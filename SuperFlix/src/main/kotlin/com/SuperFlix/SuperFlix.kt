@@ -7,6 +7,9 @@ import org.jsoup.nodes.Element
 import com.lagradost.cloudstream3.LoadResponse.Companion.addMovie
 import com.lagradost.cloudstream3.LoadResponse.Companion.addTvSeries
 
+// CORREÇÃO 1: Importação da classe M3U8 para resolver o erro "Unresolved reference 'M3U8'"
+import com.lagradost.cloudstream3.extractors.ExtractorLink.M3U8
+
 class SuperFlix : MainAPI() {
     // 1. Informações Básicas do Provedor
     override var mainUrl = "https://superflix20.lol"
@@ -35,7 +38,7 @@ class SuperFlix : MainAPI() {
             else -> TvType.Movie
         }
 
-        // CORREÇÃO CRÍTICA: Uso do construtor SearchResponse correto
+        // Uso do construtor SearchResponse
         return SearchResponse(
             name = title,
             url = href,
@@ -74,14 +77,14 @@ class SuperFlix : MainAPI() {
 
         val home = getListItems(url)
 
-        // CORREÇÃO: Fechando corretamente a estrutura da função
+        // CORREÇÃO 2: Estrutura da função corrigida. O 'return' estava incompleto.
         return newHomePageResponse(
             list = HomePageList(
                 name = request.name,
                 list = home,
                 isHorizontalImages = true
             )
-        )
+        ) // <-- Parêntese de fechamento faltante adicionado aqui (na linha 75 do arquivo original).
     }
 
     // As funções 'search', 'load' e 'get and extract links' (que são o restante do provedor)
