@@ -35,9 +35,9 @@ subprojects {
     apply(plugin = "com.lagradost.cloudstream3.gradle")
 
     cloudstream {
-        setRepo("https://github.com/saimuelbr/saimuelrepo/main")
-        authors = listOf("saimuelbr")
-    }
+    setRepo("https://github.com/euluan1912/cloudstream-brazil-providers/main")
+    authors = listOf("euluan1912")
+ }
 
     android {
         namespace = "com.saimuelbr"
