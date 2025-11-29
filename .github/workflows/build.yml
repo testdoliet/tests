@@ -9,8 +9,11 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    steps:
+        steps:
       - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }} # Adicionado para conceder permissão de escrita
+
 
       # 1. SETUP JAVA/GRADLE
       - name: Set up JDK 17
