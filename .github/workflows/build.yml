@@ -1,53 +1,17 @@
-name: Build Cloudstream Providers
+# Ação para gerar os arquivos (isso deve vir primeiro)
+- name: ...
+  # ... (suas etapas de compilação/cópia que geram repo.json e os .cs3 na pasta 'builds/')
+  # ...
 
-on:
-  push:
-    branches:
-      - main
-  workflow_dispatch:
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
-        with:
-          java-version: '17'
-          distribution: 'temurin'
-          cache: 'gradle'
-
-      - name: Grant execute permission for gradlew
-        run: chmod +x gradlew
-
-      - name: Build with Gradle (Cria os .cs3)
-        run: ./gradlew assemble --refresh-dependencies --info
-
-      - name: Generate repository.json
-        run: ./gradlew makePluginsJson
-
-      # --- CORREÇÃO CRÍTICA AQUI: CONSOLIDAÇÃO DE ARQUIVOS ---
-      - name: Consolidar Arquivos CS3 e Manifesto para Upload
-        run: |
-          # 1. Cria a pasta 'builds'
-          mkdir -p builds
-          
-          # 2. COPIA TODOS OS ARQUIVOS .CS3 ENCONTRADOS NO PROJETO PARA builds/
-          # Isso garante que todos os seus provedores (SuperFlix, etc.) sejam incluídos
-          find . -name "*.cs3" -exec cp {} builds/ \;
-          
-          # 3. Move/Renomeia o arquivo JSON gerado para o nome e local final esperado
-          # Assume-se que 'makePluginsJson' gera 'build/plugins.json'
-          mv build/plugins.json builds/repo.json || true
-          
-          # Se o seu repo.json for gerado em outro local, ajuste a linha acima!
-          ls -R builds 
-        
-      - name: Upload Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: euluan-repo
-          # Apenas sobe a pasta 'builds' inteira
-          path: builds/
+# --- Use ESTE bloco para o deploy ---
+- name: Deploy to GitHub Pages
+  uses: peaceiris/actions-gh-pages@v3
+  with:
+    github_token: ${{ secrets.GITHUB_TOKEN }}
+    # Este é o ponto CRÍTICO: a pasta 'builds/' é onde o seu repo.json e os .cs3 estão.
+    # A ação peaceiris vai commitar o CONTEÚDO desta pasta para o branch gh-pages.
+    publish_dir: ./builds
+    # A mensagem que aparecerá no histórico de commits do branch gh-pages
+    commit_message: "Build: Automatic deployment of CloudStream providers"
+    # Você já está usando o branch gh-pages, mas é bom garantir:
+    publish_branch: gh-pages
