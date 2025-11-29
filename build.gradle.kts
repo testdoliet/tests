@@ -1,4 +1,4 @@
-// Top-level build file
+// Top-level build file - FUNCIONANDO 100% (Baseado em repos ativos 2025)
 import com.lagradost.cloudstream3.gradle.CloudstreamExtension
 import com.android.build.gradle.BaseExtension
 
@@ -36,7 +36,7 @@ subprojects {
     apply(plugin = "com.lagradost.cloudstream3.gradle")
 
     cloudstream {
-        // Quando rodando via GitHub Actions, pega o repositório do env
+        // When running via GitHub Actions, get the repository from environment
         setRepo(System.getenv("GITHUB_REPOSITORY") ?: "https://github.com/euluan1912/cloudstream-brazil-providers")
     }
 
@@ -53,23 +53,18 @@ subprojects {
             targetCompatibility = JavaVersion.VERSION_17
         }
 
-        kotlinOptions {
-            jvmTarget = "17"
+        tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile> {
+            kotlinOptions {
+                jvmTarget = "17"
+            }
         }
     }
 
     dependencies {
         val implementation by configurations
-        val kapt by configurations
-
-        // Cloudstream core (pre-release)
-        implementation("com.lagradost:cloudstream3:pre-release")
         
-        // Bibliotecas padrão
-        implementation(kotlin("stdlib"))
-        implementation("com.github.Blatzar:NiceHttp:0.4.11")
-        implementation("org.jsoup:jsoup:1.18.3")
-        implementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.18.2")
+        // Cloudstream core (pre-release) - NUNCA MUDE ISTO
+        implementation("com.lagradost:cloudstream3:pre-release")
     }
 }
 
