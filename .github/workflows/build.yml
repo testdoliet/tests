@@ -13,10 +13,12 @@ jobs:
       contents: write # 1. CRÍTICO: Permissão de escrita para o deploy
       
     steps:
+      # 1. CHECKOUT
       - uses: actions/checkout@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }} 
 
+      # 2. SETUP JAVA/GRADLE
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
@@ -50,19 +52,11 @@ jobs:
       - name: Corrigir URLs do JSON para Remover '/builds/'
         run: |
           sed -i 's/\/builds\//\//g' builds/repo.json
-          
-      # 6. CRÍTICO: Configura o Git para permitir o commit no branch main
-      - name: Setup Git User for Commit
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      # 7. DEPLOY FINAL
+      # 6. DEPLOY FINAL COM AÇÃO DE COMMIT DIRETO (Standard CloudStream)
       - name: Commit Providers to main branch
-        uses: peaceiris/actions-gh-pages@v3
+        uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./builds
-          publish_branch: main
-          destination_dir: builds
-          commit_message: "Deploy: Final CloudStream Standard Architecture Fix (Git Configured)"
+          commit_message: "Deploy: CloudStream Providers Update (Final Standard Commit)"
+          branch: main
+          file_pattern: builds/*
