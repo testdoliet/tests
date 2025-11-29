@@ -10,15 +10,13 @@ jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # Permissão de escrita para o deploy
+      contents: write
       
     steps:
-      # 1. CHECKOUT
       - uses: actions/checkout@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }} 
 
-      # 2. SETUP JAVA/GRADLE
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
@@ -29,14 +27,13 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
-      # 3. BUILD E GERAÇÃO DOS ARQUIVOS
       - name: Build with Gradle (Cria os .cs3)
         run: ./gradlew assemble --refresh-dependencies --info
 
       - name: Generate repository.json
         run: ./gradlew makePluginsJson
         
-      # 4. CRIAÇÃO DA ESTRUTURA FINAL (MOVER E COPIAR)
+      # 4. CRIAÇÃO DA ESTRUTURA FINAL (MOVER E COPIAR) - COM CÓPIA SIMPLIFICADA
       - name: Mover repo.json e Copiar .cs3 para pasta de deploy
         run: |
           # 1. Cria a pasta 'builds'
@@ -45,15 +42,13 @@ jobs:
           # 2. Move o manifesto (Repo.json)
           mv build/plugins.json builds/repo.json || true
           
-          # 3. COPIA DEFINITIVA DOS CS3:
-          find . -name "*.cs3" -print0 | xargs -0 cp -t builds/
+          # 3. NOVO COMANDO DE CÓPIA: Habilita o ** (recursivo) e copia de forma direta.
+          shopt -s globstar # Habilita a expansão recursiva do wildcard (**)
+          cp -f **/build/libs/*.cs3 builds/
           
       # 5. CORREÇÃO CRÍTICA DE URL (Remove o /builds/ do JSON)
       - name: Corrigir URLs do JSON para Remover '/builds/'
         run: |
-          # O comando sed substitui todas as ocorrências de '/builds/' por '/' no repo.json.
-          # Isso é essencial porque o peaceiris move o conteúdo de 'builds/' para a raiz do gh-pages,
-          # mas o Gradle insere a string '/builds/' nas URLs.
           sed -i 's/\/builds\//\//g' builds/repo.json
 
       # 6. DEPLOY CRÍTICO - Publica o conteúdo da pasta 'builds/'
@@ -63,7 +58,7 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./builds
           publish_branch: gh-pages
-          commit_message: "Deploy: Automatic CloudStream Providers URL Final Fix"
+          commit_message: "Deploy: Automatic CloudStream Providers Final Copy Fix"
 
       # 7. UPLOAD ARTIFACT (Opcional)
       - name: Upload Artifacts
