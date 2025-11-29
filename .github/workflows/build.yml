@@ -29,38 +29,43 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
-      - name: Build with Gradle (Cria os .cs3)
+      - name: Build with Gradle (Cria os .cs3 e .jar)
         run: ./gradlew assemble --refresh-dependencies --info
 
       # 3. GERAÇÃO DO MANIFESTO DE PROVEDORES
       - name: Generate plugins.json at correct path
         run: ./gradlew makePluginsJson -PoutputFile="build/plugins.json"
 
-      # 4. CRIAÇÃO DA ESTRUTURA FINAL (MANIFESTO DUPLO) - CORRIGIDO O ERRO DE SINTAXE YAML
-      - name: Mover plugins.json e Criar repo.json principal
+      # 4. CRIAÇÃO DA ESTRUTURA FINAL E CORREÇÃO DE URL (RESOLVE O 404)
+      - name: Mover, Corrigir URLs Internas e Criar repo.json principal
         run: |
-          # Define as URLs de base e do ícone
-          BASE_URL="https://raw.githubusercontent.com/${{ github.repository }}/main/builds"
-          REPO_ICON_URL="https://raw.githubusercontent.com/${{ github.repository }}/main/builds/RepoIcon.png"
-          PLUGINS_LIST="[\"$BASE_URL/plugins.json\"]"
+          # Define a base da URL para o repositório RAW do GitHub
+          REPO_BASE_URL="https://raw.githubusercontent.com/${{ github.repository }}/main/builds"
+          PLUGINS_LIST="[\"$REPO_BASE_URL/plugins.json\"]"
 
           # 1. Cria a pasta 'builds'
           mkdir -p builds
           
-          # 2. Move o manifesto de plugins para a pasta builds/ (mantendo o nome correto)
+          # 2. Move o manifesto de plugins para a pasta builds/
           mv build/plugins.json builds/plugins.json 
           
-          # 3. CRIA o manifesto principal (repo.json) usando 'echo' e variáveis.
-          # Esta sintaxe evita o erro YAML.
+          # 3. CRÍTICO PARA O 404: Substitui o caminho temporário gerado pelo Gradle
+          # (Ex: "file:///builds/file.cs3") pela URL RAW completa do GitHub.
+          # O \/ é o separador do SED.
+          # Este passo é crucial para o CloudStream encontrar os arquivos .cs3 e .jar.
+          sed -i 's|"url": "[^"]*NetCine[^"]*\.cs3"|"url": "'"$REPO_BASE_URL"'/NetCine.cs3"|g' builds/plugins.json
+          # Exemplo de correção de URL para plugins.json (aplique a todos os seus provedores se houver mais)
+          # sed -i 's|"url": "[^"]*<NOME_DO_PROVEDOR>[^"]*\.cs3"|"url": "'"$REPO_BASE_URL"'/<NOME_DO_PROVEDOR>.cs3"|g' builds/plugins.json
+          
+          # 4. CRIA o manifesto principal (repo.json) usando 'echo' e variáveis. (Correção YAML)
           echo "{
             \"name\": \"CloudStream Brasil Repo\",
-            \"iconUrl\": \"$REPO_ICON_URL\",
             \"description\": \"Repositório Brasileiro de Provedores CloudStream\",
             \"manifestVersion\": 1,
             \"pluginLists\": $PLUGINS_LIST
           }" > builds/repo.json
           
-          # 4. COPIA os arquivos .cs3 e .jar para a pasta builds/
+          # 5. COPIA os arquivos .cs3 e .jar para a pasta builds/
           find . -type f -name "*.cs3" -exec cp {} builds/ \; || true
           find . -type f -name "*.jar" -exec cp {} builds/ \; || true
           
