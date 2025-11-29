@@ -33,7 +33,7 @@ jobs:
       - name: Generate repository.json
         run: ./gradlew makePluginsJson
         
-      # 4. CRIAÇÃO DA ESTRUTURA FINAL (MOVER E COPIAR) - COM CÓPIA SIMPLIFICADA
+      # 4. CRIAÇÃO DA ESTRUTURA FINAL (MOVER E COPIAR) - COM CÓPIA MAIS SEGURA
       - name: Mover repo.json e Copiar .cs3 para pasta de deploy
         run: |
           # 1. Cria a pasta 'builds'
@@ -42,9 +42,9 @@ jobs:
           # 2. Move o manifesto (Repo.json)
           mv build/plugins.json builds/repo.json || true
           
-          # 3. NOVO COMANDO DE CÓPIA: Habilita o ** (recursivo) e copia de forma direta.
-          shopt -s globstar # Habilita a expansão recursiva do wildcard (**)
-          cp -f **/build/libs/*.cs3 builds/
+          # 3. COMANDO DE CÓPIA FINAL E SEGURO:
+          # Procura todos os arquivos .cs3 no diretório atual e subdiretórios e os copia.
+          find . -type f -name "*.cs3" -exec cp {} builds/ \; || true
           
       # 5. CORREÇÃO CRÍTICA DE URL (Remove o /builds/ do JSON)
       - name: Corrigir URLs do JSON para Remover '/builds/'
