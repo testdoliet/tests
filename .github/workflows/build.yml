@@ -13,10 +13,9 @@ jobs:
       contents: write # ESSENCIAL: Concede permissão de escrita ao GITHUB_TOKEN para o deploy
       
     steps:
-      # 1. CHECKOUT CORRIGIDO: Esta seção garante a permissão de escrita
+      # 1. CHECKOUT
       - uses: actions/checkout@v4
         with:
-          # ESSA LINHA É CRÍTICA: Passa o token para a ação de checkout
           token: ${{ secrets.GITHUB_TOKEN }} 
 
       # 2. SETUP JAVA/GRADLE
@@ -45,9 +44,10 @@ jobs:
           # 2. Tenta mover o 'build/plugins.json' para 'builds/repo.json'
           mv build/plugins.json builds/repo.json || true
           
-          # 3. Copia todos os .cs3 para a pasta builds/ para serem publicados
-          find . -name "*.cs3" -exec cp {} builds/ \;
-
+          # 3. COPIA CORRIGIDA: Copia todos os .cs3 da pasta de libs para a pasta builds/
+          # O comando **cp **(copy) é mais direto e menos propenso a falhas de permissão que o find -exec cp.
+          cp **/build/libs/*.cs3 builds/ || true
+          
       # 5. DEPLOY CRÍTICO - Publica o conteúdo da pasta 'builds/'
       - name: Deploy Providers to gh-pages branch
         uses: peaceiris/actions-gh-pages@v3
