@@ -10,7 +10,7 @@ class UltraCine : MainAPI() {
     override var mainUrl = "https://ultracine.org"
     override var name = "UltraCine"
     override val hasMainPage = true
-    override val lang = "pt"
+    override var lang = "pt"
     override val hasDownloadSupport = true
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries)
 
@@ -93,7 +93,7 @@ class UltraCine : MainAPI() {
                 this.posterUrl = poster
                 this.year = year
                 this.plot = plot
-                this.score = rating?.times(10)?.toInt()
+                this.score = rating?.times(10)?.roundToInt()
                 this.tags = genres
                 if (actors.isNotEmpty()) addActors(actors)
                 trailerUrl?.let { addTrailer(it) }
@@ -103,7 +103,7 @@ class UltraCine : MainAPI() {
                 this.posterUrl = poster
                 this.year = year
                 this.plot = plot
-                this.score = rating?.times(10)?.toInt()
+                this.score = rating?.times(10)?.roundToInt()
                 this.tags = genres
                 this.recommendations = null
                 this.duration = parseDuration(duration)
