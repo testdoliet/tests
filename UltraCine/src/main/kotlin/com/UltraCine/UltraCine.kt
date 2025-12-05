@@ -235,6 +235,7 @@ class UltraCine : MainAPI() {
     return false
 }
 
+
 private suspend fun loadFromEpisodePage(
     pageUrl: String,
     subtitleCallback: (SubtitleFile) -> Unit,
