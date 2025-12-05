@@ -209,14 +209,14 @@ class UltraCine : MainAPI() {
             else -> videoUrl
         }
 
-        // MÉTODO NOVO DO CLOUDSTREAM — 100% compatível, sem warning
+        // CORREÇÃO FINAL: Sem source (fixo), usa type = LoadType.M3u8 no lugar de isM3u8
         callback(
             newExtractorLink(
                 name = "UltraCine 4K • Tela Cheia",
                 url = videoUrl,
                 referer = "https://ultracine.org/",
                 quality = Qualities.Unknown.value,
-                isM3u8 = true,
+                type = LoadType.M3u8,  // ← PRA M3U8, É ISSO AQUI!
                 headers = mapOf("Origin" to "https://ultracine.org", "Referer" to "https://ultracine.org/")
             )
         )
@@ -225,34 +225,6 @@ class UltraCine : MainAPI() {
 
     } catch (e: Exception) {
         e.printStackTrace()
-    }
-
-    return false
-}
- 
-private suspend fun loadFromEpisodePage(
-    pageUrl: String,
-    subtitleCallback: (SubtitleFile) -> Unit,
-    callback: (ExtractorLink) -> Unit
-): Boolean {
-    val response = app.get(pageUrl, referer = "https://ultracine.org/")
-    val text = response.text
-
-    // PEGA DIRETO DO JAVASCRIPT (método infalível 2025)
-    val regex = Regex("""["']?(?:file|src|source|url)["']?\s*:\s*["'](https?://[^"']+embedplay[^"']+)""")
-    regex.find(text)?.let {
-        val link = it.groupValues[1]
-        loadExtractor(link, pageUrl, subtitleCallback, callback)
-        return true
-    }
-
-    // Fallback: botão com data-source
-    response.document.select("button[data-source]").forEach { btn ->
-        val link = btn.attr("data-source")
-        if (link.contains("embedplay") || link.contains("upn")) {
-            loadExtractor(link, pageUrl, subtitleCallback, callback)
-            return true
-        }
     }
 
     return false
