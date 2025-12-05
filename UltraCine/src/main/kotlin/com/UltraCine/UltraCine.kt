@@ -212,17 +212,31 @@ class UltraCine : MainAPI() {
         }
 
         // Constructor old, compatível e sem erros
-        callback(
-            ExtractorLink(
-                source = "UltraCine",
-                name = "UltraCine 4K • Tela Cheia",
-                url = videoUrl,
-                referer = "https://ultracine.org/",
-                quality = Qualities.Unknown.value,
-                isM3u8 = true,  // Mantém compatível com players HLS
-                headers = mapOf("Origin" to "https://ultracine.org")
-            )
-        )
+        
+         // SUBSTITUI ESSE BLOCO INTEIRO:
+callback(
+    ExtractorLink(
+        source = "UltraCine",
+        name = "UltraCine 4K • Tela Cheia",
+        url = videoUrl,
+        referer = "https://ultracine.org/",
+        quality = Qualities.Unknown.value,
+        isM3u8 = true,
+        headers = mapOf("Origin" to "https://ultracine.org")
+    )
+)
+
+// POR ESSE (100% compatível 2025):
+callback.invoke(
+    newExtractorLink(
+        url = videoUrl,
+        name = "UltraCine 4K • Tela Cheia",
+        referer = "https://ultracine.org/",
+        quality = Qualities.Unknown.value,
+        isM3u8 = true,
+        headers = mapOf("Origin" to "https://ultracine.org", "Referer" to "https://ultracine.org/")
+    )
+)
 
         return true
 
