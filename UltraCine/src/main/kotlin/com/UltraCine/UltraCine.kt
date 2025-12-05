@@ -225,8 +225,8 @@ class UltraCine : MainAPI() {
     }
 
     return false
-}
-
+    }
+    
     private fun parseDuration(duration: String?): Int? {
         if (duration == null) return null
         val regex = Regex("(\\d+)h\\s*(\\d+)m")
