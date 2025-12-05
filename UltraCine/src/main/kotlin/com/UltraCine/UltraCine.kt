@@ -85,7 +85,6 @@ class UltraCine : MainAPI() {
         }
         val year = document.selectFirst("aside.fg1 header.entry-header div.entry-meta span.year")?.text()?.substringAfter("far\">")?.toIntOrNull()
         val duration = document.selectFirst("aside.fg1 header.entry-header div.entry-meta span.duration")?.text()?.substringAfter("far\">")
-        val rating = document.selectFirst("div.vote-cn span.vote span.num")?.text()?.toDoubleOrNull()
         val plot = document.selectFirst("aside.fg1 div.description p")?.text()
         val genres = document.select("aside.fg1 header.entry-header div.entry-meta span.genres a").map { it.text() }
         
@@ -113,7 +112,7 @@ class UltraCine : MainAPI() {
                     this.posterUrl = poster
                     this.year = year
                     this.plot = plot
-                    this.rating = rating?.times(1000)?.toInt()
+                    // CORREÇÃO: Nenhum rating/score para evitar erros
                     this.tags = genres
                     if (actors != null) addActors(actors)
                     addTrailer(trailerUrl)
@@ -123,7 +122,7 @@ class UltraCine : MainAPI() {
                     this.posterUrl = poster
                     this.year = year
                     this.plot = plot
-                    this.rating = rating?.times(1000)?.toInt()
+                    // CORREÇÃO: Nenhum rating/score para evitar erros
                     this.tags = genres
                     if (actors != null) addActors(actors)
                     addTrailer(trailerUrl)
@@ -134,7 +133,7 @@ class UltraCine : MainAPI() {
                 this.posterUrl = poster
                 this.year = year
                 this.plot = plot
-                this.rating = rating?.times(1000)?.toInt()
+                // CORREÇÃO: Nenhum rating/score para evitar erros
                 this.tags = genres
                 this.duration = parseDuration(duration)
                 if (actors != null) addActors(actors)
@@ -163,12 +162,12 @@ class UltraCine : MainAPI() {
                         episodeTitle
                     }
                     
-                    Episode(
-                        data = episodeId,
-                        name = cleanTitle,
-                        season = seasonNumber,
-                        episode = episodeNumber
-                    )
+                    // CORREÇÃO: Usando newEpisode em vez do construtor depreciado
+                    newEpisode(episodeId) {
+                        this.name = cleanTitle
+                        this.season = seasonNumber
+                        this.episode = episodeNumber
+                    }
                 }
             
             episodes.addAll(seasonEpisodes)
@@ -259,6 +258,16 @@ class UltraCine : MainAPI() {
             val minutesRegex = Regex("(\\d+)m")
             val minutesMatch = minutesRegex.find(duration)
             minutesMatch?.groupValues?.get(1)?.toIntOrNull()
+        }
+    }
+
+    private fun getQualityFromString(qualityStr: String?): Qualities? {
+        return when {
+            qualityStr?.contains("4k", ignoreCase = true) == true -> Qualities.Q4K
+            qualityStr?.contains("1080p", ignoreCase = true) == true -> Qualities.Q1080
+            qualityStr?.contains("720p", ignoreCase = true) == true -> Qualities.Q720
+            qualityStr?.contains("480p", ignoreCase = true) == true -> Qualities.Q480
+            else -> null
         }
     }
 }
