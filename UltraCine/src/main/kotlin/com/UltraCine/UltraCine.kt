@@ -4,7 +4,6 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.LoadResponse.Companion.addActors
 import com.lagradost.cloudstream3.LoadResponse.Companion.addTrailer
-import org.jsoup.nodes.Element
 
 class UltraCine : MainAPI() {
     override var mainUrl = "https://ultracine.org"
@@ -39,7 +38,7 @@ class UltraCine : MainAPI() {
         return newHomePageResponse(request.name, home)
     }
 
-    private fun Element.toSearchResult(): SearchResponse? {
+    private fun org.jsoup.nodes.Element.toSearchResult(): SearchResponse? {
         val title = this.selectFirst("header.entry-header h2.entry-title")?.text() ?: return null
         val href = this.selectFirst("a.lnk-blk")?.attr("href") ?: return null
         val posterUrl = this.selectFirst("div.post-thumbnail figure img")?.let { img ->
@@ -56,7 +55,8 @@ class UltraCine : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        val document = app.get("\( mainUrl/?s= \){query.urlEncode()}").document
+        val url = "\( mainUrl/?s= \){query.encodeUrl()}"
+        val document = app.get(url).document
         return document.select("div.aa-cn div#movies-a ul.post-lst li").mapNotNull { it.toSearchResult() }
     }
 
@@ -64,7 +64,9 @@ class UltraCine : MainAPI() {
         val document = app.get(url).document
 
         val title = document.selectFirst("aside.fg1 header.entry-header h1.entry-title")?.text() ?: return null
-        val poster = document.selectFirst("div.bghd img.TPostBg")?.attr("src")?.replace("/w1280/", "/original/")
+        val poster = document.selectFirst("div.bghd img.TPostBg")?.let { img ->
+            (img.attr("src").takeIf { it.isNotBlank() } ?: img.attr("data-src"))?.replace("/w1280/", "/original/")
+        }
         val year = document.selectFirst("aside.fg1 span.year")?.text()?.toIntOrNull()
         val plot = document.selectFirst("aside.fg1 div.description p")?.text()
         val genres = document.select("aside.fg1 span.genres a").map { it.text() }
@@ -72,7 +74,7 @@ class UltraCine : MainAPI() {
         val trailer = document.selectFirst("div.mdl-cn div.video iframe")?.attr("src")
 
         val iframeUrl = document.selectFirst("iframe[src*='assistirseriesonline']")
-            ?.let { it.attr("src").takeIf { s -> s.isNotBlank() } ?: it.attr("data-src") }
+            ?.let { it.attr("src").takeIf { it.isNotBlank() } ?: it.attr("data-src") }
 
         val isSerie = url.contains("/serie/")
 
@@ -114,7 +116,6 @@ class UltraCine : MainAPI() {
         try {
             val doc = app.get(url).document
 
-            // Botão embedplay (mais comum)
             doc.selectFirst("button[data-source*='embedplay.upns.pro'], button[data-source*='embedplay.upn.one']")?.let {
                 val link = it.attr("data-source")
                 if (link.isNotBlank()) {
@@ -123,13 +124,11 @@ class UltraCine : MainAPI() {
                 }
             }
 
-            // iframe direto do player
-            doc.selectFirst("div.play-overlay div#player iframe")?.attr("src")?.takeIf { it.isNotBlank() }?.let {
+            doc.selectFirst("div.play-overlay div#player iframe")?.attr("src")?.takeIf { it.isNotBlank())?.let {
                 loadExtractor(it, url, subtitleCallback, callback)
                 return true
             }
 
-            // iframe geral da página
             doc.selectFirst("iframe[src*='assistirseriesonline'], iframe[data-src*='assistirseriesonline']")?.let {
                 val src = it.attr("src").takeIf { s -> s.isNotBlank() } ?: it.attr("data-src")
                 if (src.isNotBlank()) {
@@ -137,9 +136,7 @@ class UltraCine : MainAPI() {
                     return true
                 }
             }
-        } catch (e: Exception) {
-            // nada
-        }
+        } catch (e: Exception) { }
 
         return false
     }
