@@ -61,11 +61,12 @@ class UltraCine : MainAPI() {
         return newMovieSearchResponse(title, href, TvType.Movie) {
             this.posterUrl = posterUrl
             this.year = year
+            this.quality = getQualityFromString(this@toSearchResult.selectFirst("span.post-ql")?.text())
         }
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        val searchResponse = app.get("\( mainUrl/?s= \){query.urlEncode()}").document
+        val searchResponse = app.get("$mainUrl/?s=$query").document
         return searchResponse.select("div.aa-cn div#movies-a ul.post-lst li").mapNotNull {
             it.toSearchResult()
         }
@@ -84,6 +85,7 @@ class UltraCine : MainAPI() {
         }
         val year = document.selectFirst("aside.fg1 header.entry-header div.entry-meta span.year")?.text()?.substringAfter("far\">")?.toIntOrNull()
         val duration = document.selectFirst("aside.fg1 header.entry-header div.entry-meta span.duration")?.text()?.substringAfter("far\">")
+        val rating = document.selectFirst("div.vote-cn span.vote span.num")?.text()?.toDoubleOrNull()
         val plot = document.selectFirst("aside.fg1 div.description p")?.text()
         val genres = document.select("aside.fg1 header.entry-header div.entry-meta span.genres a").map { it.text() }
         
@@ -111,6 +113,7 @@ class UltraCine : MainAPI() {
                     this.posterUrl = poster
                     this.year = year
                     this.plot = plot
+                    this.rating = rating?.times(1000)?.toInt()
                     this.tags = genres
                     if (actors != null) addActors(actors)
                     addTrailer(trailerUrl)
@@ -120,6 +123,7 @@ class UltraCine : MainAPI() {
                     this.posterUrl = poster
                     this.year = year
                     this.plot = plot
+                    this.rating = rating?.times(1000)?.toInt()
                     this.tags = genres
                     if (actors != null) addActors(actors)
                     addTrailer(trailerUrl)
@@ -130,6 +134,7 @@ class UltraCine : MainAPI() {
                 this.posterUrl = poster
                 this.year = year
                 this.plot = plot
+                this.rating = rating?.times(1000)?.toInt()
                 this.tags = genres
                 this.duration = parseDuration(duration)
                 if (actors != null) addActors(actors)
@@ -158,11 +163,12 @@ class UltraCine : MainAPI() {
                         episodeTitle
                     }
                     
-                    newEpisode(episodeId) {
-                        this.name = cleanTitle
-                        this.season = seasonNumber
-                        this.episode = episodeNumber
-                    }
+                    Episode(
+                        data = episodeId,
+                        name = cleanTitle,
+                        season = seasonNumber,
+                        episode = episodeNumber
+                    )
                 }
             
             episodes.addAll(seasonEpisodes)
@@ -192,16 +198,7 @@ class UltraCine : MainAPI() {
                     val embedPlayLink = embedPlayButton.attr("data-source")
                     
                     if (embedPlayLink.isNotBlank()) {
-                        callback(
-                            newExtractorLink(
-                                source = "UltraCine",
-                                name = "UltraCine 4K • Tela Cheia",
-                                url = embedPlayLink,
-                                referer = "https://ultracine.org/"
-                            ).apply {
-                                this.isM3u8 = true
-                            }
-                        )
+                        loadExtractor(embedPlayLink, episodeUrl, subtitleCallback, callback)
                         return true
                     }
                 }
@@ -210,16 +207,7 @@ class UltraCine : MainAPI() {
                 if (singlePlayerIframe != null) {
                     val singlePlayerSrc = singlePlayerIframe.attr("src")
                     if (singlePlayerSrc.isNotBlank()) {
-                        callback(
-                            newExtractorLink(
-                                source = "UltraCine",
-                                name = "UltraCine 4K • Tela Cheia",
-                                url = singlePlayerSrc,
-                                referer = "https://ultracine.org/"
-                            ).apply {
-                                this.isM3u8 = true
-                            }
-                        )
+                        loadExtractor(singlePlayerSrc, episodeUrl, subtitleCallback, callback)
                         return true
                     }
                 }
@@ -238,16 +226,7 @@ class UltraCine : MainAPI() {
                     val embedPlayLink = embedPlayButton.attr("data-source")
                     
                     if (embedPlayLink.isNotBlank()) {
-                        callback(
-                            newExtractorLink(
-                                source = "UltraCine",
-                                name = "UltraCine 4K • Tela Cheia",
-                                url = embedPlayLink,
-                                referer = "https://ultracine.org/"
-                            ).apply {
-                                this.isM3u8 = true
-                            }
-                        )
+                        loadExtractor(embedPlayLink, data, subtitleCallback, callback)
                         return true
                     }
                 }
@@ -256,16 +235,7 @@ class UltraCine : MainAPI() {
                 if (singlePlayerIframe != null) {
                     val singlePlayerSrc = singlePlayerIframe.attr("src")
                     if (singlePlayerSrc.isNotBlank()) {
-                        callback(
-                            newExtractorLink(
-                                source = "UltraCine",
-                                name = "UltraCine 4K • Tela Cheia",
-                                url = singlePlayerSrc,
-                                referer = "https://ultracine.org/"
-                            ).apply {
-                                this.isM3u8 = true
-                            }
-                        )
+                        loadExtractor(singlePlayerSrc, data, subtitleCallback, callback)
                         return true
                     }
                 }
