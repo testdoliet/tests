@@ -60,12 +60,12 @@ class UltraCine : MainAPI() {
         val plot = document.selectFirst("aside.fg1 div.description p")?.text()
         val year = document.selectFirst("aside.fg1 header.entry-header div.entry-meta span.year")?.text()?.substringAfter("far\">")?.toIntOrNull()
         
-        // CORREÇÃO: Extrair rating e converter para score (0-100)
+        // CORREÇÃO: Extrair rating e converter para Score (0-100)
         val ratingText = document.selectFirst("div.vote-cn span.vote span.num")?.text()?.toDoubleOrNull()
-        val score = if (ratingText != null) {
-            // Se rating está em escala 0-10, converte para 0-100
-            (ratingText * 10).toInt()
-        } else null
+        val score = ratingText?.let {
+            // Se rating está em escala 0-10, converte para 0-100 e cria um Score
+            Score((it * 10).toInt())
+        }
         
         val genres = document.select("aside.fg1 header.entry-header div.entry-meta span.genres a").map { it.text() }
         val duration = document.selectFirst("aside.fg1 header.entry-header div.entry-meta span.duration")?.text()?.substringAfter("far\">")
@@ -85,7 +85,7 @@ class UltraCine : MainAPI() {
                 this.posterUrl = poster?.replace("/w1280/", "/original/")
                 this.plot = plot
                 this.year = year
-                this.score = score // CORREÇÃO: usar score em vez de rating
+                this.score = score // CORREÇÃO: Score é do tipo Score?
                 this.tags = genres
             }
         } else {
@@ -93,7 +93,7 @@ class UltraCine : MainAPI() {
                 this.posterUrl = poster?.replace("/w1280/", "/original/")
                 this.plot = plot
                 this.year = year
-                this.score = score // CORREÇÃO: usar score em vez de rating
+                this.score = score // CORREÇÃO: Score é do tipo Score?
                 this.tags = genres
                 this.duration = parseDuration(duration)
             }
