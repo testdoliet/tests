@@ -348,6 +348,24 @@ class UltraCine : MainAPI() {
                 }
             }
             
+            val m3u8Pattern = Regex("""(https?://[^"'\s<>]+\.m3u8[^"'\s<>]*)""")
+            val m3u8Matches = m3u8Pattern.findAll(html).toList()
+            
+            if (m3u8Matches.isNotEmpty()) {
+                for (match in m3u8Matches) {
+                    val videoUrl = match.value
+                    if (videoUrl.isNotBlank() && !videoUrl.contains("banner")) {
+                        val link = newExtractorLink(
+                            source = this.name,
+                            name = "${this.name} (HLS)",
+                            url = videoUrl
+                        )
+                        callback.invoke(link)
+                        return true
+                    }
+                }
+            }
+            
             val doc = res.document
             
             val iframes = doc.select("iframe[src]")
