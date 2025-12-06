@@ -125,7 +125,7 @@ class UltraCine : MainAPI() {
                 this.year = year
                 this.plot = plot
                 // CORREÇÃO: Usa o construtor público Score(it, null)
-                this.score = rating?.times(1000)?.toInt()?.let { Score(it, null) } 
+                this.score = null
                 this.tags = genres
                 addActors(actors)
                 trailerUrl?.let { addTrailer(it) } // Usa trailerUrl em vez de trailer
@@ -139,7 +139,7 @@ class UltraCine : MainAPI() {
                 this.year = year
                 this.plot = plot
                 // CORREÇÃO: Usa o construtor público Score(it, null)
-                this.score = rating?.times(1000)?.toInt()?.let { Score(it, null) } 
+                this.score = null
                 this.tags = genres
                 this.duration = parseDuration(durationText) // Usa durationText
                 addActors(actors)
