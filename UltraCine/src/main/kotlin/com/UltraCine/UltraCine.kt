@@ -113,7 +113,7 @@ class UltraCine : MainAPI() {
                     this.posterUrl = poster
                     this.year = year
                     this.plot = plot
-                    this.rating = null
+                    this.score = rating?.times(1000)?.toInt()?.let { Score(it, null) }
                     this.tags = genres
                     if (actors != null) addActors(actors)
                     addTrailer(trailerUrl)
@@ -123,7 +123,7 @@ class UltraCine : MainAPI() {
                     this.posterUrl = poster
                     this.year = year
                     this.plot = plot
-                    this.rating = null
+                    this.score = rating?.times(1000)?.toInt()?.let { Score(it, null) }
                     this.tags = genres
                     if (actors != null) addActors(actors)
                     addTrailer(trailerUrl)
@@ -134,7 +134,7 @@ class UltraCine : MainAPI() {
                 this.posterUrl = poster
                 this.year = year
                 this.plot = plot
-                this.rating = null
+                this.score = rating?.times(1000)?.toInt()?.let { Score(it, null) }
                 this.tags = genres
                 this.duration = parseDuration(duration)
                 if (actors != null) addActors(actors)
@@ -163,13 +163,11 @@ class UltraCine : MainAPI() {
                         episodeTitle
                     }
                     
-                    Episode(
-                        data = episodeId,
-                        name = cleanTitle,
-                        season = seasonNumber,
-                        episode = episodeNumber
-                    )
-                }
+                    newEpisode(episodeId) {
+                        this.name = cleanTitle
+                        this.season = seasonNumber
+                        this.episode = episodeNumber
+                    }
             
             episodes.addAll(seasonEpisodes)
         }
