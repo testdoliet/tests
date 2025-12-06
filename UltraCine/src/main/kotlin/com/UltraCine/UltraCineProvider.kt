@@ -3,9 +3,8 @@ package com.UltraCine
 import com.lagradost.cloudstream3.plugins.BasePlugin
 import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
 
-// 1. IMPORTAÇÃO EXPLÍCITA DAS CLASSES DE EXTRATORAS
-// O compilador precisa ver onde essas classes estão definidas.
-// Como estão no mesmo pacote (com.UltraCine), esta é a sintaxe correta.
+// 1. IMPORTAÇÕES EXPLÍCITAS DAS CLASSES DE EXTRATORES
+// O compilador precisa ver onde essas classes estão definidas no mesmo pacote.
 import com.UltraCine.PlayEmbedApiSite
 import com.UltraCine.EmbedPlayExtractor
 
@@ -15,7 +14,7 @@ class UltraCineProvider : BasePlugin() {
         // 2. REGISTRO DO API PRINCIPAL
         registerMainAPI(UltraCine()) 
         
-        // 3. REGISTRO DOS EXTRATORES
+        // 3. REGISTRO DOS EXTRATORES (Usando as referências importadas)
         registerExtractorAPI(PlayEmbedApiSite())
         registerExtractorAPI(EmbedPlayExtractor()) 
     }
