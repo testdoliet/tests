@@ -4,6 +4,8 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.LoadResponse.Companion.addActors
 import com.lagradost.cloudstream3.LoadResponse.Companion.addTrailer
+import com.lagradost.cloudstream3.network.WebViewResolver
+import kotlinx.coroutines.delay
 import org.jsoup.nodes.Element
 
 class UltraCine : MainAPI() {
@@ -13,6 +15,9 @@ class UltraCine : MainAPI() {
     override var lang = "pt-br"
     override val hasDownloadSupport = true
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries)
+    override val hasQuickSearch = true
+    override val vpnStatus = VPNStatus.MightBeNeeded
+    override val chromecastSupport = true
 
     override val mainPage = mainPageOf(
         "$mainUrl/category/lancamentos/" to "Lançamentos",
@@ -32,6 +37,10 @@ class UltraCine : MainAPI() {
         "$mainUrl/category/terror/" to "Terror",
         "$mainUrl/category/thriller/" to "Thriller"
     )
+
+    // User-Agent customizado para simular browser real
+    private fun getUserAgent(): String = 
+        "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val url = request.data + if (page > 1) "page/$page/" else ""
@@ -182,226 +191,254 @@ class UltraCine : MainAPI() {
         }
     }
 
-    // loadLinks CORRIGIDO para lidar com anúncios
+    // SOLUÇÃO DEFINITIVA PARA 2025 - JW Player + Anúncios Interativos
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        println("🎬 ULTRA CINE loadLinks CHAMADO")
+        println("🎬 ULTRA CINE loadLinks CHAMADO!")
         println("📦 Data recebido: $data")
         
         if (data.isBlank()) return false
 
         return try {
-            // URL final a ser usada
+            // Constrói a URL final
             val finalUrl = when {
-                data.startsWith("https://") -> data
-                data.startsWith("http://") -> data
-                else -> "https://assistirseriesonline.icu/episodio/$data"
+                data.startsWith("https://") || data.startsWith("http://") -> data
+                data.matches(Regex("\\d+")) -> "https://assistirseriesonline.icu/episodio/$data"
+                else -> "https://assistirseriesonline.icu/$data"
             }
             
-            println("🔗 Acessando URL: $finalUrl")
+            println("🔗 URL final: $finalUrl")
             
-            // PRIMEIRA TENTATIVA: Acesso direto com headers
-            val headers = mapOf(
-                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-                "Accept-Language" to "pt-BR,pt;q=0.9,en;q=0.8",
-                "Referer" to mainUrl,
-                "DNT" to "1",
-                "Connection" to "keep-alive",
-                "Upgrade-Insecure-Requests" to "1"
-            )
+            // ESTRATÉGIA 1: Extração manual rápida (sem WebView)
+            if (tryManualExtraction(finalUrl, subtitleCallback, callback)) {
+                println("✅ Extração manual bem-sucedida!")
+                return true
+            }
             
-            val res = app.get(finalUrl, headers = headers, timeout = 60)
-            val doc = res.document
-            
-            // ANALISA A PÁGINA PARA ENCONTRAR O VÍDEO
-            return analyzePageForVideo(doc, finalUrl, callback)
+            // ESTRATÉGIA 2: WebViewResolver (para sites com JW Player + ads)
+            println("🔄 Usando WebViewResolver para lidar com JW Player e anúncios...")
+            return useWebViewResolver(finalUrl, callback)
             
         } catch (e: Exception) {
-            println("💥 ERRO no loadLinks: ${e.message}")
+            println("💥 ERRO CRÍTICO no loadLinks: ${e.message}")
             e.printStackTrace()
             false
         }
     }
     
-    // FUNÇÃO PARA ANALISAR A PÁGINA E ENCONTRAR O VÍDEO
-    private suspend fun analyzePageForVideo(
-        doc: org.jsoup.nodes.Document,
-        referer: String,
+    // Tenta extração manual primeiro (mais rápido)
+    private suspend fun tryManualExtraction(
+        url: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        println("🔍 Analisando página em busca de vídeo...")
-        
-        // ESTRATÉGIA 1: Procura por iframes
-        doc.select("iframe[src]").forEach { iframe ->
-            val src = iframe.attr("src")
-            println("🖼️ Iframe encontrado: $src")
+        try {
+            val headers = mapOf(
+                "User-Agent" to getUserAgent(),
+                "Referer" to mainUrl,
+                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+                "Accept-Language" to "pt-BR,pt;q=0.9,en;q=0.8"
+            )
             
-            // Tenta extrair do iframe
-            if (tryExtractFromIframe(src, referer, callback)) {
-                return true
-            }
-        }
-        
-        // ESTRATÉGIA 2: Procura por scripts com URLs de vídeo
-        doc.select("script").forEach { script ->
-            val scriptText = script.html()
+            val res = app.get(url, headers = headers, timeout = 30)
+            val doc = res.document
             
-            // Procura por URLs de m3u8
-            val m3u8Matches = Regex("""(https?://[^"'\s]+\.m3u8[^"'\s]*)""").findAll(scriptText).toList()
-            for (match in m3u8Matches) {
-                val m3u8Url = match.groupValues[1]
-                println("🎬 M3U8 encontrado no script: $m3u8Url")
+            // Procura JW Player específico
+            val jwPlayer = doc.selectFirst("div.jwplayer, div.jw-wrapper, [class*='jw-']")
+            if (jwPlayer != null) {
+                println("🎯 JW Player detectado na página!")
                 
-                if (createExtractorLink(m3u8Url, referer, callback, true)) {
-                    return true
+                // Tenta extrair do JW Player via atributos data
+                val possibleSources = listOf(
+                    jwPlayer.attr("data-src"),
+                    jwPlayer.attr("data-file"),
+                    jwPlayer.attr("data-video-src"),
+                    jwPlayer.selectFirst("video")?.attr("src"),
+                    jwPlayer.selectFirst("source")?.attr("src"),
+                    jwPlayer.selectFirst("iframe")?.attr("src")
+                )
+                
+                for (source in possibleSources) {
+                    if (!source.isNullOrBlank() && 
+                        (source.contains(".m3u8") || source.contains(".mp4") || source.contains("googlevideo"))) {
+                        println("🎬 Vídeo encontrado no JW Player: $source")
+                        
+                        if (loadExtractor(fixUrl(source), url, subtitleCallback, callback)) {
+                            return true
+                        }
+                    }
                 }
             }
             
-            // Procura por URLs de MP4
-            val mp4Matches = Regex("""(https?://[^"'\s]+\.mp4[^"'\s]*)""").findAll(scriptText).toList()
-            for (match in mp4Matches) {
-                val mp4Url = match.groupValues[1]
-                println("🎬 MP4 encontrado no script: $mp4Url")
-                
-                if (createExtractorLink(mp4Url, referer, callback, false)) {
-                    return true
-                }
-            }
-        }
-        
-        // ESTRATÉGIA 3: Procura por elementos de vídeo HTML5
-        doc.select("video source[src]").forEach { source ->
-            val videoUrl = source.attr("src")
-            println("🎬 Vídeo HTML5 encontrado: $videoUrl")
-            
-            if (createExtractorLink(videoUrl, referer, callback, videoUrl.contains(".m3u8"))) {
-                return true
-            }
-        }
-        
-        // ESTRATÉGIA 4: Procura por links que possam conter vídeo
-        doc.select("a[href*='.m3u8'], a[href*='.mp4']").forEach { link ->
-            val videoUrl = link.attr("href")
-            println("🔗 Link de vídeo encontrado: $videoUrl")
-            
-            if (createExtractorLink(videoUrl, referer, callback, videoUrl.contains(".m3u8"))) {
-                return true
-            }
-        }
-        
-        // ESTRATÉGIA 5: Tenta seguir redirecionamentos
-        val allLinks = doc.select("a[href]")
-        for (link in allLinks) {
-            val href = link.attr("href")
-            if (href.contains("player") || href.contains("video") || href.contains("embed")) {
-                println("🔄 Seguindo link suspeito: $href")
-                
-                try {
-                    val newRes = app.get(href, referer = referer, timeout = 30)
-                    val newDoc = newRes.document
+            // Procura botões de play/skip
+            doc.select("button.skip-button, .skip-ad, .jw-skip, [class*='skip']").forEach { btn ->
+                val skipUrl = btn.attr("data-src") ?: btn.attr("data-url") ?: btn.attr("href")
+                if (!skipUrl.isNullOrBlank()) {
+                    println("⏭️ Botão skip encontrado: $skipUrl")
                     
-                    if (analyzePageForVideo(newDoc, href, callback)) {
+                    if (loadExtractor(fixUrl(skipUrl), url, subtitleCallback, callback)) {
                         return true
                     }
-                } catch (e: Exception) {
-                    println("❌ Erro ao seguir link: ${e.message}")
                 }
             }
-        }
-        
-        println("❌ Nenhum vídeo encontrado na página")
-        return false
-    }
-    
-    // FUNÇÃO PARA TENTAR EXTRAIR DE UM IFRAME
-    private suspend fun tryExtractFromIframe(
-        iframeSrc: String,
-        referer: String,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        if (iframeSrc.isBlank()) return false
-        
-        println("🔍 Extraindo do iframe: $iframeSrc")
-        
-        try {
-            // Adiciona headers para evitar bloqueios
-            val headers = mapOf(
-                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                "Referer" to referer,
-                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-            )
             
-            val res = app.get(iframeSrc, headers = headers, timeout = 30)
-            val html = res.text
-            
-            // Procura por URLs de vídeo
-            val videoPatterns = listOf(
-                Regex("""(https?://[^"'\s]+\.m3u8[^"'\s]*)"""),
-                Regex("""(https?://[^"'\s]+\.mp4[^"'\s]*)"""),
-                Regex("""['"]file['"]\s*:\s*['"](https?://[^"']+)['"]"""),
-                Regex("""['"]src['"]\s*:\s*['"](https?://[^"']+)['"]"""),
-                Regex("""<source[^>]+src=['"](https?://[^"']+)['"]""")
-            )
-            
-            for (pattern in videoPatterns) {
-                pattern.findAll(html).forEach { match ->
-                    val videoUrl = match.groupValues[1]
-                    if (videoUrl.isNotBlank() && 
-                        (videoUrl.contains(".m3u8") || videoUrl.contains(".mp4") || videoUrl.contains(".mkv"))) {
-                        
-                        println("🎬 Vídeo encontrado no iframe: $videoUrl")
-                        
-                        return createExtractorLink(videoUrl, iframeSrc, callback, videoUrl.contains(".m3u8"))
+            // Procura iframes de vídeo
+            doc.select("iframe[src*='player'], iframe[src*='video']").forEach { iframe ->
+                val src = iframe.attr("src")
+                if (!src.isNullOrBlank()) {
+                    println("🖼️ Iframe de vídeo: $src")
+                    
+                    if (loadExtractor(fixUrl(src), url, subtitleCallback, callback)) {
+                        return true
                     }
                 }
             }
+            
         } catch (e: Exception) {
-            println("❌ Erro ao extrair do iframe: ${e.message}")
+            println("❌ Extração manual falhou: ${e.message}")
         }
         
         return false
     }
     
-    // FUNÇÃO AUXILIAR PARA CRIAR EXTRACTOR LINK
-    private fun createExtractorLink(
-        url: String,
-        referer: String,
-        callback: (ExtractorLink) -> Unit,
-        isM3u8: Boolean
-    ): Boolean {
-        if (url.isBlank()) return false
-        
-        try {
-            val quality = when {
-                url.contains("360p") -> 360
-                url.contains("480p") -> 480
-                url.contains("720p") -> 720
-                url.contains("1080p") -> 1080
-                url.contains("2160p") -> 2160
-                else -> Qualities.Unknown.value
+    // Usa WebViewResolver para sites complexos com JavaScript
+    private suspend fun useWebViewResolver(url: String, callback: (ExtractorLink) -> Unit): Boolean {
+        return try {
+            println("🌐 Iniciando WebViewResolver...")
+            
+            // Configurações do WebView
+            val webViewResult = WebViewResolver(
+                url = url,
+                timeout = 45000, // 45 segundos para carregar e interagir
+                customHeaders = mapOf(
+                    "User-Agent" to getUserAgent(),
+                    "Referer" to mainUrl,
+                    "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+                    "Accept-Language" to "pt-BR,pt;q=0.9,en;q=0.8"
+                ),
+                // Scripts JavaScript para interagir com a página
+                jsCode = """
+                    // Aguarda a página carregar
+                    setTimeout(function() {
+                        console.log('🔍 Procurando JW Player e anúncios...');
+                        
+                        // 1. Tenta encontrar e pular anúncios
+                        var skipButtons = document.querySelectorAll('button.skip-button, .skip-ad, .jw-skip, [class*="skip"]');
+                        skipButtons.forEach(function(btn) {
+                            console.log('🎯 Clicando em botão skip:', btn);
+                            btn.click();
+                        });
+                        
+                        // 2. Tenta encontrar e clicar no play do JW Player
+                        var playButtons = document.querySelectorAll('.jw-play, .jw-icon-playback, button[aria-label*="play"], .play-btn');
+                        playButtons.forEach(function(btn) {
+                            console.log('▶️ Clicando em play:', btn);
+                            btn.click();
+                        });
+                        
+                        // 3. Aguarda um pouco para vídeo carregar
+                        setTimeout(function() {
+                            // Coleta todos os links de vídeo possíveis
+                            var videoLinks = [];
+                            
+                            // JW Player sources
+                            var jwPlayers = document.querySelectorAll('[class*="jw-"]');
+                            jwPlayers.forEach(function(player) {
+                                var sources = [
+                                    player.getAttribute('data-src'),
+                                    player.getAttribute('data-file'),
+                                    player.getAttribute('data-video-src'),
+                                    player.querySelector('video')?.src,
+                                    player.querySelector('source')?.src,
+                                    player.querySelector('iframe')?.src
+                                ];
+                                videoLinks = videoLinks.concat(sources.filter(s => s));
+                            });
+                            
+                            // Vídeos HTML5
+                            var videos = document.querySelectorAll('video');
+                            videos.forEach(function(video) {
+                                videoLinks.push(video.src);
+                                if (video.currentSrc) videoLinks.push(video.currentSrc);
+                            });
+                            
+                            // Iframes
+                            var iframes = document.querySelectorAll('iframe');
+                            iframes.forEach(function(iframe) {
+                                videoLinks.push(iframe.src);
+                            });
+                            
+                            // Scripts com URLs de vídeo
+                            var scripts = document.querySelectorAll('script');
+                            scripts.forEach(function(script) {
+                                var text = script.textContent || script.innerHTML;
+                                var matches = text.match(/(https?:[^"'\s]+\.(?:m3u8|mp4|mkv)[^"'\s]*)/gi);
+                                if (matches) {
+                                    videoLinks = videoLinks.concat(matches);
+                                }
+                            });
+                            
+                            console.log('📹 Links encontrados:', videoLinks.filter(l => l).length);
+                            
+                            // Envia os links de volta
+                            videoLinks.filter(function(link) {
+                                return link && (link.includes('.m3u8') || 
+                                               link.includes('.mp4') || 
+                                               link.includes('.mkv') || 
+                                               link.includes('googlevideo'));
+                            }).forEach(function(link) {
+                                console.log('📤 Enviando link:', link);
+                                Android.sendLink(link);
+                            });
+                            
+                        }, 5000); // Aguarda 5 segundos após interação
+                        
+                    }, 3000); // Aguarda 3 segundos inicial
+                """.trimIndent()
+            ).resolve()
+            
+            // Processa os links encontrados pelo WebView
+            var foundLinks = false
+            webViewResult.forEach { link ->
+                if (link.isNotBlank() && 
+                    (link.contains(".m3u8") || link.contains(".mp4") || 
+                     link.contains("googlevideo") || link.contains("blob:"))) {
+                    
+                    println("🎬 WebView encontrou vídeo: $link")
+                    
+                    // Converte blob: URLs se necessário
+                    val finalUrl = if (link.startsWith("blob:")) {
+                        println("⚠️ Convertendo blob URL...")
+                        link
+                    } else {
+                        fixUrl(link)
+                    }
+                    
+                    // Cria o ExtractorLink
+                    callback(
+                        ExtractorLink(
+                            source = name,
+                            name = "${name} (Auto-Extracted)",
+                            url = finalUrl,
+                            referer = url,
+                            quality = extractQualityFromUrl(finalUrl),
+                            isM3u8 = finalUrl.contains(".m3u8"),
+                            headers = mapOf(
+                                "Referer" to url,
+                                "User-Agent" to getUserAgent()
+                            )
+                        )
+                    )
+                    
+                    foundLinks = true
+                }
             }
             
-            callback.invoke(
-                newExtractorLink(
-                    source = this.name,
-                    name = "${this.name} (${if (isM3u8) "HLS" else "Direct"})",
-                    url = url,
-                    referer = referer,
-                    quality = quality,
-                    isM3u8 = isM3u8
-                )
-            )
-            
-            println("✅ ExtractorLink criado com sucesso!")
-            return true
-        } catch (e: Exception) {
-            println("❌ Erro ao criar ExtractorLink: ${e.message}")
-            return false
-        }
-    }
-}
+            if (!foundLinks) {
+                println("⚠️ WebView não encontrou links de vídeo válidos")
+                // Tenta fallback para extractors padrão
+                return loadExtractor(url, url, {}, 
