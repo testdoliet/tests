@@ -147,113 +147,37 @@ class UltraCine : MainAPI() {
     }
 
     override suspend fun loadLinks(
-        data: String,
-        isCasting: Boolean,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        if (data.isBlank()) return false
+    data: String,
+    isCasting: Boolean,
+    subtitleCallback: (SubtitleFile) -> Unit,
+    callback: (ExtractorLink) -> Unit
+): Boolean {
+    if (data.isBlank()) return false
 
-        val finalUrl = when {
-            data.matches(Regex("^\\d+$")) -> "https://assistirseriesonline.icu/episodio/$data"
-            data.contains("ultracine.org/") && data.matches(Regex(".*/\\d+$")) -> {
-                val id = data.substringAfterLast("/")
-                "https://assistirseriesonline.icu/episodio/$id"
-            }
-            else -> data
-        }
+    val isEpisode = data.matches(Regex("^\\d+$")) || data.contains("assistirseriesonline.icu")
 
-        val isEpisode = data.matches(Regex("^\\d+$"))
+    val finalUrl = if (isEpisode && data.matches(Regex("^\\d+$"))) {
+        "https://assistirseriesonline.icu/episodio/$data"
+    } else {
+        data
+    }
 
-        try {
+    try {
+        if (isEpisode) {
+            // WEBVIEW PARA EPISÓDIOS: Simula skip ad + play, depois loadExtractor pega o upns.one
             val res = app.get(finalUrl, referer = mainUrl)
-            val html = res.text
-
-            if (isEpisode) {
-                // WEBVIEW PARA EPISÓDIOS (pula ads e ativa JW Player)
-                WebViewResolver(html).resolveUsingWebView(finalUrl) { link ->
-                    if (link.length > 0 && 
-                        (link.contains(".mp4") || link.contains(".m3u8") || link.contains("googlevideo.com")) &&
-                        !link.contains("banner") && !link.contains("ads")
-                    ) {
-                        val quality = when {
-                            link.contains("360p") -> 360
-                            link.contains("480p") -> 480
-                            link.contains("720p") -> 720
-                            link.contains("1080p") -> 1080
-                            else -> Qualities.Unknown.value
-                        }
-
-                        callback(
-                            newExtractorLink(
-                                name,
-                                "\( name ( \){quality}p)",
-                                link,
-                                finalUrl,
-                                quality,
-                                link.contains(".m3u8")
-                            )
-                        )
-                    }
-                }
-                delay(10000) // Tempo pra WebView simular skip + play
-                return true
+            WebViewResolver(res.text).resolveUsingWebView(finalUrl) { extractedUrl ->
+                // Aqui o upns.one resolve automaticamente (sem newExtractorLink!)
+                loadExtractor(extractedUrl, finalUrl, subtitleCallback, callback)
             }
-
-            // FILMES: REGEX RÁPIDO
-            val jwRegex = Regex("""<video[^>]+class=["'][^"']*jw[^"']*["'][^>]+src=["'](https?://[^"']+\\.mp4[^"']*)["']""")
-            jwRegex.find(html)?.groupValues?.get(1)?.let { url ->
-                if (!url.contains("banner") && !url.contains("ads")) {
-                    val quality = when {
-                        url.contains("360p") -> 360
-                        url.contains("480p") -> 480
-                        url.contains("720p") -> 720
-                        url.contains("1080p") -> 1080
-                        else -> Qualities.Unknown.value
-                    }
-                    callback(
-                        newExtractorLink(
-                            name,
-                            "\( name ( \){quality}p)",
-                            url,
-                            finalUrl,
-                            quality,
-                            false
-                        )
-                    )
-                    return true
-                }
-            }
-
-            // MP4 genérico
-            val mp4Regex = Regex("""(https?://[^"']+\\.mp4[^"']*)""")
-            mp4Regex.findAll(html).forEach { match ->
-                val url = match.value
-                if (url.length > 50 && !url.contains("banner") && !url.contains("ads")) {
-                    callback(
-                        newExtractorLink(
-                            name,
-                            name,
-                            url,
-                            finalUrl,
-                            Qualities.Unknown.value,
-                            false
-                        )
-                    )
-                    return true
-                }
-            }
-
-            // Iframes
-            res.document.select("iframe").forEach { iframe ->
-                val src = iframe.attr("src")
-                if (src.length > 0 && loadExtractor(src, finalUrl, subtitleCallback, callback)) return true
-            }
-
-            return false
-        } catch (e: Exception) {
-            e.printStackTrace()
-            return isEpisode
+            delay(12000) // 12s: tempo pro anúncio sumir + JW Player injetar o src do Google Storage
+            return true // CloudStream espera o WebView em background
         }
+
+        // FILMES: Usa o extractor normal (upns.one já resolve)
+        return loadExtractor(finalUrl, mainUrl, subtitleCallback, callback)
+    } catch (e: Exception) {
+        e.printStackTrace()
+        return isEpisode // Episódios sempre retornam true (WebView tenta)
     }
 }
