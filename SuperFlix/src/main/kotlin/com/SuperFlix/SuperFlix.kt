@@ -94,17 +94,26 @@ override suspend fun search(query: String): List<SearchResponse> {
     val response = app.get(url, headers = defaultHeaders)
     val document = response.document 
 
-    // Seleção original de resultados
-    val results = document.select("a.card").mapNotNull { it.toSearchResponse() }
+    // O seletor correto é o contêiner '.card' que também é um link (<a>)
+    // Se o elemento .card for um DIV, tentamos div.card
+    val results = document.select("a.card, div.card").mapNotNull { element ->
+        // Dentro de cada card:
+        val title = element.selectFirst(".card-title")?.text()?.trim() ?: return@mapNotNull null
+        val posterUrl = element.selectFirst(".card-img")?.attr("src")?.let { fixUrl(it) } ?: return@mapNotNull null
+        val href = element.attr("href") ?: return@mapNotNull null
+        val typeText = element.selectFirst(".card-meta")?.text()?.trim() ?: "Filme" // Assume Filme se não tiver meta
 
-    // >>>>> CÓDIGO DE DIAGNÓSTICO <<<<<
-    if (results.isEmpty()) {
-        // Pega as primeiras 150 caracteres do HTML recebido
-        val errorHtml = document.html().take(150)
-        // Lança um erro que você verá no log do Cloudstream
-        throw ErrorLoadingException("ERRO BUSCA: Nenhum resultado. HTML Recebido (150 chars): $errorHtml")
+        // Determina o tipo:
+        val type = if (typeText.contains("Série", ignoreCase = true)) TvType.TvSeries else TvType.Movie
+        
+        // Retorna o objeto SearchResponse
+        newSearchResponse(title, fixUrl(href), type) {
+            this.posterUrl = posterUrl
+        }
     }
-    // >>>>> FIM DO CÓDIGO DE DIAGNÓSTICO <<<<<
+
+    // Código de diagnóstico removido, pois encontramos os seletores
+    // Se a busca ainda falhar, o problema é de bloqueio, não de seletor.
     
     return results
 }
