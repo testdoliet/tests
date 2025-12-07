@@ -32,7 +32,7 @@ class SuperFlix21 : MainAPI() {
         val url = request.data + if (page > 1) "?page=$page" else ""
         val document = app.get(url).document
         
-        val home = document.select("div.movie-card, article.movie, .item").mapNotNull {
+        val home = document.select("div.movie-card, article, .item").mapNotNull {
             it.toSearchResult()
         }
         
@@ -80,46 +80,57 @@ class SuperFlix21 : MainAPI() {
         val document = app.get(url).document
         val html = document.html()
 
-        // 🔥🔥🔥 EXTRAIR DADOS DO JSON-LD (SUA DESCOBERTA!) 🔥🔥🔥
-        val jsonLd = extractJsonLdData(html)
+        // Extrair título
+        val title = document.selectFirst("h1")?.text() 
+            ?: Regex("<title>(.*?)</title>").find(html)?.groupValues?.get(1)
+            ?: return null
         
-        val title = jsonLd.title ?: document.selectFirst("h1")?.text() ?: return null
-        val year = jsonLd.year ?: Regex("\\((\\d{4})\\)").find(title)?.groupValues?.get(1)?.toIntOrNull()
+        // Extrair ano do título
+        val year = Regex("\\((\\d{4})\\)").find(title)?.groupValues?.get(1)?.toIntOrNull()
         
-        // POSTER DO TMDB (QUALIDADE ORIGINAL)
-        val poster = jsonLd.posterUrl?.replace("/w500/", "/original/")
-            ?: document.selectFirst("meta[property='og:image']")?.attr("content")?.let { fixUrl(it) }
+        // Extrair poster (meta tag ou imagem)
+        val poster = document.selectFirst("meta[property='og:image']")?.attr("content")?.let { fixUrl(it) }
+            ?.replace("/w500/", "/original/")
+            ?: document.selectFirst("img[src*='tmdb']")?.attr("src")?.let { fixUrl(it) }
         
-        val plot = jsonLd.description ?: document.selectFirst(".description, .sinopse, p")?.text()
+        // Extrair sinopse
+        val plot = document.selectFirst("meta[name='description']")?.attr("content")
+            ?: document.selectFirst(".description, .sinopse, p")?.text()
         
-        // GÊNEROS DO JSON-LD
-        val tags = jsonLd.genres ?: document.select("a[href*='/genero/']").map { it.text() }
+        // Extrair gêneros
+        val tags = mutableListOf<String>()
+        val genrePattern = Regex("\"genre\":\\s*\\[([^\\]]+)\\]")
+        genrePattern.find(html)?.groupValues?.get(1)?.let { genreStr ->
+            genreStr.split(",").forEach { tag ->
+                val cleanTag = tag.trim().trim('"', '\'', ' ')
+                if (cleanTag.isNotBlank()) tags.add(cleanTag)
+            }
+        }
         
-        // ATORES DO JSON-LD
-        val actors = jsonLd.actors?.map { Actor(it, "") } ?: 
-            document.select(".cast a, .actors a").map { Actor(it.text(), it.attr("href")) }
+        // Extrair atores
+        val actors = mutableListOf<Actor>()
+        val actorPattern = Regex("\"actor\":\\s*\\[([^\\]]+)\\]")
+        actorPattern.find(html)?.groupValues?.get(1)?.let { actorStr ->
+            val actorNames = Regex("\"name\":\"([^\"]+)\"").findAll(actorStr)
+            actorNames.forEach { match ->
+                val name = match.groupValues[1]
+                if (name.isNotBlank()) {
+                    actors.add(Actor(name, ""))
+                }
+            }
+        }
         
-        // DIRETOR
-        val director = jsonLd.director?.firstOrNull()
-        
-        // TRAILER
-        val trailer = document.selectFirst("iframe[src*='youtube']")?.attr("src")
-        
-        // 🔥 ID DO TMDB (PARA FEMBED) 🔥
-        val tmdbId = jsonLd.tmdbId
-            ?: url.substringAfterLast("-").toIntOrNull()
-            ?: extractTmdbIdFromHtml(html)
-        
-        // URL DO FEMBED
+        // Extrair TMDB ID para Fembed
+        val tmdbId = extractTmdbId(html)
         val fembedUrl = if (tmdbId != null) {
             "https://fembed.sx/e/$tmdbId"
         } else {
-            // Fallback: procura iframe do Fembed
+            // Procurar iframe do Fembed
             document.selectFirst("iframe[src*='fembed']")?.attr("src")
         }
         
-        // VERIFICAR SE É SÉRIE
-        val isSerie = url.contains("/serie/") || jsonLd.type == "TVSeries"
+        // Verificar se é série
+        val isSerie = url.contains("/serie/")
         
         return if (isSerie) {
             val episodes = extractEpisodes(document, tmdbId)
@@ -128,117 +139,27 @@ class SuperFlix21 : MainAPI() {
                 this.posterUrl = poster
                 this.year = year
                 this.plot = plot
-                this.tags = tags
-                if (director != null) addActors(listOf(Actor(director, "Diretor")))
+                this.tags = if (tags.isNotEmpty()) tags else null
                 addActors(actors)
-                addTrailer(trailer)
             }
         } else {
             newMovieLoadResponse(title, url, TvType.Movie, fembedUrl ?: "") {
                 this.posterUrl = poster
                 this.year = year
                 this.plot = plot
-                this.tags = tags
-                if (director != null) addActors(listOf(Actor(director, "Diretor")))
+                this.tags = if (tags.isNotEmpty()) tags else null
                 addActors(actors)
-                addTrailer(trailer)
             }
         }
     }
 
-    // 🔥 NOVA FUNÇÃO: EXTRAIR DADOS DO JSON-LD 🔥
-    private data class JsonLdData(
-        val title: String? = null,
-        val year: Int? = null,
-        val posterUrl: String? = null,
-        val description: String? = null,
-        val genres: List<String>? = null,
-        val director: List<String>? = null,
-        val actors: List<String>? = null,
-        val tmdbId: String? = null,
-        val type: String? = null
-    )
-
-    private fun extractJsonLdData(html: String): JsonLdData {
-        val jsonLdPattern = Regex("""<script type="application/ld\+json">(.*?)</script>""", RegexOption.DOT_MATCHES_ALL)
-        val matches = jsonLdPattern.findAll(html)
-        
-        matches.forEach { match ->
-            try {
-                val jsonStr = match.groupValues[1].trim()
-                if (jsonStr.contains("\"@type\":\"Movie\"") || jsonStr.contains("\"@type\":\"TVSeries\"")) {
-                    // Extrair dados básicos com regex simples
-                    val title = Regex("\"name\":\"([^\"]+)\"").find(jsonStr)?.groupValues?.get(1)
-                    val description = Regex("\"description\":\"([^\"]+)\"").find(jsonStr)?.groupValues?.get(1)
-                    val image = Regex("\"image\":\"([^\"]+)\"").find(jsonStr)?.groupValues?.get(1)
-                    
-                    // Extrair ano da dataPublished
-                    val datePublished = Regex("\"datePublished\":\"([^\"]+)\"").find(jsonStr)?.groupValues?.get(1)
-                    val year = datePublished?.substring(0, 4)?.toIntOrNull()
-                    
-                    // Extrair gêneros
-                    val genresMatch = Regex("\"genre\":\\s*\\[([^\\]]+)\\]").find(jsonStr)
-                    val genres = genresMatch?.groupValues?.get(1)
-                        ?.split(",")
-                        ?.map { it.trim(' ', '"', '\'') }
-                        ?.filter { it.isNotBlank() }
-                    
-                    // Extrair atores
-                    val actorsSection = Regex("\"actor\":\\s*\\[([^\\]]+)\\]").find(jsonStr)
-                    val actors = actorsSection?.groupValues?.get(1)
-                        ?.split("},")
-                        ?.mapNotNull { actorStr ->
-                            Regex("\"name\":\"([^\"]+)\"").find(actorStr)?.groupValues?.get(1)
-                        }
-                    
-                    // Extrair diretor
-                    val directorSection = Regex("\"director\":\\s*\\[([^\\]]+)\\]").find(jsonStr)
-                    val director = directorSection?.groupValues?.get(1)
-                        ?.split("},")
-                        ?.mapNotNull { dirStr ->
-                            Regex("\"name\":\"([^\"]+)\"").find(dirStr)?.groupValues?.get(1)
-                        }
-                    
-                    // Extrair TMDB ID
-                    val sameAs = Regex("\"sameAs\":\\s*\\[([^\\]]+)\\]").find(jsonStr)
-                    val tmdbId = sameAs?.groupValues?.get(1)
-                        ?.split(",")
-                        ?.find { it.contains("themoviedb.org") }
-                        ?.substringAfterLast("/")
-                        ?.trim(' ', '"', '\'')
-                    
-                    // Verificar tipo
-                    val type = if (jsonStr.contains("\"@type\":\"Movie\"")) "Movie" 
-                              else if (jsonStr.contains("\"@type\":\"TVSeries\"")) "TVSeries"
-                              else null
-                    
-                    return JsonLdData(
-                        title = title,
-                        year = year,
-                        posterUrl = image,
-                        description = description,
-                        genres = genres,
-                        director = director,
-                        actors = actors,
-                        tmdbId = tmdbId,
-                        type = type
-                    )
-                }
-            } catch (e: Exception) {
-                // Continua para o próximo JSON-LD
-            }
-        }
-        
-        return JsonLdData()
-    }
-
-    private fun extractTmdbIdFromHtml(html: String): String? {
-        // Procura por padrões com TMDB
+    private fun extractTmdbId(html: String): String? {
+        // Procura por TMDB ID
         val patterns = listOf(
-            Regex("https://www.themoviedb.org/movie/(\\d+)"),
+            Regex("themoviedb.org/movie/(\\d+)"),
             Regex("tmdb.org/movie/(\\d+)"),
             Regex("""data-id=["'](\d+)["']"""),
-            Regex("""id=["']movie_(\d+)["']""")
+            Regex("""\b(\d{6,7})\b""") // TMDB IDs geralmente têm 6-7 dígitos
         )
         
         patterns.forEach { pattern ->
@@ -264,9 +185,8 @@ class SuperFlix21 : MainAPI() {
                 val epUrl = ep.selectFirst("a")?.attr("href") ?: ""
                 val epNum = ep.selectFirst(".number, .ep")?.text()?.toIntOrNull() ?: (epIndex + 1)
                 
-                // Criar URL do Fembed para episódio (se tiver TMDB ID)
+                // Criar URL do Fembed para episódio
                 val finalUrl = if (tmdbId != null && epUrl.isBlank()) {
-                    // Tentar criar URL baseada no padrão
                     "https://fembed.sx/e/$tmdbId?ep=$epNum"
                 } else {
                     fixUrl(epUrl)
@@ -295,41 +215,37 @@ class SuperFlix21 : MainAPI() {
     ): Boolean {
         if (data.isBlank()) return false
         
-        // 🔥 ESTRATÉGIA PRINCIPAL: FEMBED 🔥
-        if (data.contains("fembed.sx")) {
-            // Limpar e garantir URL correta
-            val cleanUrl = if (data.startsWith("http")) data else "https://$data"
-            return loadExtractor(cleanUrl, mainUrl, subtitleCallback, callback)
-        }
-        
-        // Se não for Fembed, fazer requisição
-        try {
-            val finalUrl = if (data.startsWith("/")) "$mainUrl$data" else data
+        return try {
+            // ESTRATÉGIA 1: Se já é URL do Fembed
+            if (data.contains("fembed.sx")) {
+                return loadExtractor(data, mainUrl, subtitleCallback, callback)
+            }
+            
+            // ESTRATÉGIA 2: Se é URL do SuperFlix
+            val finalUrl = if (data.startsWith("http")) data else fixUrl(data)
             val res = app.get(finalUrl, referer = mainUrl)
             val html = res.text
             
-            // Procurar Fembed em scripts
+            // Procurar Fembed
             val fembedPattern = Regex("""https?://fembed\.sx/e/\d+""")
             val fembedMatch = fembedPattern.find(html)
             
             if (fembedMatch != null) {
-                val fembedUrl = fembedMatch.value
-                return loadExtractor(fembedUrl, finalUrl, subtitleCallback, callback)
+                return loadExtractor(fembedMatch.value, finalUrl, subtitleCallback, callback)
             }
             
-            // Procurar iframes do Fembed
+            // Procurar iframe
             val iframePattern = Regex("""<iframe[^>]+src=["'](https?://[^"']+fembed[^"']+)["']""")
             val iframeMatch = iframePattern.find(html)
             
             if (iframeMatch != null) {
-                val iframeUrl = iframeMatch.groupValues[1]
-                return loadExtractor(iframeUrl, finalUrl, subtitleCallback, callback)
+                return loadExtractor(iframeMatch.groupValues[1], finalUrl, subtitleCallback, callback)
             }
             
+            false
         } catch (e: Exception) {
             e.printStackTrace()
+            false
         }
-        
-        return false
     }
 }
