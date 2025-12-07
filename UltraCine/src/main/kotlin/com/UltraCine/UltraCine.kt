@@ -474,4 +474,97 @@ class UltraCine : MainAPI() {
                 "Referer" to mainUrl
             )).document
             
-      
+            // Procurar player na página do episódio
+            val playerIframe = doc.selectFirst("iframe[src*='player'], iframe[src*='embed']")
+            val iframeSrc = playerIframe?.attr("src")
+            
+            if (iframeSrc != null) {
+                println("🖼️ Iframe encontrado: $iframeSrc")
+                return loadMovieLinks(iframeSrc, subtitleCallback, callback)
+            }
+            
+            // Procurar scripts com dados do player
+            val scripts = doc.select("script:not([src])")
+            for (script in scripts) {
+                val scriptText = script.html()
+                if (scriptText.contains("jwplayer") || scriptText.contains("videojs")) {
+                    println("🎬 Player JavaScript encontrado")
+                    
+                    val videoUrlPattern = Regex("""['"](https?://[^"']+\.(?:m3u8|mp4)[^"']*)['"]""")
+                    val matches = videoUrlPattern.findAll(scriptText).toList()
+                    
+                    for (match in matches) {
+                        val videoUrl = match.groupValues[1]
+                        println("🎬 URL do player: $videoUrl")
+                        
+                        callback(
+                            ExtractorLink(
+                                name,
+                                name,
+                                videoUrl,
+                                referer = episodeUrl,
+                                quality = Qualities.Unknown.value,
+                                isM3u8 = videoUrl.contains(".m3u8")
+                            )
+                        )
+                        return true
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            println("💥 ERRO ao acessar página do episódio: ${e.message}")
+        }
+        
+        // ESTRATÉGIA 3: WebView como último recurso
+        println("🔄 Último recurso: WebView")
+        return loadWebViewLinks(episodeUrl, episodeUrl, subtitleCallback, callback)
+    }
+
+    private suspend fun loadWebViewLinks(
+        url: String,
+        referer: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        return try {
+            val webView = WebViewUtil()
+            val result = webView.extractLinks(
+                url = url,
+                regex = listOf(
+                    Regex("""(https?://[^"'\s]+\.m3u8[^"'\s]*)"""),
+                    Regex("""(https?://[^"'\s]+\.mp4[^"'\s]*)"""),
+                    Regex("""['"]file['"]\s*:\s*['"](https?://[^"']+)['"]"""),
+                    Regex("""<source[^>]+src=['"](https?://[^"']+)['"]""")
+                ),
+                timeout = 15000,
+                headers = mapOf(
+                    "User-Agent" to getUserAgent(),
+                    "Referer" to referer
+                )
+            )
+            
+            if (result.isNotEmpty()) {
+                println("✅ WebView encontrou ${result.size} links")
+                result.forEach { videoUrl ->
+                    if (videoUrl.contains(".m3u8") || videoUrl.contains(".mp4")) {
+                        callback(
+                            ExtractorLink(
+                                name,
+                                name,
+                                videoUrl,
+                                referer = referer,
+                                quality = Qualities.Unknown.value,
+                                isM3u8 = videoUrl.contains(".m3u8")
+                            )
+                        )
+                    }
+                }
+                return true
+            }
+            false
+        } catch (e: Exception) {
+            println("💥 ERRO no WebView: ${e.message}")
+            false
+        }
+    }
+}
