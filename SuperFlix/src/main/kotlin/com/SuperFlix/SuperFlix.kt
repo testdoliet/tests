@@ -342,43 +342,115 @@ class SuperFlix : MainAPI() {
     }
 
     override suspend fun loadLinks(
-        data: String,
-        isCasting: Boolean,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        if (data.isBlank()) return false
-        
-        return try {
-            // Se já for URL do Fembed
-            if (data.contains("fembed.sx")) {
-                return loadExtractor(data, mainUrl, subtitleCallback, callback)
+    data: String,
+    isCasting: Boolean,
+    subtitleCallback: (SubtitleFile) -> Unit,
+    callback: (ExtractorLink) -> Unit
+): Boolean {
+    println("SuperFlix DEBUG: loadLinks chamado com data = '$data'")
+    
+    return try {
+        // CASO 1: Se data já é URL completa do Fembed
+        if (data.contains("fembed")) {
+            println("SuperFlix DEBUG: URL do Fembed detectada")
+            
+            val cleanUrl = when {
+                data.startsWith("//") -> "https:$data"
+                data.startsWith("/") && data.contains("fembed") -> {
+                    // Formato: /e/71694/1-2 → https://fembed.sx/e/71694/1-2
+                    if (data.startsWith("/e/") || data.startsWith("/v/") || data.startsWith("/f/")) {
+                        "https://fembed.sx$data"
+                    } else {
+                        "https://fembed.sx$data"
+                    }
+                }
+                else -> data
             }
             
-            // Se for URL do SuperFlix
+            println("SuperFlix DEBUG: URL limpa = '$cleanUrl'")
+            
+            // Tentar carregar o extractor com referer do SuperFlix
+            if (loadExtractor(cleanUrl, "$mainUrl/", subtitleCallback, callback)) {
+                println("SuperFlix DEBUG: Extractor funcionou!")
+                return true
+            }
+            
+            // Se não funcionou, tentar com referer nulo
+            if (loadExtractor(cleanUrl, null, subtitleCallback, callback)) {
+                println("SuperFlix DEBUG: Extractor funcionou sem referer")
+                return true
+            }
+            
+            // Tentar alternar domínio fembed.sx ↔ fembed.com
+            val altUrl = if (cleanUrl.contains("fembed.sx")) {
+                cleanUrl.replace("fembed.sx", "www.fembed.com")
+            } else {
+                cleanUrl.replace("www.fembed.com", "fembed.sx")
+            }
+            
+            if (loadExtractor(altUrl, "$mainUrl/", subtitleCallback, callback)) {
+                println("SuperFlix DEBUG: Extractor funcionou com URL alternativa")
+                return true
+            }
+        }
+        
+        // CASO 2: Se é caminho parcial (ex: /e/71694/1-2)
+        else if (data.startsWith("/e/") || data.startsWith("/v/") || data.startsWith("/f/")) {
+            println("SuperFlix DEBUG: Caminho Fembed detectado: '$data'")
+            
+            // Construir URL completa
+            val fembedUrl = "https://fembed.sx$data"
+            println("SuperFlix DEBUG: URL construída: '$fembedUrl'")
+            
+            // Tentar carregar o extractor
+            if (loadExtractor(fembedUrl, "$mainUrl/", subtitleCallback, callback)) {
+                println("SuperFlix DEBUG: Extractor funcionou para caminho")
+                return true
+            }
+            
+            // Tentar com www.fembed.com
+            val fembedUrl2 = "https://www.fembed.com$data"
+            if (loadExtractor(fembedUrl2, "$mainUrl/", subtitleCallback, callback)) {
+                println("SuperFlix DEBUG: Extractor funcionou para caminho com www")
+                return true
+            }
+        }
+        
+        // CASO 3: Se for URL da página do episódio (menos comum)
+        else if (data.contains("/episodio/") || data.contains("?ep=")) {
+            println("SuperFlix DEBUG: URL de página de episódio detectada")
+            
             val finalUrl = if (data.startsWith("http")) data else fixUrl(data)
             val res = app.get(finalUrl, referer = mainUrl)
-            val doc = res.document
+            val html = res.text
             
-            // 🔥 PROCURAR BOTÃO PLAY COM DATA-URL
-            val playButton = doc.selectFirst("button.bd-play[data-url], button[data-url*='fembed']")
-            if (playButton != null) {
-                val fembedUrl = playButton.attr("data-url")
-                if (fembedUrl.isNotBlank()) {
-                    return loadExtractor(fembedUrl, finalUrl, subtitleCallback, callback)
+            // Procurar URLs do Fembed no HTML
+            val patterns = listOf(
+                Regex("""data-url=["'](https?://[^"']+fembed[^"']+)["']"""),
+                Regex("""(https?://[^"'\s]+fembed[^"'\s]+/[evf]/\d+[^"'\s]*)"""),
+                Regex("""<iframe[^>]+src=["'](https?://[^"']+fembed[^"']+)["']""")
+            )
+            
+            for (pattern in patterns) {
+                val match = pattern.find(html)
+                if (match != null) {
+                    val url = if (match.groupValues.size > 1) match.groupValues[1] else match.value
+                    println("SuperFlix DEBUG: URL encontrada no HTML: '$url'")
+                    
+                    if (loadExtractor(url, finalUrl, subtitleCallback, callback)) {
+                        println("SuperFlix DEBUG: Extractor funcionou para URL encontrada")
+                        return true
+                    }
                 }
             }
-            
-            // Fallback: iframe
-            val iframe = doc.selectFirst("iframe[src*='fembed']")
-            if (iframe != null) {
-                return loadExtractor(iframe.attr("src"), finalUrl, subtitleCallback, callback)
-            }
-            
-            false
-        } catch (e: Exception) {
-            e.printStackTrace()
-            false
         }
+        
+        println("SuperFlix DEBUG: Nenhuma estratégia funcionou")
+        false
+        
+    } catch (e: Exception) {
+        println("SuperFlix DEBUG: Erro: ${e.message}")
+        e.printStackTrace()
+        false
     }
 }
