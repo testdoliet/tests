@@ -343,16 +343,17 @@ class UltraCine : MainAPI() {
                             videoUrl.contains("googlevideo")) {
                             println("🎬 URL de vídeo em script: $videoUrl")
                             
-                            // CORREÇÃO AQUI: Usando newExtractorLink
-                            val link = newExtractorLink(
-                                name,
-                                name,
-                                videoUrl,
-                                iframeUrl,
-                                Qualities.Unknown.value,
-                                videoUrl.contains(".m3u8")
+                            // CORREÇÃO: Usando ExtractorLink() diretamente
+                            callback(
+                                ExtractorLink(
+                                    name,
+                                    name,
+                                    videoUrl,
+                                    iframeUrl,
+                                    Qualities.Unknown.value,
+                                    videoUrl.contains(".m3u8")
+                                )
                             )
-                            callback(link)
                             return true
                         }
                     }
@@ -377,15 +378,16 @@ class UltraCine : MainAPI() {
             val videoUrl = extractDirectVideoUrl(doc)
             if (videoUrl != null) {
                 println("🎬 URL direta encontrada: $videoUrl")
-                val link = newExtractorLink(
-                    name,
-                    name,
-                    videoUrl,
-                    iframeUrl,
-                    Qualities.Unknown.value,
-                    videoUrl.contains(".m3u8")
+                callback(
+                    ExtractorLink(
+                        name,
+                        name,
+                        videoUrl,
+                        iframeUrl,
+                        Qualities.Unknown.value,
+                        videoUrl.contains(".m3u8")
+                    )
                 )
-                callback(link)
                 return true
             }
             
@@ -449,16 +451,17 @@ class UltraCine : MainAPI() {
                 if (videoUrl != null) {
                     println("🎬 URL encontrada na API: $videoUrl")
                     
-                    // CORREÇÃO AQUI: Usando newExtractorLink
-                    val link = newExtractorLink(
-                        name,
-                        name,
-                        videoUrl,
-                        apiUrl,
-                        Qualities.Unknown.value,
-                        videoUrl.contains(".m3u8")
+                    // CORREÇÃO: Usando ExtractorLink() diretamente
+                    callback(
+                        ExtractorLink(
+                            name,
+                            name,
+                            videoUrl,
+                            apiUrl,
+                            Qualities.Unknown.value,
+                            videoUrl.contains(".m3u8")
+                        )
                     )
-                    callback(link)
                     return true
                 }
                 
@@ -508,16 +511,17 @@ class UltraCine : MainAPI() {
                     if (videoUrl != null) {
                         println("🎬 URL do player: $videoUrl")
                         
-                        // CORREÇÃO AQUI: Usando newExtractorLink
-                        val link = newExtractorLink(
-                            name,
-                            name,
-                            videoUrl,
-                            episodeUrl,
-                            Qualities.Unknown.value,
-                            videoUrl.contains(".m3u8")
+                        // CORREÇÃO: Usando ExtractorLink() diretamente
+                        callback(
+                            ExtractorLink(
+                                name,
+                                name,
+                                videoUrl,
+                                episodeUrl,
+                                Qualities.Unknown.value,
+                                videoUrl.contains(".m3u8")
+                            )
                         )
-                        callback(link)
                         return true
                     }
                 }
@@ -527,15 +531,16 @@ class UltraCine : MainAPI() {
             val directVideoUrl = extractDirectVideoUrl(doc)
             if (directVideoUrl != null) {
                 println("🎬 URL direta da página: $directVideoUrl")
-                val link = newExtractorLink(
-                    name,
-                    name,
-                    directVideoUrl,
-                    episodeUrl,
-                    Qualities.Unknown.value,
-                    directVideoUrl.contains(".m3u8")
+                callback(
+                    ExtractorLink(
+                        name,
+                        name,
+                        directVideoUrl,
+                        episodeUrl,
+                        Qualities.Unknown.value,
+                        directVideoUrl.contains(".m3u8")
+                    )
                 )
-                callback(link)
                 return true
             }
             
@@ -592,24 +597,5 @@ class UltraCine : MainAPI() {
         }
         
         return null
-    }
-
-    // Função auxiliar para criar ExtractorLink com a nova API
-    private fun newExtractorLink(
-        source: String,
-        name: String,
-        url: String,
-        referer: String,
-        quality: Int,
-        isM3u8: Boolean
-    ): ExtractorLink {
-        return ExtractorLink(
-            source,
-            name,
-            url,
-            referer,
-            quality,
-            isM3u8
-        )
     }
 }
