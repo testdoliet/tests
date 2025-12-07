@@ -453,4 +453,5 @@ class SuperFlix : MainAPI() {
         e.printStackTrace()
         false
     }
+  }
 }
