@@ -167,23 +167,7 @@ class UltraCine : MainAPI() {
         }
     }
 
-    // FORMA CORRETA DE CRIAR ExtractorLink baseada em outros providers
-    private suspend fun createExtractorLinkForSeries(videoUrl: String, episodeUrl: String, name: String = "Série"): ExtractorLink {
-        val quality = extractQualityFromUrl(videoUrl)
-        val isM3u8 = videoUrl.contains(".m3u8")
-        
-        return newExtractorLink(
-            source = this.name,
-            name = "${this.name} ($name)",
-            url = videoUrl
-        ) {
-            referer = episodeUrl
-            this.quality = quality
-            this.isM3u8 = isM3u8
-        }
-    }
-
-    // VERSÃO SIMPLIFICADA DO loadLinks - APENAS PARA TESTAR
+    // VERSÃO ULTRA SIMPLIFICADA QUE COMPILA
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -195,40 +179,18 @@ class UltraCine : MainAPI() {
         return try {
             // PARA SÉRIES: O data é o episodeId (números)
             if (data.matches(Regex("^\\d+$"))) {
-                // STRATÉGIA SIMPLES: Tenta carregar via extractor padrão
+                // SIMPLES: Tenta carregar via extractor padrão
                 val episodeUrl = "https://assistirseriesonline.icu/episodio/$data"
                 
                 val res = app.get(episodeUrl, timeout = 30)
                 val doc = res.document
                 
-                // Tenta iframes
+                // Tenta iframes (isso já funciona para filmes)
                 doc.select("iframe[src]").forEach { iframe ->
                     val src = iframe.attr("src")
                     if (src.isNotBlank() && loadExtractor(src, episodeUrl, subtitleCallback, callback)) {
                         return true
                     }
-                }
-                
-                // Se não encontrou iframe, tenta extrair vídeo diretamente
-                val html = res.text
-                
-                // Procura URLs de vídeo direto
-                val videoUrls = findVideoUrlsInHtml(html)
-                if (videoUrls.isNotEmpty()) {
-                    videoUrls.forEach { videoUrl ->
-                        callback.invoke(
-                            newExtractorLink(
-                                source = this.name,
-                                name = "${this.name} (Direct)",
-                                url = videoUrl
-                            ) {
-                                referer = episodeUrl
-                                this.quality = extractQualityFromUrl(videoUrl)
-                                this.isM3u8 = videoUrl.contains(".m3u8")
-                            }
-                        )
-                    }
-                    return true
                 }
                 
                 return false
@@ -269,7 +231,7 @@ class UltraCine : MainAPI() {
         }
     }
 
-    // FUNÇÕES AUXILIARES
+    // FUNÇÕES AUXILIARES (mantidas para referência futura)
     
     private fun extractQualityFromUrl(url: String): Int {
         val qualityPattern = Regex("""/(\d+)p?/""")
@@ -295,50 +257,5 @@ class UltraCine : MainAPI() {
             url.contains("2160p", ignoreCase = true) -> 2160
             else -> Qualities.Unknown.value
         }
-    }
-    
-    private suspend fun extractVideoFromIframe(iframeUrl: String): String? {
-        return try {
-            val res = app.get(iframeUrl, timeout = 30)
-            val html = res.text
-            
-            // Procura vídeo direto
-            val videoPattern = Regex("""<video[^>]+src=["'](https?://[^"']+)["']""")
-            val videoMatch = videoPattern.find(html)
-            
-            if (videoMatch != null) {
-                return videoMatch.groupValues[1]
-            }
-            
-            null
-        } catch (e: Exception) {
-            null
-        }
-    }
-    
-    private fun findVideoUrlsInHtml(html: String): List<String> {
-        val videoUrls = mutableListOf<String>()
-        
-        // Procura por URLs .m3u8
-        val m3u8Pattern = Regex("""(https?://[^"'\s]+\.m3u8[^"'\s]*)""")
-        val m3u8Matches = m3u8Pattern.findAll(html).toList()
-        m3u8Matches.forEach { match ->
-            val url = match.value
-            if (url.isNotBlank() && !url.contains("banner")) {
-                videoUrls.add(url)
-            }
-        }
-        
-        // Procura por URLs .mp4
-        val mp4Pattern = Regex("""(https?://[^"'\s]+\.mp4[^"'\s]*)""")
-        val mp4Matches = mp4Pattern.findAll(html).toList()
-        mp4Matches.forEach { match ->
-            val url = match.value
-            if (url.isNotBlank() && !url.contains("banner") && url.length > 30) {
-                videoUrls.add(url)
-            }
-        }
-        
-        return videoUrls.distinct()
     }
 }
