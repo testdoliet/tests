@@ -9,7 +9,7 @@ import org.jsoup.nodes.Element
 
 class SuperFlix : MainAPI() {
 
-    override var mainUrl = "https://superflixhd2.net" // Domínio fixo conhecido
+    override var mainUrl = "https://superflix21.lol/" // Domínio fixo conhecido
     override var name = "SuperFlix"
     override val hasMainPage = true
     override var lang = "pt-br" // Mudado para pt-br (mais comum)
