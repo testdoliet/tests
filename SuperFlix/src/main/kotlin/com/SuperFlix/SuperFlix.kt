@@ -86,37 +86,25 @@ class SuperFlix : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        val url = "$mainUrl/?s=$query"
+    val url = "$mainUrl/?s=$query"
+    val response = app.get(url, headers = defaultHeaders)
+    val document = response.document 
 
-        val response = app.get(url, headers = defaultHeaders)
-        val document = response.document 
+    // Tentamos seletores comuns que englobam o resultado completo,
+    // incluindo o link com a classe '.card' ou '.movie-card'
+    val results = document.select("a.card, a.movie-card, div.result-item a, a.card-img-top").mapNotNull { it.toSearchResponse() }
 
-        val results = document.select("a.card, div.card").mapNotNull { element ->
-
-            val title = element.selectFirst(".card-title")?.text()?.trim() ?: return@mapNotNull null
-            
-            val href = element.attr("href").ifEmpty { 
-                element.selectFirst("a")?.attr("href") 
-            } ?: return@mapNotNull null
-
-            val typeText = element.selectFirst(".card-meta")?.text()?.trim() ?: "Filme" 
-            val type = if (typeText.contains("Série", ignoreCase = true)) TvType.TvSeries else TvType.Movie
-
-            // CORREÇÃO: Força o retorno do objeto para resolver o escopo
-            return@mapNotNull newSearchResponse(title, fixUrl(href), type) {
-                this.posterUrl = element.selectFirst("img")?.attr("data-src")
-                    .takeIf { it?.isNotEmpty() == true } 
-                    ?: element.selectFirst("img")?.attr("src")?.let { fixUrl(it) }
-            }
-        }
-
-        if (results.isEmpty()) {
-            val errorHtml = document.html().take(150)
-            throw ErrorLoadingException("ERRO BUSCA: Nenhum resultado. HTML Recebido (150 chars): $errorHtml")
-        }
-
-        return results
+    // >>>>> CÓDIGO DE DIAGNÓSTICO <<<<<
+    if (results.isEmpty()) {
+        // Pega as primeiras 150 caracteres do HTML recebido
+        val errorHtml = document.html().take(150)
+        // Lança um erro que você verá no log do Cloudstream
+        throw ErrorLoadingException("ERRO BUSCA: Nenhum resultado. HTML Recebido (150 chars): $errorHtml")
     }
+    // >>>>> FIM DO CÓDIGO DE DIAGNÓSTICO <<<<<
+    
+    return results
+}
 
     override suspend fun load(url: String): LoadResponse {
         val response = app.get(url, headers = defaultHeaders) 
