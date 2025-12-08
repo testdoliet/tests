@@ -20,7 +20,96 @@ class SuperFlix : MainAPI() {
         "$mainUrl/lancamentos" to "Lançamentos"
     )
 
-    // ... (getMainPage, toSearchResult, search - mantidos iguais) ...
+    override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
+        val url = request.data + if (page > 1) "?page=$page" else ""
+        val document = app.get(url).document
+
+        val home = mutableListOf<SearchResponse>()
+
+        document.select("div.recs-grid a.rec-card, .movie-card, article, .item").forEach { element ->
+            element.toSearchResult()?.let { home.add(it) }
+        }
+
+        if (home.isEmpty()) {
+            document.select("a[href*='/filme/'], a[href*='/serie/']").forEach { link ->
+                val href = link.attr("href")
+                if (href.isNotBlank() && !href.contains("#")) {
+                    val title = link.selectFirst("img")?.attr("alt")
+                        ?: link.selectFirst(".rec-title, .title, h2, h3)")?.text()
+                        ?: href.substringAfterLast("/").replace("-", " ").replace(Regex("\\d{4}$"), "").trim()
+
+                    if (title.isNotBlank()) {
+                        val cleanTitle = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
+                        val year = Regex("\\((\\d{4})\\)").find(title)?.groupValues?.get(1)?.toIntOrNull()
+                        val poster = link.selectFirst("img")?.attr("src")?.let { fixUrl(it) }
+                        val isSerie = href.contains("/serie/")
+
+                        val searchResponse = if (isSerie) {
+                            newTvSeriesSearchResponse(cleanTitle, fixUrl(href), TvType.TvSeries) {
+                                this.posterUrl = poster
+                                this.year = year
+                            }
+                        } else {
+                            newMovieSearchResponse(cleanTitle, fixUrl(href), TvType.Movie) {
+                                this.posterUrl = poster
+                                this.year = year
+                            }
+                        }
+
+                        home.add(searchResponse)
+                    }
+                }
+            }
+        }
+
+        return newHomePageResponse(request.name, home.distinctBy { it.url })
+    }
+
+    private fun Element.toSearchResult(): SearchResponse? {
+        val title = selectFirst(".rec-title, .movie-title, h2, h3, .title")?.text()
+            ?: selectFirst("img")?.attr("alt")
+            ?: return null
+
+        val href = attr("href") ?: selectFirst("a")?.attr("href") ?: return null
+
+        val poster = selectFirst("img")?.attr("src")
+            ?.takeIf { it.isNotBlank() }
+            ?.let { fixUrl(it) }
+            ?: selectFirst("img")?.attr("data-src")?.let { fixUrl(it) }
+
+        val year = Regex("\\((\\d{4})\\)").find(title)?.groupValues?.get(1)?.toIntOrNull()
+            ?: selectFirst(".rec-meta, .movie-year, .year")?.text()?.let {
+                Regex("\\b(\\d{4})\\b").find(it)?.groupValues?.get(1)?.toIntOrNull()
+            }
+
+        val isSerie = href.contains("/serie/")
+        val cleanTitle = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
+
+        return if (isSerie) {
+            newTvSeriesSearchResponse(cleanTitle, fixUrl(href), TvType.TvSeries) {
+                this.posterUrl = poster
+                this.year = year
+            }
+        } else {
+            newMovieSearchResponse(cleanTitle, fixUrl(href), TvType.Movie) {
+                this.posterUrl = poster
+                this.year = year
+            }
+        }
+    }
+
+    override suspend fun search(query: String): List<SearchResponse> {
+        val encodedQuery = URLEncoder.encode(query, "UTF-8")
+        val document = app.get("$mainUrl/?s=$encodedQuery").document
+
+        val results = mutableListOf<SearchResponse>()
+
+        document.select("div.recs-grid a.rec-card, a[href*='/filme/'], a[href*='/serie/']").forEach { element ->
+            element.toSearchResult()?.let { results.add(it) }
+        }
+
+        return results.distinctBy { it.url }
+    }
 
     override suspend fun load(url: String): LoadResponse? {
         val document = app.get(url).document
@@ -28,6 +117,7 @@ class SuperFlix : MainAPI() {
 
         val jsonLd = extractJsonLd(html)
 
+        // Usar valores extraídos do JSON-LD ou fallback para scraping
         val title = jsonLd.title ?: document.selectFirst("h1, .title")?.text() ?: return null
         val year = jsonLd.year ?: Regex("\\((\\d{4})\\)").find(title)?.groupValues?.get(1)?.toIntOrNull()
 
@@ -55,19 +145,19 @@ class SuperFlix : MainAPI() {
                 this.plot = plot
                 this.tags = if (tags.isNotEmpty()) tags else null
                 if (director != null) addActors(listOf(Actor(director, "Diretor")))
-                addActors(actors)
+                if (actors.isNotEmpty()) addActors(actors)
             }
         } else {
             // Para filmes, extrair a URL do player
-            val playerUrl = findPlayerUrl(document)
+            val playerUrl = findPlayerUrl(document) ?: url
             
-            newMovieLoadResponse(title, url, TvType.Movie, playerUrl ?: url) {
+            newMovieLoadResponse(title, url, TvType.Movie, playerUrl) {
                 this.posterUrl = poster
                 this.year = year
                 this.plot = plot
                 this.tags = if (tags.isNotEmpty()) tags else null
                 if (director != null) addActors(listOf(Actor(director, "Diretor")))
-                addActors(actors)
+                if (actors.isNotEmpty()) addActors(actors)
             }
         }
     }
@@ -142,9 +232,18 @@ class SuperFlix : MainAPI() {
         }
     }
 
-    // ... (extractJsonLd mantido igual) ...
-}
-
+    // Data class para armazenar informações do JSON-LD
+    private data class JsonLdInfo(
+        val title: String? = null,
+        val year: Int? = null,
+        val posterUrl: String? = null,
+        val description: String? = null,
+        val genres: List<String>? = null,
+        val director: List<String>? = null,
+        val actors: List<String>? = null,
+        val tmdbId: String? = null,
+        val type: String? = null
+    )
 
     private fun extractJsonLd(html: String): JsonLdInfo {
         val pattern = Regex("<script type=\"application/ld\\+json\">(.*?)</script>", RegexOption.DOT_MATCHES_ALL)
@@ -190,7 +289,7 @@ class SuperFlix : MainAPI() {
 
                     return JsonLdInfo(
                         title = title,
-                        year = null,
+                        year = null, // JSON-LD geralmente não tem year direto
                         posterUrl = image,
                         description = description,
                         genres = genres,
@@ -201,7 +300,7 @@ class SuperFlix : MainAPI() {
                     )
                 }
             } catch (e: Exception) {
-                // Continua
+                // Continua para o próximo match
             }
         }
 
