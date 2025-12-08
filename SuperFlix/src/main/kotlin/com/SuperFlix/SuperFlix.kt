@@ -241,7 +241,6 @@ class SuperFlix : MainAPI() {
         println("SuperFlix: ID do vídeo: $videoId")
         
         return try {
-            // Abordagem mais simples e direta
             extractFembedVideo(videoId, callback)
         } catch (e: Exception) {
             println("SuperFlix: ERRO - ${e.message}")
@@ -376,13 +375,9 @@ class SuperFlix : MainAPI() {
 
     private fun buildDefaultM3u8Url(videoId: String): String? {
         // Construir URL baseada no padrão das suas imagens
-        // Baseado no padrão: https://be6721.rcr72.waw04.i8yz83pn.com/hls2/03/10382/oeh10dhh5icd_h/master.m3u8?t=...
-        
-        // Para IDs diferentes, podemos usar valores diferentes
-        // Usar valores padrão das imagens que você forneceu
         val domain = "be6721.rcr72.waw04.i8yz83pn.com"
         
-        // Gerar hash baseado no ID do vídeo
+        // Para IDs diferentes, podemos usar valores diferentes
         val hash = generateHashFromId(videoId)
         
         // Usar parâmetros padrão das imagens
@@ -397,7 +392,7 @@ class SuperFlix : MainAPI() {
             "p" to "GET"
         )
         
-        // Números do path podem variar, usar valores das imagens
+        // Números do path podem variar
         val pathNum1 = "03"
         val pathNum2 = "10382"
         
@@ -414,7 +409,6 @@ class SuperFlix : MainAPI() {
     }
 
     private fun generateHashFromId(videoId: String): String {
-        // Gerar um hash consistente baseado no ID
         // Para o exemplo da imagem, usar o hash fornecido
         if (videoId == "93899") {
             return "oeh10dhh5icd"
@@ -433,16 +427,17 @@ class SuperFlix : MainAPI() {
     ): Boolean {
         val quality = determineQualityFromUrl(url)
         
-        // Usar a sintaxe correta do newExtractorLink
+        // Usar a sintaxe CORRETA do newExtractorLink
         callback(
-            ExtractorLink(
+            newExtractorLink(
                 source = name,
                 name = "$name ($language)",
-                url = url,
-                referer = referer,
-                quality = quality,
-                isM3u8 = true
-            )
+                url = url
+            ) {
+                this.referer = referer
+                this.quality = quality
+                this.isM3u8 = true
+            }
         )
         
         println("SuperFlix: Link adicionado - $language ($quality)")
