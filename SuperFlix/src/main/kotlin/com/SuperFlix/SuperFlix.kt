@@ -3,8 +3,8 @@ package com.SuperFlix
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.LoadResponse.Companion.addActors
-import com.lagradost.cloudstream3.utils.ExtractorLink.Companion.newExtractorLink // <-- ESSENCIAL: Corrige os erros de compilação
-import com.lagradost.cloudstream3.utils.AppUtils.base64Encode // Necessário para resolveWrapperPlayer
+import com.lagradost.cloudstream3.utils.ExtractorLink.Companion.newExtractorLink
+import com.lagradost.cloudstream3.utils.AppUtils.base64Encode // Resolvido: import AppUtils
 import org.jsoup.nodes.Element
 import java.net.URLEncoder
 
@@ -266,7 +266,8 @@ class SuperFlix : MainAPI() {
             val apiPath = apiMatch?.groupValues?.get(1)?.replace("\\/", "/") ?: return null
             val apiFullUrl = fixUrl(apiPath)
             
-            val keyB64 = base64Encode(key) 
+            // 🔥 CORREÇÃO 1: Conversão para ByteArray para base64Encode
+            val keyB64 = base64Encode(key.toByteArray()) 
             
             val postBody = mapOf(
                 "action" to "getPlayer",
@@ -326,15 +327,16 @@ class SuperFlix : MainAPI() {
             if (m3u8Link != null) {
                 val quality = extractQualityFromUrl(m3u8Link)
                 
-                // Usando newExtractorLink (Corrige o erro de depreciação na Linha ~290)
+                // 🔥 CORREÇÃO 2: Chamada newExtractorLink com argumentos posicionais para evitar erro de 'No parameter with name'
                 callback.invoke(
                     newExtractorLink( 
-                        source = name,
-                        name = "$name (Fembed ${quality}p)",
-                        url = m3u8Link,
-                        referer = fembedUrl, 
-                        quality = quality,
-                        isM3u8 = true
+                        name,                          // source
+                        "$name (Fembed ${quality}p)",  // name
+                        m3u8Link,                      // url
+                        fembedUrl,                     // referer
+                        quality,                       // quality
+                        true                           // isM3u8
+                        // headers e extractorData ficam opcionais e não nomeados
                     )
                 )
                 return true
@@ -420,7 +422,6 @@ class SuperFlix : MainAPI() {
     )
 
     private fun extractJsonLd(html: String): JsonLdInfo {
-        // ... (código original)
         val pattern = Regex("<script type=\"application/ld\\+json\">(.*?)</script>", RegexOption.DOT_MATCHES_ALL)
         val matches = pattern.findAll(html)
 
