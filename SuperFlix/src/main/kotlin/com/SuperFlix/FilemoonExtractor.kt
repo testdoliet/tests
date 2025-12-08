@@ -5,7 +5,7 @@ import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.utils.ExtractorApi
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.M3u8Helper
-import okhttp3.FormBody // <<<<< CORREÇÃO 1: Adicionar FormBody
+import okhttp3.FormBody
 
 /**
  * Extractor para Filemoon e Fembed
@@ -19,98 +19,89 @@ class Filemoon : ExtractorApi() {
     override val mainUrl = "https://filemoon.in"
     override val requiresReferer = true
 
-    // ESSENCIAL: Diz ao Cloudstream quais URLs este Extractor suporta
-
     override suspend fun getUrl(
-    url: String,
-    referer: String?,
-    subtitleCallback: (SubtitleFile) -> Unit,
-    callback: (ExtractorLink) -> Unit
-) {
-    println("FilemoonExtractor: getUrl - INÍCIO")
-    val videoId = extractVideoId(url)
-    if (videoId.isEmpty()) return
+        url: String,
+        referer: String?,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ) {
+        println("FilemoonExtractor: getUrl - INÍCIO")
+        val videoId = extractVideoId(url)
+        if (videoId.isEmpty()) return
 
-    val playerEmbedUrl = if (url.contains("fembed.sx")) {
-        "https://fembed.sx/e/$videoId"
-    } else {
-        "https://filemoon.in/e/$videoId"
-    }
-
-    val apiUrl = "https://fembed.sx/api.php?s=$videoId&c="
-    
-    // =========================================================
-    // 1. FAZER GET INICIAL PARA OBTER COOKIES DE SESSÃO
-    // =========================================================
-    println("FilemoonExtractor: Fazendo GET em $playerEmbedUrl para obter cookies...")
-    
-    val initialResponse = app.get(playerEmbedUrl, headers = getHeaders(playerEmbedUrl, referer))
-    
-    if (!initialResponse.isSuccessful) {
-        println("FilemoonExtractor: ERRO: GET inicial falhou com status ${initialResponse.code}")
-        return
-    }
-
-    // O Cloudstream/okhttp gerencia os cookies automaticamente,
-    // mas vamos garantir que a URL do GET seja usada como Referer para o POST.
-    val sessionCookies = initialResponse.cookies // Captura os cookies da primeira requisição
-    println("FilemoonExtractor: Cookies de sessão obtidos: ${sessionCookies.size} item(s)")
-
-    // 2. CORPO DA REQUISIÇÃO POST (Form Data)
-    val formDataMap = mapOf(
-        "action" to "getPlayer",
-        "lang" to "DUB", 
-        "key" to "MA==" 
-    )
-    
-    val requestBody = FormBody.Builder().apply {
-        formDataMap.forEach { (key, value) ->
-            add(key, value)
+        // 1. URLs
+        val playerEmbedUrl = if (url.contains("fembed.sx")) {
+            "https://fembed.sx/e/$videoId"
+        } else {
+            "https://filemoon.in/e/$videoId"
         }
-    }.build()
 
-    // 3. HEADERS para o POST
-    val postHeaders = getHeaders(apiUrl, playerEmbedUrl).toMutableMap()
-    postHeaders["Origin"] = playerEmbedUrl.substringBefore("/e/") 
-    
-    // Remover o "Upgrade-Insecure-Requests" que não faz sentido no POST da API
-    postHeaders.remove("Upgrade-Insecure-Requests") 
-    
-    println("FilemoonExtractor: Fazendo requisição POST para Player HTML (com cookies de sessão)")
+        val apiUrl = "https://fembed.sx/api.php?s=$videoId&c="
 
-    // 4. Executar o POST
-    val response = app.post(
-        apiUrl, 
-        headers = postHeaders,
-        requestBody = requestBody,
-        referer = playerEmbedUrl,
-        cookies = sessionCookies // <<<<< CHAVE: USAR OS COOKIES DA SESSÃO AQUI
-    )
+        try {
+            // 2. FAZER GET INICIAL PARA OBTER COOKIES DE SESSÃO
+            println("FilemoonExtractor: Fazendo GET em $playerEmbedUrl para obter cookies...")
 
-    // ... (o restante do código de verificação e extração de M3U8 permanece o mesmo) ...
-    if (!response.isSuccessful) {
-        println("FilemoonExtractor: ERRO: POST falhou com status ${response.code}. Resposta do corpo: ${response.text.take(500)}") // Adicione log do corpo para debug
-        return
-    }
+            val initialResponse = app.get(playerEmbedUrl, headers = getHeaders(playerEmbedUrl, referer))
 
-    val finalPlayerHtml = response.text
-    println("FilemoonExtractor: Player HTML obtido (${finalPlayerHtml.length} chars)")
-    // ... (continua a extração do M3U8) ...
-    // ...
-}
+            if (!initialResponse.isSuccessful) {
+                println("FilemoonExtractor: ERRO: GET inicial falhou com status ${initialResponse.code}")
+                return
+            }
 
-            // 5. Extrair M3U8 do HTML de resposta
-            val m3u8Url = extractM3u8Url(finalPlayerHtml) // <<<<< CORREÇÃO: Método adicionado abaixo
+            val sessionCookies = initialResponse.cookies
+            println("FilemoonExtractor: Cookies de sessão obtidos: ${sessionCookies.size} item(s)")
+
+            // 3. PREPARAR O POST BODY
+            val formDataMap = mapOf(
+                "action" to "getPlayer",
+                "lang" to "DUB",
+                "key" to "MA=="
+            )
+
+            val requestBody = FormBody.Builder().apply {
+                formDataMap.forEach { (key, value) ->
+                    add(key, value)
+                }
+            }.build()
+
+            // 4. PREPARAR HEADERS
+            val postHeaders = getHeaders(apiUrl, playerEmbedUrl).toMutableMap()
+            postHeaders["Origin"] = playerEmbedUrl.substringBefore("/e/")
+            postHeaders.remove("Upgrade-Insecure-Requests")
+
+            println("FilemoonExtractor: Fazendo requisição POST para Player HTML")
+
+            // 5. Executar o POST
+            val response = app.post(
+                apiUrl,
+                headers = postHeaders,
+                requestBody = requestBody,
+                referer = playerEmbedUrl,
+                cookies = sessionCookies
+            )
+
+            // 6. PROCESSAR RESPOSTA
+            if (!response.isSuccessful) {
+                println("FilemoonExtractor: ERRO: POST falhou com status ${response.code}. Resposta do corpo: ${response.text.take(500)}")
+                return
+            }
+
+            val finalPlayerHtml = response.text
+            println("FilemoonExtractor: Player HTML obtido (${finalPlayerHtml.length} chars)")
+
+            // 7. Extrair M3U8
+            val m3u8Url = extractM3u8Url(finalPlayerHtml)
 
             if (m3u8Url != null) {
                 println("FilemoonExtractor: M3U8 FINAL encontrado: $m3u8Url")
 
-                // 6. Gerar Streams M3U8
+                // 8. Gerar Streams M3U8
                 val links = M3u8Helper.generateM3u8(
                     source = name,
                     streamUrl = m3u8Url,
                     referer = playerEmbedUrl,
-                    headers = getHeaders(m3u8Url, playerEmbedUrl) // <<<<< CORREÇÃO: Método adicionado abaixo
+                    headers = getHeaders(m3u8Url, playerEmbedUrl)
                 )
 
                 println("FilemoonExtractor: ${links.size} link(s) gerado(s)")
@@ -124,14 +115,14 @@ class Filemoon : ExtractorApi() {
             println("FilemoonExtractor: EXCEÇÃO: ${e.message}")
             e.printStackTrace()
         }
+        // FIM DE getUrl
     }
     
     // ====================================================================
-    // MÉTODOS AUXILIARES REINSERIDOS (CORRIGEM 'Unresolved reference')
+    // MÉTODOS AUXILIARES (DEVE ESTAR DENTRO DA CLASSE, MAS FORA DE getUrl)
     // ====================================================================
 
     private fun extractVideoId(url: String): String {
-        // Implementação do extractVideoId que você tinha
         val patterns = listOf(
             Regex("""/e/(\d+)"""),            
             Regex("""/v/([a-zA-Z0-9]+)"""),   
@@ -148,7 +139,6 @@ class Filemoon : ExtractorApi() {
     }
 
     private fun extractM3u8Url(html: String): String? {
-        // Implementação do extractM3u8Url que você tinha
         val patterns = listOf(
             Regex("""["'](https?://[^"']+\.m3u8[^"']*)["']"""),
             Regex("""file\s*:\s*["']([^"']+\.m3u8[^"']*)["']"""),
@@ -170,7 +160,6 @@ class Filemoon : ExtractorApi() {
     }
 
     private fun getHeaders(url: String, referer: String?): Map<String, String> {
-        // Implementação do getHeaders que você tinha
         return mapOf(
             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
