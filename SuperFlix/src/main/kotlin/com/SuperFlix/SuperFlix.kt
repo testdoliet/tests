@@ -30,38 +30,6 @@ class SuperFlix : MainAPI() {
             element.toSearchResult()?.let { home.add(it) }
         }
 
-        if (home.isEmpty()) {
-            document.select("a[href*='/filme/'], a[href*='/serie/']").forEach { link ->
-                val href = link.attr("href")
-                if (href.isNotBlank() && !href.contains("#")) {
-                    val title = link.selectFirst("img")?.attr("alt")
-                        ?: link.selectFirst(".rec-title, .title, h2, h3")?.text()
-                        ?: href.substringAfterLast("/").replace("-", " ").replace(Regex("\\d{4}$"), "").trim()
-
-                    if (title.isNotBlank()) {
-                        val cleanTitle = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
-                        val year = Regex("\\((\\d{4})\\)").find(title)?.groupValues?.get(1)?.toIntOrNull()
-                        val poster = link.selectFirst("img")?.attr("src")?.let { fixUrl(it) }
-                        val isSerie = href.contains("/serie/")
-
-                        val searchResponse = if (isSerie) {
-                            newTvSeriesSearchResponse(cleanTitle, fixUrl(href), TvType.TvSeries) {
-                                this.posterUrl = poster
-                                this.year = year
-                            }
-                        } else {
-                            newMovieSearchResponse(cleanTitle, fixUrl(href), TvType.Movie) {
-                                this.posterUrl = poster
-                                this.year = year
-                            }
-                        }
-
-                        home.add(searchResponse)
-                    }
-                }
-            }
-        }
-
         return newHomePageResponse(request.name, home.distinctBy { it.url })
     }
 
@@ -187,59 +155,20 @@ class SuperFlix : MainAPI() {
             )
         }
 
-        if (episodes.isEmpty()) {
-            document.select(".episode-item, .episode, .episodio").forEachIndexed { index, episodeElement ->
-                val episodeNum = index + 1
-                val button = episodeElement.selectFirst("button.bd-play[data-url]")
-                val fembedUrl = button?.attr("data-url")
-
-                if (fembedUrl != null) {
-                    val title = episodeElement.selectFirst(".ep-title, .title, .name")?.text()
-                        ?: "Episódio $episodeNum"
-                    val season = button.attr("data-season").toIntOrNull() ?: 1
-
-                    episodes.add(
-                        newEpisode(fembedUrl) {
-                            this.name = title
-                            this.season = season
-                            this.episode = episodeNum
-                        }
-                    )
-                }
-            }
-        }
-
         return episodes
     }
 
     private fun findFembedUrl(document: org.jsoup.nodes.Document): String? {
-        val iframe = document.selectFirst("iframe[src*='fembed']")
-        if (iframe != null) {
-            return iframe.attr("src")
-        }
-
+        // Procurar botão play
         val playButton = document.selectFirst("button.bd-play[data-url]")
         if (playButton != null) {
             return playButton.attr("data-url")
         }
 
-        val anyButton = document.selectFirst("button[data-url*='fembed']")
-        if (anyButton != null) {
-            return anyButton.attr("data-url")
-        }
-
-        val html = document.html()
-        val patterns = listOf(
-            Regex("""https?://[^"'\s]+fembed[^"'\s]+/(?:e|v|f)/[a-zA-Z0-9]+[^"'\s]*"""),
-            Regex("""data-url=["'](https?://[^"']+fembed[^"']+)["']"""),
-            Regex("""src\s*[:=]\s*["'](https?://[^"']+fembed[^"']+)["']""")
-        )
-
-        patterns.forEach { pattern ->
-            pattern.find(html)?.let { match ->
-                val url = if (match.groupValues.size > 1) match.groupValues[1] else match.value
-                if (url.isNotBlank()) return url
-            }
+        // Procurar iframe
+        val iframe = document.selectFirst("iframe[src*='fembed']")
+        if (iframe != null) {
+            return iframe.attr("src")
         }
 
         return null
@@ -251,80 +180,9 @@ class SuperFlix : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        println("SuperFlix DEBUG: loadLinks chamado com data = '$data'")
-
-        return try {
-            // Primeiro, tentar o extrator padrão do CloudStream
-            println("SuperFlix DEBUG: Tentando extrator padrão...")
-            
-            if (loadExtractor(data, mainUrl, subtitleCallback, callback)) {
-                println("SuperFlix DEBUG: ✅ Extrator padrão funcionou!")
-                return true
-            }
-
-            // Se não funcionar, tentar diferentes domínios
-            println("SuperFlix DEBUG: Tentando diferentes domínios...")
-            
-            val alternativeUrls = generateAlternativeUrls(data)
-            for (altUrl in alternativeUrls) {
-                println("SuperFlix DEBUG: Tentando: $altUrl")
-                
-                if (loadExtractor(altUrl, mainUrl, subtitleCallback, callback)) {
-                    println("SuperFlix DEBUG: ✅ Domínio alternativo funcionou!")
-                    return true
-                }
-            }
-
-            println("SuperFlix DEBUG: ❌ Nenhuma estratégia funcionou")
-            false
-
-        } catch (e: Exception) {
-            println("SuperFlix DEBUG: Erro em loadLinks: ${e.message}")
-            e.printStackTrace()
-            false
-        }
-    }
-    
-    private fun generateAlternativeUrls(originalUrl: String): List<String> {
-        val urls = mutableListOf<String>()
-        val domains = listOf(
-            "fembed.sx",
-            "www.fembed.com",
-            "fembed.to",
-            "feurl.com",
-            "fcdn.stream",
-            "femax20.com",
-            "fembeder.com",
-            "vanfem.com",
-            "24hd.club",
-            "vcdn.io"
-        )
-        
-        // Extrair o caminho (ex: /v/304115/1-1)
-        val path = extractFembedPath(originalUrl)
-        if (path.isNotBlank()) {
-            domains.forEach { domain ->
-                urls.add("https://$domain$path")
-            }
-        }
-        
-        return urls
-    }
-    
-    private fun extractFembedPath(url: String): String {
-        val patterns = listOf(
-            Regex("""(?:https?://[^/]+)?(/(?:e|v|f)/[a-zA-Z0-9/\-]+)"""),
-            Regex("""(/[a-zA-Z0-9/\-]+)""")
-        )
-        
-        for (pattern in patterns) {
-            val match = pattern.find(url)
-            if (match != null && match.groupValues.size > 1) {
-                return match.groupValues[1]
-            }
-        }
-        
-        return ""
+        // Simplesmente usar o extrator padrão do CloudStream
+        // Ele já tem suporte para Fembed
+        return loadExtractor(data, mainUrl, subtitleCallback, callback)
     }
 
     private data class JsonLdInfo(
