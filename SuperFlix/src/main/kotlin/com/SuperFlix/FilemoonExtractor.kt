@@ -5,6 +5,7 @@ import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.utils.ExtractorApi
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.M3u8Helper
+import okhttp3.FormBody // <<<<< CORREÇÃO 1: Adicionar FormBody
 
 /**
  * Extractor para Filemoon e Fembed
@@ -18,93 +19,150 @@ class Filemoon : ExtractorApi() {
     override val mainUrl = "https://filemoon.in"
     override val requiresReferer = true
 
- // ESSENCIAL: Diz ao Cloudstream quais URLs este Extractor suporta
-     
-    // FilemoonExtractor.kt - NOVO método getUrl
+    // ESSENCIAL: Diz ao Cloudstream quais URLs este Extractor suporta
 
-override suspend fun getUrl(
-    url: String,
-    referer: String?,
-    subtitleCallback: (SubtitleFile) -> Unit,
-    callback: (ExtractorLink) -> Unit
-) {
-    println("FilemoonExtractor: getUrl - INÍCIO")
-    val videoId = extractVideoId(url)
-    if (videoId.isEmpty()) return
+    override suspend fun getUrl(
+        url: String,
+        referer: String?,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ) {
+        println("FilemoonExtractor: getUrl - INÍCIO")
+        val videoId = extractVideoId(url) // <<<<< CORREÇÃO: Método adicionado abaixo
+        if (videoId.isEmpty()) return
 
-    // 1. URLs
-    // A URL original do embed (ex: https://fembed.sx/e/1441563) é o REFERER
-    val playerEmbedUrl = if (url.contains("fembed.sx")) {
-        "https://fembed.sx/e/$videoId"
-    } else {
-        "https://filemoon.in/e/$videoId"
-    }
-    
-    // O endpoint da API (ex: https://fembed.sx/api.php?s=1441563&c=)
-    // O Filemoon/Fembed usa o mesmo ID no 's' e no Referer
-    val apiUrl = "https://fembed.sx/api.php?s=$videoId&c="
-    val requestReferer = referer ?: "https://fembed.sx/" // Usa o referer do Cloudstream ou um default
-
-    println("FilemoonExtractor: POST API URL: $apiUrl")
-    println("FilemoonExtractor: POST Referer Header: $playerEmbedUrl")
-
-    try {
-        // 2. CORPO DA REQUISIÇÃO POST (Form Data)
-        // O JS que você viu envia: { action: 'getPlayer', lang: 'DUB', key: 'MA==' }
-        val body = mapOf(
-            "action" to "getPlayer",
-            // Nota: O idioma 'DUB' ou 'LEG' é definido pelo SuperFlix. 
-            // Para simplificar, vamos assumir DUB, mas você pode parametrizar isso se necessário.
-            "lang" to "DUB", 
-            "key" to "MA==" // Base64 de "0" (o primeiro servidor)
-        )
-        
-        // 3. HEADERS para o POST
-        val postHeaders = getHeaders(apiUrl, playerEmbedUrl).toMutableMap()
-        postHeaders["Origin"] = playerEmbedUrl.substringBefore("/e/") // https://fembed.sx
-
-        println("FilemoonExtractor: Fazendo requisição POST para Player HTML")
-
-        // 4. Executar o POST
-        val response = app.post(
-            apiUrl, 
-            headers = postHeaders,
-            requestBody = body,
-            referer = playerEmbedUrl // Garantir que o app use o referer correto
-        )
-
-        if (!response.isSuccessful) {
-            println("FilemoonExtractor: ERRO: POST falhou com status ${response.code}")
-            return
+        // 1. URLs
+        val playerEmbedUrl = if (url.contains("fembed.sx")) {
+            "https://fembed.sx/e/$videoId"
+        } else {
+            "https://filemoon.in/e/$videoId"
         }
 
-        val finalPlayerHtml = response.text
-        println("FilemoonExtractor: Player HTML obtido (${finalPlayerHtml.length} chars)")
-        
-        // 5. Extrair M3U8 do HTML de resposta
-        val m3u8Url = extractM3u8Url(finalPlayerHtml)
+        val apiUrl = "https://fembed.sx/api.php?s=$videoId&c="
+        val requestReferer = referer ?: "https://fembed.sx/"
 
-        if (m3u8Url != null) {
-            println("FilemoonExtractor: M3U8 FINAL encontrado: $m3u8Url")
+        println("FilemoonExtractor: POST API URL: $apiUrl")
+        println("FilemoonExtractor: POST Referer Header: $playerEmbedUrl")
 
-            // 6. Gerar Streams M3U8
-            val links = M3u8Helper.generateM3u8(
-                source = name,
-                streamUrl = m3u8Url,
-                // O referer para o M3U8 é a URL da API que o retornou, ou o playerEmbedUrl.
-                referer = playerEmbedUrl,
-                headers = getHeaders(m3u8Url, playerEmbedUrl)
+        try {
+            // 2. CORPO DA REQUISIÇÃO POST (Form Data)
+            val formDataMap = mapOf(
+                "action" to "getPlayer",
+                "lang" to "DUB", 
+                "key" to "MA==" 
+            )
+            
+            // CONVERTER MAPA PARA FormBody (para corrigir o erro 'Argument type mismatch')
+            val requestBody = FormBody.Builder().apply {
+                formDataMap.forEach { (key, value) ->
+                    add(key, value)
+                }
+            }.build()
+
+            // 3. HEADERS para o POST
+            val postHeaders = getHeaders(apiUrl, playerEmbedUrl).toMutableMap() // <<<<< CORREÇÃO: Método adicionado abaixo
+            postHeaders["Origin"] = playerEmbedUrl.substringBefore("/e/") 
+
+            println("FilemoonExtractor: Fazendo requisição POST para Player HTML")
+
+            // 4. Executar o POST
+            val response = app.post(
+                apiUrl, 
+                headers = postHeaders,
+                requestBody = requestBody, // <<<<< CORREÇÃO 2: Passando FormBody
+                referer = playerEmbedUrl 
             )
 
-            println("FilemoonExtractor: ${links.size} link(s) gerado(s)")
-            links.forEach(callback)
-            return
-        } else {
-            println("FilemoonExtractor: ERRO: Não encontrou URL M3U8 no HTML FINAL do POST.")
-        }
+            if (!response.isSuccessful) {
+                println("FilemoonExtractor: ERRO: POST falhou com status ${response.code}")
+                return
+            }
 
-    } catch (e: Exception) {
-        println("FilemoonExtractor: EXCEÇÃO: ${e.message}")
-        e.printStackTrace()
+            val finalPlayerHtml = response.text
+            println("FilemoonExtractor: Player HTML obtido (${finalPlayerHtml.length} chars)")
+
+            // 5. Extrair M3U8 do HTML de resposta
+            val m3u8Url = extractM3u8Url(finalPlayerHtml) // <<<<< CORREÇÃO: Método adicionado abaixo
+
+            if (m3u8Url != null) {
+                println("FilemoonExtractor: M3U8 FINAL encontrado: $m3u8Url")
+
+                // 6. Gerar Streams M3U8
+                val links = M3u8Helper.generateM3u8(
+                    source = name,
+                    streamUrl = m3u8Url,
+                    referer = playerEmbedUrl,
+                    headers = getHeaders(m3u8Url, playerEmbedUrl) // <<<<< CORREÇÃO: Método adicionado abaixo
+                )
+
+                println("FilemoonExtractor: ${links.size} link(s) gerado(s)")
+                links.forEach(callback)
+                return
+            } else {
+                println("FilemoonExtractor: ERRO: Não encontrou URL M3U8 no HTML FINAL do POST.")
+            }
+
+        } catch (e: Exception) {
+            println("FilemoonExtractor: EXCEÇÃO: ${e.message}")
+            e.printStackTrace()
+        }
+    }
+    
+    // ====================================================================
+    // MÉTODOS AUXILIARES REINSERIDOS (CORRIGEM 'Unresolved reference')
+    // ====================================================================
+
+    private fun extractVideoId(url: String): String {
+        // Implementação do extractVideoId que você tinha
+        val patterns = listOf(
+            Regex("""/e/(\d+)"""),            
+            Regex("""/v/([a-zA-Z0-9]+)"""),   
+            Regex("""embed/([a-zA-Z0-9]+)""") 
+        )
+
+        for (pattern in patterns) {
+            val match = pattern.find(url)
+            if (match != null && match.groupValues.size > 1) {
+                return match.groupValues[1]
+            }
+        }
+        return url.substringAfterLast("/").substringBefore("?").substringBefore("-")
+    }
+
+    private fun extractM3u8Url(html: String): String? {
+        // Implementação do extractM3u8Url que você tinha
+        val patterns = listOf(
+            Regex("""["'](https?://[^"']+\.m3u8[^"']*)["']"""),
+            Regex("""file\s*:\s*["']([^"']+\.m3u8[^"']*)["']"""),
+            Regex("""src\s*:\s*["']([^"']+\.m3u8[^"']*)["']"""),
+            Regex("""hls\s*:\s*["']([^"']+\.m3u8[^"']*)["']"""),
+            Regex("""(https://[^\s"']+\.m3u8[^\s"']*)""")
+        )
+
+        for (pattern in patterns) {
+            val matches = pattern.findAll(html)
+            for (match in matches) {
+                val url = match.groupValues.getOrNull(1) ?: continue
+                if (url.contains(".m3u8")) {
+                    return url
+                }
+            }
+        }
+        return null
+    }
+
+    private fun getHeaders(url: String, referer: String?): Map<String, String> {
+        // Implementação do getHeaders que você tinha
+        return mapOf(
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            "Accept-Language" to "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+            "Accept-Encoding" to "gzip, deflate, br",
+            "Referer" to (referer ?: "https://fembed.sx/"),
+            "Origin" to "https://fembed.sx",
+            "Connection" to "keep-alive",
+            "Upgrade-Insecure-Requests" to "1",
+            "Cache-Control" to "max-age=0"
+        )
     }
 }
