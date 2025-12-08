@@ -47,6 +47,7 @@ class SuperFlix : MainAPI() {
                     val imgElement = link.selectFirst("img")
                     val altTitle = imgElement?.attr("alt") ?: ""
                     
+                    // CORREÇÃO: Usar variável intermediária para o elemento de título
                     val titleElement = link.selectFirst(".rec-title, .title, h2, h3")
                     val elementTitle = titleElement?.text() ?: ""
                     
@@ -90,6 +91,7 @@ class SuperFlix : MainAPI() {
     private fun Element.toSearchResult(): SearchResponse? {
         println("SuperFlix: toSearchResult - Iniciando para elemento: ${this.tagName()}")
         
+        // CORREÇÃO: Armazenar o elemento primeiro, depois acessar o texto
         val titleElement = selectFirst(".rec-title, .movie-title, h2, h3, .title")
         val title = titleElement?.text()
             ?: selectFirst("img")?.attr("alt")
@@ -97,8 +99,13 @@ class SuperFlix : MainAPI() {
 
         println("SuperFlix: toSearchResult - Título encontrado: $title")
         
-        val href = attr("href") ?: selectFirst("a")?.attr("href") ?: return null.also { 
+        // CORREÇÃO: Armazenar href de forma segura
+        val elementHref = attr("href")
+        val href = if (elementHref.isNotBlank()) elementHref else selectFirst("a")?.attr("href")
+        
+        if (href.isNullOrBlank()) {
             println("SuperFlix: toSearchResult - href não encontrado")
+            return null
         }
 
         println("SuperFlix: toSearchResult - href encontrado: $href")
