@@ -348,34 +348,60 @@ class SuperFlix : MainAPI() {
     }
 
     override suspend fun loadLinks(
-        data: String,
-        isCasting: Boolean,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        println("SuperFlix: loadLinks - INÍCIO")
-        println("SuperFlix: loadLinks - Carregando links de: $data")
-        println("SuperFlix: loadLinks - isCasting: $isCasting")
+    data: String,
+    isCasting: Boolean,
+    subtitleCallback: (SubtitleFile) -> Unit,
+    callback: (ExtractorLink) -> Unit
+): Boolean {
+    println("SuperFlix: loadLinks - INÍCIO")
+    println("SuperFlix: loadLinks - Carregando links de: $data")
+    println("SuperFlix: loadLinks - isCasting: $isCasting")
 
-        if (data.isEmpty()) {
-            println("SuperFlix: loadLinks - ERRO CRÍTICO: URL vazia")
-            return false
-        }
+    if (data.isEmpty()) {
+        println("SuperFlix: loadLinks - ERRO CRÍTICO: URL vazia")
+        return false
+    }
 
-        println("SuperFlix: loadLinks - Tentando loadExtractor com a URL")
-        
-        return try {
-            val result = loadExtractor(data, subtitleCallback, callback)
-            println("SuperFlix: loadLinks - loadExtractor retornou: $result")
-            result
+    // Verificar se é uma URL do Filemoon/Fembed
+    val isFilemoonUrl = data.contains("filemoon.") || 
+                       data.contains("fembed.") || 
+                       data.contains("ico3c.")
+    
+    println("SuperFlix: loadLinks - isFilemoonUrl: $isFilemoonUrl")
+    
+    if (isFilemoonUrl) {
+        println("SuperFlix: loadLinks - Usando extractor Filemoon diretamente")
+        try {
+            // Criar instância do Filemoon e usar diretamente
+            val filemoonExtractor = Filemoon()
+            filemoonExtractor.getUrl(
+                url = data,
+                referer = "https://fembed.sx/",
+                subtitleCallback = subtitleCallback,
+                callback = callback
+            )
+            
+            // Verificar se algum link foi adicionado
+            return true
         } catch (e: Exception) {
-            println("SuperFlix: loadLinks - ERRO EXCEÇÃO: ${e.message}")
-            println("SuperFlix: loadLinks - Stack trace:")
+            println("SuperFlix: loadLinks - ERRO ao usar Filemoon: ${e.message}")
             e.printStackTrace()
-            false
         }
     }
 
+    println("SuperFlix: loadLinks - Tentando loadExtractor para outros serviços")
+    
+    return try {
+        val result = loadExtractor(data, subtitleCallback, callback)
+        println("SuperFlix: loadLinks - loadExtractor retornou: $result")
+        result
+    } catch (e: Exception) {
+        println("SuperFlix: loadLinks - ERRO EXCEÇÃO: ${e.message}")
+        println("SuperFlix: loadLinks - Stack trace:")
+        e.printStackTrace()
+        false
+    }
+}
     private data class JsonLdInfo(
         val title: String? = null,
         val year: Int? = null,
