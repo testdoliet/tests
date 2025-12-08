@@ -14,52 +14,39 @@ class FembedExtractor : ExtractorApi() {
         val links = mutableListOf<ExtractorLink>()
         
         try {
-            // Extrair ID do vídeo
             val videoId = extractVideoId(url) ?: return links
             
-            // Tentar domínios conhecidos
-            val domains = listOf("www.fembed.com", "fembed.sx", "fembed.to", "feurl.com")
+            // Usar fembed.com como domínio principal
+            val domain = "www.fembed.com"
+            val apiUrl = "https://$domain/api/source/$videoId"
             
-            for (domain in domains) {
-                try {
-                    val apiUrl = "https://$domain/api/source/$videoId"
+            val response = app.post(
+                apiUrl,
+                headers = mapOf(
+                    "Content-Type" to "application/x-www-form-urlencoded",
+                    "Referer" to "https://$domain/",
+                    "X-Requested-With" to "XMLHttpRequest"
+                ),
+                data = mapOf("r" to "", "d" to domain)
+            )
+            
+            val json = response.parsedSafe<FembedResponse>()
+            if (json?.success == true) {
+                json.data?.forEach { stream ->
+                    val file = stream.file ?: return@forEach
+                    val label = stream.label ?: "Unknown"
                     
-                    val response = app.post(
-                        apiUrl,
-                        headers = mapOf(
-                            "Content-Type" to "application/x-www-form-urlencoded",
-                            "Referer" to "https://$domain/",
-                            "X-Requested-With" to "XMLHttpRequest"
-                        ),
-                        data = mapOf("r" to "", "d" to domain)
+                    // Criar link manualmente se newExtractorLink não funcionar
+                    val link = ExtractorLink(
+                        source = name,
+                        name = label,
+                        url = file,
+                        referer = "https://$domain/",
+                        quality = getQuality(label),
+                        isM3u8 = file.contains(".m3u8")
                     )
                     
-                    val json = response.parsedSafe<FembedResponse>()
-                    if (json?.success == true) {
-                        json.data?.forEach { stream ->
-                            val file = stream.file ?: return@forEach
-                            val label = stream.label ?: "Unknown"
-                            val isM3u8 = file.contains(".m3u8")
-                            
-                            // Usando newExtractorLink com parâmetros corretos
-                            // A ordem correta é: url, source, name, quality, referer, isM3u8
-                            newExtractorLink(
-                                url = file,
-                                source = name,
-                                name = label,
-                                quality = getQuality(label),
-                                referer = "https://$domain/",
-                                isM3u8 = isM3u8
-                            )?.let { link ->
-                                links.add(link)
-                            }
-                        }
-                        
-                        if (links.isNotEmpty()) return links
-                    }
-                } catch (e: Exception) {
-                    // Tenta próximo domínio
-                    continue
+                    links.add(link)
                 }
             }
         } catch (e: Exception) {
@@ -70,19 +57,12 @@ class FembedExtractor : ExtractorApi() {
     }
     
     private fun extractVideoId(url: String): String? {
-        val patterns = listOf(
-            Regex("""/(?:e|v|f)/([a-zA-Z0-9]+(?:/[a-zA-Z0-9\-]+)?)"""),
-            Regex("""(\d+(?:/\d+-\d+)?)""")
-        )
-        
-        for (pattern in patterns) {
-            val match = pattern.find(url)
-            if (match != null) {
-                return match.groupValues.getOrNull(1)
-            }
+        return try {
+            // Extrair a última parte da URL
+            url.substringAfterLast("/")
+        } catch (e: Exception) {
+            null
         }
-        
-        return null
     }
     
     private fun getQuality(label: String): Int {
