@@ -283,129 +283,263 @@ class SuperFlix : MainAPI() {
 
     // 🔥🔥🔥 FUNÇÃO PRINCIPAL: EXTRACTION MANUAL ROBUSTA DO FEMBED 🔥🔥🔥
     override suspend fun loadLinks(
-        data: String,
-        isCasting: Boolean,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        if (data.isBlank()) return false
+    data: String,
+    isCasting: Boolean,
+    subtitleCallback: (SubtitleFile) -> Unit,
+    callback: (ExtractorLink) -> Unit
+): Boolean {
+    println("SuperFlix REAL: Carregando links de: $data")
+    
+    // Extrair ID do vídeo (ex: 1152238 de https://fembed.sx/e/1152238)
+    val videoId = data.substringAfterLast("/").substringBefore("?").trim()
+    if (videoId.isEmpty()) {
+        println("SuperFlix ERROR: Não consegui extrair ID do vídeo")
+        return false
+    }
+    
+    println("SuperFlix REAL: ID do vídeo: $videoId")
+    
+    return try {
+        // Tentar extrair links usando a API REAL do Fembed
+        extractFembedLinks(videoId, subtitleCallback, callback)
+    } catch (e: Exception) {
+        println("SuperFlix ERROR: ${e.message}")
+        false
+    }
+}
+
+private suspend fun extractFembedLinks(
+    videoId: String,
+    subtitleCallback: (SubtitleFile) -> Unit,
+    callback: (ExtractorLink) -> Unit
+): Boolean {
+    println("SuperFlix REAL: Extraindo links via API do Fembed")
+    
+    val baseUrl = "https://fembed.sx"
+    val apiUrl = "$baseUrl/api.php?s=$videoId&c="
+    
+    println("SuperFlix REAL: API URL: $apiUrl")
+    
+    // Headers para simular navegador
+    val headers = mapOf(
+        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Referer" to baseUrl,
+        "Origin" to baseUrl,
+        "X-Requested-With" to "XMLHttpRequest"
+    )
+    
+    // Primeiro, tentar obter o player para Dublado (DUB)
+    println("SuperFlix REAL: Tentando obter player Dublado...")
+    
+    val playerResponse = try {
+        app.post(
+            apiUrl,
+            headers = headers,
+            data = mapOf(
+                "action" to "getPlayer",
+                "lang" to "DUB",
+                "key" to "MA==" // base64 de "0"
+            )
+        )
+    } catch (e: Exception) {
+        println("SuperFlix REAL: Falha no POST, tentando GET...")
+        // Tentar via GET
+        app.get("$apiUrl&action=getPlayer&lang=DUB&key=MA==", headers = headers)
+    }
+    
+    if (!playerResponse.isSuccessful) {
+        println("SuperFlix REAL: Falha ao obter player: ${playerResponse.statusCode}")
+        return false
+    }
+    
+    val playerHtml = playerResponse.text
+    println("SuperFlix REAL: Player HTML obtido (${playerHtml.length} chars)")
+    
+    // Analisar o HTML do player para encontrar URLs de vídeo
+    val videoUrls = extractVideoUrlsFromPlayer(playerHtml)
+    
+    if (videoUrls.isNotEmpty()) {
+        println("SuperFlix REAL: Encontradas ${videoUrls.size} URLs de vídeo")
         
-        return try {
-            // 1. SE JÁ FOR URL DO FEMBED DIRETAMENTE
-            if (data.contains("fembed.sx")) {
-                return manualFembedExtractorRobust(data, callback)
+        videoUrls.forEachIndexed { index, (url, quality) ->
+            println("SuperFlix REAL: Vídeo $index -> $quality: $url")
+            
+            callback.invoke(
+                ExtractorLink(
+                    name = name,
+                    source = name,
+                    url = url,
+                    referer = "https://fembed.sx/e/$videoId",
+                    quality = quality,
+                    isM3u8 = url.contains(".m3u8")
+                )
+            )
+        }
+        
+        // Também tentar Legendado
+        println("SuperFlix REAL: Tentando obter links Legendados...")
+        tryGetLegendas(videoId, subtitleCallback, callback)
+        
+        return true
+    }
+    
+    // Se não encontrou no HTML, tentar via download
+    println("SuperFlix REAL: Nenhum vídeo encontrado, tentando via download...")
+    return tryViaDownloadApi(videoId, apiUrl, headers, callback)
+}
+
+private fun extractVideoUrlsFromPlayer(html: String): List<Pair<String, Int>> {
+    val videoUrls = mutableListOf<Pair<String, Int>>()
+    
+    // Padrões comuns para encontrar URLs de vídeo
+    val patterns = listOf(
+        Regex("""src\s*=\s*["'](https?://[^"']+\.(?:mp4|m3u8)[^"']*)["']""", RegexOption.IGNORE_CASE),
+        Regex("""file\s*:\s*["'](https?://[^"']+\.(?:mp4|m3u8)[^"']*)["']""", RegexOption.IGNORE_CASE),
+        Regex(""""(https?://[^"]+\.(?:mp4|m3u8)[^"]*)""""),
+        Regex("""source\s+src\s*=\s*["'](https?://[^"']+)["']""", RegexOption.IGNORE_CASE)
+    )
+    
+    for (pattern in patterns) {
+        val matches = pattern.findAll(html)
+        matches.forEach { match ->
+            var url = if (match.groupValues.size > 1) match.groupValues[1] else match.value
+            url = url.trim()
+            
+            if (url.isNotBlank() && (url.contains(".mp4") || url.contains(".m3u8"))) {
+                // Determinar qualidade
+                val quality = when {
+                    url.contains("1080") || url.contains("fullhd") -> Qualities.P1080.value
+                    url.contains("720") || url.contains("hd") -> Qualities.P720.value
+                    url.contains("480") || url.contains("sd") -> Qualities.P480.value
+                    url.contains("360") -> Qualities.P360.value
+                    else -> Qualities.Unknown.value
+                }
+                
+                videoUrls.add(Pair(url, quality))
             }
-            
-            // 2. SE FOR URL DO SUPERFLIX (página do filme/episódio)
-            val finalUrl = if (data.startsWith("http")) data else fixUrl(data)
-            val res = app.get(finalUrl, referer = mainUrl, timeout = 30)
-            val html = res.text
-            
-            // Procurar URL do Fembed na página
-            val fembedUrl = findFembedUrlInHtml(html)
-            
-            if (fembedUrl != null) {
-                return manualFembedExtractorRobust(fembedUrl, callback)
-            }
-            
-            false
-            
-        } catch (e: Exception) {
-            e.printStackTrace()
-            false
         }
     }
     
-    // 🔥🔥🔥 FUNÇÃO DE EXTRACTION MANUAL ROBUSTA DO FEMBED (WEB VIDEO CASTER STYLE)
-    private suspend fun manualFembedExtractorRobust(fembedUrl: String, callback: (ExtractorLink) -> Unit): Boolean {
-        return try {
-            println("🚀 SuperFlix: Iniciando extração ROBUSTA do Fembed: $fembedUrl")
-            
-            // 1. Extrair ID do Fembed da URL (suporta /e/ e /v/)
-            val fembedId = extractFembedIdRobust(fembedUrl)
-            
-            if (fembedId == null) {
-                println("❌ SuperFlix: Não conseguiu extrair ID do Fembed")
-                return false
-            }
-            
-            println("✅ SuperFlix: ID do Fembed extraído: $fembedId")
-            
-            // 2. Construir URL da API do Fembed
-            val apiUrl = "https://fembed.sx/api/source/$fembedId"
-            println("📡 SuperFlix: Chamando API: $apiUrl")
-            
-            // 3. Headers EXATOS que o Fembed espera (como Web Video Caster)
-            val headers = mapOf(
-                "Accept" to "application/json, text/javascript, */*; q=0.01",
-                "Accept-Language" to "pt-BR,pt;q=0.9,en;q=0.8",
-                "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8",
-                "X-Requested-With" to "XMLHttpRequest",
-                "Origin" to "https://fembed.sx",
-                "Referer" to fembedUrl,
-                "Sec-Fetch-Dest" to "empty",
-                "Sec-Fetch-Mode" to "cors",
-                "Sec-Fetch-Site" to "same-origin",
-                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    return videoUrls.distinctBy { it.first }
+}
+
+private suspend fun tryGetLegendas(
+    videoId: String,
+    subtitleCallback: (SubtitleFile) -> Unit,
+    callback: (ExtractorLink) -> Unit
+) {
+    val baseUrl = "https://fembed.sx"
+    val apiUrl = "$baseUrl/api.php?s=$videoId&c="
+    
+    val headers = mapOf(
+        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Referer" to baseUrl
+    )
+    
+    try {
+        val legResponse = app.post(
+            apiUrl,
+            headers = headers,
+            data = mapOf(
+                "action" to "getPlayer",
+                "lang" to "LEG",
+                "key" to "MA==" // base64 de "0"
             )
+        )
+        
+        if (legResponse.isSuccessful) {
+            val legHtml = legResponse.text
+            val legVideos = extractVideoUrlsFromPlayer(legHtml)
             
-            // 4. Body EXATO que o Fembed espera
-            val postBody = mapOf(
-                "id" to fembedId,
-                "r" to "",
-                "d" to "fembed.sx"
-            )
-            
-            // 5. Fazer requisição POST para API
-            val apiResponse = app.post(
-                url = apiUrl,
-                headers = headers,
-                data = postBody,
-                timeout = 45
-            )
-            
-            val apiText = apiResponse.text
-            println("📥 SuperFlix: Resposta da API (${apiText.length} chars)")
-            
-            // 6. Verificar se a resposta tem sucesso
-            if (!apiText.contains("\"success\":true")) {
-                println("❌ SuperFlix: API retornou erro: ${apiText.take(200)}")
-                return false
+            legVideos.forEach { (url, quality) ->
+                println("SuperFlix REAL: Legendado encontrado -> $quality: $url")
+                
+                callback.invoke(
+                    ExtractorLink(
+                        name = "$name (Legendado)",
+                        source = name,
+                        url = url,
+                        referer = "https://fembed.sx/e/$videoId",
+                        quality = quality,
+                        isM3u8 = url.contains(".m3u8")
+                    )
+                )
             }
-            
-            // 7. Extrair link .m3u8 do JSON (formato correto)
-            val m3u8Url = extractM3u8FromFembedApiRobust(apiText)
-            
-            if (m3u8Url == null) {
-                println("❌ SuperFlix: Não encontrou link .m3u8 na resposta")
-                return false
-            }
-            
-            println("✅ SuperFlix: Link .m3u8 ENCONTRADO: $m3u8Url")
-            
-            // 8. Criar ExtractorLink
-            val quality = extractQualityFromUrl(m3u8Url)
-            
-            // Usar objeto anônimo para evitar warning deprecated
-            val link = object : ExtractorLink(
-                source = name,
-                name = "$name (${quality}p)",
-                url = m3u8Url,
-                referer = fembedUrl,
-                quality = quality,
-                isM3u8 = true
-            ) {}
-            
-            callback.invoke(link)
-            return true
-            
-        } catch (e: Exception) {
-            println("💥 SuperFlix: Erro na extração robusta: ${e.message}")
-            e.printStackTrace()
-            false
         }
+    } catch (e: Exception) {
+        println("SuperFlix REAL: Não consegui obter legendados: ${e.message}")
+    }
+}
+
+private suspend fun tryViaDownloadApi(
+    videoId: String,
+    apiUrl: String,
+    headers: Map<String, String>,
+    callback: (ExtractorLink) -> Unit
+): Boolean {
+    println("SuperFlix REAL: Tentando API de download...")
+    
+    try {
+        // Tentar obter link de download Dublado
+        val dubResponse = app.get(
+            "$apiUrl&action=getDownload&key=0&lang=DUB",
+            headers = headers
+        )
+        
+        if (dubResponse.isSuccessful) {
+            val json = dubResponse.parsedSafe<Map<String, Any>>()
+            val downloadUrl = json?.get("url") as? String
+            
+            if (downloadUrl != null && downloadUrl.isNotBlank()) {
+                println("SuperFlix REAL: Download Dublado encontrado: $downloadUrl")
+                
+                callback.invoke(
+                    ExtractorLink(
+                        name = "$name (Download Dublado)",
+                        source = name,
+                        url = downloadUrl,
+                        referer = "https://fembed.sx/e/$videoId",
+                        quality = Qualities.P1080.value, // Assumir melhor qualidade
+                        isM3u8 = downloadUrl.contains(".m3u8")
+                    )
+                )
+                return true
+            }
+        }
+        
+        // Tentar Legendado também
+        val legResponse = app.get(
+            "$apiUrl&action=getDownload&key=0&lang=LEG",
+            headers = headers
+        )
+        
+        if (legResponse.isSuccessful) {
+            val json = legResponse.parsedSafe<Map<String, Any>>()
+            val downloadUrl = json?.get("url") as? String
+            
+            if (downloadUrl != null && downloadUrl.isNotBlank()) {
+                println("SuperFlix REAL: Download Legendado encontrado: $downloadUrl")
+                
+                callback.invoke(
+                    ExtractorLink(
+                        name = "$name (Download Legendado)",
+                        source = name,
+                        url = downloadUrl,
+                        referer = "https://fembed.sx/e/$videoId",
+                        quality = Qualities.P1080.value,
+                        isM3u8 = downloadUrl.contains(".m3u8")
+                    )
+                )
+                return true
+            }
+        }
+        
+    } catch (e: Exception) {
+        println("SuperFlix REAL: Erro na API de download: ${e.message}")
     }
     
+    return false
+}
     // 🔥 EXTRAIR ID DO FEMBED ROBUSTO
     private fun extractFembedIdRobust(url: String): String? {
         val patterns = listOf(
