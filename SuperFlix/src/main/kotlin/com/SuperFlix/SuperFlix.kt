@@ -52,7 +52,7 @@ class SuperFlix : MainAPI() {
     // =========================================================================
     // FUNÇÃO AUXILIAR: CONVERTER ELEMENTO PARA SEARCHRESPONSE
     // =========================================================================
- private fun Element.toSearchResult(): SearchResponse? {
+ private fun element.toSearchResult(): SearchResponse? {
     // PARA CARDS DA BUSCA (como no HTML que você mostrou)
     
     // 1. Título vem do atributo "title"
