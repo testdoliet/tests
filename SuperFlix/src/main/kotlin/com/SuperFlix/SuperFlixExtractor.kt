@@ -6,90 +6,67 @@ import com.lagradost.cloudstream3.network.WebViewResolver
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.M3u8Helper
 import com.lagradost.cloudstream3.utils.Qualities
-import com.lagradost.cloudstream3.utils.fixUrl
 
 object SuperFlixExtractor {
-
-    private const val TIMEOUT_MS = 20_000L
 
     suspend fun extractVideoLinks(
         url: String,
         mainUrl: String,
         name: String,
-        callback: (newExtractorLink) -> Unit
+        callback: (ExtractorLink) -> Unit
     ): Boolean {
-        println("SFX Extractor: Iniciando extração via WebViewResolver para URL: $url")
-
         return try {
             // Configura o WebViewResolver para interceptar links de stream
             val streamResolver = WebViewResolver(
                 interceptUrl = Regex("""\.(m3u8|mp4|mkv)"""),
                 useOkhttp = false,
-                timeout = TIMEOUT_MS
+                timeout = 15_000L
             )
 
-            // Navega até a URL do player
-            val response = app.get(url, interceptor = streamResolver, timeout = TIMEOUT_MS)
-            val intercepted = response.url
+            val intercepted = app.get(url, interceptor = streamResolver).url
 
-            println("SFX Extractor: URL Interceptada: $intercepted")
-
-            if (intercepted.isNotEmpty() && intercepted.startsWith("http")) {
-                // Verifica se a interceptação foi bem-sucedida
-                if (!intercepted.contains("m3u8") && !intercepted.contains("mp4") && !intercepted.contains("mkv")) {
-                    println("SFX Extractor DEBUG: Interceptação ocorreu, mas URL não é de mídia.")
-                    return false 
-                }
-
-                // Headers de referência
+            if (intercepted.isNotEmpty()) {
                 val headers = mapOf(
+                    "Accept" to "*/*",
+                    "Connection" to "keep-alive",
                     "Referer" to url,
                     "Origin" to mainUrl,
                     "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
                 )
 
-                // Processamento da Mídia
                 if (intercepted.contains(".m3u8")) {
-                    println("SFX Extractor DEBUG: URL é M3U8. Gerando links.")
-                    // Se for M3U8, usa o M3u8Helper com a assinatura correta
+                    // Para M3U8, usa o M3u8Helper
                     M3u8Helper.generateM3u8(
                         source = name,
                         streamUrl = intercepted,
-                        referer = url,
+                        referer = mainUrl,
                         headers = headers
                     ).forEach(callback)
-                } else {
-                    // Se for MP4/MKV direto
-                    println("SFX Extractor DEBUG: URL é MP4/MKV direto. Retornando link.")
+                } else if (intercepted.contains(".mp4") || intercepted.contains(".mkv")) {
+                    // Para links diretos MP4/MKV
                     val quality = extractQualityFromUrl(intercepted)
-
-                    // Usando newExtractorLink (método recomendado)
+                    
+                    // Cria um ExtractorLink simples para o vídeo direto
                     callback.invoke(
-                        newExtractorLink(
+                        ExtractorLink(
                             source = name,
                             name = "SuperFlix",
-                            url = fixUrl(intercepted),
+                            url = intercepted,
                             referer = url,
                             quality = quality,
-                            isM3u8 = false,
-                            headers = headers
+                            isM3u8 = false
                         )
                     )
                 }
-
-                return true
+                true
             } else {
-                println("SFX Extractor DEBUG: WebViewResolver falhou em interceptar uma URL válida.")
                 false
             }
         } catch (e: Exception) {
-            println("SFX Extractor FALHA CRÍTICA: Erro durante a extração: ${e.message}")
-            e.printStackTrace()
             false
         }
     }
 
-    // Função auxiliar para extrair qualidade da URL
     private fun extractQualityFromUrl(url: String): Int {
         return when {
             url.contains("1080p", ignoreCase = true) -> Qualities.P1080.value
