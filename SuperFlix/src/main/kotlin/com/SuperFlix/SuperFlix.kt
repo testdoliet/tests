@@ -52,64 +52,55 @@ class SuperFlix : MainAPI() {
     // =========================================================================
     // FUNÇÃO AUXILIAR: CONVERTER ELEMENTO PARA SEARCHRESPONSE
     // =========================================================================
-    private fun toSearchResult(element: Element): SearchResponse? {
-        // Tenta pegar o título do atributo 'title' ou do alt da imagem
-        val title = element.attr("title") ?: element.selectFirst("img")?.attr("alt") ?: return null
-        
-        val href = element.attr("href")
-        if (href.isNullOrBlank()) return null
-        
-        // Encontra o pôster
-        val imgElement = element.selectFirst("img")
-        val poster = imgElement?.attr("src")?.let { fixUrl(it) }
-        
-        // Extrai o ano do título
-        val year = Regex("\\((\\d{4})\\)").find(title)?.groupValues?.get(1)?.toIntOrNull()
-        
-        // Verifica se é série
-        val badge = element.selectFirst("span.badge-kind")
-        val isSerie = badge?.text()?.contains("SÉRIE", ignoreCase = true) ?: 
-                     href.contains("/serie/") || title.contains("Temporada", ignoreCase = true)
-        
-        val cleanTitle = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
-        
-        return if (isSerie) {
-            newTvSeriesSearchResponse(cleanTitle, fixUrl(href), TvType.TvSeries) {
-                this.posterUrl = poster
-                this.year = year
-            }
-        } else {
-            newMovieSearchResponse(cleanTitle, fixUrl(href), TvType.Movie) {
-                this.posterUrl = poster
-                this.year = year
-            }
+ private fun Element.toSearchResult(): SearchResponse? {
+    // PARA CARDS DA BUSCA (como no HTML que você mostrou)
+    
+    // 1. Título vem do atributo "title"
+    val title = this.attr("title") ?: return null
+    
+    // 2. Link
+    val href = this.attr("href") ?: return null
+    
+    // 3. Imagem do poster
+    val img = this.selectFirst("img.card-img")
+    val poster = img?.attr("src")?.let { fixUrl(it) }
+    
+    // 4. Extrai ano do título (ex: "Amy (2015)")
+    val year = Regex("\\((\\d{4})\\)").find(title)?.groupValues?.get(1)?.toIntOrNull()
+    
+    // 5. Limpa o título
+    val cleanTitle = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
+    
+    // 6. Verifica se é série
+    val isSerie = href.contains("/serie/") || 
+                  this.selectFirst("span.badge-kind")?.text()?.contains("SÉRIE", true) == true
+    
+    // 7. Cria o resultado
+    return if (isSerie) {
+        newTvSeriesSearchResponse(cleanTitle, fixUrl(href), TvType.TvSeries) {
+            this.posterUrl = poster
+            this.year = year
+        }
+    } else {
+        newMovieSearchResponse(cleanTitle, fixUrl(href), TvType.Movie) {
+            this.posterUrl = poster
+            this.year = year
         }
     }
-
+}
     // =========================================================================
     // PESQUISA
     // =========================================================================
     override suspend fun search(query: String): List<SearchResponse> {
-        val encodedQuery = java.net.URLEncoder.encode(query, "UTF-8")
-        val searchUrl = "$mainUrl/?s=$encodedQuery"
-        
-        val document = app.get(searchUrl).document
-        val results = mutableListOf<SearchResponse>()
-
-        // Seletores para busca
-        document.select("a.card, .card a").forEach { element ->
-            toSearchResult(element)?.let { results.add(it) }
-        }
-        
-        // Fallback
-        if (results.isEmpty()) {
-            document.select("a[href*='/filme/'], a[href*='/serie/']").forEach { element ->
-                toSearchResult(element)?.let { results.add(it) }
-            }
-        }
-
-        return results.distinctBy { it.url }
+    // Não precisa de URL encode? Vamos testar ambas
+    val searchUrl = "$mainUrl/?s=$query"
+    val document = app.get(searchUrl).document
+    
+    // Seletor CORRETO para SuperFlix (baseado no HTML que você mostrou)
+    return document.select("a.card").mapNotNull {
+        it.toSearchResult()
     }
+}
 
     // =========================================================================
     // CARREGAR DETALHES DO CONTEÚDO
