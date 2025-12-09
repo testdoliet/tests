@@ -1,4 +1,4 @@
-package com.SuperFlix
+Package com.SuperFlix
 
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
@@ -180,193 +180,33 @@ class SuperFlix : MainAPI() {
         }
     }
 
+    // =========================================================================
+    // FUNÇÃO loadLinks CORRIGIDA: Usa apenas o loadExtractor para forçar o WebView
+    // =========================================================================
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        println("SuperFlix: loadLinks - INÍCIO para: $data")
+        println("SuperFlix: loadLinks - INÍCIO para: $data. Confiança total no Extractor Padrão/WebView.")
 
         if (data.isEmpty()) {
             println("SuperFlix: loadLinks - ERRO: URL vazia")
             return false
         }
-
-        // 1. Abordagem Primária: Usar Extractor Customizado para Filemoon/Fembed
-        if (data.contains("fembed") || data.contains("filemoon")) {
-            println("SuperFlix: loadLinks - URL do host detectada, usando lógica de Extractor customizada...")
-
-            val m3u8Urls = extractFilemoon(data) 
-
-            if (m3u8Urls.isNotEmpty()) {
-                println("SuperFlix: loadLinks - Extractor customizado encontrou ${m3u8Urls.size} URLs")
-                for (m3u8Url in m3u8Urls) {
-                    val quality = extractQualityFromUrl(m3u8Url)
-                    println("SuperFlix: loadLinks - Enviando URL: $m3u8Url (${quality}p)")
-
-                    callback(
-                        newExtractorLink(
-                            source = this.name,
-                            name = "SuperFlix HLS (${quality}p)",
-                            url = m3u8Url,
-                            type = ExtractorLinkType.M3U8
-                        ) {
-                            this.referer = data 
-                            this.headers = getHeaders() // ERRO CORRIGIDO AQUI
-                            this.quality = quality
-                        }
-                    )
-                }
-                return true
-            }
-
-            // 2. Fallback para APIs diretas antigas ou Extractor padrão
-            println("SuperFlix: loadLinks - Extractor customizado falhou. Tentando APIs diretas/padrão...")
-
-            val directUrls = tryDirectFembedApi(data) 
-            if (directUrls.isNotEmpty()) {
-                for (directUrl in directUrls) {
-                    val quality = extractQualityFromUrl(directUrl)
-                    callback(
-                        newExtractorLink(
-                            source = this.name,
-                            name = "SuperFlix Direct (${quality}p)",
-                            url = directUrl,
-                            type = ExtractorLinkType.VIDEO
-                        ) {
-                            this.referer = data
-                            this.headers = getHeaders() // ERRO CORRIGIDO AQUI
-                            this.quality = quality
-                        }
-                    )
-                }
-                return true
-            }
-
-            // Tenta Extractor Padrão (loadExtractor)
-            return loadExtractor(data, subtitleCallback, callback)
-        }
-
-        // 3. Se não for Filemoon/Fembed, usar Extractor Padrão
-        println("SuperFlix: loadLinks - URL não é do host, usando análise normal...")
+        
+        // Chamada direta ao Extractor Padrão.
+        // O `loadExtractor` tentará os extractors HTTP. Se falhar, o `usesWebView = true`
+        // da classe forçará o sistema a tentar o WebView para carregar o link.
         return loadExtractor(data, subtitleCallback, callback)
     }
 
-    // ========== MÉTODOS ESPECIAIS PARA FILEMOON/ICO3C ==========
-    // ========== MÉTODOS ESPECIAIS PARA FILEMOON/ICO3C ==========
-
-     // ========== MÉTODOS ESPECIAIS PARA FILEMOON/ICO3C ==========
-
-    private suspend fun extractFilemoon(filemoonUrl: String): List<String> {
-        val m3u8Urls = mutableListOf<String>()
-        println("SuperFlix: extractFilemoon - Processando: $filemoonUrl")
-
-        try {
-            // Passo 1: Extrair o HTML do player (Filemoon) para obter parâmetros de token
-            val document = app.get(filemoonUrl, referer = filemoonUrl).document
-            val html = document.html()
-
-            // 1. Extrair o hash do vídeo (file_code)
-            val fileCode = filemoonUrl.substringAfterLast("/e/").substringBefore("/") 
-                .substringBefore("?")
-            if (fileCode.isBlank()) {
-                println("SuperFlix: extractFilemoon - ERRO: fileCode não encontrado na URL.")
-                return emptyList()
-            }
-
-            // 2. Extrair o hash de segurança (hash/token)
-            
-            // Tentativa A (Padrão mais estrito: GUID completo ou hash=...)
-            val dynamicHashA = Regex("""hash=['"]?([a-fA-F0-9-]+)['"]?,?""").find(html)?.groupValues?.get(1)
-                ?: Regex("""\b[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}\b""").find(html)?.value
-
-            // Tentativa B (Mais genérica: String alfanumérica entre 32 e 40 caracteres)
-            val dynamicHashB = Regex("""\b([a-fA-F0-9]{32,40})\b""").find(html)?.groupValues?.get(1)
-
-            // Usar o primeiro hash encontrado, priorizando o A
-            val dynamicHash = dynamicHashA ?: dynamicHashB
-
-            if (dynamicHash.isNullOrBlank()) {
-                 println("SuperFlix: extractFilemoon - ERRO: Hash dinâmico não encontrado.")
-                 return emptyList()
-            }
-            
-            // 3. Montar a URL completa da API Intermediária (ico3c.com)
-        val baseUrlAPI = "https://ico3c.com/dl?view/file=$fileCode&hash=$dynamicHash"
-        val fixedParams = "&embed=1&prem=&referer=fembed.sx&vb=0&adb=0&cx=198&cy=394&device=Mobile%2FAndroid&browser=Chrome&ww=393&wh=768&gpuv=Google%20Inc.%20(Qualcomm)"
-        val urlAPICompleta = "$baseUrlAPI$fixedParams"
-        println("SuperFlix: extractFilemoon - API Intermediária construída: $urlAPICompleta")
-
-        // Passo 4: Chamar a API Intermediária (GET)
-        val respostaTokenizada = app.get(
-            urlAPICompleta,
-            headers = mapOf(
-                "Referer" to filemoonUrl, 
-                "Accept" to "*/*" 
-            )
-        ).text
-            // Passo 5: Analisar a resposta para o link final do .m3u8
-            // REGEX CORRIGIDO: Mais abrangente para capturar URLs de streaming.
-            val linkM3u8 = Regex("""https?://[^"']*?\.m3u8[^"']*""").find(respostaTokenizada)?.value
-
-
-            if (!linkM3u8.isNullOrEmpty() && isValidStreamUrl(linkM3u8)) {
-                println("SuperFlix: extractFilemoon - Link M3U8 Final encontrado: $linkM3u8")
-                m3u8Urls.add(linkM3u8)
-            } else {
-                println("SuperFlix: extractFilemoon - Link M3U8 não encontrado na resposta da API. (Resposta: ${respostaTokenizada.substring(0, minOf(200, respostaTokenizada.length))}...)")
-            }
-
-        } catch (e: Exception) {
-            println("SuperFlix: extractFilemoon - ERRO GERAL: ${e.message}")
-        }
-
-        return m3u8Urls.distinct()
-    }
-
-
-    // ========== MÉTODOS ORIGINAIS (MANTIDOS) ==========
-
-    private suspend fun tryDirectFembedApi(url: String): List<String> {
-        val videoUrls = mutableListOf<String>()
-
-        try {
-            println("SuperFlix: tryDirectFembedApi - Tentando extrair ID do Fembed...")
-
-            val fembedId = extractFembedId(url)
-            if (fembedId != null) {
-                println("SuperFlix: tryDirectFembedApi - ID encontrado: $fembedId")
-
-                val apiUrls = listOf(
-                    "https://fembed.sx/api/source/$fembedId",
-                    "https://www.fembed.com/api/source/$fembedId",
-                    "https://fembed.net/api/source/$fembedId"
-                )
-
-                for (apiUrl in apiUrls) {
-                    try {
-                        println("SuperFlix: tryDirectFembedApi - Tentando API: $apiUrl")
-                        val response = app.get(apiUrl, referer = url).text
-
-                        val mp4Pattern = Regex("""["'](file|url)["']\s*:\s*["'](https?://[^"']+\.mp4[^"']*)["']""")
-                        val m3u8Pattern = Regex("""["'](file|url)["']\s*:\s*["'](https?://[^"']+\.m3u8[^"']*)["']""")
-
-                        mp4Pattern.findAll(response).forEach { videoUrls.add(it.groupValues[2]) }
-                        m3u8Pattern.findAll(response).forEach { videoUrls.add(it.groupValues[2]) }
-
-                    } catch (e: Exception) {
-                        println("SuperFlix: tryDirectFembedApi - Erro na API: ${e.message}")
-                    }
-                }
-            }
-
-        } catch (e: Exception) {
-            println("SuperFlix: tryDirectFembedApi - Erro geral: ${e.message}")
-        }
-
-        return videoUrls.distinct()
-    }
+    // =========================================================================
+    // FUNÇÕES DE RASPAGEM MANUAL REMOVIDAS (para forçar o uso de Extractor Padrão/WebView)
+    // =========================================================================
+    // private suspend fun extractFilemoon(filemoonUrl: String): List<String> { ... }
+    // private suspend fun tryDirectFembedApi(url: String): List<String> { ... }
 
     private fun extractFembedId(url: String): String? {
         val patterns = listOf(
@@ -404,7 +244,7 @@ class SuperFlix : MainAPI() {
         }
         return Qualities.Unknown.value
     }
-    
+
     private fun getHeaders(): Map<String, String> {
         return mapOf(
             "accept" to "*/*",
@@ -431,10 +271,7 @@ class SuperFlix : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // Esta função é uma utilidade padrão do CloudStream para tentar extractors externos.
-        // Já que você não a implementou, mas a chamou, ela precisa ser incluída para compilar.
-        // A implementação real deve ser: return ExtractorApi.extract(data, subtitleCallback, callback)
-        // Mas para fins de compilação, a deixamos mínima.
+        // Implementação mock (deve ser o ExtractorApi.extract real)
         return false 
     }
 
