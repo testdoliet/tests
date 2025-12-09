@@ -4,7 +4,6 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.LoadResponse.Companion.addActors
 import com.lagradost.cloudstream3.app
-import com.lagradost.cloudstream3.extractors.ExtractorApi // <<== IMPORTAÇÃO CORRIGIDA
 import kotlinx.coroutines.*
 import org.jsoup.nodes.Element
 import java.net.URLEncoder
@@ -16,7 +15,7 @@ class SuperFlix : MainAPI() {
     override var lang = "pt-br"
     override val hasDownloadSupport = true
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries)
-    override val usesWebView = true // <<== ESSENCIAL PARA FEMBED/FILEMOON
+    override val usesWebView = true
 
     override val mainPage = mainPageOf(
         "$mainUrl/filmes" to "Filmes",
@@ -182,7 +181,7 @@ class SuperFlix : MainAPI() {
     }
 
     // =========================================================================
-    // FUNÇÃO loadLinks CORRIGIDA
+    // FUNÇÃO loadLinks CORRIGIDA - Usa a função de extração global
     // =========================================================================
     override suspend fun loadLinks(
         data: String,
@@ -190,8 +189,9 @@ class SuperFlix : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // Chamada correta:
-        return ExtractorApi.extract(data, subtitleCallback, callback)
+        // Chamada correta: Usa a função de extensão 'loadExtractor' disponível
+        // no MainAPI para forçar o uso dos extractors internos do CloudStream.
+        return loadExtractor(data, subtitleCallback, callback)
     }
 
 
