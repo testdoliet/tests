@@ -27,9 +27,9 @@ class SuperFlix : MainAPI() {
     // =========================================================================
     override val mainPage = mainPageOf(
         "$mainUrl/lancamentos" to "Lançamentos",
-        "$mainUrl/filmes" to "Últimos Filmes",
-        "$mainUrl/series" to "Últimas Séries",
-       // "$mainUrl/animes" to "Animes"
+        "$mainUrl/filmes" to "Filmes",
+        "$mainUrl/series" to "Séries",
+        "$mainUrl/animes" to "Animes"
     )
 
     // =========================================================================
@@ -299,9 +299,9 @@ class SuperFlix : MainAPI() {
             // Se não encontrou episódios, criar pelo menos 1
             val finalEpisodes = if (episodes.isEmpty()) {
                 listOf(newEpisode(url) {
-                    name = "Episódio 1"
-                    season = 1
-                    episode = 1
+                    this.name = "Episódio 1"
+                    this.season = 1
+                    this.episode = 1
                 })
             } else {
                 episodes
@@ -325,12 +325,12 @@ class SuperFlix : MainAPI() {
                 // Recomendações
                 this.recommendations = tmdbInfo.recommendations?.map { rec ->
                     if (rec.isMovie) {
-                        newMovieSearchResponse(rec.title ?: "", "") {
+                        newMovieSearchResponse(rec.title ?: "") {
                             this.posterUrl = rec.posterUrl
                             this.year = rec.recYear
                         }
                     } else {
-                        newTvSeriesSearchResponse(rec.title ?: "", "") {
+                        newTvSeriesSearchResponse(rec.title ?: "") {
                             this.posterUrl = rec.posterUrl
                             this.year = rec.recYear
                         }
@@ -357,12 +357,12 @@ class SuperFlix : MainAPI() {
                 // Recomendações
                 this.recommendations = tmdbInfo.recommendations?.map { rec ->
                     if (rec.isMovie) {
-                        newMovieSearchResponse(rec.title ?: "", "") {
+                        newMovieSearchResponse(rec.title ?: "") {
                             this.posterUrl = rec.posterUrl
                             this.year = rec.recYear
                         }
                     } else {
-                        newTvSeriesSearchResponse(rec.title ?: "", "") {
+                        newTvSeriesSearchResponse(rec.title ?: "") {
                             this.posterUrl = rec.posterUrl
                             this.year = rec.recYear
                         }
@@ -393,9 +393,9 @@ class SuperFlix : MainAPI() {
             // Se não encontrou episódios, criar pelo menos 1
             val finalEpisodes = if (episodes.isEmpty()) {
                 listOf(newEpisode(url) {
-                    name = "Episódio 1"
-                    season = 1
-                    episode = 1
+                    this.name = "Episódio 1"
+                    this.season = 1
+                    this.episode = 1
                 })
             } else {
                 episodes
@@ -431,9 +431,9 @@ class SuperFlix : MainAPI() {
                           ?: "Episódio ${index + 1}"
             
             episodes.add(newEpisode(fixUrl(episodeUrl)) {
-                name = episodeTitle.trim()
-                episode = index + 1
-                season = 1
+                this.name = episodeTitle.trim()
+                this.episode = index + 1
+                this.season = 1
             })
         }
         
@@ -444,9 +444,9 @@ class SuperFlix : MainAPI() {
                 val episodeTitle = element.text().takeIf { it.isNotBlank() } ?: "Episódio ${index + 1}"
                 
                 episodes.add(newEpisode(fixUrl(href)) {
-                    name = episodeTitle.trim()
-                    episode = index + 1
-                    season = 1
+                    this.name = episodeTitle.trim()
+                    this.episode = index + 1
+                    this.season = 1
                 })
             }
         }
