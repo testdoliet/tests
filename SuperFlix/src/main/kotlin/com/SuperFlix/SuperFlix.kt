@@ -6,7 +6,6 @@ import com.lagradost.cloudstream3.LoadResponse.Companion.addActors
 import com.lagradost.cloudstream3.app
 import org.jsoup.nodes.Element
 import java.net.URLEncoder
-import kotlinx.coroutines.delay
 
 class SuperFlix : MainAPI() {
     override var mainUrl = "https://superflix21.lol"
@@ -18,7 +17,6 @@ class SuperFlix : MainAPI() {
 
     // Configurações do sniffer
     private val sniffingEnabled = true
-    private val debugNetwork = true
 
     // Padrões para detectar URLs de vídeo
     private val videoPatterns = listOf(
@@ -200,7 +198,7 @@ class SuperFlix : MainAPI() {
         }
 
         // Tentar loadExtractor genérico
-        if (loadExtractor(data, subtitleCallback, callback)) {
+        if (loadExtractor(data, "", subtitleCallback, callback)) {
             return true
         }
 
@@ -215,16 +213,17 @@ class SuperFlix : MainAPI() {
                     val quality = detectQualityFromUrl(videoUrl)
                     val source = detectSourceFromUrl(videoUrl)
                     
-                    // CORREÇÃO AQUI: Usando newExtractorLink corretamente
-                    val extractorLink = newExtractorLink(
+                    // CORREÇÃO: Forma correta de criar ExtractorLink
+                    val extractorLink = ExtractorLink(
                         source = this.name,
                         name = source,
                         url = videoUrl,
                         referer = data,
                         quality = quality,
                         isM3u8 = videoUrl.contains(".m3u8")
-                    ) {}
+                    )
                     
+                    // CORREÇÃO: Usando callback diretamente
                     callback(extractorLink)
                     println("SuperFlix: loadLinks - Link adicionado: $source - Qualidade: $quality")
                 }
@@ -239,7 +238,7 @@ class SuperFlix : MainAPI() {
     // ========== MÉTODOS DE NETWORK SNIFFING ==========
     
     private suspend fun sniffVideoUrls(pageUrl: String): List<String> {
-        val videoUrls = mutableSet<String>()
+        val videoUrls = mutableSetOf<String>()
         
         try {
             println("SuperFlix: sniffVideoUrls - Iniciando sniffing em: $pageUrl")
@@ -389,14 +388,13 @@ class SuperFlix : MainAPI() {
     }
     
     private fun detectQualityFromUrl(url: String): Int {
-        // CORREÇÃO AQUI: Usando valores numéricos diretamente
         return when {
             url.contains("1080") || url.contains("fullhd", ignoreCase = true) -> 1080
             url.contains("720") || url.contains("hd", ignoreCase = true) -> 720
             url.contains("480") || url.contains("sd", ignoreCase = true) -> 480
             url.contains("360") -> 360
             url.contains("240") -> 240
-            else -> 0  // Qualidade desconhecida
+            else -> 0
         }
     }
     
@@ -430,7 +428,7 @@ class SuperFlix : MainAPI() {
         )
     }
     
-    // Métodos auxiliares existentes (mantidos do seu código original)
+    // Métodos auxiliares existentes
     private fun Element.toSearchResult(): SearchResponse? {
         val titleElement = selectFirst(".rec-title, .movie-title, h2, h3, .title, .name")
         val title = titleElement?.text() ?: selectFirst("img")?.attr("alt") ?: return null
