@@ -121,12 +121,6 @@ class SuperFlix : MainAPI() {
     override suspend fun load(url: String): LoadResponse? {
         val document = app.get(url).document
 
-        // Extrair score do site
-        val scoreInt = extractScoreFromSite(document)
-        
-        // Verificar se há score no TMDB (se não tiver no site, usa do TMDB)
-        val tmdbScoreInt = extractTMDBScore(document)
-
         val titleElement = document.selectFirst("h1, .title")
         val title = titleElement?.text() ?: return null
 
@@ -137,11 +131,6 @@ class SuperFlix : MainAPI() {
         val isSerie = url.contains("/serie/") || url.contains("/tv/") ||
                      (!isAnime && document.selectFirst(".episode-list, .season-list, .seasons") != null)
 
-        // Extrair outras informações do site
-        val duration = extractDurationFromSite(document)
-        val tags = extractTagsFromSite(document)
-        val cast = extractCastFromSite(document)
-
         val tmdbInfo = if (isAnime || isSerie) {
             searchOnTMDB(cleanTitle, year, true)
         } else {
@@ -150,122 +139,11 @@ class SuperFlix : MainAPI() {
 
         val siteRecommendations = extractRecommendationsFromSite(document)
 
-        // Converter Int para Score
-        val score = scoreInt?.let { Score(it) }
-        val tmdbScore = tmdbScoreInt?.let { Score(it) }
-        val finalScore = score ?: tmdbScore ?: tmdbInfo?.score
-
         return if (tmdbInfo != null) {
-            createLoadResponseWithTMDB(tmdbInfo, url, document, isAnime, isSerie, siteRecommendations, finalScore, duration, tags, cast)
+            createLoadResponseWithTMDB(tmdbInfo, url, document, isAnime, isSerie, siteRecommendations)
         } else {
-            createLoadResponseFromSite(document, url, cleanTitle, year, isAnime, isSerie, finalScore, duration, tags, cast)
+            createLoadResponseFromSite(document, url, cleanTitle, year, isAnime, isSerie)
         }
-    }
-
-    private fun extractScoreFromSite(document: org.jsoup.nodes.Document): Int? {
-        return try {
-            // Tentar encontrar score em vários locais comuns
-            val scoreSelectors = listOf(
-                ".rating", 
-                ".imdb", 
-                ".score", 
-                ".vote", 
-                "[class*='rating']", 
-                "[class*='imdb']",
-                ".fs-item > .imdb",
-                ".meta-rating",
-                ".value",
-                ".rate",
-                "[itemprop='ratingValue']"
-            )
-            
-            for (selector in scoreSelectors) {
-                document.selectFirst(selector)?.text()?.trim()?.let { scoreText ->
-                    // Extrair números da string (ex: "IMDB: 7.5/10", "8.2", "75%")
-                    val regex = Regex("""(\d+(?:\.\d+)?)""")
-                    val match = regex.find(scoreText)
-                    match?.groupValues?.get(1)?.toFloatOrNull()?.let { scoreValue ->
-                        // Converter para escala 0-10000 (score no CloudStream3)
-                        return when {
-                            scoreText.contains("/10") || scoreText.contains("IMDB") -> 
-                                (scoreValue * 1000).toInt() // 7.5 -> 7500
-                            scoreText.contains("/5") -> 
-                                (scoreValue * 2000).toInt() // 4.5 -> 9000
-                            scoreText.contains("%") -> 
-                                (scoreValue * 100).toInt() // 75% -> 7500
-                            scoreValue <= 1.0 -> 
-                                (scoreValue * 10000).toInt() // 0.75 -> 7500
-                            scoreValue <= 10.0 -> 
-                                (scoreValue * 1000).toInt() // 7.5 -> 7500
-                            scoreValue <= 100.0 -> 
-                                scoreValue.toInt() * 100 // 75 -> 7500
-                            else -> 
-                                scoreValue.toInt() // Já está na escala correta
-                        }
-                    }
-                }
-            }
-            null
-        } catch (e: Exception) {
-            null
-        }
-    }
-
-    private fun extractDurationFromSite(document: org.jsoup.nodes.Document): Int? {
-        return try {
-            document.selectFirst(".duration, .runtime, time, [itemprop='duration']")?.text()?.trim()?.let { durationText ->
-                // Extrair minutos de várias formas: "120 min", "2h 30m", "2:30"
-                val patterns = listOf(
-                    Regex("""(\d+)\s*min"""),
-                    Regex("""(\d+)\s*h"""),
-                    Regex("""(\d+):(\d+)""")
-                )
-                
-                for (pattern in patterns) {
-                    val match = pattern.find(durationText)
-                    if (match != null) {
-                        return when {
-                            durationText.contains("h") && durationText.contains("m") -> {
-                                val hours = match.groupValues[1].toIntOrNull() ?: 0
-                                val minutesMatch = Regex("""(\d+)\s*m""").find(durationText)
-                                val minutes = minutesMatch?.groupValues?.get(1)?.toIntOrNull() ?: 0
-                                hours * 60 + minutes
-                            }
-                            durationText.contains("h") -> {
-                                match.groupValues[1].toIntOrNull()?.times(60)
-                            }
-                            durationText.contains(":") -> {
-                                val hours = match.groupValues[1].toIntOrNull() ?: 0
-                                val minutes = match.groupValues[2].toIntOrNull() ?: 0
-                                hours * 60 + minutes
-                            }
-                            else -> match.groupValues[1].toIntOrNull()
-                        }
-                    }
-                }
-                null
-            }
-        } catch (e: Exception) {
-            null
-        }
-    }
-
-    private fun extractTMDBScore(document: org.jsoup.nodes.Document): Int? {
-        // Esta função pode ser usada para extrair score do TMDB se necessário
-        // Por enquanto retorna null, pois o score já é extraído do TMDB no searchOnTMDB
-        return null
-    }
-
-    private fun extractTagsFromSite(document: org.jsoup.nodes.Document): List<String>? {
-        return document.select("a.chip, .chip, .genre, .tags, .category, a[href*='/genre/'], a[href*='/category/']")
-            .mapNotNull { it.text().trim() }
-            .takeIf { it.isNotEmpty() }
-    }
-
-    private fun extractCastFromSite(document: org.jsoup.nodes.Document): List<String>? {
-        return document.select(".cast-list a, .actors a, .starring a, [class*='cast'] a, [class*='actor'] a")
-            .mapNotNull { it.text().trim() }
-            .takeIf { it.isNotEmpty() }
     }
 
     private suspend fun searchOnTMDB(query: String, year: Int?, isTv: Boolean): TMDBInfo? {
@@ -293,10 +171,6 @@ class SuperFlix : MainAPI() {
                 emptyMap()
             }
 
-            // Extrair score do TMDB (está em escala 0-10, converter para 0-10000)
-            val tmdbScoreInt = details?.vote_average?.let { (it * 1000).toInt() }
-            val tmdbScore = tmdbScoreInt?.let { Score(it) }
-
             val allActors = details?.credits?.cast?.mapNotNull { actor ->
                 if (actor.name.isNotBlank()) {
                     Actor(
@@ -322,8 +196,7 @@ class SuperFlix : MainAPI() {
                 actors = allActors?.take(15),
                 youtubeTrailer = youtubeTrailer,
                 duration = if (!isTv) details?.runtime else null,
-                seasonsEpisodes = seasonEpisodes,
-                score = tmdbScore
+                seasonsEpisodes = seasonEpisodes
             )
         } catch (e: Exception) {
             null
@@ -345,6 +218,8 @@ class SuperFlix : MainAPI() {
         ?.sortedByDescending { it.second }
         ?.firstOrNull()
         ?.let { (key, _, _) ->
+            // SOLUÇÃO: Usar URL completa do YouTube como o TMDB faz
+            // Esta URL permite que o YouTube otimize a qualidade automaticamente
             "https://www.youtube.com/watch?v=$key"
         }
     }
@@ -409,11 +284,7 @@ class SuperFlix : MainAPI() {
         document: org.jsoup.nodes.Document,
         isAnime: Boolean,
         isSerie: Boolean,
-        siteRecommendations: List<SearchResponse>,
-        score: Score?,
-        duration: Int?,
-        tags: List<String>?,
-        cast: List<String>?
+        siteRecommendations: List<SearchResponse>
     ): LoadResponse {
         return if (isAnime || isSerie) {
             val episodes = extractEpisodesWithTMDBInfo(
@@ -436,19 +307,10 @@ class SuperFlix : MainAPI() {
                 this.backgroundPosterUrl = tmdbInfo.backdropUrl
                 this.year = tmdbInfo.year
                 this.plot = tmdbInfo.overview
-                this.tags = tags ?: tmdbInfo.genres
-                this.score = score ?: tmdbInfo.score
-                
-                // Usar duração do site ou do TMDB
-                this.duration = duration ?: tmdbInfo.duration
-                
-                // Adicionar elenco do site ou do TMDB
-                if (cast != null && cast.isNotEmpty()) {
-                    addActors(cast.map { Actor(it) })
-                } else {
-                    tmdbInfo.actors?.let { actors ->
-                        addActors(actors)
-                    }
+                this.tags = tmdbInfo.genres
+
+                tmdbInfo.actors?.let { actors ->
+                    addActors(actors)
                 }
 
                 tmdbInfo.youtubeTrailer?.let { trailerUrl ->
@@ -470,19 +332,11 @@ class SuperFlix : MainAPI() {
                 this.backgroundPosterUrl = tmdbInfo.backdropUrl
                 this.year = tmdbInfo.year
                 this.plot = tmdbInfo.overview
-                this.tags = tags ?: tmdbInfo.genres
-                this.score = score ?: tmdbInfo.score
-                
-                // Usar duração do site ou do TMDB
-                this.duration = duration ?: tmdbInfo.duration
-                
-                // Adicionar elenco do site ou do TMDB
-                if (cast != null && cast.isNotEmpty()) {
-                    addActors(cast.map { Actor(it) })
-                } else {
-                    tmdbInfo.actors?.let { actors ->
-                        addActors(actors)
-                    }
+                this.tags = tmdbInfo.genres
+                this.duration = tmdbInfo.duration
+
+                tmdbInfo.actors?.let { actors ->
+                    addActors(actors)
                 }
 
                 tmdbInfo.youtubeTrailer?.let { trailerUrl ->
@@ -677,11 +531,7 @@ class SuperFlix : MainAPI() {
         title: String,
         year: Int?,
         isAnime: Boolean,
-        isSerie: Boolean,
-        score: Score?,
-        duration: Int?,
-        tags: List<String>?,
-        cast: List<String>?
+        isSerie: Boolean
     ): LoadResponse {
         val ogImage = document.selectFirst("meta[property='og:image']")?.attr("content")
         val poster = ogImage?.let { fixUrl(it) }
@@ -689,6 +539,9 @@ class SuperFlix : MainAPI() {
         val description = document.selectFirst("meta[name='description']")?.attr("content")
         val synopsis = document.selectFirst(".syn, .description, .sinopse, .plot")?.text()
         val plot = description ?: synopsis
+
+        val tags = document.select("a.chip, .chip, .genre, .tags").map { it.text() }
+            .takeIf { it.isNotEmpty() }?.toList()
 
         val siteRecommendations = extractRecommendationsFromSite(document)
 
@@ -701,14 +554,6 @@ class SuperFlix : MainAPI() {
                 this.year = year
                 this.plot = plot
                 this.tags = tags
-                this.score = score
-                this.duration = duration
-                
-                // Adicionar elenco se disponível
-                cast?.let {
-                    addActors(it.map { actorName -> Actor(actorName) })
-                }
-
                 this.recommendations = siteRecommendations.takeIf { it.isNotEmpty() }
             }
         } else {
@@ -718,14 +563,6 @@ class SuperFlix : MainAPI() {
                 this.year = year
                 this.plot = plot
                 this.tags = tags
-                this.score = score
-                this.duration = duration
-                
-                // Adicionar elenco se disponível
-                cast?.let {
-                    addActors(it.map { actorName -> Actor(actorName) })
-                }
-
                 this.recommendations = siteRecommendations.takeIf { it.isNotEmpty() }
             }
         }
@@ -760,8 +597,7 @@ class SuperFlix : MainAPI() {
         val actors: List<Actor>?,
         val youtubeTrailer: String?,
         val duration: Int?,
-        val seasonsEpisodes: Map<Int, List<TMDBEpisode>> = emptyMap(),
-        val score: Score? = null
+        val seasonsEpisodes: Map<Int, List<TMDBEpisode>> = emptyMap()
     )
 
     private data class TMDBEpisode(
@@ -792,8 +628,7 @@ class SuperFlix : MainAPI() {
         @JsonProperty("runtime") val runtime: Int?,
         @JsonProperty("genres") val genres: List<TMDBGenre>?,
         @JsonProperty("credits") val credits: TMDBCredits?,
-        @JsonProperty("videos") val videos: TMDBVideos?,
-        @JsonProperty("vote_average") val vote_average: Float?
+        @JsonProperty("videos") val videos: TMDBVideos?
     )
 
     private data class TMDBTVDetailsResponse(
