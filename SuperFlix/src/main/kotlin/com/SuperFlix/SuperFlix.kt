@@ -175,76 +175,45 @@ class SuperFlix : MainAPI() {
         }
     }
 
-    // =========================================================================
-    // BUSCA NO TMDB (API DIRETA) - MELHORADA
-    // =========================================================================
-    private suspend fun searchOnTMDB(query: String, year: Int?, isTv: Boolean): TMDBInfo? {
-        return try {
-            val type = if (isTv) "tv" else "movie"
-            val encodedQuery = java.net.URLEncoder.encode(query, "UTF-8")
-            val yearParam = year?.let { "&year=$it" } ?: ""
+ // =========================================================================
+// BUSCA NO TMDB (API DIRETA) - MELHORADA COM SUPORTE PARA JAPONÊS
+// =========================================================================
+private suspend fun searchOnTMDB(query: String, year: Int?, isTv: Boolean): TMDBInfo? {
+    return try {
+        val type = if (isTv) "tv" else "movie"
+        val encodedQuery = java.net.URLEncoder.encode(query, "UTF-8")
+        val yearParam = year?.let { "&year=$it" } ?: ""
 
-            val searchUrl = "$tmdbBaseUrl/search/$type?" +
-                           "api_key=$tmdbApiKey" +
-                           "&language=pt-BR" +
-                           "&query=$encodedQuery" +
-                           yearParam +
-                           "&page=1"
+        val searchUrl = "$tmdbBaseUrl/search/$type?" +
+                       "api_key=$tmdbApiKey" +
+                       "&language=pt-BR" +
+                       "&query=$encodedQuery" +
+                       yearParam +
+                       "&page=1"
 
-            println("🔍 TMDB: Buscando '$query' ($type)")
-            val response = app.get(searchUrl, timeout = 10_000)
-            val searchResult = response.parsedSafe<TMDBSearchResponse>()
+        println("🔍 TMDB: Buscando '$query' ($type)")
+        val response = app.get(searchUrl, timeout = 10_000)
+        val searchResult = response.parsedSafe<TMDBSearchResponse>()
 
-            val result = searchResult?.results?.firstOrNull()
-            if (result == null) {
-                println("❌ TMDB: Nenhum resultado para '$query'")
-                return null
-            }
-
-            println("✅ TMDB: Encontrado '${if (isTv) result.name else result.title}' (ID: ${result.id})")
-
-            // Busca detalhes completos
-            val details = getTMDBDetails(result.id, isTv)
-
-            // Busca informações de temporadas para séries
-            val seasonEpisodes = if (isTv && details != null) {
-                getTMDBAllSeasons(result.id)
-            } else {
-                emptyMap()
-            }
-
-            TMDBInfo(
-                id = result.id,
-                title = if (isTv) result.name else result.title,
-                year = if (isTv) result.first_air_date?.substring(0, 4)?.toIntOrNull()
-                      else result.release_date?.substring(0, 4)?.toIntOrNull(),
-                posterUrl = result.poster_path?.let { "$tmdbImageUrl/w500$it" },
-                backdropUrl = details?.backdrop_path?.let { "$tmdbImageUrl/original$it" },
-                overview = details?.overview,
-                genres = details?.genres?.map { it.name },
-                actors = details?.credits?.cast?.map { actor ->
-                    Actor(actor.name, actor.profile_path?.let { "$tmdbImageUrl/w185$it" })
-                },
-                youtubeTrailer = details?.videos?.results
-                    ?.find { it.site == "YouTube" && (it.type == "Trailer" || it.type == "Teaser") }
-                    ?.key,
-                duration = if (!isTv) details?.runtime else null,
-                recommendations = details?.recommendations?.results?.take(5)?.map { rec ->
-                    TMDBRecommendation(
-                        title = if (isTv) rec.name else rec.title,
-                        posterUrl = rec.poster_path?.let { "$tmdbImageUrl/w500$it" },
-                        year = if (isTv) rec.first_air_date?.substring(0, 4)?.toIntOrNull()
-                              else rec.release_date?.substring(0, 4)?.toIntOrNull(),
-                        isMovie = !isTv
-                    )
-                },
-                seasonsEpisodes = seasonEpisodes
-            )
-        } catch (e: Exception) {
-            println("❌ TMDB: Erro na busca - ${e.message}")
-            null
+        val result = searchResult?.results?.firstOrNull()
+        if (result == null) {
+            println("❌ TMDB: Nenhum resultado para '$query'")
+            return null
         }
-    }
+
+        println("✅ TMDB: Encontrado '${if (isTv) result.name else result.title}' (ID: ${result.id})")
+
+        // Verifica se é anime pelo título ou tipo
+        val isAnime = query.contains("(Anime)", ignoreCase = true) || 
+                     type == "tv" && (query.contains("anime", ignoreCase = true) || 
+                     result.name?.contains("Anime") == true || 
+                     result.title?.contains("Anime") == true)
+
+        // Busca detalhes completos em português primeiro
+        val details = getTMDBDetails(result.id, isTv, false)
+
+        // Para animes, tenta buscar também em japonês para nomes originais
+        val
 
     // =========================================================================
     // DETALHES DO TMDB COM TODOS OS ATORES
