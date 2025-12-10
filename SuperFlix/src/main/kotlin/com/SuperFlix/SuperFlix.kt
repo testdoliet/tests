@@ -550,74 +550,59 @@ class SuperFlix : MainAPI() {
             this.posterUrl = tmdbEpisode?.still_path?.let { "$tmdbImageUrl/w300$it" } ?:
                             element.selectFirst("img")?.attr("src")?.let { fixUrl(it) }
 
-            // Adicionar timestamps para pular abertura se disponíveis
+            val descriptionBuilder = StringBuilder()
+            
+            // Adicionar informação de skip no description se disponível
             skipInfo?.let { info ->
                 info.startTime?.let { startTime ->
                     info.endTime?.let { endTime ->
                         if (startTime >= 0 && endTime > startTime) {
-                            // Adicionar skipTime para pular abertura
-                            this.skipTime = com.lagradost.cloudstream3.SkipTime(
-                                startTime = startTime.toInt(),
-                                endTime = endTime.toInt(),
-                                type = info.skipType ?: "op"
-                            )
-                            
-                            // Adicionar informação no description se for abertura
-                            val descriptionBuilder = StringBuilder()
-                            if (info.skipType == "op" || info.skipType == "mixed-op") {
-                                descriptionBuilder.append("⏭️ Abertura: ${startTime.toInt()}s - ${endTime.toInt()}s\n\n")
+                            val skipTypeText = when (info.skipType) {
+                                "op" -> "Abertura"
+                                "ed" -> "Encerramento"
+                                "mixed-op" -> "Abertura Mista"
+                                else -> "Skip"
                             }
-                            
-                            // Adicionar descrição do TMDB se disponível
-                            tmdbEpisode?.overview?.let { overview ->
-                                descriptionBuilder.append(overview)
-                            }
-                            
-                            this.description = descriptionBuilder.toString().takeIf { it.isNotEmpty() }
+                            descriptionBuilder.append("⏭️ $skipTypeText: ${startTime.toInt()}s - ${endTime.toInt()}s\n\n")
                         }
                     }
                 }
             }
-
-            // Se não tiver skipInfo, construir a descrição normalmente
-            if (this.description == null) {
-                val descriptionBuilder = StringBuilder()
-                
-                // Adicionar descrição do TMDB se disponível
-                tmdbEpisode?.overview?.let { overview ->
-                    descriptionBuilder.append(overview)
-                }
-
-                tmdbEpisode?.air_date?.let { airDate ->
-                    try {
-                        val dateFormatter = SimpleDateFormat("yyyy-MM-dd")
-                        val date = dateFormatter.parse(airDate)
-                        this.date = date.time
-                    } catch (e: Exception) {
-                    }
-                }
-
-                val duration = when {
-                    isAnime -> tmdbEpisode?.runtime ?: 24
-                    else -> tmdbEpisode?.runtime ?: 0
-                }
-
-                if (duration > 0 && descriptionBuilder.isNotEmpty()) {
-                    descriptionBuilder.append("\n\n- ${duration}min")
-                } else if (duration > 0) {
-                    descriptionBuilder.append("- ${duration}min")
-                }
-
-                if ((isSerie || isAnime) && descriptionBuilder.isEmpty()) {
-                    element.selectFirst(".ep-desc, .description, .synopsis")?.text()?.trim()?.let { siteDescription ->
-                        if (siteDescription.isNotBlank()) {
-                            descriptionBuilder.append(siteDescription)
-                        }
-                    }
-                }
-
-                this.description = descriptionBuilder.toString().takeIf { it.isNotEmpty() }
+            
+            // Adicionar descrição do TMDB se disponível
+            tmdbEpisode?.overview?.let { overview ->
+                descriptionBuilder.append(overview)
             }
+
+            tmdbEpisode?.air_date?.let { airDate ->
+                try {
+                    val dateFormatter = SimpleDateFormat("yyyy-MM-dd")
+                    val date = dateFormatter.parse(airDate)
+                    this.date = date.time
+                } catch (e: Exception) {
+                }
+            }
+
+            val duration = when {
+                isAnime -> tmdbEpisode?.runtime ?: 24
+                else -> tmdbEpisode?.runtime ?: 0
+            }
+
+            if (duration > 0 && descriptionBuilder.isNotEmpty()) {
+                descriptionBuilder.append("\n\n- ${duration}min")
+            } else if (duration > 0) {
+                descriptionBuilder.append("- ${duration}min")
+            }
+
+            if ((isSerie || isAnime) && descriptionBuilder.isEmpty()) {
+                element.selectFirst(".ep-desc, .description, .synopsis")?.text()?.trim()?.let { siteDescription ->
+                    if (siteDescription.isNotBlank()) {
+                        descriptionBuilder.append(siteDescription)
+                    }
+                }
+            }
+
+            this.description = descriptionBuilder.toString().takeIf { it.isNotEmpty() }
         }
     }
 
