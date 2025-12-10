@@ -178,14 +178,15 @@ class SuperFlix : MainAPI() {
 
             println("✅ TMDB: Encontrado '${if (isTv) result.name else result.title}' (ID: ${result.id})")
 
-            val details = getTMDBDetails(result.id, isTv)
+            val details = getTMDBDetailsWithFullCredits(result.id, isTv)
             val seasonEpisodes = if (isTv && details != null) {
                 getTMDBAllSeasons(result.id)
             } else {
                 emptyMap()
             }
 
-            val actors = details?.credits?.cast?.mapNotNull { actor ->
+            // Pega TODOS os atores do TMDB (até 15 principais)
+            val allActors = details?.credits?.cast?.mapNotNull { actor ->
                 if (actor.name.isNotBlank()) {
                     Actor(
                         name = actor.name,
@@ -196,6 +197,9 @@ class SuperFlix : MainAPI() {
                 }
             }
 
+            // DEBUG: Mostra quantos atores foram encontrados
+            println("🎭 TMDB: Encontrados ${allActors?.size ?: 0} atores para '${if (isTv) result.name else result.title}'")
+
             TMDBInfo(
                 id = result.id,
                 title = if (isTv) result.name else result.title,
@@ -205,7 +209,7 @@ class SuperFlix : MainAPI() {
                 backdropUrl = details?.backdrop_path?.let { "$tmdbImageUrl/original$it" },
                 overview = details?.overview,
                 genres = details?.genres?.map { it.name },
-                actors = actors,
+                actors = allActors?.take(15), // Mostra os 15 primeiros atores (mais importantes)
                 youtubeTrailer = details?.videos?.results
                     ?.find { it.site == "YouTube" && (it.type == "Trailer" || it.type == "Teaser") }
                     ?.key,
@@ -227,7 +231,7 @@ class SuperFlix : MainAPI() {
         }
     }
 
-    private suspend fun getTMDBDetails(id: Int, isTv: Boolean): TMDBDetailsResponse? {
+    private suspend fun getTMDBDetailsWithFullCredits(id: Int, isTv: Boolean): TMDBDetailsResponse? {
         return try {
             val type = if (isTv) "tv" else "movie"
             val url = "$tmdbBaseUrl/$type/$id?" +
@@ -235,7 +239,14 @@ class SuperFlix : MainAPI() {
                      "&language=pt-BR" +
                      "&append_to_response=credits,videos,recommendations"
 
-            app.get(url, timeout = 10_000).parsedSafe<TMDBDetailsResponse>()
+            val response = app.get(url, timeout = 10_000)
+            val details = response.parsedSafe<TMDBDetailsResponse>()
+            
+            // DEBUG: Verifica quantos atores foram retornados
+            val actorCount = details?.credits?.cast?.size ?: 0
+            println("🎭 TMDB Detalhes: $actorCount atores retornados para ID $id")
+            
+            details
         } catch (e: Exception) {
             println("❌ TMDB: Erro nos detalhes - ${e.message}")
             null
@@ -314,6 +325,7 @@ class SuperFlix : MainAPI() {
                 this.tags = tmdbInfo.genres
 
                 tmdbInfo.actors?.let { actors ->
+                    println("🎭 SuperFlix: Adicionando ${actors.size} atores do TMDB")
                     addActors(actors)
                 }
 
@@ -353,6 +365,7 @@ class SuperFlix : MainAPI() {
                 this.duration = tmdbInfo.duration
 
                 tmdbInfo.actors?.let { actors ->
+                    println("🎭 SuperFlix: Adicionando ${actors.size} atores do TMDB")
                     addActors(actors)
                 }
 
@@ -484,28 +497,27 @@ class SuperFlix : MainAPI() {
                 descriptionBuilder.append(overview)
             }
 
+            // Adiciona data de lançamento (não adiciona na descrição, apenas usa this.date)
             tmdbEpisode?.air_date?.let { airDate ->
                 try {
                     val dateFormatter = SimpleDateFormat("yyyy-MM-dd")
                     val date = dateFormatter.parse(airDate)
                     this.date = date.time
-
-                    val displayDate = SimpleDateFormat("dd/MM/yyyy").format(date)
-                    if (descriptionBuilder.isNotEmpty()) descriptionBuilder.append("\n\n")
-                    descriptionBuilder.append("📅 Lançado em: $displayDate")
                 } catch (e: Exception) {
-                    if (descriptionBuilder.isNotEmpty()) descriptionBuilder.append("\n\n")
-                    descriptionBuilder.append("📅 Lançado em: $airDate")
+                    // Apenas ignora erro de parsing
                 }
             }
 
-            if (isAnime) {
-                val duration = tmdbEpisode?.runtime ?: 24
-                if (descriptionBuilder.isNotEmpty()) descriptionBuilder.append("\n")
-                descriptionBuilder.append("⏱️ Duração: ${duration}min")
-            } else if (tmdbEpisode?.runtime != null && tmdbEpisode.runtime > 0) {
-                if (descriptionBuilder.isNotEmpty()) descriptionBuilder.append("\n")
-                descriptionBuilder.append("⏱️ Duração: ${tmdbEpisode.runtime}min")
+            // Adiciona duração de forma limpa no final da descrição
+            val duration = when {
+                isAnime -> tmdbEpisode?.runtime ?: 24
+                else -> tmdbEpisode?.runtime ?: 0
+            }
+            
+            if (duration > 0 && descriptionBuilder.isNotEmpty()) {
+                descriptionBuilder.append("\n\n- ${duration}min")
+            } else if (duration > 0) {
+                descriptionBuilder.append("- ${duration}min")
             }
 
             if ((isSerie || isAnime) && descriptionBuilder.isEmpty()) {
