@@ -21,9 +21,9 @@ jobs:
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
-          java-version: '17'
-          distribution: 'temurin'
-          cache: 'gradle'
+          java-version: "17"
+          distribution: "temurin"
+          cache: "gradle"
 
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
@@ -35,25 +35,29 @@ jobs:
         run: ./gradlew makePluginsJson -PoutputFile="build/plugins.json"
 
       - name: Move, Fix URLs and Create repo.json
+        env:
+          GITHUB_REPO: ${{ github.repository }}
         run: |
-          GITHUB_REPO="${{ github.repository }}" 
-
-          # Base RAW para downloads
+          # Diretório RAW das builds
           REPO_BASE_URL="https://raw.githubusercontent.com/${GITHUB_REPO}/refs/heads/main/builds"
 
           mkdir -p builds
           mv build/plugins.json builds/plugins.json
 
-          # Escapa URL para sed
+          # Escapa URL para usar no sed
           REPO_BASE_URL_ESCAPED=$(echo "$REPO_BASE_URL" | sed 's/\//\\\//g')
 
-          # Corrige URLs .cs3
-          sed -i -E 's|"url": "[^"]*/([^/]+)\.cs3"|"url": "'"$REPO_BASE_URL_ESCAPED"'/\1.cs3"|g' builds/plugins.json
+          # Corrige URLs de .cs3
+          sed -i -E \
+            's|"url": "[^"]*/([^/]+)\.cs3"|"url": "'"$REPO_BASE_URL_ESCAPED"'/\1.cs3"|g' \
+            builds/plugins.json
 
-          # Corrige URLs .jar
-          sed -i -E 's|"jarUrl": "[^"]*/([^/]+)\.jar"|"jarUrl": "'"$REPO_BASE_URL_ESCAPED"'/\1.jar"|g' builds/plugins.json
+          # Corrige URLs de .jar
+          sed -i -E \
+            's|"jarUrl": "[^"]*/([^/]+)\.jar"|"jarUrl": "'"$REPO_BASE_URL_ESCAPED"'/\1.jar"|g' \
+            builds/plugins.json
 
-          # Cria repo.json usando sua foto do GitHub
+          # Cria repo.json (ATENÇÃO: NADA de espaço depois do EOF)
           cat > builds/repo.json <<EOF
 {
   "name": "lietrepo",
@@ -64,7 +68,7 @@ jobs:
 }
 EOF
 
-          # Copia builds
+          # Copia arquivos compilados
           find . -type f -name "*.cs3" -exec cp {} builds/ \; || true
           find . -type f -name "*.jar" -exec cp {} builds/ \; || true
 
