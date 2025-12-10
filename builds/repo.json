@@ -1,6 +1,0 @@
-{
-  "name": "CloudStream Brasil Repo",
-  "description": "Repositório Brasileiro de Provedores CloudStream",
-  "manifestVersion": 1,
-  "pluginLists": ["https://github.com/euluan1912/cloudstream-brazil-providers/raw/refs/heads/main/builds/plugins.json"]
-}
