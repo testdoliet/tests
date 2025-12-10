@@ -47,7 +47,7 @@ class SuperFlix : MainAPI() {
         val localPoster = selectFirst("img")?.attr("src")?.let { fixUrl(it) }
         val year = Regex("\\((\\d{4})\\)").find(title)?.groupValues?.get(1)?.toIntOrNull()
         val cleanTitle = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
-        
+
         val badge = selectFirst(".badge-kind")?.text()?.lowercase() ?: ""
         val isAnime = badge.contains("anime") || href.contains("/anime/") || 
                       title.contains("(Anime)", ignoreCase = true)
@@ -127,7 +127,7 @@ class SuperFlix : MainAPI() {
 
         val year = Regex("\\((\\d{4})\\)").find(title)?.groupValues?.get(1)?.toIntOrNull()
         val cleanTitle = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
-        
+
         val isAnime = url.contains("/anime/") || title.contains("(Anime)", ignoreCase = true)
         val isSerie = url.contains("/serie/") || url.contains("/tv/") || 
                      (!isAnime && document.selectFirst(".episode-list, .season-list, .seasons") != null)
@@ -185,12 +185,11 @@ class SuperFlix : MainAPI() {
                 emptyMap()
             }
 
-            // Pega TODOS os atores do TMDB com nomes romanizados
             val actors = details?.credits?.cast?.mapNotNull { actor ->
                 if (actor.name.isNotBlank()) {
                     Actor(
-                        name = actor.name, // Nome romanizado (ex: "Koutaro Nishiyama")
-                       image = actor.profile_path?.let { "$tmdbImageUrl/w185$it" }
+                        name = actor.name,
+                        image = actor.profile_path?.let { "$tmdbImageUrl/w185$it" }
                     )
                 } else {
                     null
@@ -253,7 +252,7 @@ class SuperFlix : MainAPI() {
             val seriesDetails = seriesResponse.parsedSafe<TMDBTVDetailsResponse>()
 
             val seasonsEpisodes = mutableMapOf<Int, List<TMDBEpisode>>()
-            
+
             seriesDetails?.seasons?.forEach { season ->
                 if (season.season_number > 0) {
                     val seasonNumber = season.season_number
@@ -296,7 +295,8 @@ class SuperFlix : MainAPI() {
                 document = document,
                 url = url,
                 tmdbInfo = tmdbInfo,
-                isAnime = isAnime
+                isAnime = isAnime,
+                isSerie = isSerie
             )
 
             val type = if (isAnime) TvType.Anime else TvType.TvSeries
@@ -314,9 +314,7 @@ class SuperFlix : MainAPI() {
                 this.tags = tmdbInfo.genres
 
                 tmdbInfo.actors?.let { actors ->
-                    // Ordena atores por ordem do TMDB (mais importantes primeiro)
-                    val sortedActors = actors.sortedBy { it.role?.contains("(voice)") == true }
-                    addActors(sortedActors)
+                    addActors(actors)
                 }
 
                 tmdbInfo.youtubeTrailer?.let { trailerKey ->
@@ -384,7 +382,8 @@ class SuperFlix : MainAPI() {
         document: org.jsoup.nodes.Document,
         url: String,
         tmdbInfo: TMDBInfo?,
-        isAnime: Boolean
+        isAnime: Boolean,
+        isSerie: Boolean = false
     ): List<Episode> {
         val episodes = mutableListOf<Episode>()
 
@@ -407,7 +406,8 @@ class SuperFlix : MainAPI() {
                         episodeNumber = epNumber,
                         element = element,
                         tmdbEpisode = tmdbEpisode,
-                        isAnime = isAnime
+                        isAnime = isAnime,
+                        isSerie = isSerie
                     )
 
                     episodes.add(episode)
@@ -433,7 +433,8 @@ class SuperFlix : MainAPI() {
                         episodeNumber = epNumber,
                         element = element,
                         tmdbEpisode = tmdbEpisode,
-                        isAnime = isAnime
+                        isAnime = isAnime,
+                        isSerie = isSerie
                     )
 
                     episodes.add(episode)
@@ -463,7 +464,8 @@ class SuperFlix : MainAPI() {
         episodeNumber: Int,
         element: Element,
         tmdbEpisode: TMDBEpisode?,
-        isAnime: Boolean
+        isAnime: Boolean,
+        isSerie: Boolean = false
     ): Episode {
         return newEpisode(fixUrl(dataUrl)) {
             this.name = tmdbEpisode?.name ?:
@@ -506,6 +508,14 @@ class SuperFlix : MainAPI() {
                 descriptionBuilder.append("⏱️ Duração: ${tmdbEpisode.runtime}min")
             }
 
+            if ((isSerie || isAnime) && descriptionBuilder.isEmpty()) {
+                element.selectFirst(".ep-desc, .description, .synopsis")?.text()?.trim()?.let { siteDescription ->
+                    if (siteDescription.isNotBlank()) {
+                        descriptionBuilder.append(siteDescription)
+                    }
+                }
+            }
+
             this.description = descriptionBuilder.toString().takeIf { it.isNotEmpty() }
         }
     }
@@ -530,7 +540,7 @@ class SuperFlix : MainAPI() {
 
         return if (isAnime || isSerie) {
             val type = if (isAnime) TvType.Anime else TvType.TvSeries
-            val episodes = extractEpisodesWithTMDBInfo(document, url, null, isAnime)
+            val episodes = extractEpisodesWithTMDBInfo(document, url, null, isAnime, isSerie)
 
             newTvSeriesLoadResponse(title, url, type, episodes) {
                 this.posterUrl = poster
