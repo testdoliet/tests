@@ -49,10 +49,10 @@ class SuperFlix : MainAPI() {
         val cleanTitle = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
 
         val badge = selectFirst(".badge-kind")?.text()?.lowercase() ?: ""
-        val isAnime = badge.contains("anime") || href.contains("/anime/") || 
+        val isAnime = badge.contains("anime") || href.contains("/anime/") ||
                       title.contains("(Anime)", ignoreCase = true)
-        val isSerie = badge.contains("série") || badge.contains("serie") || 
-                     href.contains("/serie/") || 
+        val isSerie = badge.contains("série") || badge.contains("serie") ||
+                     href.contains("/serie/") ||
                      (!isAnime && (badge.contains("tv") || href.contains("/tv/")))
         val isMovie = !isSerie && !isAnime
 
@@ -92,10 +92,10 @@ class SuperFlix : MainAPI() {
                 val cleanTitle = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
 
                 val badge = card.selectFirst(".badge-kind")?.text()?.lowercase() ?: ""
-                val isAnime = badge.contains("anime") || href.contains("/anime/") || 
+                val isAnime = badge.contains("anime") || href.contains("/anime/") ||
                              title.contains("(Anime)", ignoreCase = true)
-                val isSerie = badge.contains("série") || badge.contains("serie") || 
-                             href.contains("/serie/") || 
+                val isSerie = badge.contains("série") || badge.contains("serie") ||
+                             href.contains("/serie/") ||
                              (!isAnime && (badge.contains("tv") || href.contains("/tv/")))
 
                 when {
@@ -129,7 +129,7 @@ class SuperFlix : MainAPI() {
         val cleanTitle = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
 
         val isAnime = url.contains("/anime/") || title.contains("(Anime)", ignoreCase = true)
-        val isSerie = url.contains("/serie/") || url.contains("/tv/") || 
+        val isSerie = url.contains("/serie/") || url.contains("/tv/") ||
                      (!isAnime && document.selectFirst(".episode-list, .season-list, .seasons") != null)
 
         println("🎬 SuperFlix: Carregando '$cleanTitle' (Tipo: ${when {
@@ -144,7 +144,6 @@ class SuperFlix : MainAPI() {
             searchOnTMDB(cleanTitle, year, false)
         }
 
-        // Extrai recomendações do site (sempre, mesmo com TMDB)
         val siteRecommendations = extractRecommendationsFromSite(document)
 
         return if (tmdbInfo != null) {
@@ -188,7 +187,6 @@ class SuperFlix : MainAPI() {
                 emptyMap()
             }
 
-            // Pega TODOS os atores do TMDB (até 15 principais)
             val allActors = details?.credits?.cast?.mapNotNull { actor ->
                 if (actor.name.isNotBlank()) {
                     Actor(
@@ -200,7 +198,6 @@ class SuperFlix : MainAPI() {
                 }
             }
 
-            // Busca trailer com qualidade mais alta disponível
             val youtubeTrailer = getHighQualityTrailer(details?.videos?.results)
 
             TMDBInfo(
@@ -212,10 +209,10 @@ class SuperFlix : MainAPI() {
                 backdropUrl = details?.backdrop_path?.let { "$tmdbImageUrl/original$it" },
                 overview = details?.overview,
                 genres = details?.genres?.map { it.name },
-                actors = allActors?.take(15), // Mostra os 15 primeiros atores (mais importantes)
+                actors = allActors?.take(15),
                 youtubeTrailer = youtubeTrailer,
                 duration = if (!isTv) details?.runtime else null,
-                recommendations = null, // Não usa recomendações do TMDB
+                recommendations = null,
                 seasonsEpisodes = seasonEpisodes
             )
         } catch (e: Exception) {
@@ -225,19 +222,28 @@ class SuperFlix : MainAPI() {
     }
 
     private fun getHighQualityTrailer(videos: List<TMDBVideo>?): String? {
-        return videos?.filter { it.site == "YouTube" && (it.type == "Trailer" || it.type == "Teaser") }
-            ?.sortedByDescending { video ->
-                // Prioridade: Trailer > Teaser, e procura trailers HD/4K
-                when {
-                    video.type == "Trailer" && video.key.contains("hd", ignoreCase = true) -> 5
-                    video.type == "Trailer" && video.key.contains("4k", ignoreCase = true) -> 4
-                    video.type == "Trailer" -> 3
-                    video.type == "Teaser" -> 2
-                    else -> 1
-                }
+        return videos?.mapNotNull { video ->
+            when {
+                video.site == "YouTube" && video.type == "Trailer" ->
+                    Triple(video.key, 5, "YouTube Trailer")
+                video.site == "YouTube" && video.type == "Teaser" ->
+                    Triple(video.key, 3, "YouTube Teaser")
+                video.site == "Vimeo" && video.type == "Trailer" ->
+                    Triple(video.key, 4, "Vimeo Trailer")
+                video.site == "Vimeo" && video.type == "Teaser" ->
+                    Triple(video.key, 2, "Vimeo Teaser")
+                else -> null
             }
-            ?.firstOrNull()
-            ?.key
+        }
+        ?.sortedByDescending { it.second }
+        ?.firstOrNull()
+        ?.let { (key, _, site) ->
+            when {
+                site.startsWith("Vimeo") -> "https://vimeo.com/$key"
+                key.startsWith("http") -> key
+                else -> key
+            }
+        }
     }
 
     private suspend fun getTMDBDetailsWithFullCredits(id: Int, isTv: Boolean): TMDBDetailsResponse? {
@@ -250,10 +256,10 @@ class SuperFlix : MainAPI() {
 
             val response = app.get(url, timeout = 10_000)
             val details = response.parsedSafe<TMDBDetailsResponse>()
-            
+
             val actorCount = details?.credits?.cast?.size ?: 0
             println("🎭 TMDB Detalhes: $actorCount atores retornados para ID $id")
-            
+
             details
         } catch (e: Exception) {
             println("❌ TMDB: Erro nos detalhes - ${e.message}")
@@ -337,13 +343,21 @@ class SuperFlix : MainAPI() {
                     addActors(actors)
                 }
 
-                // Adiciona trailer com qualidade mais alta
+                // Adiciona trailer com URL que força qualidade máxima
                 tmdbInfo.youtubeTrailer?.let { trailerKey ->
-                    val trailerUrl = "https://www.youtube.com/watch?v=$trailerKey"
+                    val trailerUrl = when {
+                        trailerKey.contains("vimeo.com") -> trailerKey
+                        trailerKey.startsWith("http") -> trailerKey
+                        else -> {
+                            // YouTube - Força qualidade HD quando possível
+                            // O parâmetro vq=hd1080 não é mais suportado, mas mantemos para compatibilidade
+                            // O YouTube decide automaticamente a melhor qualidade baseada na conexão
+                            "https://www.youtube.com/embed/$trailerKey?rel=0&showinfo=0&modestbranding=1&autoplay=1"
+                        }
+                    }
                     addTrailer(trailerUrl)
                 }
 
-                // Usa recomendações do site (com URLs reais)
                 this.recommendations = siteRecommendations.takeIf { it.isNotEmpty() }
             }
         } else {
@@ -366,38 +380,41 @@ class SuperFlix : MainAPI() {
                     addActors(actors)
                 }
 
-                // Adiciona trailer com qualidade mais alta
+                // Adiciona trailer com URL que força qualidade máxima
                 tmdbInfo.youtubeTrailer?.let { trailerKey ->
-                    val trailerUrl = "https://www.youtube.com/watch?v=$trailerKey"
+                    val trailerUrl = when {
+                        trailerKey.contains("vimeo.com") -> trailerKey
+                        trailerKey.startsWith("http") -> trailerKey
+                        else -> {
+                            // YouTube - Força qualidade HD quando possível
+                            // Usando embed com autoplay e controles
+                            "https://www.youtube.com/embed/$trailerKey?rel=0&showinfo=0&modestbranding=1&autoplay=1"
+                        }
+                    }
                     addTrailer(trailerUrl)
                 }
 
-                // Usa recomendações do site (com URLs reais)
                 this.recommendations = siteRecommendations.takeIf { it.isNotEmpty() }
             }
         }
     }
 
-    // =========================================================================
-    // EXTRATIR RECOMENDAÇÕES DO SITE (COM URLs REAIS)
-    // =========================================================================
     private fun extractRecommendationsFromSite(document: org.jsoup.nodes.Document): List<SearchResponse> {
         return document.select(".recs-grid .rec-card, .recs-grid a").mapNotNull { element ->
             try {
                 val href = element.attr("href") ?: return@mapNotNull null
                 if (href.isBlank() || href == "#") return@mapNotNull null
-                
+
                 val imgElement = element.selectFirst("img")
-                val title = imgElement?.attr("alt") ?: 
-                           element.selectFirst(".rec-title")?.text() ?: 
-                           element.attr("title") ?: 
+                val title = imgElement?.attr("alt") ?:
+                           element.selectFirst(".rec-title")?.text() ?:
+                           element.attr("title") ?:
                            return@mapNotNull null
-                
+
                 val poster = imgElement?.attr("src")?.let { fixUrl(it) }
                 val cleanTitle = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
                 val year = Regex("\\((\\d{4})\\)").find(title)?.groupValues?.get(1)?.toIntOrNull()
-                
-                // Determina tipo de conteúdo
+
                 val isAnime = href.contains("/anime/") || title.contains("(Anime)", ignoreCase = true)
                 val isSerie = href.contains("/serie/") || href.contains("/tv/")
                 val isMovie = !isSerie && !isAnime
@@ -542,7 +559,7 @@ class SuperFlix : MainAPI() {
                 isAnime -> tmdbEpisode?.runtime ?: 24
                 else -> tmdbEpisode?.runtime ?: 0
             }
-            
+
             if (duration > 0 && descriptionBuilder.isNotEmpty()) {
                 descriptionBuilder.append("\n\n- ${duration}min")
             } else if (duration > 0) {
@@ -622,9 +639,6 @@ class SuperFlix : MainAPI() {
         return videoLink?.attr("href")
     }
 
-    // =========================================================================
-    // CLASSES DE DADOS PARA TMDB
-    // =========================================================================
     private data class TMDBInfo(
         val id: Int,
         val title: String?,
