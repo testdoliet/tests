@@ -8,7 +8,6 @@ import com.lagradost.cloudstream3.app
 import org.jsoup.nodes.Element
 import com.fasterxml.jackson.annotation.JsonProperty
 import java.text.SimpleDateFormat
-import com.lietrepo.superflix.BuildConfig
 
 class SuperFlix : MainAPI() {
     override var mainUrl = "https://superflix21.lol"
@@ -19,6 +18,9 @@ class SuperFlix : MainAPI() {
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries, TvType.Anime)
     override val usesWebView = true
 
+internal val tmdbApiKey = Config.TMDB_API_KEY
+    internal val tmdbBaseUrl = Config.TMDB_BASE_URL
+    internal val tmdbImageUrl = Config.TMDB_IMAGE_URL
 
 private fun forceConfigUsage() {
         // Estas chamadas FORÇAM o Kotlin a incluir o Config no APK
