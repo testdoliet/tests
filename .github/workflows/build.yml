@@ -68,24 +68,38 @@ jobs:
         env:
           TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
 
-      # 5. CRIA UM local.properties COM A CHAVE (IMPORTANTE!)
-      - name: Criar local.properties com a chave
+      # 5. Clean total ANTES do build
+      - name: Clean total
         run: |
-          echo "=== CRIANDO LOCAL.PROPERTIES ==="
+          echo "=== LIMPEZA TOTAL ==="
+          # Limpa TUDO
+          rm -rf ~/.gradle/caches/
+          rm -rf .gradle/
+          rm -rf build/
+          rm -rf SuperFlix/build/
+          rm -f local.properties
+          rm -f gradle.properties
+          echo "=== LIMPEZA CONCLUÍDA ==="
+
+      # 6. CRIA UM gradle.properties COM A CHAVE
+      - name: Criar gradle.properties com a chave
+        run: |
+          echo "=== CRIANDO GRADLE.PROPERTIES ==="
           
-          # Cria o arquivo local.properties com a chave real
-          echo "# Configurações do projeto" > local.properties
-          echo "TMDB_API_KEY=$TMDB_API_KEY" >> local.properties
-          echo "sdk.dir=/usr/local/lib/android/sdk" >> local.properties
+          # Cria o arquivo gradle.properties com a chave real
+          echo "# Configurações do projeto" > gradle.properties
+          echo "TMDB_API_KEY=$TMDB_API_KEY" >> gradle.properties
+          echo "ORG_GRADLE_PROJECT_TMDB_API_KEY=$TMDB_API_KEY" >> gradle.properties
+          echo "DEBUG_MODE=true" >> gradle.properties
           
-          echo "Conteúdo de local.properties (ocultando chave):"
-          head -3 local.properties | sed 's/TMDB_API_KEY=.*/TMDB_API_KEY=***/' 
+          echo "Conteúdo de gradle.properties (ocultando chave):"
+          head -4 gradle.properties | sed 's/TMDB_API_KEY=.*/TMDB_API_KEY=***/' | sed 's/ORG_GRADLE_PROJECT_TMDB_API_KEY=.*/ORG_GRADLE_PROJECT_TMDB_API_KEY=***/'
           
           echo "=== FIM ==="
         env:
           TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
 
-      # 6. DEBUG: Verificar estrutura do projeto
+      # 7. DEBUG: Verificar estrutura do projeto
       - name: Debug - Verificar estrutura do projeto
         run: |
           echo "=== ESTRUTURA DO PROJETO ==="
@@ -93,11 +107,10 @@ jobs:
           find . -name "build.gradle*" | xargs grep -l "TMDB" || true
           echo "=== FIM ==="
 
-      # 7. BUILD com debug aprimorado
+      # 8. BUILD com debug aprimorado
       - name: Build with Gradle
         env:
           TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
-          ORG_GRADLE_PROJECT_TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}  # Para Gradle properties
         run: |
           echo "=== INICIANDO BUILD GRADLE ==="
           
@@ -109,21 +122,16 @@ jobs:
             echo "Tamanho: ${#TMDB_API_KEY} caracteres"
           fi
           
-          # Verificar se temos local.properties
-          echo "Verificando local.properties..."
-          if [ -f "local.properties" ]; then
-            echo "local.properties encontrado"
-            if grep -q "TMDB_API_KEY" local.properties; then
-              echo "✅ TMDB_API_KEY encontrada em local.properties"
+          # Verificar se temos gradle.properties
+          echo "Verificando gradle.properties..."
+          if [ -f "gradle.properties" ]; then
+            echo "gradle.properties encontrado"
+            if grep -q "TMDB_API_KEY" gradle.properties; then
+              echo "✅ TMDB_API_KEY encontrada em gradle.properties"
             else
-              echo "⚠️  TMDB_API_KEY NÃO encontrada em local.properties"
+              echo "⚠️  TMDB_API_KEY NÃO encontrada em gradle.properties"
             fi
           fi
-          
-          # Criar gradle.properties para garantir
-          echo "Criando gradle.properties..."
-          echo "org.gradle.project.TMDB_API_KEY=$TMDB_API_KEY" >> gradle.properties
-          echo "DEBUG_MODE=true" >> gradle.properties
           
           # Verificar propriedades do Gradle
           echo "Executando gradle properties..."
@@ -131,15 +139,76 @@ jobs:
           
           # Task de debug customizada
           echo "Executando task de debug..."
-          ./gradlew printDebugInfo --info 2>&1 | tail -50 || true
+          ./gradlew :SuperFlix:printDebugInfo --info 2>&1 | tail -50 || true
           
-          # Build principal
+          # Build principal com debug
           echo "Executando build principal..."
-          ./gradlew clean assemble --refresh-dependencies --info --stacktrace
+          ./gradlew :SuperFlix:assembleDebug --info --stacktrace 2>&1 | tee build.log
           
           echo "=== BUILD COMPLETO ==="
 
-      # 8. DEBUG: Verificar APK gerado
+      # 9. DEBUG: Verificar BuildConfig gerado IMEDIATAMENTE
+      - name: Debug - Verificar BuildConfig gerado
+        run: |
+          echo "=== DEBUG BUILDCONFIG ==="
+          
+          # Procurar por BuildConfig gerado
+          find . -name "*BuildConfig.java" -type f 2>/dev/null | while read file; do
+            echo "=== Arquivo BuildConfig: $file ==="
+            
+            # Verificar se é do módulo correto
+            if echo "$file" | grep -q "superflix"; then
+              echo "✅ BuildConfig do módulo SuperFlix encontrado"
+              
+              echo "Conteúdo completo do arquivo:"
+              cat "$file"
+              echo ""
+              
+              # Verificar TMDB específicamente
+              echo "--- Busca por TMDB ---"
+              if grep -q "TMDB_API_KEY" "$file"; then
+                echo "✅ TMDB_API_KEY encontrada no BuildConfig"
+                LINE=$(grep -n "TMDB_API_KEY" "$file")
+                LINE_NUM=$(echo "$LINE" | cut -d: -f1)
+                LINE_CONTENT=$(echo "$LINE" | cut -d: -f2-)
+                echo "Linha $LINE_NUM: $LINE_CONTENT"
+                
+                # Verificar o valor
+                if echo "$LINE_CONTENT" | grep -q '""'; then
+                  echo "⚠️  AVISO: TMDB_API_KEY está vazia (\"\")"
+                elif echo "$LINE_CONTENT" | grep -q "\"***\""; then
+                  echo "❌ ERRO CRÍTICO: TMDB_API_KEY tem valor '***' (mascarado!)"
+                elif echo "$LINE_CONTENT" | grep -q "\"[a-zA-Z0-9]\""; then
+                  echo "✅ TMDB_API_KEY parece ter um valor REAL"
+                  # Mostrar tamanho do valor
+                  VALUE=$(echo "$LINE_CONTENT" | sed -n 's/.*TMDB_API_KEY = "\([^"]*\)".*/\1/p')
+                  if [ -n "$VALUE" ]; then
+                    echo "   Tamanho do valor: ${#VALUE} caracteres"
+                    if [ ${#VALUE} -eq 32 ]; then
+                      echo "   ✅ Tamanho correto (32 chars)"
+                    else
+                      echo "   ⚠️  Tamanho inesperado: ${#VALUE} chars"
+                    fi
+                    echo "   Primeiros 8 chars: ${VALUE:0:8}..."
+                  fi
+                fi
+              else
+                echo "❌ TMDB_API_KEY NÃO encontrada no BuildConfig"
+              fi
+            else
+              echo "ℹ️  Não é do módulo SuperFlix (ignorando)"
+            fi
+            echo "====================="
+          done
+          
+          if [ -f "build.log" ]; then
+            echo "=== ÚLTIMAS LINHAS DO BUILD LOG ==="
+            tail -100 build.log | grep -i "tmdb\|debug\|error\|fail" || true
+          fi
+          
+          echo "=== FIM DEBUG ==="
+
+      # 10. DEBUG: Verificar APK gerado
       - name: Debug - Verificar APK gerado
         run: |
           echo "=== VERIFICANDO APK ==="
@@ -152,61 +221,16 @@ jobs:
             fi
           done
 
-      # 9. DEBUG: Verificar BuildConfig gerado
-      - name: Debug - Verificar BuildConfig gerado
+      # 11. Debug do Gradle
+      - name: Debug - Verificar código do Gradle
         run: |
-          echo "=== DEBUG BUILDCONFIG ==="
+          echo "=== CÓDIGO DO BUILD.GRADLE.KTS ==="
+          cat ./SuperFlix/build.gradle.kts
           
-          # Procurar por BuildConfig gerado
-          find . -name "*BuildConfig.java" -type f 2>/dev/null | while read file; do
-            echo "=== Arquivo BuildConfig: $file ==="
-            
-            # Verificar se é do módulo correto
-            if echo "$file" | grep -q "superflix"; then
-              echo "✅ BuildConfig do módulo SuperFlix encontrado"
-            fi
-            
-            echo "Conteúdo completo do arquivo:"
-            cat "$file"
-            echo ""
-            
-            # Verificar TMDB específicamente
-            echo "--- Busca por TMDB ---"
-            if grep -q "TMDB_API_KEY" "$file"; then
-              echo "✅ TMDB_API_KEY encontrada no BuildConfig"
-              LINE=$(grep -n "TMDB_API_KEY" "$file")
-              LINE_NUM=$(echo "$LINE" | cut -d: -f1)
-              LINE_CONTENT=$(echo "$LINE" | cut -d: -f2-)
-              echo "Linha $LINE_NUM: $LINE_CONTENT"
-              
-              # Verificar o valor
-              if echo "$LINE_CONTENT" | grep -q '""'; then
-                echo "⚠️  AVISO: TMDB_API_KEY está vazia (\"\")"
-              elif echo "$LINE_CONTENT" | grep -q "\"[a-zA-Z0-9]\""; then
-                echo "✅ TMDB_API_KEY parece ter um valor"
-                # Mostrar tamanho do valor
-                VALUE=$(echo "$LINE_CONTENT" | sed -n 's/.*TMDB_API_KEY = "\([^"]*\)".*/\1/p')
-                if [ -n "$VALUE" ]; then
-                  echo "   Tamanho do valor: ${#VALUE} caracteres"
-                  echo "   Primeiros 8 chars: ${VALUE:0:8}..."
-                fi
-              fi
-            else
-              echo "❌ TMDB_API_KEY NÃO encontrada no BuildConfig"
-            fi
-            echo "====================="
-          done
+          echo ""
+          echo "=== BUSCANDO POR '***' NO CÓDIGO ==="
+          grep -n "\*\*\*" ./SuperFlix/build.gradle.kts || echo "Não encontrado"
           
-          echo "=== FIM DEBUG ==="
-     - name: Debug - Verificar código do Gradle
-  run: |
-    echo "=== CÓDIGO DO BUILD.GRADLE.KTS ==="
-    cat ./SuperFlix/build.gradle.kts
-    
-    echo ""
-    echo "=== BUSCANDO POR '***' NO CÓDIGO ==="
-    grep -n "\*\*\*" ./SuperFlix/build.gradle.kts || echo "Não encontrado"
-    
-    echo ""
-    echo "=== BUSCANDO POR 'buildConfigField' ==="
-    grep -n "buildConfigField" ./SuperFlix/build.gradle.kts
+          echo ""
+          echo "=== BUSCANDO POR 'buildConfigField' ==="
+          grep -n "buildConfigField" ./SuperFlix/build.gradle.kts
