@@ -1,0 +1,125 @@
+# .github/workflows/build-secure.yml
+name: Build Secure (Com Secrets) - APK Final
+
+on:
+  # Só roda manualmente OU em tags/releases
+  workflow_dispatch:  # Roda manualmente pelo GitHub UI
+  push:
+    tags:
+      - 'v*'          # Ex: v1.0.0, v2.1.0
+    branches:
+      - 'release/*'   # Ex: release/v1.0
+
+jobs:
+  build-secure:
+    runs-on: ubuntu-latest
+    # COM permissão de write - pode commitar builds
+    permissions:
+      contents: write
+
+    steps:
+      # 1. CHECKOUT
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      # 2. SETUP JAVA
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: 'gradle'
+
+      - name: Grant execute permission
+        run: chmod +x gradlew
+
+      # 3. INJEÇÃO SEGURA DE SECRETS
+      - name: Inject Secrets Securely
+        env:
+          TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+        run: |
+          echo "Injetando secrets (mascaradas nos logs)..."
+          echo "::add-mask::${{ secrets.TMDB_API_KEY }}"
+          
+          # Lista arquivos que serão modificados
+          echo " Arquivos Kotlin encontrados:"
+          find . -name "*.kt" -type f | while read file; do
+            if grep -q "{{TMDB_API_KEY}}" "$file"; then
+              echo "  → $file (tem placeholder)"
+            fi
+          done
+          
+          # Substitui placeholder pela chave REAL
+          find . -name "*.kt" -type f -exec sed -i \
+            "s/{{TMDB_API_KEY}}/$TMDB_API_KEY/g" {} +
+          
+          echo " Secrets injetadas com sucesso"
+          
+          # Verificação de segurança
+          echo "Verificando se há chaves hardcoded..."
+          if grep -r "f9a1e262f2251496b1efa1cd5759680a" . 2>/dev/null; then
+            echo " CHAVE VAZADA ENCONTRADA! ABORTANDO!"
+            exit 1
+          fi
+
+      # 4. BUILD COMPLETO (Release)
+      - name: Build Release APK
+        run: ./gradlew assembleRelease --info --stacktrace
+
+      # 5. GERAÇÃO DOS MANIFESTOS (igual ao seu original)
+      - name: Generate plugins.json
+        run: ./gradlew makePluginsJson -PoutputFile="build/plugins.json"
+
+    
+      - name: Create Repository Files
+        run: |
+          # Configurações
+          REPO_BASE_URL="https://github.com/${{ github.repository }}/raw/refs/heads/main/builds"
+          PLUGINS_LIST="[\"$REPO_BASE_URL/plugins.json\"]"
+          
+          # Cria diretório builds
+          mkdir -p builds
+          rm -rf builds/* 2>/dev/null || true
+          
+          # Move plugins.json
+          mv build/plugins.json builds/plugins.json
+          
+          # Corrige URLs
+          REPO_BASE_URL_ESCAPED=$(echo $REPO_BASE_URL | sed 's/[\/&]/\\&/g')
+          sed -i -E 's|"url": "[^"]*/([^/]+)\.cs3"|"url": "'"$REPO_BASE_URL_ESCAPED"'/\1.cs3"|g' builds/plugins.json
+          sed -i -E 's|"jarUrl": "[^"]*/([^/]+)\.jar"|"jarUrl": "'"$REPO_BASE_URL_ESCAPED"'/\1.jar"|g' builds/plugins.json
+          
+          # Cria repo.json
+          echo '{
+            "name": "lietrepo",
+            "iconUrl": "https://github.com/lawlietbr.png",
+            "description": "Repositório BR do CloudStream - Build Seguro",
+            "manifestVersion": 1,
+            "pluginLists": '"$PLUGINS_LIST"'
+          }' > builds/repo.json
+          
+          # Copia arquivos compilados
+          find . -type f \( -name "*.cs3" -o -name "*.jar" \) -exec cp {} builds/ \; 2>/dev/null || true
+          
+          # Lista resultado
+          echo "📦 Conteúdo do diretório builds:"
+          ls -la builds/
+
+      # 7. DEPLOY AUTOMÁTICO
+      - name: Deploy to Repository
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: " Release Seguro: $(date +'%Y-%m-%d %H:%M:%S')"
+          branch: main
+          file_pattern: builds/*
+          commit_user_name: "GitHub Actions Secure"
+          commit_user_email: "actions-secure@github.com"
+          
+      # 8. CRIAR RELEASE
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v1
+        with:
+          files: builds/*.cs3
+          generate_release_notes: true
