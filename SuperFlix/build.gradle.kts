@@ -9,6 +9,8 @@ cloudstream {
     iconUrl = "https://superflix21.lol/assets/logo.png"
 }
 
+import java.util.properties
+
 plugins {
     id("com.android.library")
     id("kotlin-android")
