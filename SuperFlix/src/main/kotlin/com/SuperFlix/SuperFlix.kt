@@ -21,7 +21,7 @@ class SuperFlix : MainAPI() {
 
     internal val tmdbApiKey = Config.TMDB_API_KEY
     internal val tmdbBaseUrl = Config.TMDB_BASE_URL
-    internal val tmdbImageUrl = Config.TMDB_IMG_URL
+    internal val tmdbImageUrl = Config.TMDB_IMAGE_URL
    
 init {
         Config.logConfig()  
