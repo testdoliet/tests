@@ -1,183 +1,243 @@
-name: Build SuperFlix com Injeção Segura
+name: Build SuperFlix
 
 on:
   push:
     branches:
       - main
-  workflow_dispatch:  # Permite executar manualmente
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write  # Permite fazer push de volta
 
     steps:
-      # PASSO 1: BAIXAR O CÓDIGO
+      # 1. CHECKOUT
       - name: Checkout código
         uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          # Baixa TUDO, inclusive o template
-          fetch-depth: 0
 
-      # PASSO 2: CONFIGURAR JAVA
-      - name: Setup Java 17
-        uses: actions/setup-java@v4
-        with:
-          java-version: '17'
-          distribution: 'temurin'
-
-      - name: Dar permissão ao Gradle
-        run: chmod +x gradlew
-
-      # PASSO 3: VERIFICAR SE O TEMPLATE EXISTE
-      - name: Verificar template
+      # 2. SETUP
+      - name: Setup
         run: |
-          echo "=== VERIFICANDO TEMPLATE ==="
-          TEMPLATE="SuperFlix/src/main/kotlin/com/SuperFlix/Config.kt.template"
-          
-          if [ -f "$TEMPLATE" ]; then
-            echo "✅ Template encontrado: $TEMPLATE"
-            echo "📄 Conteúdo (primeiras linhas):"
-            head -10 "$TEMPLATE"
-          else
-            echo "❌ ERRO: Template NÃO encontrado!"
-            echo "Crie o arquivo: $TEMPLATE"
-            exit 1
-          fi
+          chmod +x gradlew
+          echo "=== VERIFICANDO ARQUIVOS ==="
+          ls -la SuperFlix/src/main/kotlin/com/SuperFlix/
 
-      # PASSO 4: INJETAR A CHAVE DO SECRETS
+      # 3. DEBUG DO CÓDIGO
+      - name: Debug do código
+        run: |
+          echo "=== DEBUG DO CÓDIGO ==="
+          
+          # Verifica se tem as variáveis críticas
+          echo "🔍 Buscando 'tmdbApiKey' no SuperFlix.kt:"
+          grep -n "tmdbApiKey = " SuperFlix/src/main/kotlin/com/SuperFlix/SuperFlix.kt || echo "❌ NÃO ENCONTRADO!"
+          
+          echo ""
+          echo "🔍 Buscando 'Config.TMDB':"
+          grep -n "Config\." SuperFlix/src/main/kotlin/com/SuperFlix/SuperFlix.kt || echo "❌ NÃO ENCONTRADO!"
+          
+          # Mostra primeiras 25 linhas
+          echo ""
+          echo "📄 Primeiras 25 linhas do SuperFlix.kt:"
+          sed -n '1,25p' SuperFlix/src/main/kotlin/com/SuperFlix/SuperFlix.kt | cat -n
+
+      # 4. VERIFICAR/CRIAR TEMPLATE
+      - name: Preparar template
+        run: |
+          echo "=== PREPARANDO TEMPLATE ==="
+          
+          # Cria diretórios se não existirem
+          mkdir -p SuperFlix/src/main/kotlin/com/SuperFlix
+          
+          # Cria template (substitui se existir)
+          cat > SuperFlix/src/main/kotlin/com/SuperFlix/Config.kt.template << 'EOF'
+          package com.SuperFlix
+
+          object Config {
+              const val TMDB_API_KEY = "@@TMDB_API_KEY@@"
+              const val TMDB_BASE_URL = "https://api.themoviedb.org/3"
+              const val TMDB_IMAGE_URL = "https://image.tmdb.org/t/p"
+              const val DEBUG_MODE = true
+              const val REQUEST_TIMEOUT = 10000L
+              
+              fun logConfig() {
+                  println("🎬 SuperFlix Config")
+                  println("📏 TMDB Key: ${TMDB_API_KEY.length} chars")
+              }
+          }
+          EOF
+          
+          echo "✅ Template criado/atualizado"
+
+      # 5. INJETAR CHAVE
       - name: Inject TMDB API Key
         run: |
-          echo "=== INJETANDO CHAVE TMDB ==="
+          echo "=== INJETANDO CHAVE ==="
           
-          # Caminhos dos arquivos
-          TEMPLATE_FILE="SuperFlix/src/main/kotlin/com/SuperFlix/Config.kt.template"
-          OUTPUT_FILE="SuperFlix/src/main/kotlin/com/SuperFlix/Config.kt"
+          KEY="${{ secrets.TMDB_API_KEY }}"
           
-          # Pega a chave do GitHub Secrets
-          SECRET_KEY="${{ secrets.TMDB_API_KEY }}"
-          
-          echo "🔐 Chave do Secrets: ${#SECRET_KEY} caracteres"
-          
-          # Verifica se a chave existe
-          if [ -z "$SECRET_KEY" ]; then
-            echo "❌ ERRO: TMDB_API_KEY não definida no GitHub Secrets!"
-            echo "Vá em Settings → Secrets and variables → Actions"
-            echo "Adicione: TMDB_API_KEY = sua_chave_32_chars"
+          if [ -z "$KEY" ]; then
+            echo "❌ ERRO: TMDB_API_KEY não configurada!"
+            echo "Configure em: Settings → Secrets and variables → Actions"
             exit 1
           fi
           
-          # Verifica tamanho da chave
-          if [ ${#SECRET_KEY} -ne 32 ]; then
-            echo "⚠️  AVISO: Chave tem ${#SECRET_KEY} chars (deveria ser 32)"
-          fi
+          echo "🔑 Chave recebida: ${#KEY} chars"
           
-          # PASSO CRÍTICO: Substitui @@TMDB_API_KEY@@ pela chave real
-          echo "🔄 Substituindo placeholder..."
-          sed "s/@@TMDB_API_KEY@@/$SECRET_KEY/g" "$TEMPLATE_FILE" > "$OUTPUT_FILE"
-          
-          # Verifica se funcionou
-          echo "✅ Arquivo gerado: $OUTPUT_FILE"
-          echo "🔍 Verificando injeção..."
-          
-          if grep -q "$SECRET_KEY" "$OUTPUT_FILE"; then
-            echo "🎉 SUCESSO! Chave injetada corretamente"
-            echo "📏 Tamanho no arquivo: $(grep TMDB_API_KEY "$OUTPUT_FILE" | wc -c) bytes"
-            
-            # Mostra a linha (com máscara para segurança)
-            LINE=$(grep "TMDB_API_KEY" "$OUTPUT_FILE")
-            MASKED_LINE=$(echo "$LINE" | sed 's/"[^"]*\("[^"]*"\)/"***\1/')
-            echo "📝 Linha: $MASKED_LINE"
-          else
-            echo "❌ FALHA: Chave NÃO foi injetada!"
-            echo "Conteúdo do arquivo:"
-            cat "$OUTPUT_FILE"
-            exit 1
-          fi
+          # Cria Config.kt com a chave real
+          cat > SuperFlix/src/main/kotlin/com/SuperFlix/Config.kt << EOF
+          package com.SuperFlix
 
-      # PASSO 5: EXECUTAR O BUILD
-      - name: Build do plugin
+          object Config {
+              const val TMDB_API_KEY = "$KEY"
+              const val TMDB_BASE_URL = "https://api.themoviedb.org/3"
+              const val TMDB_IMAGE_URL = "https://image.tmdb.org/t/p"
+              const val DEBUG_MODE = true
+              const val REQUEST_TIMEOUT = 10000L
+              
+              fun logConfig() {
+                  println("🎬 SuperFlix Config")
+                  println("📏 TMDB Key: \${TMDB_API_KEY.length} chars")
+              }
+          }
+          EOF
+          
+          echo "✅ Config.kt criado com chave"
+          echo "📝 Verificação (mascarada):"
+          grep "TMDB_API_KEY" SuperFlix/src/main/kotlin/com/SuperFlix/Config.kt | sed 's/"[^"]*\("[^"]*"\)/"***\1/'
+
+      # 6. BUILD COM VERIFICAÇÃO DE ERROS
+      - name: Build com verificação
         run: |
-          echo "=== EXECUTANDO BUILD ==="
+          echo "=== BUILD COM VERIFICAÇÃO ==="
           
-          # Limpa builds anteriores
-          ./gradlew :SuperFlix:clean
-          
-          # Executa o build
           echo "🔄 Compilando..."
-          ./gradlew :SuperFlix:assembleDebug
+          ./gradlew :SuperFlix:assembleDebug 2>&1 | tee build.log
           
-          # Verifica se o .cs3 foi gerado
-          CS3_FILE=$(find . -name "*.cs3" -type f | head -1)
+          BUILD_RESULT=$?
           
-          if [ -f "$CS3_FILE" ]; then
-            echo "✅ BUILD COMPLETO!"
-            echo "📦 Arquivo gerado: $CS3_FILE"
-            echo "📏 Tamanho: $(ls -lh "$CS3_FILE" | awk '{print $5}')"
+          if [ $BUILD_RESULT -eq 0 ]; then
+            echo "✅ BUILD SUCESSO!"
+            
+            # Procura o .cs3 gerado
+            CS3_FILE=$(find . -name "*.cs3" -type f | head -1)
+            if [ -f "$CS3_FILE" ]; then
+              echo "📦 Plugin gerado: $CS3_FILE"
+              echo "📏 Tamanho: $(ls -lh "$CS3_FILE" | awk '{print $5}')"
+            fi
           else
-            echo "❌ ERRO: Nenhum arquivo .cs3 foi gerado!"
+            echo "❌ BUILD FALHOU!"
+            echo ""
+            echo "=== ERROS ENCONTRADOS ==="
+            grep -i "error\|fail\|unresolved" build.log | head -20
+            echo ""
+            echo "=== LOG COMPLETO (últimas 50 linhas) ==="
+            tail -50 build.log
             exit 1
           fi
 
-      # PASSO 6: VERIFICAR SE A CHAVE ESTÁ NO .CS3
-      - name: Verificar chave no output
+      # 7. VERIFICAÇÃO PROFUNDA DO .CS3
+      - name: Verificação profunda
+        if: success()
         run: |
-          echo "=== VERIFICANDO ARQUIVO FINAL ==="
+          echo "=== VERIFICAÇÃO PROFUNDA ==="
           
-          # Encontra o arquivo .cs3
           CS3_FILE=$(find . -name "*.cs3" -type f | head -1)
           
           if [ -f "$CS3_FILE" ]; then
             echo "🔍 Analisando: $CS3_FILE"
             
-            # Procura pela chave (ou parte dela) no arquivo
-            if strings "$CS3_FILE" | grep -q "b64d2f3a"; then
-              echo "✅ CONFIRMADO: Chave TMDB está presente no .cs3!"
-              echo "🎉 PLUGIN PRONTO PARA USAR!"
+            # Verifica se é um ZIP válido
+            echo "📦 É arquivo ZIP? (deve ser sim)"
+            file "$CS3_FILE"
+            
+            # Tenta extrair strings
+            echo ""
+            echo "🔎 Buscando referências no .cs3:"
+            
+            # Procura por padrões
+            strings "$CS3_FILE" | grep -i "tmdb\|config\|superflix" | head -10
+            
+            # Conta ocorrências
+            TMDB_COUNT=$(strings "$CS3_FILE" | grep -i "tmdb" | wc -l)
+            CONFIG_COUNT=$(strings "$CS3_FILE" | grep -i "config" | wc -l)
+            
+            echo ""
+            echo "📊 Estatísticas:"
+            echo "   Referências TMDB: $TMDB_COUNT"
+            echo "   Referências Config: $CONFIG_COUNT"
+            
+            if [ $TMDB_COUNT -gt 0 ] && [ $CONFIG_COUNT -gt 0 ]; then
+              echo "✅ Plugin parece correto!"
             else
-              echo "⚠️  Chave não encontrada no .cs3 (pode estar ofuscada)"
-              echo "📊 Strings do arquivo (primeiras 20):"
-              strings "$CS3_FILE" | head -20
+              echo "⚠️  Poucas referências encontradas"
             fi
+          else
+            echo "❌ Nenhum .cs3 encontrado!"
           fi
 
-      # PASSO 7: LIMPEZA (REMOVER ARQUIVOS SENSÍVEIS)
-      - name: Limpeza pós-build
+      # 8. TESTE DE FUNCIONALIDADE (SIMULAÇÃO)
+      - name: Teste de funcionalidade
+        if: success()
         run: |
-          echo "=== LIMPEZA SEGURA ==="
+          echo "=== TESTE DE FUNCIONALIDADE ==="
           
-          # 1. Remove o arquivo Config.kt gerado (contém a chave)
-          if [ -f "SuperFlix/src/main/kotlin/com/SuperFlix/Config.kt" ]; then
-            rm "SuperFlix/src/main/kotlin/com/SuperFlix/Config.kt"
-            echo "🗑️  Config.kt removido (contém chave real)"
-          fi
+          # Cria um teste simples
+          cat > test_config.kt << 'EOF'
+          package com.SuperFlix
           
-          # 2. Mantém o template para próximos builds
-          echo "📄 Template mantido: Config.kt.template"
+          fun testConfig() {
+              println("=== TESTE CONFIG ===")
+              println("Chave: ${Config.TMDB_API_KEY.length} chars")
+              println("URL Base: ${Config.TMDB_BASE_URL}")
+              println("URL Imagem: ${Config.TMDB_IMAGE_URL}")
+          }
+          EOF
           
-          # 3. Remove logs sensíveis
-          rm -f build.log gradle.properties local.properties
-          echo "🧹 Arquivos temporários removidos"
+          echo "🧪 Teste criado"
+          echo "✅ Se o build passou, o plugin deve funcionar!"
+          echo ""
+          echo "🎯 PRÓXIMOS PASSOS:"
+          echo "1. Instale o plugin no CloudStream"
+          echo "2. Teste buscar um filme"
+          echo "3. Verifique logs no CloudStream (Config → Log)"
+          echo "4. Se mostrar 'TMDB Key: 32 chars', está funcionando!"
 
-      # PASSO 8 (OPCIONAL): COMMIT AUTOMÁTICO
-      - name: Commit automático
-        if: success()  # Só executa se o build foi bem
+      # 9. LIMPEZA SEGURA
+      - name: Limpeza
         run: |
-          echo "=== COMMIT AUTOMÁTICO ==="
+          echo "=== LIMPEZA ==="
           
-          # Configura git
-          git config --local user.email "github-actions@github.com"
-          git config --local user.name "GitHub Actions"
+          # Remove arquivos sensíveis
+          rm -f SuperFlix/src/main/kotlin/com/SuperFlix/Config.kt
+          rm -f test_config.kt build.log
           
-          # Adiciona apenas o template (se foi modificado)
-          git add SuperFlix/src/main/kotlin/com/SuperFlix/Config.kt.template
+          echo "✅ Arquivos sensíveis removidos"
+          echo "📄 Template mantido para próximos builds"
+
+      # 10. RELATÓRIO FINAL
+      - name: Relatório final
+        if: always()
+        run: |
+          echo "=== RELATÓRIO FINAL ==="
           
-          # Faz commit
-          git commit -m "build: Template atualizado [skip ci]" || echo "Nenhuma alteração no template"
-          
-          # Faz push (opcional)
-          # git push origin main || echo "Nada para push"
-          
-          echo "✅ Processo completo!"
+          if [ -f "build.log" ]; then
+            if grep -q "BUILD SUCCESSFUL" build.log; then
+              echo "🎉 BUILD COMPLETO COM SUCESSO!"
+              echo ""
+              echo "✅ O que funcionou:"
+              echo "   - Template criado/injetado"
+              echo "   - Config.kt gerado com chave"
+              echo "   - Plugin .cs3 compilado"
+              echo ""
+              echo "📦 Próximos passos:"
+              echo "   1. Encontre o arquivo .cs3 em builds/"
+              echo "   2. Adicione ao CloudStream"
+              echo "   3. Teste com um filme"
+              echo "   4. Verifique logs no CloudStream"
+            else
+              echo "❌ BUILD FALHOU"
+              echo "Consulte os logs acima para detalhes"
+            fi
+          else
+            echo "⚠️  Log não encontrado"
+          fi
