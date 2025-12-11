@@ -10,7 +10,7 @@ android {
         println("=== DEBUG BUILD ===")
         println("TMDB_API_KEY definida? ${System.getenv("TMDB_API_KEY") != null}")
         
-        val tmdbApiKey = (System.getenv("TMDB_API_KEY") ?: "").trim()
+        val tmdbApiKey = System.getenv("TMDB_API_KEY") ?: ""
         
         println("Tamanho da chave: ${tmdbApiKey.length}")
         if (tmdbApiKey.isNotEmpty()) {
