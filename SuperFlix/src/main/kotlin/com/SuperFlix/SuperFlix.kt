@@ -272,7 +272,7 @@ class SuperFlix : TmdbProvider() {
                 println("🔍 [DEBUG] Seletor '$selector': ${altElements.size} elementos")
                 
                 if (altElements.isNotEmpty()) {
-                    println("🔍 [DEBUG] Exemplo do primeiro elemento:")
+                   
                     println(altElements.first().outerHtml().take(200))
                     break
                 }
