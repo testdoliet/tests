@@ -29,7 +29,94 @@ class SuperFlix : MainAPI() {
         "$mainUrl/animes" to "Últimas Animes"
     )
 
-    // ... (funções getMainPage, search, etc permanecem iguais) ...
+    override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
+        val url = request.data + if (page > 1) "?page=$page" else ""
+        val document = app.get(url).document
+
+        val home = document.select("a.card, div.recs-grid a.rec-card").mapNotNull { element ->
+            element.toSearchResult()
+        }
+
+        return newHomePageResponse(request.name, home.distinctBy { it.url })
+    }
+
+    private fun Element.toSearchResult(): SearchResponse? {
+        val title = attr("title") ?: selectFirst("img")?.attr("alt") ?: return null
+        val href = attr("href") ?: return null
+
+        val localPoster = selectFirst("img")?.attr("src")?.let { fixUrl(it) }
+        val year = Regex("\\((\\d{4})\\)").find(title)?.groupValues?.get(1)?.toIntOrNull()
+        val cleanTitle = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
+
+        val badge = selectFirst(".badge-kind")?.text()?.lowercase() ?: ""
+        val isAnime = badge.contains("anime") || href.contains("/anime/") ||
+                      title.contains("(Anime)", ignoreCase = true)
+        val isSerie = badge.contains("série") || badge.contains("serie") ||
+                     href.contains("/serie/") ||
+                     (!isAnime && (badge.contains("tv") || href.contains("/tv/")))
+        val isMovie = !isSerie && !isAnime
+
+        return when {
+            isAnime -> {
+                newAnimeSearchResponse(cleanTitle, fixUrl(href), TvType.Anime) {
+                    this.posterUrl = localPoster
+                    this.year = year
+                }
+            }
+            isSerie -> {
+                newTvSeriesSearchResponse(cleanTitle, fixUrl(href), TvType.TvSeries) {
+                    this.posterUrl = localPoster
+                    this.year = year
+                }
+            }
+            else -> {
+                newMovieSearchResponse(cleanTitle, fixUrl(href), TvType.Movie) {
+                    this.posterUrl = localPoster
+                    this.year = year
+                }
+            }
+        }
+    }
+
+    override suspend fun search(query: String): List<SearchResponse> {
+        val searchUrl = "$mainUrl/buscar?q=${java.net.URLEncoder.encode(query, "UTF-8")}"
+        val document = app.get(searchUrl).document
+
+        return document.select(".grid .card, a.card").mapNotNull { card ->
+            try {
+                val title = card.attr("title") ?: card.selectFirst("img")?.attr("alt") ?: return@mapNotNull null
+                val href = card.attr("href") ?: return@mapNotNull null
+
+                val poster = card.selectFirst("img")?.attr("src")?.let { fixUrl(it) }
+                val year = Regex("\\((\\d{4})\\)").find(title)?.groupValues?.get(1)?.toIntOrNull()
+                val cleanTitle = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
+
+                val badge = card.selectFirst(".badge-kind")?.text()?.lowercase() ?: ""
+                val isAnime = badge.contains("anime") || href.contains("/anime/") ||
+                             title.contains("(Anime)", ignoreCase = true)
+                val isSerie = badge.contains("série") || badge.contains("serie") ||
+                             href.contains("/serie/") ||
+                             (!isAnime && (badge.contains("tv") || href.contains("/tv/")))
+
+                when {
+                    isAnime -> newAnimeSearchResponse(cleanTitle, fixUrl(href), TvType.Anime) {
+                        this.posterUrl = poster
+                        this.year = year
+                    }
+                    isSerie -> newTvSeriesSearchResponse(cleanTitle, fixUrl(href), TvType.TvSeries) {
+                        this.posterUrl = poster
+                        this.year = year
+                    }
+                    else -> newMovieSearchResponse(cleanTitle, fixUrl(href), TvType.Movie) {
+                        this.posterUrl = poster
+                        this.year = year
+                    }
+                }
+            } catch (e: Exception) {
+                null
+            }
+        }
+    }
 
     override suspend fun load(url: String): LoadResponse? {
         println("🔍 [DEBUG] Iniciando load para URL: $url")
