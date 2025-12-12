@@ -590,7 +590,7 @@ class SuperFlix : MainAPI() {
 
             tmdbEpisode?.air_date?.let { airDate ->
                 try {
-                    val dateFormatter = SimpleDateFormat("yyyy-MM-dd")
+                    val dateFormatter = SimpleDateFormat("dd-MM-yyyy")
                     val date = dateFormatter.parse(airDate)
                     this.date = date.time
                 } catch (e: Exception) {
