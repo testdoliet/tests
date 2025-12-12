@@ -1,4 +1,4 @@
-name: Build do L
+Name: Build do L
 
 on:
   push:
@@ -7,111 +7,75 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write # Permissão de escrita para o deploy
+    build:
+        runs-on: ubuntu-latest
+        permissions:
+            contents: write # CRÍTICO: Permissão de escrita para o deploy
 
-    steps:
-      # 1. CHECKOUT
-      - uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+        steps:
+            # 1. CHECKOUT
+            - uses: actions/checkout@v4
+              with:
+                  token: ${{ secrets.GITHUB_TOKEN }}
 
-      # 2. SETUP JAVA/GRADLE
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
-        with:
-          java-version: '17'
-          distribution: 'temurin'
-          cache: 'gradle'
+            # 2. SETUP JAVA/GRADLE
+            - name: Set up JDK 17
+              uses: actions/setup-java@v4
+              with:
+                  java-version: '17'
+                  distribution: 'temurin'
+                  cache: 'gradle'
 
-      - name: Grant execute permission for gradlew
-        run: chmod +x gradlew
+            - name: Grant execute permission for gradlew
+              run: chmod +x gradlew
 
-      # BUILD
-      - name: Build with Gradle (Apenas erros e arquivos)
-        run: |
-          if ./gradlew assemble --refresh-dependencies --stacktrace 2>&1 | \
-             grep -E '^e:|file|FAILED|BUILD FAILED|error|ERROR'; then
-            echo "Build failed with errors shown above"
-            exit 1
-          else
-            echo "Build completed successfully"
-            ./gradlew assemble --refresh-dependencies --stacktrace 2>&1 | \
-              tail -5 | grep -E 'BUILD SUCCESSFUL|BUILD FAILED' || true
-          fi
+            - name: Build with Gradle (Cria os .cs3 e .jar)
+              run: ./gradlew assemble --refresh-dependencies --info
 
-      # 3. GERAÇÃO DO MANIFESTO DE PROVEDORES
-      - name: Generate plugins.json at correct path
-        run: |
-          # Executa e filtra a saída
-          ./gradlew makePluginsJson -PoutputFile="build/plugins.json" 2>&1 | \
-            grep -E '^e:|file|FAILED|error|ERROR' || true
-          
-          
-          if [ -f "build/plugins.json" ]; then
-            echo " plugins.json generated successfully"
-          else
-            echo "Failed to generate plugins.json"
-            exit 1
-          fi
+            # 3. GERAÇÃO DO MANIFESTO DE PROVEDORES
+            - name: Generate plugins.json at correct path
+              run: ./gradlew makePluginsJson -PoutputFile="build/plugins.json"
 
-      # 4. CRIAÇÃO DA ESTRUTURA FINAL E CORREÇÃO DE URL
-      - name: Mover, Corrigir URLs Internas e Criar repo.json principal
-        run: |
-          REPO_BASE_URL="https://github.com/${{ github.repository }}/raw/refs/heads/main/builds"
-          PLUGINS_LIST="[\"$REPO_BASE_URL/plugins.json\"]"
+            # 4. CRIAÇÃO DA ESTRUTURA FINAL E CORREÇÃO DE URL (Regex de Captura Reversa)
+            - name: Mover, Corrigir URLs Internas e Criar repo.json principal
+              run: |
+                  # Define a base da URL funcional para o download no GitHub
+                  REPO_BASE_URL="https://github.com/${{ github.repository }}/raw/refs/heads/main/builds"
+                  PLUGINS_LIST="[\"$REPO_BASE_URL/plugins.json\"]"
 
-          echo "Creating builds directory..."
-          mkdir -p builds
+                  # 1. Cria a pasta 'builds'
+                  mkdir -p builds
 
-          echo "📄 Moving plugins.json..."
-          if [ -f "build/plugins.json" ]; then
-            mv build/plugins.json builds/plugins.json
-            echo " plugins.json moved"
-          else
-            echo "plugins.json not found in build/"
-            exit 1
-          fi
+                  # 2. Move o manifesto de plugins para a pasta builds/
+                  mv build/plugins.json builds/plugins.json
 
-          echo "🔗 Fixing URLs in plugins.json..."
-          # ESCAPA a URL de base para uso no comando SED
-          REPO_BASE_URL_ESCAPED=$(echo $REPO_BASE_URL | sed 's/\//\\\//g')
+                  # 3. ESCAPA a URL de base para uso no comando SED
+                  REPO_BASE_URL_ESCAPED=$(echo $REPO_BASE_URL | sed 's/\//\\\//g')
 
-          # Substitui a URL do .cs3
-          sed -i -E 's|"url": "[^"]*/([^/]+)\.cs3"|"url": "'"$REPO_BASE_URL_ESCAPED"'/\1.cs3"|g' builds/plugins.json
-          echo "CS3 URLs fixed"
+                  # 4. CRÍTICO: Substitui a URL do .cs3 no plugins.json
+                  # Captura a parte do nome do arquivo, que é tudo que não é barra ou aspas.
+                  # Remove TUDO ANTES da última barra e substitui pela URL RAW.
+                  sed -i -E 's|"url": "[^"]*/([^/]+)\.cs3"|"url": "'"$REPO_BASE_URL_ESCAPED"'/\1.cs3"|g' builds/plugins.json
 
-          # Substitui a URL do .jar
-          sed -i -E 's|"jarUrl": "[^"]*/([^/]+)\.jar"|"jarUrl": "'"$REPO_BASE_URL_ESCAPED"'/\1.jar"|g' builds/plugins.json
-          echo "JAR URLs fixed"
+                  # 5. CRÍTICO: Substitui a URL do .jar no plugins.json
+                  sed -i -E 's|"jarUrl": "[^"]*/([^/]+)\.jar"|"jarUrl": "'"$REPO_BASE_URL_ESCAPED"'/\1.jar"|g' builds/plugins.json
 
-          echo " Creating main repo.json..."
-          echo "{
-            \"name\": \"CloudStream Brasil Repo\",
-            \"description\": \"Repositório Brasileiro de Provedores CloudStream\",
-            \"manifestVersion\": 1,
-            \"pluginLists\": $PLUGINS_LIST
-          }" > builds/repo.json
-          echo " repo.json created"
+                  # 6. CRIA o manifesto principal (repo.json)
+                  echo "{
+                    \"name\": \"CloudStream Brasil Repo\",
+                    \"description\": \"Repositório Brasileiro de Provedores CloudStream\",
+                    \"manifestVersion\": 1,
+                    \"pluginLists\": $PLUGINS_LIST
+                  }" > builds/repo.json
 
-          echo "Copying build files..."
-          # Copia .cs3 files
-          CS3_COUNT=$(find . -type f -name "*.cs3" -exec cp {} builds/ \; -exec echo "  Copied: {}" \; | wc -l)
-          echo "Copied $CS3_COUNT .cs3 files"
+                  # 7. COPIA os arquivos .cs3 e .jar para a pasta builds/
+                  find . -type f -name "*.cs3" -exec cp {} builds/ \; || true
+                  find . -type f -name "*.jar" -exec cp {} builds/ \; || true
 
-          # Copia .jar files
-          JAR_COUNT=$(find . -type f -name "*.jar" -exec cp {} builds/ \; -exec echo "  Copied: {}" \; | wc -l)
-          echo "Copied $JAR_COUNT .jar files"
-
-          echo "Summary of builds directory:"
-          ls -la builds/ | grep -E '\.(cs3|jar|json)$'
-
-      # 5. DEPLOY FINAL
-      - name: Commit Providers to main branch
-        uses: stefanzweifel/git-auto-commit-action@v5
-        with:
-          commit_message: "Deploy: Minor Fixings"
-          branch: main
-          file_pattern: builds/*
+            # 5. DEPLOY FINAL COM AÇÃO DE COMMIT DIRETO (Standard CloudStream)
+            - name: Commit Providers to main branch
+              uses: stefanzweifel/git-auto-commit-action@v5
+              with:
+                  commit_message: "minor fixing"
+                  branch: main
+                  file_pattern: builds/*
