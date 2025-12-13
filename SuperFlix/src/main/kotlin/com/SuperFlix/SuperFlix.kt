@@ -1,6 +1,5 @@
 package com.SuperFlix
 
-import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.TvType
@@ -11,10 +10,7 @@ import com.lagradost.cloudstream3.utils.AppUtils
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.Qualities
-import com.lagradost.cloudstream3.utils.getAndUnpack
 import com.lagradost.cloudstream3.utils.newExtractorLink
-import com.lagradost.cloudstream3.utils.newMovieSearchResponse
-import java.net.URLEncoder
 
 class SuperFlix : TmdbProvider() {
     override var name = "SuperFlix"
@@ -23,15 +19,7 @@ class SuperFlix : TmdbProvider() {
     override val instantLinkLoading = true
     override val useMetaLoadResponse = true
     override val hasQuickSearch = true
-    override val supportedTypes = setOf(
-        TvType.Movie,
-        TvType.TvSeries,
-        TvType.Anime,
-    )
-
-    // Configuração específica para TMDB
-    private val tmdbLang = "pt-BR"
-    private val tmdbRegion = "BR"
+    override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries, TvType.Anime)
 
     companion object {
         const val HOST = "https://superflix21.lol"
@@ -60,48 +48,43 @@ class SuperFlix : TmdbProvider() {
         return try {
             val mediaData = AppUtils.parseJson<TmdbLink>(data)
             
-            println("🎬 [SuperFlix] Buscando: ${mediaData.movieName ?: "Unknown"}")
-            println("🎬 [SuperFlix] TMDB ID: ${mediaData.tmdbID}")
+            println("🎬 [SuperFlix] Carregando links para: ${mediaData.movieName ?: "Unknown"}")
             
-            // 1. Busca no site SuperFlix
-            val searchQuery = mediaData.movieName ?: return false
-            val searchUrl = "$HOST/buscar?q=${URLEncoder.encode(searchQuery, "UTF-8")}"
+            var success = false
             
-            println("🔍 [SuperFlix] Buscando em: $searchUrl")
-            val document = app.get(searchUrl).document
-            
-            // 2. Encontra primeiro resultado
-            val firstResult = document.selectFirst(".grid .card, a.card, .movie-item a, .rec-card")
-            if (firstResult == null) {
-                println("❌ [SuperFlix] Nenhum resultado encontrado")
-                return false
+            // 1. Tenta usar o extractor personalizado
+            try {
+                // Busca no site SuperFlix
+                val searchQuery = mediaData.movieName ?: return false
+                val searchUrl = "$HOST/buscar?q=${java.net.URLEncoder.encode(searchQuery, "UTF-8")}"
+                
+                val document = app.get(searchUrl).document
+                val firstResult = document.selectFirst(".grid .card, a.card, .movie-item a, .rec-card")
+                
+                if (firstResult != null) {
+                    val detailUrl = firstResult.attr("href")?.let { fixUrl(it) }
+                    if (detailUrl != null) {
+                        val detailDoc = app.get(detailUrl).document
+                        val playButton = detailDoc.selectFirst("button.bd-play[data-url], button[data-url*='watch']")
+                        val playerUrl = playButton?.attr("data-url")?.let { fixUrl(it) }
+                        
+                        if (playerUrl != null) {
+                            // Usa o extractor personalizado
+                            success = SuperFlixExtractor.extractVideoLinks(playerUrl, HOST, name, callback)
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                println("⚠️ [SuperFlix] Busca no site falhou: ${e.message}")
             }
             
-            val detailUrl = firstResult.attr("href")?.let { fixUrl(it) } ?: return false
-            println("🔗 [SuperFlix] Página de detalhes: $detailUrl")
-            
-            // 3. Carrega página de detalhes
-            val detailDoc = app.get(detailUrl).document
-            
-            // 4. Encontra player
-            val playerUrl = findPlayerUrl(detailDoc)
-            if (playerUrl == null) {
-                println("❌ [SuperFlix] Player não encontrado")
-                return false
-            }
-            
-            println("🎥 [SuperFlix] Player URL: $playerUrl")
-            
-            // 5. Usa seu extractor personalizado
-            val success = SuperFlixExtractor.extractVideoLinks(playerUrl, HOST, name, callback)
-            
+            // 2. Se falhar, usa link de exemplo
             if (!success) {
-                println("⚠️ [SuperFlix] Extractor falhou, tentando método alternativo...")
-                // Fallback: retorna link de exemplo
+                println("🎬 [SuperFlix] Usando link de exemplo")
                 callback.invoke(
                     newExtractorLink(
                         name,
-                        "SuperFlix",
+                        "SuperFlix Stream",
                         "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
                         ExtractorLinkType.M3U8
                     ) {
@@ -114,30 +97,8 @@ class SuperFlix : TmdbProvider() {
             
             success
         } catch (e: Exception) {
-            println("💥 [SuperFlix] Erro: ${e.message}")
+            e.printStackTrace()
             false
         }
-    }
-    
-    private fun findPlayerUrl(document: org.jsoup.nodes.Document): String? {
-        // Método 1: Botão com data-url
-        val playButton = document.selectFirst("button.bd-play[data-url], button[data-url*='watch']")
-        if (playButton != null) {
-            return fixUrl(playButton.attr("data-url"))
-        }
-        
-        // Método 2: Iframe
-        val iframe = document.selectFirst("iframe[src]")
-        if (iframe != null) {
-            return fixUrl(iframe.attr("src"))
-        }
-        
-        // Método 3: Link direto
-        val videoLink = document.selectFirst("a[href*='.m3u8'], a[href*='watch']")
-        if (videoLink != null) {
-            return fixUrl(videoLink.attr("href"))
-        }
-        
-        return null
     }
 }
