@@ -14,7 +14,6 @@ android {
     defaultConfig {
         minSdk = 24
         targetSdk = 34
-        // NÃO configure TMDB_API aqui - o CloudStream já tem
     }
     
     compileOptions {
@@ -22,6 +21,14 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     
+    // Configuração KotlinOptions dentro do android
+    kotlinOptions {
+        jvmTarget = "17"
+    }
+}
+
+// Adiciona esta configuração global para Kotlin
+tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile> {
     kotlinOptions {
         jvmTarget = "17"
     }
