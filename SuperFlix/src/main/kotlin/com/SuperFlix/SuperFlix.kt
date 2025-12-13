@@ -25,7 +25,12 @@ class SuperFlix(val sharedPref: SharedPreferences? = null) : TmdbProvider() {
     private val tmdbRegion = "BR"
     
     companion object {
-        private const val apiKey = BuildConfig.TMDB_API
+        // Usa a API key do CloudStream (já vem embutida)
+        private const val apiKey = com.lagradost.cloudstream3.BuildConfig.TMDB_API
+        
+        init {
+            println("✅ [SuperFlix] Usando API key do CloudStream")
+        }
     }
 
     override val mainPage = mainPageOf(
