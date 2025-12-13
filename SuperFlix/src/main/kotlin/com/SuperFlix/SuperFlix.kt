@@ -11,19 +11,19 @@ import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.getAndUnpack
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.app
-import com.lagradost.cloudstream3.safeApiCall
 import org.jsoup.nodes.Element
 import java.net.URLEncoder
+import kotlinx.coroutines.runBlocking
 
 class SuperFlix : TmdbProvider() {
     override var mainUrl = "https://superflix21.lol"
     override var name = "SuperFlix"
-    override val hasMainPage = false // CloudStream cuida da página principal
+    override val hasMainPage = false
     override val hasDownloadSupport = true
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries, TvType.Anime)
     override val usesWebView = false
     override var lang = "pt-br"
-    override val useMetaLoadResponse = true // CloudStream cuida dos metadados
+    override val useMetaLoadResponse = true
     override val hasQuickSearch = true
     override val instantLinkLoading = true
 
@@ -39,7 +39,6 @@ class SuperFlix : TmdbProvider() {
             // Log para debug
             println("🎬 [SuperFlix] Buscando: ${mediaData.movieName ?: "Unknown"}")
             println("🎬 [SuperFlix] TMDB ID: ${mediaData.tmdbID}")
-            println("🎬 [SuperFlix] Tipo: ${if (mediaData.season != null) "Série" else "Filme"}")
             
             // 1. Buscar no site SuperFlix
             val searchResults = searchOnSuperFlix(mediaData.movieName ?: return false)
@@ -51,7 +50,7 @@ class SuperFlix : TmdbProvider() {
             // 3. Encontrar player
             val playerUrl = findPlayerUrl(detailDoc) ?: return false
             
-            // 4. Extrair vídeo (similar ao Tamilian)
+            // 4. Extrair vídeo
             extractVideoFromPlayer(playerUrl, callback)
             
             true
@@ -115,7 +114,7 @@ class SuperFlix : TmdbProvider() {
     }
     
     private suspend fun extractVideoFromPlayer(playerUrl: String, callback: (ExtractorLink) -> Unit) {
-        safeApiCall {
+        try {
             val document = app.get(playerUrl).document
             
             // Tenta método tipo Tamilian (FirePlayer)
@@ -142,7 +141,7 @@ class SuperFlix : TmdbProvider() {
                             this.headers = mapOf("Origin" to mainUrl)
                         }
                     )
-                    return@safeApiCall
+                    return
                 }
             }
             
@@ -164,6 +163,8 @@ class SuperFlix : TmdbProvider() {
                     }
                 )
             }
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
     }
     
