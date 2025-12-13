@@ -29,7 +29,8 @@ class SuperFlix : TmdbProvider() {
         const val HOST = "https://superflix21.lol"
     }
     
-    override val mainUrl = HOST
+    // Corrigido: deve ser var, não val
+    override var mainUrl = HOST
     
     // Página principal - aqui fazemos nossa própria busca no site
     override val mainPage = mainPageOf(
