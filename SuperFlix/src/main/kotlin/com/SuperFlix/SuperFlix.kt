@@ -1,6 +1,5 @@
 package com.SuperFlix
 
-import android.content.SharedPreferences
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.SubtitleFile
@@ -12,152 +11,688 @@ import com.lagradost.cloudstream3.utils.AppUtils
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.Qualities
+import com.lagradost.cloudstream3.utils.getAndUnpack
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import java.net.URLEncoder
+import com.lagradost.cloudstream3.utils.*
+import com.lagradost.cloudstream3.LoadResponse.Companion.addActors
+import com.lagradost.cloudstream3.LoadResponse.Companion.addTrailer
+import com.lagradost.cloudstream3.app
+import org.jsoup.nodes.Element
+import com.fasterxml.jackson.annotation.JsonProperty
+import java.text.SimpleDateFormat
 
-class SuperFlix(val sharedPref: SharedPreferences? = null) : TmdbProvider() {
+class SuperFlix : MainAPI() {
+    override var mainUrl = "https://superflix21.lol"
     override var name = "SuperFlix"
     override val hasMainPage = true
     override var lang = "pt-br"
-    override val instantLinkLoading = true
-    override val useMetaLoadResponse = true
-    override val hasQuickSearch = true
+    override val hasDownloadSupport = true
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries, TvType.Anime)
-    
-    // FORÇAR IDIOMA PORTUGUÊS
-    private val tmdbLanguage = "pt-BR"
-    private val tmdbRegion = "BR"
-    private val tmdbApiKey = com.lagradost.cloudstream3.BuildConfig.TMDB_API
+    override val usesWebView = true
 
-    companion object {
-        const val HOST = "https://superflix21.lol"
-    }
-    
-    override val mainPage = mainPageOf("" to "SuperFlix")
-    
-    // ========== SOBRESCREVER FUNÇÕES DO TMDB PARA FORÇAR PORTUGUÊS ==========
-    
+    // Usando API do TMDB diretamente via CloudStream
+    private val tmdb = Tmdb()
+    private val tmdbImageUrl = "https://image.tmdb.org/t/p"
+
+    override val mainPage = mainPageOf(
+        "$mainUrl/lancamentos" to "Lançamentos",
+        "$mainUrl/filmes" to "Últimos Filmes",
+        "$mainUrl/series" to "Últimas Séries",
+        "$mainUrl/animes" to "Últimas Animes"
+    )
+
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        // Força idioma português na URL do TMDB
-        val tmdbUrl = if (request.data.contains("?")) {
-            "${request.data}&language=$tmdbLanguage&region=$tmdbRegion"
-        } else {
-            "${request.data}?language=$tmdbLanguage&region=$tmdbRegion"
+        val url = request.data + if (page > 1) "?page=$page" else ""
+        val document = app.get(url).document
+
+        val home = document.select("a.card, div.recs-grid a.rec-card").mapNotNull { element ->
+            element.toSearchResult()
         }
-        
-        // CORREÇÃO: Criar novo MainPageRequest com a URL modificada
-        val newRequest = MainPageRequest(tmdbUrl, request.name)
-        return super.getMainPage(page, newRequest)
+
+        return newHomePageResponse(request.name, home.distinctBy { it.url })
     }
-    
-    override suspend fun search(query: String): List<SearchResponse> {
-        // Busca direto no TMDB com idioma português
-        val encodedQuery = URLEncoder.encode(query, "UTF-8")
-        val url = "https://api.themoviedb.org/3/search/multi?api_key=$tmdbApiKey&query=$encodedQuery&language=$tmdbLanguage&region=$tmdbRegion"
-        
-        return try {
-            val response = app.get(url).parsedSafe<TMDBResults>()
-            response?.results?.mapNotNull { result ->
-                createSearchResponse(result)
-            } ?: emptyList()
-        } catch (e: Exception) {
-            emptyList()
-        }
-    }
-    
-    override suspend fun quickSearch(query: String): List<SearchResponse>? {
-        return search(query).take(5)
-    }
-    
-    override suspend fun load(url: String): LoadResponse? {
-        // Pega o ID do TMDB da URL
-        val data = AppUtils.parseJson<TMDBData>(url)
-        val type = if (data.type == "tv") TvType.TvSeries else TvType.Movie
-        
-        // Carrega do TMDB com idioma português
-        val tmdbUrl = "https://api.themoviedb.org/3/${data.type}/${data.id}?api_key=$tmdbApiKey&language=$tmdbLanguage&append_to_response=credits,videos"
-        
-        return try {
-            val response = app.get(tmdbUrl).parsedSafe<TMDBDetails>()
-            when (type) {
-                TvType.Movie -> createMovieLoadResponse(data, response)
-                TvType.TvSeries -> createTVLoadResponse(data, response)
-                else -> null
+
+    private fun Element.toSearchResult(): SearchResponse? {
+        val title = attr("title") ?: selectFirst("img")?.attr("alt") ?: return null
+        val href = attr("href") ?: return null
+
+        val localPoster = selectFirst("img")?.attr("src")?.let { fixUrl(it) }
+        val year = Regex("\\((\\d{4})\\)").find(title)?.groupValues?.get(1)?.toIntOrNull()
+        val cleanTitle = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
+
+        val badge = selectFirst(".badge-kind")?.text()?.lowercase() ?: ""
+        val isAnime = badge.contains("anime") || href.contains("/anime/") ||
+                      title.contains("(Anime)", ignoreCase = true)
+        val isSerie = badge.contains("série") || badge.contains("serie") ||
+                     href.contains("/serie/") ||
+                     (!isAnime && (badge.contains("tv") || href.contains("/tv/")))
+        val isMovie = !isSerie && !isAnime
+
+        return when {
+            isAnime -> {
+                newAnimeSearchResponse(cleanTitle, fixUrl(href), TvType.Anime) {
+                    this.posterUrl = localPoster
+                    this.year = year
+                }
             }
+            isSerie -> {
+                newTvSeriesSearchResponse(cleanTitle, fixUrl(href), TvType.TvSeries) {
+                    this.posterUrl = localPoster
+                    this.year = year
+                }
+            }
+            else -> {
+                newMovieSearchResponse(cleanTitle, fixUrl(href), TvType.Movie) {
+                    this.posterUrl = localPoster
+                    this.year = year
+                }
+            }
+        }
+    }
+
+    override suspend fun search(query: String): List<SearchResponse> {
+        val searchUrl = "$mainUrl/buscar?q=${java.net.URLEncoder.encode(query, "UTF-8")}"
+        val document = app.get(searchUrl).document
+
+        return document.select(".grid .card, a.card").mapNotNull { card ->
+            try {
+                val title = card.attr("title") ?: card.selectFirst("img")?.attr("alt") ?: return@mapNotNull null
+                val href = card.attr("href") ?: return@mapNotNull null
+
+                val poster = card.selectFirst("img")?.attr("src")?.let { fixUrl(it) }
+                val year = Regex("\\((\\d{4})\\)").find(title)?.groupValues?.get(1)?.toIntOrNull()
+                val cleanTitle = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
+
+                val badge = card.selectFirst(".badge-kind")?.text()?.lowercase() ?: ""
+                val isAnime = badge.contains("anime") || href.contains("/anime/") ||
+                             title.contains("(Anime)", ignoreCase = true)
+                val isSerie = badge.contains("série") || badge.contains("serie") ||
+                             href.contains("/serie/") ||
+                             (!isAnime && (badge.contains("tv") || href.contains("/tv/")))
+
+                when {
+                    isAnime -> newAnimeSearchResponse(cleanTitle, fixUrl(href), TvType.Anime) {
+                        this.posterUrl = poster
+                        this.year = year
+                    }
+                    isSerie -> newTvSeriesSearchResponse(cleanTitle, fixUrl(href), TvType.TvSeries) {
+                        this.posterUrl = poster
+                        this.year = year
+                    }
+                    else -> newMovieSearchResponse(cleanTitle, fixUrl(href), TvType.Movie) {
+                        this.posterUrl = poster
+                        this.year = year
+                    }
+                }
+            } catch (e: Exception) {
+                null
+            }
+        }
+    }
+
+    override suspend fun load(url: String): LoadResponse? {
+        println("🔍 [DEBUG] Iniciando load para URL: $url")
+
+        val document = app.get(url).document
+
+        val titleElement = document.selectFirst("h1, .title")
+        val title = titleElement?.text() ?: return null
+        println("🔍 [DEBUG] Título encontrado no site: $title")
+
+        val year = Regex("\\((\\d{4})\\)").find(title)?.groupValues?.get(1)?.toIntOrNull()
+        val cleanTitle = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
+        println("🔍 [DEBUG] Título limpo: $cleanTitle | Ano: $year")
+
+        val isAnime = url.contains("/anime/") || title.contains("(Anime)", ignoreCase = true)
+        val isSerie = url.contains("/serie/") || url.contains("/tv/") ||
+                     (!isAnime && document.selectFirst(".episode-list, .season-list, .seasons") != null)
+        println("🔍 [DEBUG] Tipo: ${if (isAnime) "Anime" else if (isSerie) "Série" else "Filme"}")
+
+        // Buscar no TMDB usando CloudStream (já busca em português)
+        println("🔍 [DEBUG] Buscando no TMDB via CloudStream...")
+        val tmdbInfo = if (isAnime || isSerie) {
+            searchOnTMDB(cleanTitle, year, true)
+        } else {
+            searchOnTMDB(cleanTitle, year, false)
+        }
+
+        if (tmdbInfo == null) {
+            println("⚠️ [DEBUG] TMDB não retornou informações!")
+        } else {
+            println("✅ [DEBUG] TMDB OK! Título: ${tmdbInfo.title}, Ano: ${tmdbInfo.year}")
+            println("✅ [DEBUG] Poster URL: ${tmdbInfo.posterUrl}")
+            println("✅ [DEBUG] Backdrop URL: ${tmdbInfo.backdropUrl}")
+            println("✅ [DEBUG] Overview: ${tmdbInfo.overview?.take(50)}...")
+            println("✅ [DEBUG] Atores: ${tmdbInfo.actors?.size ?: 0}")
+            println("✅ [DEBUG] Trailer: ${tmdbInfo.youtubeTrailer}")
+            println("✅ [DEBUG] Temporadas/Episódios TMDB: ${tmdbInfo.seasonsEpisodes.size}")
+        }
+
+        val siteRecommendations = extractRecommendationsFromSite(document)
+
+        return if (tmdbInfo != null) {
+            println("✅ [DEBUG] Criando resposta COM dados do TMDB")
+            createLoadResponseWithTMDB(tmdbInfo, url, document, isAnime, isSerie, siteRecommendations)
+        } else {
+            println("⚠️ [DEBUG] Criando resposta APENAS com dados do site")
+            createLoadResponseFromSite(document, url, cleanTitle, year, isAnime, isSerie)
+        }
+    }
+
+    private suspend fun searchOnTMDB(query: String, year: Int?, isTv: Boolean): TMDBInfo? {
+        println("🔍 [TMDB DEBUG] Iniciando busca no TMDB via CloudStream")
+        println("🔍 [TMDB DEBUG] Query: $query")
+        println("🔍 [TMDB DEBUG] Ano: $year")
+        println("🔍 [TMDB DEBUG] Tipo: ${if (isTv) "TV" else "Movie"}")
+
+        return try {
+            // Usar a API do TMDB do CloudStream
+            val searchResults = if (isTv) {
+                tmdb.searchTv(query, 1, year)
+            } else {
+                tmdb.search(query, 1, year, "movie")
+            }
+
+            println("📊 [TMDB DEBUG] Resultados encontrados: ${searchResults.size}")
+            
+            if (searchResults.isEmpty()) {
+                // Tentar sem o ano
+                val searchResultsWithoutYear = if (isTv) {
+                    tmdb.searchTv(query, 1, null)
+                } else {
+                    tmdb.search(query, 1, null, "movie")
+                }
+                
+                if (searchResultsWithoutYear.isEmpty()) {
+                    println("❌ [TMDB DEBUG] Nenhum resultado encontrado no TMDB")
+                    return null
+                }
+                
+                val result = searchResultsWithoutYear.first()
+                println("✅ [TMDB DEBUG] Usando resultado sem filtro de ano")
+                return createTMDBInfo(result, isTv)
+            }
+
+            val result = searchResults.first()
+            createTMDBInfo(result, isTv)
         } catch (e: Exception) {
+            println("❌ [TMDB DEBUG] ERRO na busca do TMDB: ${e.message}")
+            e.printStackTrace()
             null
         }
     }
-    
-    // ========== FUNÇÕES AUXILIARES ==========
-    
-    private fun createSearchResponse(result: TMDBResult): SearchResponse? {
-        val title = result.title ?: result.name ?: return null
-        val type = if (result.media_type == "tv") TvType.TvSeries else TvType.Movie
-        
-        return newMovieSearchResponse(
-            title = title,
-            url = TMDBData(
-                id = result.id,
-                type = result.media_type ?: "movie"
-            ).toJson(),
-            type = type
-        ) {
-            this.posterUrl = result.poster_path?.let { "https://image.tmdb.org/t/p/w500$it" }
-            this.year = result.release_date?.substring(0, 4)?.toIntOrNull() 
-                    ?: result.first_air_date?.substring(0, 4)?.toIntOrNull()
+
+    private suspend fun createTMDBInfo(result: SearchResponse, isTv: Boolean): TMDBInfo? {
+        return try {
+            // Obter detalhes usando o link do TMDB
+            val tmdbId = result.id?.toIntOrNull() ?: return null
+            
+            val details = if (isTv) {
+                tmdb.getTvDetails(tmdbId, "pt-BR")
+            } else {
+                tmdb.getMovieDetails(tmdbId, "pt-BR")
+            }
+            
+            if (details == null) {
+                println("❌ [TMDB DEBUG] Detalhes não encontrados para ID: $tmdbId")
+                return null
+            }
+
+            // Extrair atores
+            val credits = if (isTv) {
+                tmdb.getTvCredits(tmdbId, "pt-BR")
+            } else {
+                tmdb.getMovieCredits(tmdbId, "pt-BR")
+            }
+            
+            val actors = credits?.cast?.take(15)?.mapNotNull { actor ->
+                if (actor.name.isNotBlank()) {
+                    Actor(
+                        name = actor.name,
+                        role = actor.character,
+                        image = actor.profile_path?.let { "$tmdbImageUrl/w185$it" }
+                    )
+                } else null
+            }
+
+            // Buscar trailer
+            val videos = if (isTv) {
+                tmdb.getTvVideos(tmdbId, "pt-BR")
+            } else {
+                tmdb.getMovieVideos(tmdbId, "pt-BR")
+            }
+            
+            val youtubeTrailer = videos?.results?.firstOrNull { video ->
+                video.site == "YouTube" && (video.type == "Trailer" || video.type == "Teaser")
+            }?.let { "https://www.youtube.com/watch?v=${it.key}" }
+
+            // Buscar temporadas (apenas para séries)
+            val seasonsEpisodes = if (isTv) {
+                getTMDBSeasonsEpisodes(tmdbId)
+            } else {
+                emptyMap()
+            }
+
+            TMDBInfo(
+                id = tmdbId,
+                title = result.name ?: "",
+                year = result.year,
+                posterUrl = details.poster_path?.let { "$tmdbImageUrl/w500$it" } ?: result.posterUrl,
+                backdropUrl = details.backdrop_path?.let { "$tmdbImageUrl/original$it" },
+                overview = details.overview,
+                genres = details.genres?.map { it.name },
+                actors = actors,
+                youtubeTrailer = youtubeTrailer,
+                duration = if (!isTv) details.runtime else null,
+                seasonsEpisodes = seasonsEpisodes
+            )
+        } catch (e: Exception) {
+            println("❌ [TMDB DEBUG] ERRO ao criar info TMDB: ${e.message}")
+            null
         }
     }
-    
-    private fun createMovieLoadResponse(data: TMDBData, details: TMDBDetails): LoadResponse? {
-        val title = details.title ?: return null
-        
-        return newMovieLoadResponse(
-            name = title,  // CORREÇÃO: mudado de 'title' para 'name'
-            url = data.toJson(),
-            type = TvType.Movie,
-            dataUrl = ""  // CORREÇÃO: mudado de 'data.url' para '""'
-        ) {
-            this.posterUrl = details.poster_path?.let { "https://image.tmdb.org/t/p/w500$it" }
-            this.backgroundPosterUrl = details.backdrop_path?.let { "https://image.tmdb.org/t/p/original$it" }
-            this.year = details.release_date?.substring(0, 4)?.toIntOrNull()
-            this.plot = details.overview
-            this.duration = details.runtime
-            this.tags = details.genres?.map { it.name }
-            this.actors = details.credits?.cast?.take(10)?.map { 
-                Actor(it.name ?: "", it.profile_path?.let { path -> "https://image.tmdb.org/t/p/w185$path" })
+
+    private suspend fun getTMDBSeasonsEpisodes(seriesId: Int): Map<Int, List<TMDBEpisode>> {
+        println("🔍 [TMDB DEBUG] Buscando temporadas para série ID: $seriesId")
+
+        return try {
+            val seasons = tmdb.getTvDetails(seriesId, "pt-BR")?.seasons ?: return emptyMap()
+            println("📊 [TMDB DEBUG] Temporadas encontradas: ${seasons.size}")
+
+            val seasonsEpisodes = mutableMapOf<Int, List<TMDBEpisode>>()
+
+            for (seasonInfo in seasons) {
+                if (seasonInfo.season_number > 0) { // Ignorar temporada 0 (especiais)
+                    val seasonNumber = seasonInfo.season_number
+                    println("🔍 [TMDB DEBUG] Buscando temporada $seasonNumber...")
+
+                    val season = tmdb.getTvSeason(seriesId, seasonNumber, "pt-BR")
+                    season?.episodes?.let { episodes ->
+                        val tmdbEpisodes = episodes.map { episode ->
+                            TMDBEpisode(
+                                episode_number = episode.episode_number,
+                                name = episode.name,
+                                overview = episode.overview,
+                                still_path = episode.still_path,
+                                runtime = episode.runtime,
+                                air_date = episode.air_date
+                            )
+                        }
+                        
+                        seasonsEpisodes[seasonNumber] = tmdbEpisodes
+                        println("✅ [TMDB DEBUG] Temporada $seasonNumber: ${tmdbEpisodes.size} episódios")
+                    }
+                }
+            }
+
+            println("✅ [TMDB DEBUG] Total temporadas com dados: ${seasonsEpisodes.size}")
+            seasonsEpisodes
+        } catch (e: Exception) {
+            println("❌ [TMDB DEBUG] ERRO ao buscar temporadas: ${e.message}")
+            emptyMap()
+        }
+    }
+
+    private fun extractRecommendationsFromSite(document: org.jsoup.nodes.Document): List<SearchResponse> {
+        val recommendations = document.select(".recs-grid .rec-card, .recs-grid a").mapNotNull { element ->
+            try {
+                val href = element.attr("href") ?: return@mapNotNull null
+                if (href.isBlank() || href == "#") return@mapNotNull null
+
+                val imgElement = element.selectFirst("img")
+                val title = imgElement?.attr("alt") ?:
+                           element.selectFirst(".rec-title")?.text() ?:
+                           element.attr("title") ?:
+                           return@mapNotNull null
+
+                val poster = imgElement?.attr("src")?.let { fixUrl(it) }
+                val cleanTitle = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
+                val year = Regex("\\((\\d{4})\\)").find(title)?.groupValues?.get(1)?.toIntOrNull()
+
+                val isAnime = href.contains("/anime/") || title.contains("(Anime)", ignoreCase = true)
+                val isSerie = href.contains("/serie/") || href.contains("/tv/")
+                val isMovie = !isSerie && !isAnime
+
+                when {
+                    isAnime -> newAnimeSearchResponse(cleanTitle, fixUrl(href), TvType.Anime) {
+                        this.posterUrl = poster
+                        this.year = year
+                    }
+                    isSerie -> newTvSeriesSearchResponse(cleanTitle, fixUrl(href), TvType.TvSeries) {
+                        this.posterUrl = poster
+                        this.year = year
+                    }
+                    else -> newMovieSearchResponse(cleanTitle, fixUrl(href), TvType.Movie) {
+                        this.posterUrl = poster
+                        this.year = year
+                    }
+                }
+            } catch (e: Exception) {
+                null
+            }
+        }
+
+        println("🔍 [DEBUG] Recomendações encontradas no site: ${recommendations.size}")
+        return recommendations
+    }
+
+    private suspend fun createLoadResponseFromSite(
+        document: org.jsoup.nodes.Document,
+        url: String,
+        title: String,
+        year: Int?,
+        isAnime: Boolean,
+        isSerie: Boolean
+    ): LoadResponse {
+        println("🏗️ [DEBUG] Criando resposta APENAS com dados do site")
+
+        val ogImage = document.selectFirst("meta[property='og:image']")?.attr("content")
+        val poster = ogImage?.let { fixUrl(it) }
+        println("🏗️ [DEBUG] Poster do site: $poster")
+
+        val description = document.selectFirst("meta[name='description']")?.attr("content")
+        val synopsis = document.selectFirst(".syn, .description, .sinopse, .plot")?.text()
+        val plot = description ?: synopsis
+        println("🏗️ [DEBUG] Plot do site: ${plot?.take(50)}...")
+
+        val tags = document.select("a.chip, .chip, .genre, .tags").map { it.text() }
+            .takeIf { it.isNotEmpty() }?.toList()
+        println("🏗️ [DEBUG] Tags do site: $tags")
+
+        val siteRecommendations = extractRecommendationsFromSite(document)
+
+        return if (isAnime || isSerie) {
+            println("🏗️ [DEBUG] Criando série/Anime (apenas site)")
+            val type = if (isAnime) TvType.Anime else TvType.TvSeries
+
+            // Extrair episódios do site
+            val episodes = extractEpisodesFromSite(document, url, isAnime, isSerie)
+
+            newTvSeriesLoadResponse(title, url, type, episodes) {
+                this.posterUrl = poster
+                this.year = year
+                this.plot = plot
+                this.tags = tags
+                this.recommendations = siteRecommendations.takeIf { it.isNotEmpty() }
+                println("🏗️ [DEBUG] Série criada com ${episodes.size} episódios")
+            }
+        } else {
+            println("🏗️ [DEBUG] Criando filme (apenas site)")
+            val playerUrl = findPlayerUrl(document)
+            println("🏗️ [DEBUG] Player URL: $playerUrl")
+
+            newMovieLoadResponse(title, url, TvType.Movie, playerUrl ?: url) {
+                this.posterUrl = poster
+                this.year = year
+                this.plot = plot
+                this.tags = tags
+                this.recommendations = siteRecommendations.takeIf { it.isNotEmpty() }
             }
         }
     }
-    
-    private fun createTVLoadResponse(data: TMDBData, details: TMDBDetails): LoadResponse? {
-        val title = details.name ?: return null
-        
-        return newTvSeriesLoadResponse(
-            name = title,  // CORREÇÃO: mudado de 'title' para 'name'
-            url = data.toJson(),
-            type = TvType.TvSeries,
-            episodes = emptyList() // TMDB Provider cuida dos episódios
-        ) {
-            this.posterUrl = details.poster_path?.let { "https://image.tmdb.org/t/p/w500$it" }
-            this.backgroundPosterUrl = details.backdrop_path?.let { "https://image.tmdb.org/t/p/original$it" }
-            this.year = details.first_air_date?.substring(0, 4)?.toIntOrNull()
-            this.plot = details.overview
-            this.tags = details.genres?.map { it.name }
-            this.actors = details.credits?.cast?.take(10)?.map { 
-                Actor(it.name ?: "", it.profile_path?.let { path -> "https://image.tmdb.org/t/p/w185$path" })
+
+    private suspend fun extractEpisodesFromSite(
+        document: org.jsoup.nodes.Document,
+        url: String,
+        isAnime: Boolean,
+        isSerie: Boolean
+    ): List<Episode> {
+        println("🔍 [SITE DEBUG] Extraindo episódios do site")
+        val episodes = mutableListOf<Episode>()
+
+        val episodeElements = document.select("button.bd-play[data-url], a.episode-card, .episode-item, .episode-link, [class*='episode']")
+        println("🔍 [SITE DEBUG] Elementos de episódio encontrados: ${episodeElements.size}")
+
+        if (episodeElements.isNotEmpty()) {
+            episodeElements.forEachIndexed { index, element ->
+                try {
+                    val dataUrl = element.attr("data-url") ?: element.attr("href") ?: ""
+                    if (dataUrl.isBlank()) {
+                        println("⚠️ [SITE DEBUG] Elemento $index sem data-url/href")
+                        return@forEachIndexed
+                    }
+
+                    val epNumber = extractEpisodeNumber(element, index + 1)
+                    val seasonNumber = element.attr("data-season").toIntOrNull() ?: 1
+
+                    val episode = newEpisode(fixUrl(dataUrl)) {
+                        this.name = "Episódio $epNumber"
+                        this.season = seasonNumber
+                        this.episode = epNumber
+
+                        element.selectFirst(".ep-desc, .description")?.text()?.trim()?.let { desc ->
+                            if (desc.isNotBlank()) {
+                                this.description = desc
+                            }
+                        }
+                    }
+
+                    episodes.add(episode)
+                } catch (e: Exception) {
+                    println("❌ [SITE DEBUG] Erro ao processar episódio $index: ${e.message}")
+                }
+            }
+        }
+
+        println("✅ [SITE DEBUG] Total de episódios extraídos do site: ${episodes.size}")
+        return episodes
+    }
+
+    private suspend fun createLoadResponseWithTMDB(
+        tmdbInfo: TMDBInfo,
+        url: String,
+        document: org.jsoup.nodes.Document,
+        isAnime: Boolean,
+        isSerie: Boolean,
+        siteRecommendations: List<SearchResponse>
+    ): LoadResponse {
+        println("🏗️ [DEBUG] Criando resposta com dados TMDB")
+
+        return if (isAnime || isSerie) {
+            println("🏗️ [DEBUG] Criando série/Anime")
+
+            // AGORA COM DADOS DO TMDB!
+            val episodes = extractEpisodesWithTMDBInfo(
+                document = document,
+                url = url,
+                tmdbInfo = tmdbInfo,
+                isAnime = isAnime,
+                isSerie = isSerie
+            )
+
+            println("🏗️ [DEBUG] Total de episódios: ${episodes.size}")
+            val type = if (isAnime) TvType.Anime else TvType.TvSeries
+
+            newTvSeriesLoadResponse(
+                name = tmdbInfo.title ?: "",
+                url = url,
+                type = type,
+                episodes = episodes
+            ) {
+                this.posterUrl = tmdbInfo.posterUrl
+                this.backgroundPosterUrl = tmdbInfo.backdropUrl
+                this.year = tmdbInfo.year
+                this.plot = tmdbInfo.overview
+                this.tags = tmdbInfo.genres
+
+                tmdbInfo.actors?.let { actors ->
+                    println("🏗️ [DEBUG] Adicionando ${actors.size} atores")
+                    addActors(actors)
+                }
+
+                tmdbInfo.youtubeTrailer?.let { trailerUrl ->
+                    println("🏗️ [DEBUG] Adicionando trailer: $trailerUrl")
+                    addTrailer(trailerUrl)
+                }
+
+                this.recommendations = siteRecommendations.takeIf { it.isNotEmpty() }
+                println("🏗️ [DEBUG] Recomendações: ${siteRecommendations.size}")
+            }
+        } else {
+            println("🏗️ [DEBUG] Criando filme com dados TMDB")
+            val playerUrl = findPlayerUrl(document)
+            println("🏗️ [DEBUG] Player URL: $playerUrl")
+
+            newMovieLoadResponse(
+                name = tmdbInfo.title ?: "",
+                url = url,
+                type = TvType.Movie,
+                dataUrl = playerUrl ?: url
+            ) {
+                this.posterUrl = tmdbInfo.posterUrl
+                this.backgroundPosterUrl = tmdbInfo.backdropUrl
+                this.year = tmdbInfo.year
+                this.plot = tmdbInfo.overview
+                this.tags = tmdbInfo.genres
+                this.duration = tmdbInfo.duration
+
+                tmdbInfo.actors?.let { actors ->
+                    println("🏗️ [DEBUG] Adicionando ${actors.size} atores")
+                    addActors(actors)
+                }
+
+                tmdbInfo.youtubeTrailer?.let { trailerUrl ->
+                    println("🏗️ [DEBUG] Adicionando trailer: $trailerUrl")
+                    addTrailer(trailerUrl)
+                }
+
+                this.recommendations = siteRecommendations.takeIf { it.isNotEmpty() }
+                println("🏗️ [DEBUG] Recomendações: ${siteRecommendations.size}")
             }
         }
     }
-    
-    private fun fixUrl(url: String): String {
+
+    private suspend fun extractEpisodesWithTMDBInfo(
+        document: org.jsoup.nodes.Document,
+        url: String,
+        tmdbInfo: TMDBInfo?,
+        isAnime: Boolean,
+        isSerie: Boolean = false
+    ): List<Episode> {
+        println("🔍 [DEBUG] Extraindo episódios da URL: $url")
+        val episodes = mutableListOf<Episode>()
+
+        val episodeElements = document.select("button.bd-play[data-url], a.episode-card, .episode-item, .episode-link, [class*='episode']")
+        println("🔍 [DEBUG] Elementos de episódio encontrados: ${episodeElements.size}")
+
+        if (episodeElements.isNotEmpty()) {
+            episodeElements.forEachIndexed { index, element ->
+                try {
+                    val dataUrl = element.attr("data-url") ?: element.attr("href") ?: ""
+                    if (dataUrl.isBlank()) return@forEachIndexed
+
+                    val epNumber = extractEpisodeNumber(element, index + 1)
+                    val seasonNumber = element.attr("data-season").toIntOrNull() ?: 1
+
+                    // AGORA COM DADOS DO TMDB!
+                    val tmdbEpisode = findTMDBEpisode(tmdbInfo, seasonNumber, epNumber)
+
+                    val episode = if (tmdbEpisode != null) {
+                        // Episódio com dados do TMDB - ADICIONANDO DURAÇÃO "-min" NA SINOPSE
+                        val descriptionWithDuration = buildDescriptionWithDuration(
+                            tmdbEpisode.overview,
+                            tmdbEpisode.runtime
+                        )
+
+                        newEpisode(fixUrl(dataUrl)) {
+                            this.name = tmdbEpisode.name ?: "Episódio $epNumber"
+                            this.season = seasonNumber
+                            this.episode = epNumber
+                            this.posterUrl = tmdbEpisode.still_path?.let { "$tmdbImageUrl/w300$it" }
+                            this.description = descriptionWithDuration
+
+                            tmdbEpisode.air_date?.let { airDate ->
+                                try {
+                                    val dateFormatter = SimpleDateFormat("yyyy-MM-dd")
+                                    val date = dateFormatter.parse(airDate)
+                                    this.date = date.time
+                                } catch (e: Exception) {}
+                            }
+                        }
+                    } else {
+                        // Episódio sem dados do TMDB
+                        newEpisode(fixUrl(dataUrl)) {
+                            this.name = "Episódio $epNumber"
+                            this.season = seasonNumber
+                            this.episode = epNumber
+                        }
+                    }
+
+                    episodes.add(episode)
+                } catch (e: Exception) {
+                    println("❌ [DEBUG] Erro episódio $index: ${e.message}")
+                }
+            }
+        }
+
+        println("✅ [DEBUG] Total de episódios extraídos: ${episodes.size}")
+        return episodes
+    }
+
+    // NOVA FUNÇÃO: Adiciona "-min" no final da sinopse com a duração
+    private fun buildDescriptionWithDuration(overview: String?, runtime: Int?): String? {
         return when {
-            url.isEmpty() -> url
-            url.startsWith("http") -> url
-            url.startsWith("//") -> "https:$url"
-            url.startsWith("/") -> "$HOST$url"
-            else -> "$HOST/$url"
+            overview != null && runtime != null && runtime > 0 -> {
+                // Adiciona "-min" no final da sinopse
+                "$overview\n\nDuração: $runtime min"
+            }
+            overview != null -> {
+                // Mantém apenas a sinopse se não houver duração
+                overview
+            }
+            runtime != null && runtime > 0 -> {
+                // Se não houver sinopse mas houver duração
+                "Duração: $runtime min"
+            }
+            else -> null
         }
+    }
+
+    private fun findTMDBEpisode(tmdbInfo: TMDBInfo?, season: Int, episode: Int): TMDBEpisode? {
+        if (tmdbInfo == null) return null
+
+        val episodes = tmdbInfo.seasonsEpisodes[season]
+        if (episodes == null) {
+            println("⚠️ [DEBUG] Temporada $season não encontrada no TMDB")
+            return null
+        }
+
+        return episodes.find { it.episode_number == episode }
+    }
+
+    private fun extractEpisodeNumber(element: Element, default: Int): Int {
+        return element.attr("data-ep").toIntOrNull() ?:
+               element.selectFirst(".ep-number, .number, .episode-number")?.text()?.toIntOrNull() ?:
+               Regex("Ep\\.?\\s*(\\d+)").find(element.text())?.groupValues?.get(1)?.toIntOrNull() ?:
+               Regex("Epis[oó]dio\\s*(\\d+)").find(element.text())?.groupValues?.get(1)?.toIntOrNull() ?:
+               default
+    }
+
+    private fun findPlayerUrl(document: org.jsoup.nodes.Document): String? {
+        val playButton = document.selectFirst("button.bd-play[data-url]")
+        if (playButton != null) {
+            val url = playButton.attr("data-url")
+            println("🔍 [DEBUG] Player URL encontrado no botão: $url")
+            return url
+        }
+
+        val iframe = document.selectFirst("iframe[src*='fembed'], iframe[src*='filemoon'], iframe[src*='player'], iframe[src*='embed']")
+        if (iframe != null) {
+            val url = iframe.attr("src")
+            println("🔍 [DEBUG] Player URL encontrado no iframe: $url")
+            return url
+        }
+
+        val videoLink = document.selectFirst("a[href*='.m3u8'], a[href*='.mp4'], a[href*='watch']")
+        val url = videoLink?.attr("href")
+        if (url != null) {
+            println("🔍 [DEBUG] Player URL encontrado no link: $url")
+        } else {
+            println("⚠️ [DEBUG] Nenhum player URL encontrado")
+        }
+
+        return url
     }
 
     override suspend fun loadLinks(
@@ -166,109 +701,31 @@ class SuperFlix(val sharedPref: SharedPreferences? = null) : TmdbProvider() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        return try {
-            val mediaData = AppUtils.parseJson<TmdbLink>(data)
-            
-            println("🎬 [SuperFlix] Carregando links para: ${mediaData.movieName ?: "Unknown"}")
-            
-            var success = false
-            
-            // Tenta buscar no site SuperFlix
-            try {
-                val searchQuery = mediaData.movieName ?: return false
-                val searchUrl = "$HOST/buscar?q=${URLEncoder.encode(searchQuery, "UTF-8")}"
-                
-                val document = app.get(searchUrl).document
-                val firstResult = document.selectFirst(".grid .card, a.card")
-                
-                if (firstResult != null) {
-                    val detailUrl = firstResult.attr("href")?.let { fixUrl(it) }
-                    if (detailUrl != null) {
-                        val detailDoc = app.get(detailUrl).document
-                        val playButton = detailDoc.selectFirst("button.bd-play[data-url]")
-                        val playerUrl = playButton?.attr("data-url")?.let { fixUrl(it) }
-                        
-                        if (playerUrl != null) {
-                            success = SuperFlixExtractor.extractVideoLinks(playerUrl, HOST, name, callback)
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                println("⚠️ [SuperFlix] Busca falhou: ${e.message}")
-            }
-            
-            // Fallback para link de exemplo
-            if (!success) {
-                callback.invoke(
-                    newExtractorLink(
-                        name,
-                        "SuperFlix",
-                        "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
-                        ExtractorLinkType.M3U8
-                    ) {
-                        this.referer = HOST
-                        this.quality = Qualities.P720.value
-                    }
-                )
-                success = true
-            }
-            
-            success
-        } catch (e: Exception) {
-            e.printStackTrace()
-            false
-        }
+        return SuperFlixExtractor.extractVideoLinks(data, mainUrl, name, callback)
     }
-    
-    // ========== CLASSES DE DADOS TMDB ==========
-    
-    data class TMDBData(
+
+    // ============ CLASSES DE DADOS ============
+
+    private data class TMDBInfo(
         val id: Int,
-        val type: String
-    ) {
-        fun toJson(): String {
-            return AppUtils.toJson(this)
-        }
-    }
-    
-    data class TMDBResults(
-        @JsonProperty("results") val results: List<TMDBResult>
+        val title: String?,
+        val year: Int?,
+        val posterUrl: String?,
+        val backdropUrl: String?,
+        val overview: String?,
+        val genres: List<String>?,
+        val actors: List<Actor>?,
+        val youtubeTrailer: String?,
+        val duration: Int?,
+        val seasonsEpisodes: Map<Int, List<TMDBEpisode>> = emptyMap()
     )
-    
-    data class TMDBResult(
-        @JsonProperty("id") val id: Int,
-        @JsonProperty("title") val title: String?,
-        @JsonProperty("name") val name: String?,
-        @JsonProperty("media_type") val media_type: String?,
-        @JsonProperty("poster_path") val poster_path: String?,
-        @JsonProperty("release_date") val release_date: String?,
-        @JsonProperty("first_air_date") val first_air_date: String?
-    )
-    
-    data class TMDBDetails(
-        @JsonProperty("id") val id: Int,
-        @JsonProperty("title") val title: String?,
-        @JsonProperty("name") val name: String?,
+
+    private data class TMDBEpisode(
+        @JsonProperty("episode_number") val episode_number: Int,
+        @JsonProperty("name") val name: String,
         @JsonProperty("overview") val overview: String?,
-        @JsonProperty("poster_path") val poster_path: String?,
-        @JsonProperty("backdrop_path") val backdrop_path: String?,
-        @JsonProperty("release_date") val release_date: String?,
-        @JsonProperty("first_air_date") val first_air_date: String?,
+        @JsonProperty("still_path") val still_path: String?,
         @JsonProperty("runtime") val runtime: Int?,
-        @JsonProperty("genres") val genres: List<TMDBGenre>?,
-        @JsonProperty("credits") val credits: TMDBCredits?
-    )
-    
-    data class TMDBGenre(
-        @JsonProperty("name") val name: String
-    )
-    
-    data class TMDBCredits(
-        @JsonProperty("cast") val cast: List<TMDBCast>
-    )
-    
-    data class TMDBCast(
-        @JsonProperty("name") val name: String?,
-        @JsonProperty("profile_path") val profile_path: String?
+        @JsonProperty("air_date") val air_date: String?
     )
 }
