@@ -11,6 +11,7 @@ import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.getAndUnpack
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.app
+import com.lagradost.cloudstream3.safeApiCall
 import org.jsoup.nodes.Element
 import java.text.SimpleDateFormat
 
@@ -82,38 +83,53 @@ class SuperFlix : TmdbProvider() {
         return videoLink?.attr("href")
     }
     
-    private fun extractVideo(playerUrl: String, callback: (ExtractorLink) -> Unit) {
+    private suspend fun extractVideo(playerUrl: String, callback: (ExtractorLink) -> Unit) {
         // Similar ao Tamilian, extrai o vídeo
-        try {
-            val document = app.get(playerUrl).document
-            
-            // Busca script com dados do vídeo (ajuste conforme o site)
-            val script = document.selectFirst("script:containsData(function(p,a,c,k,e,d))")
-                ?.data()?.let { getAndUnpack(it) }
-            
-            script?.let {
-                // Extrai token e busca vídeo (adaptar conforme necessidade)
-                val token = it.substringAfter("FirePlayer(\"").substringBefore("\",")
-                val videoUrl = "$mainUrl/player/index.php?data=$token&do=getVideo"
+        safeApiCall {
+            try {
+                val document = app.get(playerUrl).document
                 
-                // Aqui você faria a requisição para obter o m3u8
-                // Similar ao Tamilian
-            }
-            
-        } catch (e: Exception) {
-            // Fallback: tenta usar o playerUrl diretamente se for m3u8
-            if (playerUrl.contains(".m3u8")) {
-                callback.invoke(
-                    newExtractorLink(
-                        name,
-                        name,
-                        url = playerUrl,
-                        ExtractorLinkType.M3U8
-                    ) {
-                        this.referer = "$mainUrl/"
-                        this.quality = Qualities.P1080.value
-                    }
-                )
+                // Busca script com dados do vídeo (ajuste conforme o site)
+                val script = document.selectFirst("script:containsData(function(p,a,c,k,e,d))")
+                    ?.data()?.let { getAndUnpack(it) }
+                
+                script?.let {
+                    // Extrai token e busca vídeo (adaptar conforme necessidade)
+                    val token = it.substringAfter("FirePlayer(\"").substringBefore("\",")
+                    val videoUrl = "$mainUrl/player/index.php?data=$token&do=getVideo"
+                    
+                    // Aqui você faria a requisição para obter o m3u8
+                    // Similar ao Tamilian
+                    
+                    // Exemplo simplificado:
+                    callback.invoke(
+                        newExtractorLink(
+                            name,
+                            name,
+                            url = videoUrl,
+                            ExtractorLinkType.M3U8
+                        ) {
+                            this.referer = "$mainUrl/"
+                            this.quality = Qualities.P1080.value
+                        }
+                    )
+                }
+                
+            } catch (e: Exception) {
+                // Fallback: tenta usar o playerUrl diretamente se for m3u8
+                if (playerUrl.contains(".m3u8")) {
+                    callback.invoke(
+                        newExtractorLink(
+                            name,
+                            name,
+                            url = playerUrl,
+                            ExtractorLinkType.M3U8
+                        ) {
+                            this.referer = "$mainUrl/"
+                            this.quality = Qualities.P1080.value
+                        }
+                    )
+                }
             }
         }
     }
