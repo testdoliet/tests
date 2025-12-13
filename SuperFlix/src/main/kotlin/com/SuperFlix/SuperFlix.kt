@@ -1,6 +1,7 @@
 package com.SuperFlix
 
 import com.fasterxml.jackson.annotation.JsonProperty
+import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.TvType
 import com.lagradost.cloudstream3.app
@@ -30,13 +31,9 @@ class SuperFlix : TmdbProvider() {
 
     companion object {
         const val HOST = "https://superflix21.lol"
-        
-        // Configuração de idioma para TMDB
-        private const val TMDB_LANG = "pt-BR"
-        private const val TMDB_REGION = "BR"
     }
     
-    // Sobrescreve a configuração de idioma do TMDB
+    // Página principal mínima para o TMDB Provider
     override val mainPage = mainPageOf(
         "" to "Filmes e Séries"
     )
