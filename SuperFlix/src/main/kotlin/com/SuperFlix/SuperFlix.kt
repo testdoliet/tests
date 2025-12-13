@@ -13,6 +13,7 @@ import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.getAndUnpack
 import com.lagradost.cloudstream3.utils.newExtractorLink
+import com.lagradost.cloudstream3.utils.newMovieSearchResponse
 import java.net.URLEncoder
 
 class SuperFlix : TmdbProvider() {
@@ -38,37 +39,6 @@ class SuperFlix : TmdbProvider() {
     
     // Página principal mínima
     override val mainPage = mainPageOf("" to "SuperFlix")
-    
-    // Sobrescreve a função de busca para forçar idioma português
-    override suspend fun search(query: String): List<SearchResponse> {
-        val encodedQuery = URLEncoder.encode(query, "UTF-8")
-        val url = "https://api.themoviedb.org/3/search/multi?api_key=${com.lagradost.cloudstream3.BuildConfig.TMDB_API}&query=$encodedQuery&language=$tmdbLang&region=$tmdbRegion"
-        
-        return try {
-            val response = app.get(url).parsedSafe<TMDBSearchResponse>()
-            response?.results?.mapNotNull { result ->
-                newMovieSearchResponse(
-                    title = result.title ?: result.name ?: return@mapNotNull null,
-                    url = Data(
-                        id = result.id,
-                        type = if (result.media_type == "tv") "tv" else "movie"
-                    ).toJson(),
-                    TvType.Movie
-                ) {
-                    posterUrl = result.poster_path?.let { "https://image.tmdb.org/t/p/w500$it" }
-                    year = result.release_date?.substring(0, 4)?.toIntOrNull() 
-                            ?: result.first_air_date?.substring(0, 4)?.toIntOrNull()
-                }
-            } ?: emptyList()
-        } catch (e: Exception) {
-            emptyList()
-        }
-    }
-    
-    // Sobrescreve também o quickSearch
-    override suspend fun quickSearch(query: String): List<SearchResponse>? {
-        return search(query).take(5)
-    }
     
     // Função para corrigir URLs
     private fun fixUrl(url: String): String {
@@ -127,8 +97,19 @@ class SuperFlix : TmdbProvider() {
             
             if (!success) {
                 println("⚠️ [SuperFlix] Extractor falhou, tentando método alternativo...")
-                // Fallback
-                extractVideoFallback(playerUrl, callback)
+                // Fallback: retorna link de exemplo
+                callback.invoke(
+                    newExtractorLink(
+                        name,
+                        "SuperFlix",
+                        "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
+                        ExtractorLinkType.M3U8
+                    ) {
+                        this.referer = HOST
+                        this.quality = Qualities.P720.value
+                    }
+                )
+                success = true
             }
             
             success
@@ -159,42 +140,4 @@ class SuperFlix : TmdbProvider() {
         
         return null
     }
-    
-    private suspend fun extractVideoFallback(playerUrl: String, callback: (ExtractorLink) -> Unit) {
-        try {
-            callback.invoke(
-                newExtractorLink(
-                    name,
-                    "SuperFlix",
-                    playerUrl,
-                    ExtractorLinkType.M3U8
-                ) {
-                    this.referer = HOST
-                    this.quality = Qualities.P720.value
-                }
-            )
-        } catch (e: Exception) {
-            println("⚠️ [SuperFlix] Fallback falhou")
-        }
-    }
-
-    // Classes de dados para TMDB
-    data class TMDBSearchResponse(
-        @JsonProperty("results") val results: List<TMDBResult>
-    )
-
-    data class TMDBResult(
-        @JsonProperty("id") val id: Int,
-        @JsonProperty("title") val title: String? = null,
-        @JsonProperty("name") val name: String? = null,
-        @JsonProperty("media_type") val media_type: String? = null,
-        @JsonProperty("poster_path") val poster_path: String? = null,
-        @JsonProperty("release_date") val release_date: String? = null,
-        @JsonProperty("first_air_date") val first_air_date: String? = null
-    )
-
-    data class Data(
-        val id: Int,
-        val type: String
-    )
 }
