@@ -9,9 +9,6 @@ import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.newExtractorLink
-import com.lagradost.cloudstream3.app
-import org.jsoup.nodes.Element
-import kotlinx.coroutines.runBlocking
 
 class SuperFlix : TmdbProvider() {
     override var mainUrl = "https://superflix21.lol"
@@ -25,100 +22,61 @@ class SuperFlix : TmdbProvider() {
     override val hasQuickSearch = true
     override val instantLinkLoading = true
 
-    companion object {
-        const val HOST = "https://superflix21.lol"
-    }
-
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        return try {
-            val mediaData = AppUtils.parseJson<TmdbLink>(data).toLinkData()
+        try {
+            // Parse dos dados do TMDB
+            val mediaData = AppUtils.parseJson<TmdbLink>(data)
             
-            // Para teste, vamos retornar um link de exemplo baseado no título
-            // Na implementação real, você buscaria no site SuperFlix
-            val searchQuery = "${mediaData.title} ${mediaData.year}"
-            println("🔍 [SuperFlix] Buscando: $searchQuery")
+            // Extrair título e ano de maneira segura
+            val title = mediaData.movieName ?: "Unknown"
+            val year = try {
+                // Tenta extrair ano do título ou usa valor padrão
+                title.substringAfterLast("(").substringBefore(")").toIntOrNull()
+            } catch (e: Exception) {
+                null
+            }
             
-            // Exemplo simplificado - retorna um link de teste
-            callback.invoke(
+            // Log para debug
+            println("🎬 [SuperFlix] Carregando links para: $title (${year ?: "N/A"})")
+            println("🎬 [SuperFlix] Tipo: ${mediaData.type}, TMDB ID: ${mediaData.tmdbID}")
+            println("🎬 [SuperFlix] IMDB ID: ${mediaData.imdbID}")
+            println("🎬 [SuperFlix] Temporada: ${mediaData.season}, Episódio: ${mediaData.episode}")
+            
+            // Aqui você implementaria a busca real no site SuperFlix
+            // Por enquanto, retorna um link de exemplo
+            
+            // Link de teste real (stream público de exemplo)
+            val testUrl = when {
+                mediaData.type == "movie" -> "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8"
+                mediaData.type == "tv" -> "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8"
+                else -> "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8"
+            }
+            
+            callback(
                 newExtractorLink(
-                    name,
-                    "SuperFlix Stream",
-                    url = "https://example.com/test.m3u8", // Substitua por link real
-                    ExtractorLinkType.M3U8
+                    source = name,
+                    name = "SuperFlix Stream",
+                    url = testUrl,
+                    type = ExtractorLinkType.M3U8
                 ) {
-                    this.referer = "$mainUrl/"
-                    this.quality = Qualities.P720.value
+                    referer = "$mainUrl/"
+                    quality = Qualities.P720.value
+                    headers = mapOf(
+                        "Origin" to mainUrl,
+                        "Referer" to "$mainUrl/"
+                    )
                 }
             )
             
-            true
+            return true
         } catch (e: Exception) {
             e.printStackTrace()
-            false
+            return false
         }
     }
-    
-    // Função auxiliar para encontrar player (não suspensa)
-    private fun findPlayerUrl(document: org.jsoup.nodes.Document): String? {
-        // Primeiro tenta o botão de play
-        val playButton = document.selectFirst("button.bd-play[data-url]")
-        if (playButton != null) {
-            return playButton.attr("data-url")
-        }
-        
-        // Tenta iframe
-        val iframe = document.selectFirst("iframe[src*='fembed'], iframe[src*='filemoon'], iframe[src*='player'], iframe[src*='embed']")
-        if (iframe != null) {
-            return iframe.attr("src")
-        }
-        
-        // Tenta link direto
-        val videoLink = document.selectFirst("a[href*='.m3u8'], a[href*='.mp4'], a[href*='watch']")
-        return videoLink?.attr("href")
-    }
-    
-    // Função suspensa para extrair vídeo
-    private suspend fun extractVideoFromUrl(playerUrl: String): String? {
-        return try {
-            val document = app.get(playerUrl).document
-            
-            // Lógica de extração real aqui
-            // Por enquanto, retorna o próprio URL se for m3u8
-            if (playerUrl.contains(".m3u8")) {
-                playerUrl
-            } else {
-                // Tenta encontrar m3u8 na página
-                val videoElement = document.selectFirst("video source[src*='.m3u8']")
-                videoElement?.attr("src") ?: playerUrl
-            }
-        } catch (e: Exception) {
-            e.printStackTrace()
-            null
-        }
-    }
-
-    private fun TmdbLink.toLinkData(): LinkData {
-        return LinkData(
-            imdbId = imdbID,
-            tmdbId = tmdbID,
-            title = movieName,
-            season = season,
-            episode = episode,
-            year = movieYear
-        )
-    }
-
-    data class LinkData(
-        @JsonProperty("imdbId") val imdbId: String? = null,
-        @JsonProperty("tmdbId") val tmdbId: Int? = null,
-        @JsonProperty("title") val title: String? = null,
-        @JsonProperty("season") val season: Int? = null,
-        @JsonProperty("episode") val episode: Int? = null,
-        @JsonProperty("year") val year: Int? = null
-    )
 }
