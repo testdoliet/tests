@@ -6,31 +6,14 @@ android {
     compileSdk = 34
     namespace = "com.SuperFlix"
     
-    buildFeatures {
-        buildConfig = true
-        viewBinding = true
-    }
-    
     defaultConfig {
-        minSdk = 24
+        minSdk = 21
         targetSdk = 34
     }
     
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
-    }
-    
-    // Configuração KotlinOptions dentro do android
-    kotlinOptions {
-        jvmTarget = "17"
-    }
-}
-
-// Adiciona esta configuração global para Kotlin
-tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile> {
-    kotlinOptions {
-        jvmTarget = "17"
+        sourceCompatibility = JavaVersion.VERSION_1_8
+        targetCompatibility = JavaVersion.VERSION_1_8
     }
 }
 
@@ -43,4 +26,9 @@ cloudstream {
     iconUrl = "https://superflix21.lol/assets/logo.png"
     isCrossPlatform = true
     requiresResources = true
+}
+
+dependencies {
+    val cloudstream by configurations
+    cloudstream("com.lagradost:cloudstream3:pre-release")
 }
