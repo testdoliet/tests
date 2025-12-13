@@ -17,9 +17,9 @@
         ],
         "version": 1,
         "internalName": "SuperFlix",
-        "jarUrl": "https://github.com/lawlietbr/lietrepo/raw/refs/heads/main/builds/SuperFlix.jar",
+        "jarUrl": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/SuperFlix.jar",
         "description": "SuperFlix - Filmes e S\u00e9ries em Portugu\u00eas",
-        "url": "https://github.com/lawlietbr/lietrepo/raw/refs/heads/main/builds/SuperFlix.cs3",
+        "url": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/SuperFlix.cs3",
         "name": "SuperFlix"
     }
 ]
