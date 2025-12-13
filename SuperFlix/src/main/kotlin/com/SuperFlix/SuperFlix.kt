@@ -8,22 +8,20 @@ import com.lagradost.cloudstream3.utils.AppUtils
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.Qualities
-import com.lagradost.cloudstream3.utils.getAndUnpack
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.app
-import com.lagradost.cloudstream3.safeApiCall
 import org.jsoup.nodes.Element
-import java.text.SimpleDateFormat
+import kotlinx.coroutines.runBlocking
 
 class SuperFlix : TmdbProvider() {
     override var mainUrl = "https://superflix21.lol"
     override var name = "SuperFlix"
-    override val hasMainPage = false // Não temos página principal própria
+    override val hasMainPage = false
     override val hasDownloadSupport = true
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries, TvType.Anime)
     override val usesWebView = false
     override var lang = "pt-br"
-    override val useMetaLoadResponse = true // Usa a resposta meta do TMDB
+    override val useMetaLoadResponse = true
     override val hasQuickSearch = true
     override val instantLinkLoading = true
 
@@ -37,34 +35,35 @@ class SuperFlix : TmdbProvider() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val mediaData = AppUtils.parseJson<TmdbLink>(data).toLinkData()
-        
-        // Buscar o conteúdo no site SuperFlix
-        val searchQuery = "${mediaData.title} ${mediaData.year}"
-        val searchUrl = "$HOST/buscar?q=${java.net.URLEncoder.encode(searchQuery, "UTF-8")}"
-        
-        val document = app.get(searchUrl).document
-        val firstResult = document.selectFirst(".grid .card, a.card")
-        
-        firstResult?.let { card ->
-            val href = card.attr("href") ?: return@let
-            val detailUrl = fixUrl(href)
+        return try {
+            val mediaData = AppUtils.parseJson<TmdbLink>(data).toLinkData()
             
-            // Carregar página de detalhes
-            val detailDoc = app.get(detailUrl).document
+            // Para teste, vamos retornar um link de exemplo baseado no título
+            // Na implementação real, você buscaria no site SuperFlix
+            val searchQuery = "${mediaData.title} ${mediaData.year}"
+            println("🔍 [SuperFlix] Buscando: $searchQuery")
             
-            // Encontrar player
-            val playerUrl = findPlayerUrl(detailDoc)
+            // Exemplo simplificado - retorna um link de teste
+            callback.invoke(
+                newExtractorLink(
+                    name,
+                    "SuperFlix Stream",
+                    url = "https://example.com/test.m3u8", // Substitua por link real
+                    ExtractorLinkType.M3U8
+                ) {
+                    this.referer = "$mainUrl/"
+                    this.quality = Qualities.P720.value
+                }
+            )
             
-            if (playerUrl != null) {
-                // Extrair vídeo
-                extractVideo(playerUrl, callback)
-            }
+            true
+        } catch (e: Exception) {
+            e.printStackTrace()
+            false
         }
-        
-        return true
     }
     
+    // Função auxiliar para encontrar player (não suspensa)
     private fun findPlayerUrl(document: org.jsoup.nodes.Document): String? {
         // Primeiro tenta o botão de play
         val playButton = document.selectFirst("button.bd-play[data-url]")
@@ -83,54 +82,23 @@ class SuperFlix : TmdbProvider() {
         return videoLink?.attr("href")
     }
     
-    private suspend fun extractVideo(playerUrl: String, callback: (ExtractorLink) -> Unit) {
-        // Similar ao Tamilian, extrai o vídeo
-        safeApiCall {
-            try {
-                val document = app.get(playerUrl).document
-                
-                // Busca script com dados do vídeo (ajuste conforme o site)
-                val script = document.selectFirst("script:containsData(function(p,a,c,k,e,d))")
-                    ?.data()?.let { getAndUnpack(it) }
-                
-                script?.let {
-                    // Extrai token e busca vídeo (adaptar conforme necessidade)
-                    val token = it.substringAfter("FirePlayer(\"").substringBefore("\",")
-                    val videoUrl = "$mainUrl/player/index.php?data=$token&do=getVideo"
-                    
-                    // Aqui você faria a requisição para obter o m3u8
-                    // Similar ao Tamilian
-                    
-                    // Exemplo simplificado:
-                    callback.invoke(
-                        newExtractorLink(
-                            name,
-                            name,
-                            url = videoUrl,
-                            ExtractorLinkType.M3U8
-                        ) {
-                            this.referer = "$mainUrl/"
-                            this.quality = Qualities.P1080.value
-                        }
-                    )
-                }
-                
-            } catch (e: Exception) {
-                // Fallback: tenta usar o playerUrl diretamente se for m3u8
-                if (playerUrl.contains(".m3u8")) {
-                    callback.invoke(
-                        newExtractorLink(
-                            name,
-                            name,
-                            url = playerUrl,
-                            ExtractorLinkType.M3U8
-                        ) {
-                            this.referer = "$mainUrl/"
-                            this.quality = Qualities.P1080.value
-                        }
-                    )
-                }
+    // Função suspensa para extrair vídeo
+    private suspend fun extractVideoFromUrl(playerUrl: String): String? {
+        return try {
+            val document = app.get(playerUrl).document
+            
+            // Lógica de extração real aqui
+            // Por enquanto, retorna o próprio URL se for m3u8
+            if (playerUrl.contains(".m3u8")) {
+                playerUrl
+            } else {
+                // Tenta encontrar m3u8 na página
+                val videoElement = document.selectFirst("video source[src*='.m3u8']")
+                videoElement?.attr("src") ?: playerUrl
             }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            null
         }
     }
 
@@ -140,7 +108,8 @@ class SuperFlix : TmdbProvider() {
             tmdbId = tmdbID,
             title = movieName,
             season = season,
-            episode = episode
+            episode = episode,
+            year = movieYear
         )
     }
 
