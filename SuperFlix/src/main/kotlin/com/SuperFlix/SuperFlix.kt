@@ -97,8 +97,3 @@ class SuperFlix : TmdbProvider() {
             
             success
         } catch (e: Exception) {
-            e.printStackTrace()
-            false
-        }
-    }
-}
