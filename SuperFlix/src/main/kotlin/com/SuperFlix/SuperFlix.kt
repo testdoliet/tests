@@ -31,6 +31,17 @@ class SuperFlix : TmdbProvider() {
     {
         const val HOST="https://superflix21.lol"
     }
+    
+    // Função para corrigir URLs (similar ao fixUrl do Tamilian)
+    private fun fixUrl(url: String): String {
+        return when {
+            url.isEmpty() -> url
+            url.startsWith("http") -> url
+            url.startsWith("//") -> "https:$url"
+            url.startsWith("/") -> "$HOST$url"
+            else -> "$HOST/$url"
+        }
+    }
 
     override suspend fun loadLinks(
         data: String,
