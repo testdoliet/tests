@@ -31,6 +31,9 @@ class SuperFlix : TmdbProvider() {
     
     override var mainUrl = HOST
     
+    // Criar nossa própria instância do TMDB
+    private val tmdbApi = com.lagradost.cloudstream3.Tmdb()
+    
     // Página principal - aqui fazemos nossa própria busca no site
     override val mainPage = mainPageOf(
         "$HOST/lancamentos" to "Lançamentos",
@@ -76,17 +79,17 @@ class SuperFlix : TmdbProvider() {
                 if (tmdbId != null) {
                     // Se encontrou no TMDB, criar resposta com ID
                     when {
-                        isAnime -> newAnimeSearchResponse(cleanTitle, "", TvType.Anime) {
+                        isAnime -> newAnimeSearchResponse(cleanTitle, href, TvType.Anime) {
                             this.posterUrl = poster
                             this.year = year
                             this.id = tmdbId // ID do TMDB
                         }
-                        isSerie -> newTvSeriesSearchResponse(cleanTitle, "", TvType.TvSeries) {
+                        isSerie -> newTvSeriesSearchResponse(cleanTitle, href, TvType.TvSeries) {
                             this.posterUrl = poster
                             this.year = year
                             this.id = tmdbId // ID do TMDB
                         }
-                        else -> newMovieSearchResponse(cleanTitle, "", TvType.Movie) {
+                        else -> newMovieSearchResponse(cleanTitle, href, TvType.Movie) {
                             this.posterUrl = poster
                             this.year = year
                             this.id = tmdbId // ID do TMDB
@@ -95,15 +98,15 @@ class SuperFlix : TmdbProvider() {
                 } else {
                     // Se não encontrou no TMDB, usar dados básicos
                     when {
-                        isAnime -> newAnimeSearchResponse(cleanTitle, "", TvType.Anime) {
+                        isAnime -> newAnimeSearchResponse(cleanTitle, href, TvType.Anime) {
                             this.posterUrl = poster
                             this.year = year
                         }
-                        isSerie -> newTvSeriesSearchResponse(cleanTitle, "", TvType.TvSeries) {
+                        isSerie -> newTvSeriesSearchResponse(cleanTitle, href, TvType.TvSeries) {
                             this.posterUrl = poster
                             this.year = year
                         }
-                        else -> newMovieSearchResponse(cleanTitle, "", TvType.Movie) {
+                        else -> newMovieSearchResponse(cleanTitle, href, TvType.Movie) {
                             this.posterUrl = poster
                             this.year = year
                         }
@@ -140,17 +143,17 @@ class SuperFlix : TmdbProvider() {
                 
                 if (tmdbId != null) {
                     when {
-                        isAnime -> newAnimeSearchResponse(cleanTitle, "", TvType.Anime) {
+                        isAnime -> newAnimeSearchResponse(cleanTitle, href, TvType.Anime) {
                             this.posterUrl = poster
                             this.year = year
                             this.id = tmdbId // ID do TMDB
                         }
-                        isSerie -> newTvSeriesSearchResponse(cleanTitle, "", TvType.TvSeries) {
+                        isSerie -> newTvSeriesSearchResponse(cleanTitle, href, TvType.TvSeries) {
                             this.posterUrl = poster
                             this.year = year
                             this.id = tmdbId // ID do TMDB
                         }
-                        else -> newMovieSearchResponse(cleanTitle, "", TvType.Movie) {
+                        else -> newMovieSearchResponse(cleanTitle, href, TvType.Movie) {
                             this.posterUrl = poster
                             this.year = year
                             this.id = tmdbId // ID do TMDB
@@ -158,15 +161,15 @@ class SuperFlix : TmdbProvider() {
                     }
                 } else {
                     when {
-                        isAnime -> newAnimeSearchResponse(cleanTitle, "", TvType.Anime) {
+                        isAnime -> newAnimeSearchResponse(cleanTitle, href, TvType.Anime) {
                             this.posterUrl = poster
                             this.year = year
                         }
-                        isSerie -> newTvSeriesSearchResponse(cleanTitle, "", TvType.TvSeries) {
+                        isSerie -> newTvSeriesSearchResponse(cleanTitle, href, TvType.TvSeries) {
                             this.posterUrl = poster
                             this.year = year
                         }
-                        else -> newMovieSearchResponse(cleanTitle, "", TvType.Movie) {
+                        else -> newMovieSearchResponse(cleanTitle, href, TvType.Movie) {
                             this.posterUrl = poster
                             this.year = year
                         }
@@ -182,11 +185,12 @@ class SuperFlix : TmdbProvider() {
     private suspend fun getTmdbIdFromSearch(query: String, year: Int?, isTv: Boolean): Int? {
         return try {
             if (isTv) {
-                tmdb.searchTv(query, 1, year).firstOrNull()?.id
+                tmdbApi.searchTv(query, 1, year).firstOrNull()?.id
             } else {
-                tmdb.search(query, 1, year, "movie").firstOrNull()?.id
+                tmdbApi.search(query, 1, year, "movie").firstOrNull()?.id
             }
         } catch (e: Exception) {
+            println("⚠️ [SuperFlix] Erro ao buscar no TMDB: ${e.message}")
             null
         }
     }
