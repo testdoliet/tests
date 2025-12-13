@@ -29,7 +29,6 @@ class SuperFlix : TmdbProvider() {
         const val HOST = "https://superflix21.lol"
     }
     
-    // Corrigido: deve ser var, não val
     override var mainUrl = HOST
     
     // Página principal - aqui fazemos nossa própria busca no site
@@ -70,18 +69,44 @@ class SuperFlix : TmdbProvider() {
                 val isAnime = badge.contains("anime") || href.contains("/anime/")
                 val isSerie = badge.contains("série") || badge.contains("serie") || href.contains("/serie/") || href.contains("/tv/")
 
-                when {
-                    isAnime -> newAnimeSearchResponse(cleanTitle, fixUrl(href), TvType.Anime) {
-                        this.posterUrl = poster
-                        this.year = year
+                // IMPORTANTE: Precisamos do ID do TMDB para o Provider funcionar
+                // Vamos buscar no TMDB pelo título
+                val tmdbId = getTmdbIdFromSearch(cleanTitle, year, isSerie || isAnime)
+                
+                if (tmdbId != null) {
+                    // Se encontrou no TMDB, criar resposta com ID
+                    when {
+                        isAnime -> newAnimeSearchResponse(cleanTitle, "", TvType.Anime) {
+                            this.posterUrl = poster
+                            this.year = year
+                            this.id = tmdbId // ID do TMDB
+                        }
+                        isSerie -> newTvSeriesSearchResponse(cleanTitle, "", TvType.TvSeries) {
+                            this.posterUrl = poster
+                            this.year = year
+                            this.id = tmdbId // ID do TMDB
+                        }
+                        else -> newMovieSearchResponse(cleanTitle, "", TvType.Movie) {
+                            this.posterUrl = poster
+                            this.year = year
+                            this.id = tmdbId // ID do TMDB
+                        }
                     }
-                    isSerie -> newTvSeriesSearchResponse(cleanTitle, fixUrl(href), TvType.TvSeries) {
-                        this.posterUrl = poster
-                        this.year = year
-                    }
-                    else -> newMovieSearchResponse(cleanTitle, fixUrl(href), TvType.Movie) {
-                        this.posterUrl = poster
-                        this.year = year
+                } else {
+                    // Se não encontrou no TMDB, usar dados básicos
+                    when {
+                        isAnime -> newAnimeSearchResponse(cleanTitle, "", TvType.Anime) {
+                            this.posterUrl = poster
+                            this.year = year
+                        }
+                        isSerie -> newTvSeriesSearchResponse(cleanTitle, "", TvType.TvSeries) {
+                            this.posterUrl = poster
+                            this.year = year
+                        }
+                        else -> newMovieSearchResponse(cleanTitle, "", TvType.Movie) {
+                            this.posterUrl = poster
+                            this.year = year
+                        }
                     }
                 }
             } catch (e: Exception) {
@@ -110,23 +135,59 @@ class SuperFlix : TmdbProvider() {
                 val isAnime = badge.contains("anime") || href.contains("/anime/")
                 val isSerie = badge.contains("série") || badge.contains("serie") || href.contains("/serie/") || href.contains("/tv/")
 
-                when {
-                    isAnime -> newAnimeSearchResponse(cleanTitle, fixUrl(href), TvType.Anime) {
-                        this.posterUrl = poster
-                        this.year = year
+                // Buscar ID do TMDB
+                val tmdbId = getTmdbIdFromSearch(cleanTitle, year, isSerie || isAnime)
+                
+                if (tmdbId != null) {
+                    when {
+                        isAnime -> newAnimeSearchResponse(cleanTitle, "", TvType.Anime) {
+                            this.posterUrl = poster
+                            this.year = year
+                            this.id = tmdbId // ID do TMDB
+                        }
+                        isSerie -> newTvSeriesSearchResponse(cleanTitle, "", TvType.TvSeries) {
+                            this.posterUrl = poster
+                            this.year = year
+                            this.id = tmdbId // ID do TMDB
+                        }
+                        else -> newMovieSearchResponse(cleanTitle, "", TvType.Movie) {
+                            this.posterUrl = poster
+                            this.year = year
+                            this.id = tmdbId // ID do TMDB
+                        }
                     }
-                    isSerie -> newTvSeriesSearchResponse(cleanTitle, fixUrl(href), TvType.TvSeries) {
-                        this.posterUrl = poster
-                        this.year = year
-                    }
-                    else -> newMovieSearchResponse(cleanTitle, fixUrl(href), TvType.Movie) {
-                        this.posterUrl = poster
-                        this.year = year
+                } else {
+                    when {
+                        isAnime -> newAnimeSearchResponse(cleanTitle, "", TvType.Anime) {
+                            this.posterUrl = poster
+                            this.year = year
+                        }
+                        isSerie -> newTvSeriesSearchResponse(cleanTitle, "", TvType.TvSeries) {
+                            this.posterUrl = poster
+                            this.year = year
+                        }
+                        else -> newMovieSearchResponse(cleanTitle, "", TvType.Movie) {
+                            this.posterUrl = poster
+                            this.year = year
+                        }
                     }
                 }
             } catch (e: Exception) {
                 null
             }
+        }
+    }
+    
+    // Função auxiliar para buscar ID do TMDB
+    private suspend fun getTmdbIdFromSearch(query: String, year: Int?, isTv: Boolean): Int? {
+        return try {
+            if (isTv) {
+                tmdb.searchTv(query, 1, year).firstOrNull()?.id
+            } else {
+                tmdb.search(query, 1, year, "movie").firstOrNull()?.id
+            }
+        } catch (e: Exception) {
+            null
         }
     }
 
@@ -144,7 +205,7 @@ class SuperFlix : TmdbProvider() {
             println("🎬 [SuperFlix] TMDB ID: ${mediaData.tmdbId}")
             println("🎬 [SuperFlix] Tipo: ${if (mediaData.season != null) "Série" else "Filme"}")
             
-            // 1. Busca no site SuperFlix
+            // 1. Busca no site SuperFlix pelo título
             val searchQuery = mediaData.title ?: return false
             val searchUrl = "$HOST/buscar?q=${URLEncoder.encode(searchQuery, "UTF-8")}"
             
