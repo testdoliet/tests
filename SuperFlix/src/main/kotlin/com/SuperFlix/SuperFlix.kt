@@ -4,7 +4,6 @@ import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.app
-import org.jsoup.nodes.Element
 import com.lagradost.cloudstream3.metaproviders.TmdbLink
 import com.lagradost.cloudstream3.metaproviders.TmdbProvider
 import com.lagradost.cloudstream3.utils.AppUtils
@@ -13,7 +12,6 @@ import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.getAndUnpack
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import java.net.URLEncoder
-import java.text.SimpleDateFormat
 
 class SuperFlix : TmdbProvider() {
     override var name = "SuperFlix"
@@ -33,7 +31,7 @@ class SuperFlix : TmdbProvider() {
     
     override val mainUrl = HOST
     
-    // Página principal
+    // Página principal - aqui fazemos nossa própria busca no site
     override val mainPage = mainPageOf(
         "$HOST/lancamentos" to "Lançamentos",
         "$HOST/filmes" to "Últimos Filmes",
@@ -52,80 +50,7 @@ class SuperFlix : TmdbProvider() {
         }
     }
 
-    // Função para mapear tipos do site para tipos TMDB
-    private fun Element.toTmdbType(): String? {
-        val href = attr("href") ?: return null
-        val badge = selectFirst(".badge-kind")?.text()?.lowercase() ?: ""
-        
-        return when {
-            badge.contains("anime") || href.contains("/anime/") -> "tv"
-            badge.contains("série") || badge.contains("serie") || href.contains("/serie/") || href.contains("/tv/") -> "tv"
-            else -> "movie"
-        }
-    }
-
-    // Buscar no site (para quick search e main page)
-    override suspend fun search(query: String): List<SearchResponse> {
-        val searchUrl = "$HOST/buscar?q=${URLEncoder.encode(query, "UTF-8")}"
-        val document = app.get(searchUrl).document
-
-        return document.select(".grid .card, a.card").mapNotNull { card ->
-            try {
-                val title = card.attr("title") ?: card.selectFirst("img")?.attr("alt") ?: return@mapNotNull null
-                val href = card.attr("href") ?: return@mapNotNull null
-
-                val poster = card.selectFirst("img")?.attr("src")?.let { fixUrl(it) }
-                val year = Regex("\\((\\d{4})\\)").find(title)?.groupValues?.get(1)?.toIntOrNull()
-                val cleanTitle = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
-
-                val tmdbType = card.toTmdbType()
-                
-                // Usar TMDB para metadados
-                val tmdbId = when (tmdbType) {
-                    "tv" -> tmdb.searchTv(cleanTitle, 1, year).firstOrNull()?.id
-                    else -> tmdb.search(cleanTitle, 1, year, "movie").firstOrNull()?.id
-                }
-
-                if (tmdbId != null) {
-                    // Se encontrou no TMDB, usar resposta TMDB
-                    when (tmdbType) {
-                        "tv" -> {
-                            val details = tmdb.getTvDetails(tmdbId, lang)
-                            newTvSeriesSearchResponse(details?.name ?: cleanTitle, fixUrl(href), TvType.TvSeries) {
-                                this.posterUrl = details?.poster_path?.let { "https://image.tmdb.org/t/p/w500$it" } ?: poster
-                                this.year = details?.first_air_date?.substring(0, 4)?.toIntOrNull() ?: year
-                                this.id = tmdbId
-                            }
-                        }
-                        else -> {
-                            val details = tmdb.getMovieDetails(tmdbId, lang)
-                            newMovieSearchResponse(details?.title ?: cleanTitle, fixUrl(href), TvType.Movie) {
-                                this.posterUrl = details?.poster_path?.let { "https://image.tmdb.org/t/p/w500$it" } ?: poster
-                                this.year = details?.release_date?.substring(0, 4)?.toIntOrNull() ?: year
-                                this.id = tmdbId
-                            }
-                        }
-                    }
-                } else {
-                    // Se não encontrou no TMDB, usar dados do site
-                    when (tmdbType) {
-                        "tv" -> newTvSeriesSearchResponse(cleanTitle, fixUrl(href), TvType.TvSeries) {
-                            this.posterUrl = poster
-                            this.year = year
-                        }
-                        else -> newMovieSearchResponse(cleanTitle, fixUrl(href), TvType.Movie) {
-                            this.posterUrl = poster
-                            this.year = year
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                null
-            }
-        }
-    }
-
-    // Carregar página principal
+    // Buscar na página principal (nossa implementação)
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val url = request.data + if (page > 1) "?page=$page" else ""
         val document = app.get(url).document
@@ -139,10 +64,17 @@ class SuperFlix : TmdbProvider() {
                 val year = Regex("\\((\\d{4})\\)").find(title)?.groupValues?.get(1)?.toIntOrNull()
                 val cleanTitle = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
 
-                val tmdbType = element.toTmdbType()
-                
-                when (tmdbType) {
-                    "tv" -> newTvSeriesSearchResponse(cleanTitle, fixUrl(href), TvType.TvSeries) {
+                // Determinar tipo
+                val badge = element.selectFirst(".badge-kind")?.text()?.lowercase() ?: ""
+                val isAnime = badge.contains("anime") || href.contains("/anime/")
+                val isSerie = badge.contains("série") || badge.contains("serie") || href.contains("/serie/") || href.contains("/tv/")
+
+                when {
+                    isAnime -> newAnimeSearchResponse(cleanTitle, fixUrl(href), TvType.Anime) {
+                        this.posterUrl = poster
+                        this.year = year
+                    }
+                    isSerie -> newTvSeriesSearchResponse(cleanTitle, fixUrl(href), TvType.TvSeries) {
                         this.posterUrl = poster
                         this.year = year
                     }
@@ -159,7 +91,45 @@ class SuperFlix : TmdbProvider() {
         return newHomePageResponse(request.name, home.distinctBy { it.url })
     }
 
-    // ESSA É A PARTE IMPORTANTE: Usar TMDB para metadados completos
+    // Quick Search - nossa implementação
+    override suspend fun search(query: String): List<SearchResponse> {
+        val searchUrl = "$HOST/buscar?q=${URLEncoder.encode(query, "UTF-8")}"
+        val document = app.get(searchUrl).document
+
+        return document.select(".grid .card, a.card").mapNotNull { card ->
+            try {
+                val title = card.attr("title") ?: card.selectFirst("img")?.attr("alt") ?: return@mapNotNull null
+                val href = card.attr("href") ?: return@mapNotNull null
+
+                val poster = card.selectFirst("img")?.attr("src")?.let { fixUrl(it) }
+                val year = Regex("\\((\\d{4})\\)").find(title)?.groupValues?.get(1)?.toIntOrNull()
+                val cleanTitle = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
+
+                val badge = card.selectFirst(".badge-kind")?.text()?.lowercase() ?: ""
+                val isAnime = badge.contains("anime") || href.contains("/anime/")
+                val isSerie = badge.contains("série") || badge.contains("serie") || href.contains("/serie/") || href.contains("/tv/")
+
+                when {
+                    isAnime -> newAnimeSearchResponse(cleanTitle, fixUrl(href), TvType.Anime) {
+                        this.posterUrl = poster
+                        this.year = year
+                    }
+                    isSerie -> newTvSeriesSearchResponse(cleanTitle, fixUrl(href), TvType.TvSeries) {
+                        this.posterUrl = poster
+                        this.year = year
+                    }
+                    else -> newMovieSearchResponse(cleanTitle, fixUrl(href), TvType.Movie) {
+                        this.posterUrl = poster
+                        this.year = year
+                    }
+                }
+            } catch (e: Exception) {
+                null
+            }
+        }
+    }
+
+    // AQUI ESTÁ A MAGIA: TMDB cuida dos metadados, nós buscamos o vídeo
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -171,6 +141,7 @@ class SuperFlix : TmdbProvider() {
             
             println("🎬 [SuperFlix] Buscando: ${mediaData.title ?: "Unknown"}")
             println("🎬 [SuperFlix] TMDB ID: ${mediaData.tmdbId}")
+            println("🎬 [SuperFlix] Tipo: ${if (mediaData.season != null) "Série" else "Filme"}")
             
             // 1. Busca no site SuperFlix
             val searchQuery = mediaData.title ?: return false
@@ -192,22 +163,82 @@ class SuperFlix : TmdbProvider() {
             // 3. Carrega página de detalhes
             val detailDoc = app.get(detailUrl).document
             
-            // 4. Encontra player
-            val playerUrl = findPlayerUrl(detailDoc)
-            if (playerUrl == null) {
+            // 4. Para séries, encontrar episódio específico
+            val finalPlayerUrl = if (mediaData.season != null && mediaData.episode != null) {
+                println("📺 [SuperFlix] Buscando S${mediaData.season}E${mediaData.episode}")
+                findEpisodeUrl(detailDoc, mediaData.season, mediaData.episode)
+            } else {
+                // Para filmes ou primeiro episódio
+                findPlayerUrl(detailDoc)
+            }
+            
+            if (finalPlayerUrl == null) {
                 println("❌ [SuperFlix] Player não encontrado")
                 return false
             }
             
-            println("🎥 [SuperFlix] Player URL: $playerUrl")
+            println("🎥 [SuperFlix] Player URL: $finalPlayerUrl")
             
             // 5. Extrai links de vídeo
-            extractVideoLinks(playerUrl, callback)
+            extractVideoLinks(finalPlayerUrl, callback)
             true
         } catch (e: Exception) {
             println("💥 [SuperFlix] Erro: ${e.message}")
+            e.printStackTrace()
             false
         }
+    }
+    
+    private fun findEpisodeUrl(document: org.jsoup.nodes.Document, season: Int, episode: Int): String? {
+        // Procura pelo episódio específico
+        val episodeElements = document.select("button.bd-play[data-url], .episode-item, .episode-link, [data-season], [data-ep]")
+        
+        for (element in episodeElements) {
+            val epSeason = element.attr("data-season").toIntOrNull() ?: 1
+            val epNumber = element.attr("data-ep").toIntOrNull() ?: 
+                          Regex("Ep\\.?\\s*(\\d+)").find(element.text())?.groupValues?.get(1)?.toIntOrNull() ?:
+                          Regex("(\\d+)").find(element.text())?.groupValues?.get(1)?.toIntOrNull()
+            
+            if (epSeason == season && epNumber == episode) {
+                val url = element.attr("data-url") ?: element.attr("href")
+                if (url != null) {
+                    println("✅ [SuperFlix] Episódio S${season}E${episode} encontrado: $url")
+                    return fixUrl(url)
+                }
+            }
+        }
+        
+        // Se não encontrar específico, pega o primeiro player
+        println("⚠️ [SuperFlix] Episódio específico não encontrado, usando primeiro disponível")
+        return findPlayerUrl(document)
+    }
+    
+    private fun findPlayerUrl(document: org.jsoup.nodes.Document): String? {
+        // Método 1: Botão com data-url
+        val playButton = document.selectFirst("button.bd-play[data-url], button[data-url*='watch'], .play-btn[data-url]")
+        if (playButton != null) {
+            val url = playButton.attr("data-url")
+            println("🔘 [SuperFlix] Player encontrado no botão: $url")
+            return fixUrl(url)
+        }
+        
+        // Método 2: Iframe
+        val iframe = document.selectFirst("iframe[src*='player'], iframe[src*='embed'], iframe[src*='watch']")
+        if (iframe != null) {
+            val url = iframe.attr("src")
+            println("📺 [SuperFlix] Player encontrado no iframe: $url")
+            return fixUrl(url)
+        }
+        
+        // Método 3: Link direto
+        val videoLink = document.selectFirst("a[href*='.m3u8'], a[href*='assistir'], a[href*='watch']")
+        if (videoLink != null) {
+            val url = videoLink.attr("href")
+            println("🔗 [SuperFlix] Player encontrado no link: $url")
+            return fixUrl(url)
+        }
+        
+        return null
     }
     
     private suspend fun extractVideoLinks(playerUrl: String, callback: (ExtractorLink) -> Unit) {
@@ -247,56 +278,44 @@ class SuperFlix : TmdbProvider() {
                 }
             } else {
                 // Método 2: Tentar extrair m3u8 diretamente
-                val m3u8Match = Regex("(https?:[^\"']+\\.m3u8[^\"' ]*)").find(playerDoc.text())
-                if (m3u8Match != null) {
-                    val videoUrl = m3u8Match.value
-                    println("✅ [SuperFlix] Vídeo encontrado diretamente: $videoUrl")
-                    callback.invoke(
-                        newExtractorLink(
-                            name,
-                            "SuperFlix Stream",
-                            url = videoUrl,
-                            ExtractorLinkType.M3U8
-                        ) {
-                            this.referer = playerUrl
-                            this.quality = Qualities.P1080.value
-                        }
-                    )
-                } else {
-                    println("❌ [SuperFlix] Nenhum vídeo encontrado")
+                val scripts = playerDoc.select("script")
+                for (scriptElement in scripts) {
+                    val scriptText = scriptElement.html() + scriptElement.data()
+                    val m3u8Match = Regex("(https?:[^\"']+\\.m3u8[^\"' ]*)").find(scriptText)
+                    if (m3u8Match != null) {
+                        val videoUrl = m3u8Match.value
+                        println("✅ [SuperFlix] Vídeo encontrado no script: $videoUrl")
+                        callback.invoke(
+                            newExtractorLink(
+                                name,
+                                "SuperFlix Stream",
+                                url = videoUrl,
+                                ExtractorLinkType.M3U8
+                            ) {
+                                this.referer = playerUrl
+                                this.quality = Qualities.P1080.value
+                            }
+                        )
+                        return
+                    }
                 }
+                
+                // Método 3: Procurar em iframes
+                val iframe = playerDoc.selectFirst("iframe")
+                if (iframe != null) {
+                    val iframeSrc = iframe.attr("src")
+                    println("🔍 [SuperFlix] Tentando iframe: $iframeSrc")
+                    if (iframeSrc.isNotBlank()) {
+                        extractVideoLinks(fixUrl(iframeSrc), callback)
+                        return
+                    }
+                }
+                
+                println("❌ [SuperFlix] Nenhum vídeo encontrado")
             }
         } catch (e: Exception) {
             println("⚠️ [SuperFlix] Erro ao extrair vídeo: ${e.message}")
         }
-    }
-    
-    private fun findPlayerUrl(document: org.jsoup.nodes.Document): String? {
-        // Método 1: Botão com data-url
-        val playButton = document.selectFirst("button.bd-play[data-url], button[data-url*='watch'], .play-btn[data-url]")
-        if (playButton != null) {
-            val url = playButton.attr("data-url")
-            println("🔘 [SuperFlix] Player encontrado no botão: $url")
-            return fixUrl(url)
-        }
-        
-        // Método 2: Iframe
-        val iframe = document.selectFirst("iframe[src*='player'], iframe[src*='embed'], iframe[src*='watch']")
-        if (iframe != null) {
-            val url = iframe.attr("src")
-            println("📺 [SuperFlix] Player encontrado no iframe: $url")
-            return fixUrl(url)
-        }
-        
-        // Método 3: Link direto
-        val videoLink = document.selectFirst("a[href*='.m3u8'], a[href*='assistir'], a[href*='watch']")
-        if (videoLink != null) {
-            val url = videoLink.attr("href")
-            println("🔗 [SuperFlix] Player encontrado no link: $url")
-            return fixUrl(url)
-        }
-        
-        return null
     }
 
     private fun TmdbLink.toLinkData(): LinkData {
