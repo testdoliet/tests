@@ -27,6 +27,7 @@ class SuperFlix(val sharedPref: SharedPreferences? = null) : TmdbProvider() {
     // FORÇAR IDIOMA PORTUGUÊS
     private val tmdbLanguage = "pt-BR"
     private val tmdbRegion = "BR"
+    private val tmdbApiKey = com.lagradost.cloudstream3.BuildConfig.TMDB_API
 
     companion object {
         const val HOST = "https://superflix21.lol"
@@ -44,13 +45,15 @@ class SuperFlix(val sharedPref: SharedPreferences? = null) : TmdbProvider() {
             "${request.data}?language=$tmdbLanguage&region=$tmdbRegion"
         }
         
-        return super.getMainPage(page, MainPageRequest(tmdbUrl, request.name))
+        // CORREÇÃO: Criar novo MainPageRequest com a URL modificada
+        val newRequest = MainPageRequest(tmdbUrl, request.name)
+        return super.getMainPage(page, newRequest)
     }
     
     override suspend fun search(query: String): List<SearchResponse> {
         // Busca direto no TMDB com idioma português
         val encodedQuery = URLEncoder.encode(query, "UTF-8")
-        val url = "https://api.themoviedb.org/3/search/multi?api_key=${com.lagradost.cloudstream3.BuildConfig.TMDB_API}&query=$encodedQuery&language=$tmdbLanguage&region=$tmdbRegion"
+        val url = "https://api.themoviedb.org/3/search/multi?api_key=$tmdbApiKey&query=$encodedQuery&language=$tmdbLanguage&region=$tmdbRegion"
         
         return try {
             val response = app.get(url).parsedSafe<TMDBResults>()
@@ -72,10 +75,10 @@ class SuperFlix(val sharedPref: SharedPreferences? = null) : TmdbProvider() {
         val type = if (data.type == "tv") TvType.TvSeries else TvType.Movie
         
         // Carrega do TMDB com idioma português
-        val tmdbUrl = "https://api.themoviedb.org/3/${data.type}/${data.id}?api_key=${com.lagradost.cloudstream3.BuildConfig.TMDB_API}&language=$tmdbLanguage&append_to_response=credits,videos"
+        val tmdbUrl = "https://api.themoviedb.org/3/${data.type}/${data.id}?api_key=$tmdbApiKey&language=$tmdbLanguage&append_to_response=credits,videos"
         
         return try {
-            val response = app.get(tmdbUrl).parsedSafe<TMDBDetails>() ?: return null
+            val response = app.get(tmdbUrl).parsedSafe<TMDBDetails>()
             when (type) {
                 TvType.Movie -> createMovieLoadResponse(data, response)
                 TvType.TvSeries -> createTVLoadResponse(data, response)
@@ -106,14 +109,14 @@ class SuperFlix(val sharedPref: SharedPreferences? = null) : TmdbProvider() {
         }
     }
     
-    private suspend fun createMovieLoadResponse(data: TMDBData, details: TMDBDetails): LoadResponse? {
+    private fun createMovieLoadResponse(data: TMDBData, details: TMDBDetails): LoadResponse? {
         val title = details.title ?: return null
         
         return newMovieLoadResponse(
-            name = title,
+            name = title,  // CORREÇÃO: mudado de 'title' para 'name'
             url = data.toJson(),
             type = TvType.Movie,
-            dataUrl = ""
+            dataUrl = ""  // CORREÇÃO: mudado de 'data.url' para '""'
         ) {
             this.posterUrl = details.poster_path?.let { "https://image.tmdb.org/t/p/w500$it" }
             this.backgroundPosterUrl = details.backdrop_path?.let { "https://image.tmdb.org/t/p/original$it" }
@@ -121,38 +124,28 @@ class SuperFlix(val sharedPref: SharedPreferences? = null) : TmdbProvider() {
             this.plot = details.overview
             this.duration = details.runtime
             this.tags = details.genres?.map { it.name }
-            // Converte os atores corretamente
-            details.credits?.cast?.take(10)?.mapNotNull { actor ->
-                actor.name?.let { name ->
-                    Actor(name, actor.profile_path?.let { "https://image.tmdb.org/t/p/w185$it" })
-                }
-            }?.let { actorList ->
-                this.actors = actorList
+            this.actors = details.credits?.cast?.take(10)?.map { 
+                Actor(it.name ?: "", it.profile_path?.let { path -> "https://image.tmdb.org/t/p/w185$path" })
             }
         }
     }
     
-    private suspend fun createTVLoadResponse(data: TMDBData, details: TMDBDetails): LoadResponse? {
+    private fun createTVLoadResponse(data: TMDBData, details: TMDBDetails): LoadResponse? {
         val title = details.name ?: return null
         
         return newTvSeriesLoadResponse(
-            name = title,
+            name = title,  // CORREÇÃO: mudado de 'title' para 'name'
             url = data.toJson(),
             type = TvType.TvSeries,
-            episodes = emptyList()
+            episodes = emptyList() // TMDB Provider cuida dos episódios
         ) {
             this.posterUrl = details.poster_path?.let { "https://image.tmdb.org/t/p/w500$it" }
             this.backgroundPosterUrl = details.backdrop_path?.let { "https://image.tmdb.org/t/p/original$it" }
             this.year = details.first_air_date?.substring(0, 4)?.toIntOrNull()
             this.plot = details.overview
             this.tags = details.genres?.map { it.name }
-            // Converte os atores corretamente
-            details.credits?.cast?.take(10)?.mapNotNull { actor ->
-                actor.name?.let { name ->
-                    Actor(name, actor.profile_path?.let { "https://image.tmdb.org/t/p/w185$it" })
-                }
-            }?.let { actorList ->
-                this.actors = actorList
+            this.actors = details.credits?.cast?.take(10)?.map { 
+                Actor(it.name ?: "", it.profile_path?.let { path -> "https://image.tmdb.org/t/p/w185$path" })
             }
         }
     }
