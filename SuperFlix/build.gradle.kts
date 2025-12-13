@@ -15,6 +15,11 @@ android {
         sourceCompatibility = JavaVersion.VERSION_1_8
         targetCompatibility = JavaVersion.VERSION_1_8
     }
+    
+    kotlinOptions {
+        jvmTarget = "1.8"
+        freeCompilerArgs = freeCompilerArgs + "-Xopt-in=kotlin.RequiresOptIn"
+    }
 }
 
 cloudstream {
@@ -31,4 +36,7 @@ cloudstream {
 dependencies {
     val cloudstream by configurations
     cloudstream("com.lagradost:cloudstream3:pre-release")
+    
+    // Adiciona dependência de coroutines se necessário
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
 }
