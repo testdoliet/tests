@@ -29,14 +29,18 @@ jobs:
             - name: Grant execute permission for gradlew
               run: chmod +x gradlew
 
-            - name: Build with Gradle (Cria os .cs3 e .jar)
-              run: ./gradlew assemble --refresh-dependencies --info
+            # 3. BUILD INDIVIDUAL DOS PLUGINS
+            - name: Build SuperFlix
+              run: ./gradlew :SuperFlix:cs3Jar --info
+              
+            - name: Build AnimeFire
+              run: ./gradlew :AnimeFire:cs3Jar --info
 
-            # 3. GERAÇÃO DO MANIFESTO DE PROVEDORES
+            # 4. GERAÇÃO DO MANIFESTO DE PROVEDORES
             - name: Generate plugins.json at correct path
               run: ./gradlew makePluginsJson -PoutputFile="build/plugins.json"
 
-            # 4. CRIAÇÃO DA ESTRUTURA FINAL E CORREÇÃO DE URL (Regex de Captura Reversa)
+            # 5. CRIAÇÃO DA ESTRUTURA FINAL E CORREÇÃO DE URL
             - name: Mover, Corrigir URLs Internas e Criar repo.json principal
               run: |
                   # Define a base da URL funcional para o download no GitHub
@@ -53,8 +57,6 @@ jobs:
                   REPO_BASE_URL_ESCAPED=$(echo $REPO_BASE_URL | sed 's/\//\\\//g')
 
                   # 4. CRÍTICO: Substitui a URL do .cs3 no plugins.json
-                  # Captura a parte do nome do arquivo, que é tudo que não é barra ou aspas.
-                  # Remove TUDO ANTES da última barra e substitui pela URL RAW.
                   sed -i -E 's|"url": "[^"]*/([^/]+)\.cs3"|"url": "'"$REPO_BASE_URL_ESCAPED"'/\1.cs3"|g' builds/plugins.json
 
                   # 5. CRÍTICO: Substitui a URL do .jar no plugins.json
@@ -72,10 +74,10 @@ jobs:
                   find . -type f -name "*.cs3" -exec cp {} builds/ \; || true
                   find . -type f -name "*.jar" -exec cp {} builds/ \; || true
 
-            # 5. DEPLOY FINAL COM AÇÃO DE COMMIT DIRETO 
+            # 6. DEPLOY FINAL COM AÇÃO DE COMMIT DIRETO 
             - name: Commit Providers to main branch
               uses: stefanzweifel/git-auto-commit-action@v5
               with:
-                  commit_message: "minor fixing"
+                  commit_message: "Build: AnimeFire plugin added"
                   branch: main
                   file_pattern: builds/*
