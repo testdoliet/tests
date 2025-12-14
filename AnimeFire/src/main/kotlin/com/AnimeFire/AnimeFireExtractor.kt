@@ -60,16 +60,16 @@ object AnimeFireExtractor {
                 if (videoUrl.contains(".mp4") || videoUrl.contains(".m3u8")) {
                     println("✅ AnimeFireExtractor: Link de vídeo encontrado: $videoUrl")
                     
+                    // Usar ExtractorLink diretamente pois newExtractorLink é suspend
                     callback.invoke(
-                        newExtractorLink(
-                            name,
-                            "Vídeo - AnimeFire",
-                            videoUrl,
-                        ) {
-                            this.referer = mainUrl
-                            this.quality = 720 // qualidade padrão
-                            this.isM3u8 = videoUrl.contains(".m3u8")
-                        }
+                        ExtractorLink(
+                            source = name,
+                            name = "Vídeo - AnimeFire",
+                            url = videoUrl,
+                            referer = mainUrl,
+                            quality = 720,
+                            isM3u8 = videoUrl.contains(".m3u8")
+                        )
                     )
                     return true
                 }
@@ -83,13 +83,13 @@ object AnimeFireExtractor {
         }
     }
     
-    private fun extractMultipleQualitiesFromUrl(
+    private suspend fun extractMultipleQualitiesFromUrl(
         url: String,
         mainUrl: String,
         name: String,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        try {
+        return try {
             // Padrão: https://lightspeedst.net/s2/mp4/titulo/hd/1.mp4
             val regex = Regex("""lightspeed(st|ts)\.net/s(\d+)/mp4/([^/]+)/([^/]+)/(\d+)\.mp4""")
             val match = regex.find(url)
@@ -111,36 +111,56 @@ object AnimeFireExtractor {
                 )
                 
                 var foundAny = false
-                qualities.forEach { (qual, qualName) ->
+                for ((qual, qualName) in qualities) {
                     val videoUrl = "https://lightspeed${serverType}.net/s${season}/mp4/${titlePath}/${qual}/${episode}.mp4"
                     
-                    // Usar newExtractorLink corretamente
-                    callback.invoke(
-                        newExtractorLink(
-                            name,
-                            "$qualName - AnimeFire",
-                            videoUrl,
-                        ) {
-                            this.referer = mainUrl
-                            this.quality = when (qual) {
-                                "fhd" -> 1080
-                                "hd" -> 720
-                                else -> 480
+                    // Testar se o link existe
+                    try {
+                        val response = app.head(videoUrl, timeout = 3000)
+                        
+                        if (response.code == 200) {
+                            // Usar newExtractorLink corretamente (função suspend)
+                            val extractorLink = newExtractorLink(
+                                source = name,
+                                name = "$qualName - AnimeFire",
+                                url = videoUrl,
+                            ) {
+                                // Dentro do bloco suspend podemos acessar as propriedades
+                                // mas não podemos reassignar val, então configuramos no construtor
                             }
-                            this.isM3u8 = false
+                            
+                            // Configurar propriedades adicionais
+                            val finalLink = ExtractorLink(
+                                source = extractorLink.source,
+                                name = extractorLink.name,
+                                url = extractorLink.url,
+                                referer = mainUrl,
+                                quality = when (qual) {
+                                    "fhd" -> 1080
+                                    "hd" -> 720
+                                    else -> 480
+                                },
+                                isM3u8 = false
+                            )
+                            
+                            callback.invoke(finalLink)
+                            println("✅ AnimeFireExtractor: Qualidade $qual adicionada")
+                            foundAny = true
+                        } else {
+                            println("⚠️ AnimeFireExtractor: Qualidade $qual não disponível (HTTP ${response.code})")
                         }
-                    )
-                    
-                    println("✅ AnimeFireExtractor: Qualidade $qual adicionada")
-                    foundAny = true
+                    } catch (e: Exception) {
+                        println("⚠️ AnimeFireExtractor: Erro ao testar qualidade $qual - ${e.message}")
+                    }
                 }
                 
-                return foundAny
+                foundAny
+            } else {
+                false
             }
         } catch (e: Exception) {
             println("⚠️ AnimeFireExtractor: Erro ao extrair múltiplas qualidades - ${e.message}")
+            false
         }
-        
-        return false
     }
 }
