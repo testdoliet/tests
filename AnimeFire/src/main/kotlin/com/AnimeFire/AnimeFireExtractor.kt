@@ -1,10 +1,11 @@
 package com.AnimeFire
 
-import com.lagradost.cloudstream3.*
-import com.lagradost.cloudstream3.utils.*
+import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.app
+import com.lagradost.cloudstream3.utils.ExtractorLink
 
 object AnimeFireExtractor {
+
     suspend fun extractVideoLinks(
         url: String,
         mainUrl: String,
@@ -17,100 +18,128 @@ object AnimeFireExtractor {
             // Fazer requisição à página do episódio
             val document = app.get(url).document
             
-            // Procurar por iframes
+            // Procurar por iframes do lightspeedst.net
             val iframe = document.selectFirst("iframe[src*='lightspeedst.net'], iframe[src*='lightspeedts.net']")
-            
             if (iframe != null) {
                 val iframeSrc = iframe.attr("src")
-                return extractFromLightspeedUrl(iframeSrc, mainUrl, name, callback)
-            }
-            
-            // Procurar scripts com URLs
-            val html = app.get(url).text
-            val mp4Regex = Regex("""["'](https?://[^"']*lightspeed(st|ts)\.net[^"']*\.mp4)["']""")
-            val mp4Matches = mp4Regex.findAll(html)
-            
-            var found = false
-            mp4Matches.forEach { match ->
-                val videoUrl = match.groupValues[1]
-                if (extractFromLightspeedUrl(videoUrl, mainUrl, name, callback)) {
-                    found = true
+                println("🌐 AnimeFireExtractor: Iframe encontrado: $iframeSrc")
+                
+                // Extrair múltiplas qualidades
+                if (extractMultipleQualitiesFromUrl(iframeSrc, mainUrl, name, callback)) {
+                    return true
                 }
             }
             
-            println("✅ AnimeFireExtractor: Links encontrados: $found")
-            found
+            // Procurar por links MP4 no HTML
+            val html = app.get(url).text
+            val mp4Regex = Regex("""https?://[^"'\s]*lightspeed(st|ts)\.net[^"'\s]*\.mp4""")
+            val mp4Matches = mp4Regex.findAll(html)
+            
+            var foundLinks = false
+            mp4Matches.forEach { match ->
+                val videoUrl = match.value
+                println("✅ AnimeFireExtractor: Link MP4 encontrado: $videoUrl")
+                
+                if (extractMultipleQualitiesFromUrl(videoUrl, mainUrl, name, callback)) {
+                    foundLinks = true
+                }
+            }
+            
+            if (foundLinks) {
+                return true
+            }
+            
+            // Fallback: Tentar encontrar qualquer link de vídeo
+            println("⚠️ AnimeFireExtractor: Procurando qualquer link de vídeo...")
+            val videoRegex = Regex("""(https?://[^"'\s]*\.(mp4|m3u8))""")
+            val videoMatches = videoRegex.findAll(html)
+            
+            videoMatches.forEach { match ->
+                val videoUrl = match.value
+                if (videoUrl.contains(".mp4") || videoUrl.contains(".m3u8")) {
+                    println("✅ AnimeFireExtractor: Link de vídeo encontrado: $videoUrl")
+                    
+                    callback.invoke(
+                        newExtractorLink(
+                            name,
+                            "Vídeo - AnimeFire",
+                            videoUrl,
+                        ) {
+                            this.referer = mainUrl
+                            this.quality = 720 // qualidade padrão
+                            this.isM3u8 = videoUrl.contains(".m3u8")
+                        }
+                    )
+                    return true
+                }
+            }
+            
+            println("❌ AnimeFireExtractor: Nenhum link de vídeo encontrado")
+            false
         } catch (e: Exception) {
             println("💥 AnimeFireExtractor: Erro - ${e.message}")
             false
         }
     }
     
-    private suspend fun extractFromLightspeedUrl(
+    private fun extractMultipleQualitiesFromUrl(
         url: String,
         mainUrl: String,
         name: String,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         try {
+            // Padrão: https://lightspeedst.net/s2/mp4/titulo/hd/1.mp4
             val regex = Regex("""lightspeed(st|ts)\.net/s(\d+)/mp4/([^/]+)/([^/]+)/(\d+)\.mp4""")
             val match = regex.find(url)
             
             if (match != null) {
-                val serverType = match.groupValues[1]
-                val season = match.groupValues[2]
-                val titlePath = match.groupValues[3]
-                val quality = match.groupValues[4]
-                val episode = match.groupValues[5]
+                val serverType = match.groupValues[1] // "st" ou "ts"
+                val season = match.groupValues[2] // número do servidor
+                val titlePath = match.groupValues[3] // caminho do título
+                val currentQuality = match.groupValues[4] // qualidade atual
+                val episode = match.groupValues[5] // número do episódio
                 
-                val qualities = listOf("fhd", "hd", "sd")
+                println("✨ AnimeFireExtractor: Padrão identificado - Server: $serverType, Title: $titlePath, Qual: $currentQuality, Ep: $episode")
                 
-                qualities.forEach { qual ->
+                // Gerar links para todas as qualidades
+                val qualities = listOf(
+                    "fhd" to "Full HD",
+                    "hd" to "HD", 
+                    "sd" to "SD"
+                )
+                
+                var foundAny = false
+                qualities.forEach { (qual, qualName) ->
                     val videoUrl = "https://lightspeed${serverType}.net/s${season}/mp4/${titlePath}/${qual}/${episode}.mp4"
                     
-                    // Testar se o link está acessível
-                    try {
-                        val response = app.head(videoUrl, headers = mapOf(
-                            "Referer" to mainUrl,
-                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-                        ))
-                        
-                        if (response.code in 200..299) {
-                            // Usar newExtractorLink
-                            callback.invoke(
-                                newExtractorLink(
-                                    source = name,
-                                    name = "${qual.uppercase()} - AnimeFire",
-                                    url = videoUrl,
-                                    referer = "$mainUrl/",
-                                    quality = getQualityFromString(qual),
-                                    isM3u8 = false
-                                )
-                            )
-                            println("✅ AnimeFireExtractor: Link válido encontrado - $qual")
+                    // Usar newExtractorLink corretamente
+                    callback.invoke(
+                        newExtractorLink(
+                            name,
+                            "$qualName - AnimeFire",
+                            videoUrl,
+                        ) {
+                            this.referer = mainUrl
+                            this.quality = when (qual) {
+                                "fhd" -> 1080
+                                "hd" -> 720
+                                else -> 480
+                            }
+                            this.isM3u8 = false
                         }
-                    } catch (e: Exception) {
-                        println("⚠️ AnimeFireExtractor: Link não acessível - $qual")
-                    }
+                    )
+                    
+                    println("✅ AnimeFireExtractor: Qualidade $qual adicionada")
+                    foundAny = true
                 }
                 
-                return true
+                return foundAny
             }
         } catch (e: Exception) {
-            println("💥 AnimeFireExtractor: Erro ao processar URL - ${e.message}")
+            println("⚠️ AnimeFireExtractor: Erro ao extrair múltiplas qualidades - ${e.message}")
         }
         
         return false
-    }
-    
-    private fun getQualityFromString(quality: String): Int {
-        return when (quality.lowercase()) {
-            "fhd", "1080p", "fullhd" -> Qualities.Q1080P.value
-            "hd", "720p" -> Qualities.Q720P.value
-            "sd", "480p" -> Qualities.Q480P.value
-            "360p" -> Qualities.Q360P.value
-            "240p" -> Qualities.Q240P.value
-            else -> Qualities.Q720P.value // Default
-        }
     }
 }
