@@ -5,7 +5,7 @@ import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
 import com.lagradost.cloudstream3.plugins.Plugin
 
 @CloudstreamPlugin
-class AnimeFireProviderPlugin: Plugin() {
+class AnimeFirePlugin: Plugin() {
     override fun load(context: Context) {
         registerMainAPI(AnimeFire())
     }
