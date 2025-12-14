@@ -149,7 +149,7 @@ class SuperFlix : MainAPI() {
             // Para animes: buscar personagens e seiyuus do AniList
             getAnimeCharactersFromAniList(cleanTitle)
         } else {
-            // Para filmes/séries: buscar atores do TMDB (COM PERSONAGEM)
+            // Para filmes/séries: buscar atores do TMDB
             tmdbInfo?.actors ?: emptyList()
         }
         
@@ -188,7 +188,7 @@ class SuperFlix : MainAPI() {
         }
     }
 
-    // ============ BUSCAR ATORES DO TMDB (COM PERSONAGEM) ============
+    // ============ BUSCAR ATORES DO TMDB ============
     private suspend fun searchOnTMDB(query: String, year: Int?, isTv: Boolean): TMDBInfo? {
         println("🔍 [TMDB DEBUG] Iniciando busca no TMDB")
         println("🔍 [TMDB DEBUG] Query: $query")
@@ -216,17 +216,17 @@ class SuperFlix : MainAPI() {
             // Buscar detalhes completos
             val details = getTMDBDetails(result.id, isTv) ?: return null
 
-            // ============ ATORES COM PERSONAGEM ============
+            // ============ ATORES DO TMDB ============
             val allActors = details.credits?.cast?.take(15)?.mapNotNull { actor ->
                 if (actor.name.isNotBlank()) {
+                    // Para filmes/séries: nome do ator e personagem como descrição
                     Actor(
                         name = actor.name,
-                        role = actor.character,  // ← PERSONAGEM QUE INTERPRETA
                         image = actor.profile_path?.let { "$tmdbImageUrl/w185$it" }
                     )
                 } else null
             }
-            println("✅ [TMDB DEBUG] Atores com personagem: ${allActors?.size ?: 0}")
+            println("✅ [TMDB DEBUG] Atores encontrados: ${allActors?.size ?: 0}")
 
             // Buscar trailer
             val youtubeTrailer = getHighQualityTrailer(details.videos?.results)
@@ -262,7 +262,7 @@ class SuperFlix : MainAPI() {
         }
     }
 
-    // ============ NOVO: Buscar temporadas COM RUNTIME ============
+    // ============ Buscar temporadas COM RUNTIME ============
     private suspend fun getTMDBAllSeasonsWithRuntime(seriesId: Int): Map<Int, List<TMDBEpisode>> {
         println("🔍 [TMDB DEBUG] Buscando temporadas com runtime para série ID: $seriesId")
 
@@ -396,11 +396,11 @@ class SuperFlix : MainAPI() {
 
             val characters = charactersResponse?.data?.Media?.characters?.edges?.mapNotNull { edge ->
                 val character = edge.node
-                val voiceActor = edge.voiceActors.firstOrNull()
+                val voiceActor = edge.voiceActors?.firstOrNull()
                 
+                // Para animes: personagem como nome, seiyuu como "nome adicional"
                 Actor(
                     name = character.name.full,
-                    role = voiceActor?.name?.full ?: "Seiyuu não disponível", // Personagem → Seiyuu
                     image = character.image?.large ?: voiceActor?.image?.large
                 )
             } ?: emptyList()
@@ -540,9 +540,7 @@ class SuperFlix : MainAPI() {
                 // ============ ADICIONAR ATORES/PERSONAGENS ============
                 if (actorsList.isNotEmpty()) {
                     println("🏗️ [DEBUG] Adicionando ${actorsList.size} atores/personagens")
-                    actorsList.forEach { actor ->
-                        addActor(actor)
-                    }
+                    addActors(actorsList) // CORRIGIDO: addActors ao invés de addActor
                 }
 
                 tmdbInfo?.youtubeTrailer?.let { trailerUrl ->
@@ -571,12 +569,10 @@ class SuperFlix : MainAPI() {
                 this.tags = tmdbInfo?.genres
                 this.duration = tmdbInfo?.duration
 
-                // ============ ADICIONAR ATORES COM PERSONAGEM ============
+                // ============ ADICIONAR ATORES ============
                 if (actorsList.isNotEmpty()) {
-                    println("🏗️ [DEBUG] Adicionando ${actorsList.size} atores com personagem")
-                    actorsList.forEach { actor ->
-                        addActor(actor)
-                    }
+                    println("🏗️ [DEBUG] Adicionando ${actorsList.size} atores")
+                    addActors(actorsList) // CORRIGIDO: addActors ao invés de addActor
                 }
 
                 tmdbInfo?.youtubeTrailer?.let { trailerUrl ->
@@ -836,118 +832,3 @@ class SuperFlix : MainAPI() {
     private data class TMDBSeasonInfo(
         @JsonProperty("season_number") val season_number: Int,
         @JsonProperty("episode_count") val episode_count: Int
-    )
-
-    private data class TMDBSeasonResponse(
-        @JsonProperty("episodes") val episodes: List<TMDBEpisode>,
-        @JsonProperty("air_date") val air_date: String?
-    )
-
-    private data class TMDBEpisode(
-        @JsonProperty("episode_number") val episode_number: Int,
-        @JsonProperty("name") val name: String,
-        @JsonProperty("overview") val overview: String?,
-        @JsonProperty("still_path") val still_path: String?,
-        @JsonProperty("runtime") val runtime: Int?,
-        @JsonProperty("air_date") val air_date: String?
-    )
-
-    private data class TMDBDetailsResponse(
-        @JsonProperty("overview") val overview: String?,
-        @JsonProperty("backdrop_path") val backdrop_path: String?,
-        @JsonProperty("runtime") val runtime: Int?,
-        @JsonProperty("genres") val genres: List<TMDBGenre>?,
-        @JsonProperty("credits") val credits: TMDBCredits?,
-        @JsonProperty("videos") val videos: TMDBVideos?
-    )
-
-    private data class TMDBGenre(
-        @JsonProperty("name") val name: String
-    )
-
-    private data class TMDBCredits(
-        @JsonProperty("cast") val cast: List<TMDBCast>
-    )
-
-    private data class TMDBCast(
-        @JsonProperty("name") val name: String,
-        @JsonProperty("character") val character: String?,
-        @JsonProperty("profile_path") val profile_path: String?
-    )
-
-    private data class TMDBVideos(
-        @JsonProperty("results") val results: List<TMDBVideo>
-    )
-
-    private data class TMDBVideo(
-        @JsonProperty("key") val key: String,
-        @JsonProperty("site") val site: String,
-        @JsonProperty("type") val type: String,
-        @JsonProperty("official") val official: Boolean? = false
-    )
-
-    // ============ CLASSES ANILIST ============
-
-    private data class AniListSearchResponse(
-        @JsonProperty("data") val data: AniListSearchData?
-    )
-
-    private data class AniListSearchData(
-        @JsonProperty("Page") val Page: AniListPage?
-    )
-
-    private data class AniListPage(
-        @JsonProperty("media") val media: List<AniListMediaSearch>?
-    )
-
-    private data class AniListMediaSearch(
-        @JsonProperty("id") val id: Int,
-        @JsonProperty("idMal") val idMal: Int?,
-        @JsonProperty("title") val title: AniListTitle?
-    )
-
-    private data class AniListTitle(
-        @JsonProperty("romaji") val romaji: String?,
-        @JsonProperty("english") val english: String?,
-        @JsonProperty("native") val native: String?
-    )
-
-    private data class AniListCharactersResponse(
-        @JsonProperty("data") val data: AniListCharactersData?
-    )
-
-    private data class AniListCharactersData(
-        @JsonProperty("Media") val Media: AniListCharactersMedia?
-    )
-
-    private data class AniListCharactersMedia(
-        @JsonProperty("characters") val characters: AniListCharacters?
-    )
-
-    private data class AniListCharacters(
-        @JsonProperty("edges") val edges: List<AniListCharacterEdge>?
-    )
-
-    private data class AniListCharacterEdge(
-        @JsonProperty("node") val node: AniListCharacterNode,
-        @JsonProperty("voiceActors") val voiceActors: List<AniListVoiceActor>?
-    )
-
-    private data class AniListCharacterNode(
-        @JsonProperty("name") val name: AniListCharacterName,
-        @JsonProperty("image") val image: AniListImage?
-    )
-
-    private data class AniListCharacterName(
-        @JsonProperty("full") val full: String
-    )
-
-    private data class AniListImage(
-        @JsonProperty("large") val large: String?
-    )
-
-    private data class AniListVoiceActor(
-        @JsonProperty("name") val name: AniListCharacterName,
-        @JsonProperty("image") val image: AniListImage?
-    )
-}
