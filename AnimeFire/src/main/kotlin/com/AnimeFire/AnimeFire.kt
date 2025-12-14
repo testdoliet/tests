@@ -7,7 +7,7 @@ import java.net.URLEncoder
 import java.text.SimpleDateFormat
 import java.util.Locale
 
-class AnimeFirePlus : MainAPI() {
+class AnimeFire : MainAPI() {
     override var mainUrl = "https://animefire.plus"
     override var name = "AnimeFire Plus"
     override val hasMainPage = true
