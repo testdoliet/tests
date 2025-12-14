@@ -76,9 +76,9 @@ object AnimeFireExtractor {
                         ))
                         
                         if (response.code in 200..299) {
-                            // Usar ExtractorLink diretamente
+                            // Usar newExtractorLink
                             callback.invoke(
-                                ExtractorLink(
+                                newExtractorLink(
                                     source = name,
                                     name = "${qual.uppercase()} - AnimeFire",
                                     url = videoUrl,
@@ -105,12 +105,12 @@ object AnimeFireExtractor {
     
     private fun getQualityFromString(quality: String): Int {
         return when (quality.lowercase()) {
-            "fhd", "1080p", "fullhd" -> 1080
-            "hd", "720p" -> 720
-            "sd", "480p" -> 480
-            "360p" -> 360
-            "240p" -> 240
-            else -> 720 // Default
+            "fhd", "1080p", "fullhd" -> Qualities.Q1080P.value
+            "hd", "720p" -> Qualities.Q720P.value
+            "sd", "480p" -> Qualities.Q480P.value
+            "360p" -> Qualities.Q360P.value
+            "240p" -> Qualities.Q240P.value
+            else -> Qualities.Q720P.value // Default
         }
     }
 }
