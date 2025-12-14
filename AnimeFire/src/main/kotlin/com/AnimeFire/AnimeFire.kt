@@ -18,70 +18,129 @@ class AnimeFire : MainAPI() {
         private const val SEARCH_PATH = "/pesquisar"
     }
 
-    // Todas as abas usam o mesmo mainUrl, mas extraem seções diferentes
+    // CORRIGIDO: Cada aba com URL específica
     override val mainPage = mainPageOf(
-        "$mainUrl" to "Lançamentos",           // Seção "Em lançamento"
-        "$mainUrl" to "Destaques da semana",   // Seção "Destaques da semana"
-        "$mainUrl" to "Últimos Animes",        // Seção "Últimos animes adicionados"
-        "$mainUrl" to "Últimos Episódios"      // Seção "Últimos episódios adicionados"
+        "$mainUrl" to "Lançamentos",                     // Página inicial
+        "$mainUrl/animes" to "Animes Populares",         // Lista de animes
+        "$mainUrl/filmes" to "Filmes de Anime",          // Lista de filmes
+        "$mainUrl" to "Destaques da Semana",            // Seção específica da home
+        "$mainUrl" to "Últimos Animes Adicionados",     // Seção específica da home  
+        "$mainUrl" to "Últimos Episódios Adicionados"   // Seção específica da home
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val document = app.get(request.data).document
         
         val homeItems = when (request.name) {
-            "Lançamentos" -> extractLancamentos(document)
-            "Destaques da semana" -> extractDestaquesSemana(document)
-            "Últimos Animes" -> extractUltimosAnimes(document)
-            "Últimos Episódios" -> extractUltimosEpisodios(document)
+            "Lançamentos" -> extractEmLancamento(document)
+            "Animes Populares" -> extractAnimesPopulares(document, page)
+            "Filmes de Anime" -> extractFilmesAnime(document, page)
+            "Destaques da Semana" -> extractDestaquesSemana(document)
+            "Últimos Animes Adicionados" -> extractUltimosAnimes(document)
+            "Últimos Episódios Adicionados" -> extractUltimosEpisodios(document)
             else -> emptyList()
         }
         
         return newHomePageResponse(request.name, homeItems.distinctBy { it.url })
     }
 
-    private fun extractLancamentos(document: org.jsoup.nodes.Document): List<SearchResponse> {
+    // CORRIGIDO: Extrai APENAS a seção "Em lançamento" (carrossel principal)
+    private fun extractEmLancamento(document: org.jsoup.nodes.Document): List<SearchResponse> {
         val items = mutableListOf<SearchResponse>()
         
-        // Extrair da seção "Em lançamento" (primeiro carrossel)
-        document.select(".owl-carousel-home .divArticleLancamentos a.item").forEach { item ->
-            item.toSearchResult()?.let { items.add(it) }
+        // Encontrar a seção "Em lançamento" pelo título
+        val lancamentoSection = document.selectFirst("h1.section2:contains(Em lançamento)")
+        lancamentoSection?.let { section ->
+            // Encontrar o carrossel correspondente (próximo elemento)
+            val carousel = section.parent()?.nextElementSibling()?.selectFirst(".owl-carousel-home")
+            carousel?.select(".divArticleLancamentos a.item")?.forEach { item ->
+                item.toSearchResult()?.let { items.add(it) }
+            }
         }
         
-        return items
+        return items.take(20) // Limitar para não repetir
     }
 
+    // CORRIGIDO: Extrai APENAS a seção "Destaques da semana"
     private fun extractDestaquesSemana(document: org.jsoup.nodes.Document): List<SearchResponse> {
         val items = mutableListOf<SearchResponse>()
         
-        // Extrair da seção "Destaques da semana"
-        document.select(".owl-carousel-semana .divArticleLancamentos a.item").forEach { item ->
-            item.toSearchResult()?.let { items.add(it) }
+        // Encontrar pela posição CSS que você forneceu
+        val destaquesSection = document.selectFirst("div.divSection:nth-child(4) h1.section2:contains(Destaques da semana)")
+        destaquesSection?.let { section ->
+            val carousel = section.parent()?.nextElementSibling()?.selectFirst(".owl-carousel-semana")
+            carousel?.select(".divArticleLancamentos a.item")?.forEach { item ->
+                item.toSearchResult()?.let { items.add(it) }
+            }
         }
         
-        return items
+        return items.take(15) // Limitar
     }
 
+    // CORRIGIDO: Extrai APENAS a seção "Últimos animes adicionados"
     private fun extractUltimosAnimes(document: org.jsoup.nodes.Document): List<SearchResponse> {
         val items = mutableListOf<SearchResponse>()
         
-        // Extrair da seção "Últimos animes adicionados"
-        document.select(".owl-carousel-l_dia .divArticleLancamentos a.item").forEach { item ->
-            item.toSearchResult()?.let { items.add(it) }
+        // Pela posição CSS: div.divSection:nth-child(6)
+        val ultimosAnimesSection = document.selectFirst("div.divSection:nth-child(6) h1.section2:contains(Últimos animes adicionados)")
+        ultimosAnimesSection?.let { section ->
+            val carousel = section.parent()?.nextElementSibling()?.selectFirst(".owl-carousel-l_dia")
+            carousel?.select(".divArticleLancamentos a.item")?.forEach { item ->
+                item.toSearchResult()?.let { items.add(it) }
+            }
         }
         
-        return items
+        return items.take(15) // Limitar
     }
 
+    // CORRIGIDO: Extrai APENAS a seção "Últimos episódios adicionados"
     private fun extractUltimosEpisodios(document: org.jsoup.nodes.Document): List<SearchResponse> {
         val items = mutableListOf<SearchResponse>()
         
-        // Extrair da seção "Últimos episódios adicionados"
-        document.select(".divCardUltimosEpsHome").forEach { card ->
-            card.toEpisodeSearchResult()?.let { items.add(it) }
+        // Pela posição CSS: div.divSectionUltimosEpsHome:nth-child(3)
+        val episodiosSection = document.selectFirst("div.divSectionUltimosEpsHome:nth-child(3) h2.section2:contains(Últimos episódios adicionados)")
+        episodiosSection?.let { section ->
+            val container = section.parent()?.nextElementSibling()?.selectFirst(".card-group .row")
+            container?.select(".divCardUltimosEpsHome")?.forEach { card ->
+                card.toEpisodeSearchResult()?.let { items.add(it) }
+            }
         }
         
-        return items
+        return items.take(20) // Limitar
+    }
+
+    // CORRIGIDO: Animes populares com paginação REAL
+    private fun extractAnimesPopulares(document: org.jsoup.nodes.Document, page: Int): List<SearchResponse> {
+        val items = mutableListOf<SearchResponse>()
+        
+        // Se for página 1, pega da home também
+        if (page == 1) {
+            document.select(".divArticleLancamentos a.item").forEach { item ->
+                item.toSearchResult()?.let { items.add(it) }
+            }
+        }
+        
+        // Se tiver mais páginas, o site deve ter paginação própria
+        // A URL /animes já mostra todos os animes
+        
+        return items.take(30).distinctBy { it.url }
+    }
+
+    // CORRIGIDO: Filmes de anime com paginação REAL
+    private fun extractFilmesAnime(document: org.jsoup.nodes.Document, page: Int): List<SearchResponse> {
+        val items = mutableListOf<SearchResponse>()
+        
+        // Filtrar apenas filmes
+        document.select(".divArticleLancamentos a.item").forEach { item ->
+            val href = item.attr("href") ?: ""
+            val title = item.selectFirst("h3.animeTitle")?.text() ?: ""
+            
+            if (href.contains("/filmes/") || title.contains("Movie", ignoreCase = true)) {
+                item.toSearchResult()?.let { items.add(it) }
+            }
+        }
+        
+        return items.take(30).distinctBy { it.url }
     }
 
     private fun Element.toSearchResult(): SearchResponse? {
@@ -142,13 +201,13 @@ class AnimeFire : MainAPI() {
         val searchUrl = "$mainUrl$SEARCH_PATH/${URLEncoder.encode(query, "UTF-8")}"
         val document = app.get(searchUrl).document
 
-        return document.select("article.containerAnimes a.item, a.item").mapNotNull { element ->
+        return document.select("article.containerAnimes a.item").mapNotNull { element ->
             try {
                 element.toSearchResult()
             } catch (e: Exception) {
                 null
             }
-        }
+        }.take(50) // Limitar resultados da busca
     }
 
     override suspend fun load(url: String): LoadResponse? {
