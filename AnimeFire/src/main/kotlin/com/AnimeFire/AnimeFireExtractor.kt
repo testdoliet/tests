@@ -1,11 +1,8 @@
 package com.AnimeFire
 
 import com.lagradost.cloudstream3.*
-import com.lagradost.cloudstream3.SubtitleFile
+import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.app
-import com.lagradost.cloudstream3.network.WebViewResolver
-import com.lagradost.cloudstream3.utils.ExtractorLink
-import com.lagradost.cloudstream3.utils.M3u8Helper
 
 object AnimeFireExtractor {
     suspend fun extractVideoLinks(
@@ -73,23 +70,20 @@ object AnimeFireExtractor {
                     
                     // Testar se o link está acessível
                     try {
-                        val response = app.get(videoUrl, headers = mapOf(
+                        val response = app.head(videoUrl, headers = mapOf(
                             "Referer" to mainUrl,
                             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
                         ))
                         
                         if (response.code in 200..299) {
+                            // Usar ExtractorLink diretamente
                             callback.invoke(
-                                newExtractorLink(
+                                ExtractorLink(
                                     source = name,
                                     name = "${qual.uppercase()} - AnimeFire",
                                     url = videoUrl,
                                     referer = "$mainUrl/",
-                                    quality = when (qual) {
-                                        "fhd" -> Qualities.Q1080P.value
-                                        "hd" -> Qualities.Q720P.value
-                                        else -> Qualities.Q480P.value
-                                    },
+                                    quality = getQualityFromString(qual),
                                     isM3u8 = false
                                 )
                             )
@@ -107,5 +101,16 @@ object AnimeFireExtractor {
         }
         
         return false
+    }
+    
+    private fun getQualityFromString(quality: String): Int {
+        return when (quality.lowercase()) {
+            "fhd", "1080p", "fullhd" -> 1080
+            "hd", "720p" -> 720
+            "sd", "480p" -> 480
+            "360p" -> 360
+            "240p" -> 240
+            else -> 720 // Default
+        }
     }
 }
