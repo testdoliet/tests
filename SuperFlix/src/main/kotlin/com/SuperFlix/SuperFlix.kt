@@ -18,9 +18,10 @@ class SuperFlix : MainAPI() {
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries, TvType.Anime)
     override val usesWebView = true
 
-    // ============ PROXY COM SUPORTE A TEMPORADAS ============
+    // ============ APIS ============
     private val TMDB_PROXY_URL = "https://lawliet.euluan1912.workers.dev"
     private val tmdbImageUrl = "https://image.tmdb.org/t/p"
+    private val ANILIST_API_URL = "https://graphql.anilist.co"
 
     override val mainPage = mainPageOf(
         "$mainUrl/lancamentos" to "Lançamentos",
@@ -28,17 +29,6 @@ class SuperFlix : MainAPI() {
         "$mainUrl/series" to "Últimas Séries",
         "$mainUrl/animes" to "Últimas Animes"
     )
-
-    // Função para corrigir URLs
-    private fun fixUrl(url: String): String {
-        return when {
-            url.isEmpty() -> url
-            url.startsWith("http") -> url
-            url.startsWith("//") -> "https:$url"
-            url.startsWith("/") -> "$mainUrl$url"
-            else -> "$mainUrl/$url"
-        }
-    }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val url = request.data + if (page > 1) "?page=$page" else ""
@@ -65,7 +55,6 @@ class SuperFlix : MainAPI() {
         val isSerie = badge.contains("série") || badge.contains("serie") ||
                      href.contains("/serie/") ||
                      (!isAnime && (badge.contains("tv") || href.contains("/tv/")))
-        val isMovie = !isSerie && !isAnime
 
         return when {
             isAnime -> {
@@ -154,31 +143,52 @@ class SuperFlix : MainAPI() {
             searchOnTMDB(cleanTitle, year, false)
         }
 
+        // ============ ATORES APENAS DO TMDB/ANILIST ============
+        println("🔍 [DEBUG] Buscando atores/personagens...")
+        val actorsList = if (isAnime) {
+            // Para animes: buscar personagens e seiyuus do AniList
+            getAnimeCharactersFromAniList(cleanTitle)
+        } else {
+            // Para filmes/séries: buscar atores do TMDB (COM PERSONAGEM)
+            tmdbInfo?.actors ?: emptyList()
+        }
+        
+        println("✅ [DEBUG] Total atores/personagens encontrados: ${actorsList.size}")
+
         if (tmdbInfo == null) {
             println("⚠️ [DEBUG] TMDB não retornou informações!")
         } else {
             println("✅ [DEBUG] TMDB OK! Título: ${tmdbInfo.title}, Ano: ${tmdbInfo.year}")
-            println("✅ [DEBUG] Poster URL: ${tmdbInfo.posterUrl}")
-            println("✅ [DEBUG] Backdrop URL: ${tmdbInfo.backdropUrl}")
-            println("✅ [DEBUG] Overview: ${tmdbInfo.overview?.take(50)}...")
-            println("✅ [DEBUG] Atores: ${tmdbInfo.actors?.size ?: 0}")
-            println("✅ [DEBUG] Trailer: ${tmdbInfo.youtubeTrailer}")
-            println("✅ [DEBUG] Temporadas/Episódios TMDB: ${tmdbInfo.seasonsEpisodes.size}")
-            println("✅ [DEBUG] Avaliação: ${tmdbInfo.rating}")
-            println("✅ [DEBUG] Contagem de votos: ${tmdbInfo.voteCount}")
         }
 
         val siteRecommendations = extractRecommendationsFromSite(document)
 
-        return if (tmdbInfo != null) {
-            println("✅ [DEBUG] Criando resposta COM dados do TMDB")
-            createLoadResponseWithTMDB(tmdbInfo, url, document, isAnime, isSerie, siteRecommendations)
+        println("✅ [DEBUG] Criando resposta final...")
+        return if (tmdbInfo != null || actorsList.isNotEmpty()) {
+            createLoadResponseWithExternalData(
+                tmdbInfo = tmdbInfo,
+                actorsList = actorsList,
+                document = document,
+                url = url,
+                cleanTitle = cleanTitle,
+                year = year,
+                isAnime = isAnime,
+                isSerie = isSerie,
+                siteRecommendations = siteRecommendations
+            )
         } else {
-            println("⚠️ [DEBUG] Criando resposta APENAS com dados do site")
-            createLoadResponseFromSite(document, url, cleanTitle, year, isAnime, isSerie)
+            createLoadResponseFromSiteOnly(
+                document = document,
+                url = url,
+                cleanTitle = cleanTitle,
+                year = year,
+                isAnime = isAnime,
+                isSerie = isSerie
+            )
         }
     }
 
+    // ============ BUSCAR ATORES DO TMDB (COM PERSONAGEM) ============
     private suspend fun searchOnTMDB(query: String, year: Int?, isTv: Boolean): TMDBInfo? {
         println("🔍 [TMDB DEBUG] Iniciando busca no TMDB")
         println("🔍 [TMDB DEBUG] Query: $query")
@@ -206,31 +216,25 @@ class SuperFlix : MainAPI() {
             // Buscar detalhes completos
             val details = getTMDBDetails(result.id, isTv) ?: return null
 
-            // Extrair atores COM INFORMAÇÕES DE PERSONAGEM/VOZ
+            // ============ ATORES COM PERSONAGEM ============
             val allActors = details.credits?.cast?.take(15)?.mapNotNull { actor ->
                 if (actor.name.isNotBlank()) {
-                    // Verificar se é anime/desenho para adicionar "(Voz)" no personagem
-                    val character = when {
-                        actor.character.isNullOrBlank() -> null
-                        isAnimeOrCartoon(query) -> "${actor.character} (Voz)"
-                        else -> actor.character
-                    }
-                    
                     Actor(
                         name = actor.name,
-                        role = character,
+                        role = actor.character,  // ← PERSONAGEM QUE INTERPRETA
                         image = actor.profile_path?.let { "$tmdbImageUrl/w185$it" }
                     )
                 } else null
             }
+            println("✅ [TMDB DEBUG] Atores com personagem: ${allActors?.size ?: 0}")
 
             // Buscar trailer
             val youtubeTrailer = getHighQualityTrailer(details.videos?.results)
 
-            // Buscar temporadas (apenas para séries)
+            // Buscar temporadas e episódios COM RUNTIME
             val seasonsEpisodes = if (isTv) {
-                println("🔍 [TMDB DEBUG] Buscando temporadas...")
-                getTMDBAllSeasons(result.id)
+                println("🔍 [TMDB DEBUG] Buscando temporadas com runtime...")
+                getTMDBAllSeasonsWithRuntime(result.id)
             } else {
                 emptyMap()
             }
@@ -250,67 +254,50 @@ class SuperFlix : MainAPI() {
                 actors = allActors,
                 youtubeTrailer = youtubeTrailer,
                 duration = if (!isTv) details.runtime else null,
-                seasonsEpisodes = seasonsEpisodes,
-                rating = result.vote_average,
-                voteCount = result.vote_count
+                seasonsEpisodes = seasonsEpisodes
             )
         } catch (e: Exception) {
             println("❌ [TMDB DEBUG] ERRO na busca do TMDB: ${e.message}")
             null
         }
     }
-    
-    private fun isAnimeOrCartoon(title: String): Boolean {
-        val animeKeywords = listOf(
-            "anime", "cartoon", "desenho", "animação", "animaçao",
-            "animation", "animated", "animes", "cartoons"
-        )
-        val lowerTitle = title.lowercase()
-        return animeKeywords.any { lowerTitle.contains(it) }
-    }
 
-    private suspend fun getTMDBAllSeasons(seriesId: Int): Map<Int, List<TMDBEpisode>> {
-        println("🔍 [TMDB DEBUG] Buscando todas as temporadas para série ID: $seriesId")
+    // ============ NOVO: Buscar temporadas COM RUNTIME ============
+    private suspend fun getTMDBAllSeasonsWithRuntime(seriesId: Int): Map<Int, List<TMDBEpisode>> {
+        println("🔍 [TMDB DEBUG] Buscando temporadas com runtime para série ID: $seriesId")
 
         return try {
-            // Primeiro, pegar detalhes da série para saber quantas temporadas
             val seriesDetailsUrl = "$TMDB_PROXY_URL/tv/$seriesId"
             println("🔗 [TMDB DEBUG] URL detalhes série: $seriesDetailsUrl")
 
             val seriesResponse = app.get(seriesDetailsUrl, timeout = 10_000)
             println("📡 [TMDB DEBUG] Status da resposta: ${seriesResponse.code}")
 
-            if (seriesResponse.code != 200) {
-                println("❌ [TMDB DEBUG] Erro HTTP: ${seriesResponse.code}")
-                return emptyMap()
-            }
+            if (seriesResponse.code != 200) return emptyMap()
 
             val seriesDetails = seriesResponse.parsedSafe<TMDBTVDetailsResponse>() ?: return emptyMap()
-
             println("✅ [TMDB DEBUG] Série OK! Total temporadas: ${seriesDetails.seasons.size}")
 
             val seasonsEpisodes = mutableMapOf<Int, List<TMDBEpisode>>()
 
-            // Agora buscar cada temporada individualmente
             for (season in seriesDetails.seasons) {
-                if (season.season_number > 0) { // Ignorar temporada 0 (especiais)
+                if (season.season_number > 0) {
                     val seasonNumber = season.season_number
                     println("🔍 [TMDB DEBUG] Buscando temporada $seasonNumber...")
 
                     val seasonUrl = "$TMDB_PROXY_URL/tv/$seriesId/season/$seasonNumber"
-                    println("🔗 [TMDB DEBUG] URL temporada: $seasonUrl")
-
                     val seasonResponse = app.get(seasonUrl, timeout = 10_000)
-                    println("📡 [TMDB DEBUG] Status temporada: ${seasonResponse.code}")
 
                     if (seasonResponse.code == 200) {
                         val seasonData = seasonResponse.parsedSafe<TMDBSeasonResponse>()
                         seasonData?.episodes?.let { episodes ->
                             seasonsEpisodes[seasonNumber] = episodes
                             println("✅ [TMDB DEBUG] Temporada $seasonNumber: ${episodes.size} episódios")
+                            // Log do runtime dos primeiros episódios
+                            episodes.take(3).forEach { ep ->
+                                println("📊 [TMDB DEBUG] Ep ${ep.episode_number}: ${ep.runtime} min")
+                            }
                         }
-                    } else {
-                        println("❌ [TMDB DEBUG] Falha na temporada $seasonNumber")
                     }
                 }
             }
@@ -320,6 +307,109 @@ class SuperFlix : MainAPI() {
         } catch (e: Exception) {
             println("❌ [TMDB DEBUG] ERRO ao buscar temporadas: ${e.message}")
             emptyMap()
+        }
+    }
+
+    // ============ BUSCAR PERSONAGENS DO ANILIST (COM SEIYUU) ============
+    private suspend fun getAnimeCharactersFromAniList(title: String): List<Actor> {
+        println("🔍 [ANILIST DEBUG] Buscando personagens para: $title")
+        
+        return try {
+            // Primeiro buscar o anime no AniList
+            val searchQuery = """
+                query(${"$"}search: String) {
+                    Page(page: 1, perPage: 1) {
+                        media(search: ${"$"}search, type: ANIME) {
+                            id
+                            idMal
+                            title {
+                                romaji
+                                english
+                                native
+                            }
+                        }
+                    }
+                }
+            """.trimIndent()
+
+            val searchVariables = mapOf("search" to title)
+            val searchBody = mapOf(
+                "query" to searchQuery,
+                "variables" to searchVariables
+            )
+
+            val searchResponse = app.post(
+                ANILIST_API_URL,
+                data = searchBody,
+                headers = mapOf("Content-Type" to "application/json"),
+                timeout = 10_000
+            ).parsedSafe<AniListSearchResponse>()
+
+            val animeId = searchResponse?.data?.Page?.media?.firstOrNull()?.id
+            if (animeId == null) {
+                println("❌ [ANILIST DEBUG] Anime não encontrado: $title")
+                return emptyList()
+            }
+
+            println("✅ [ANILIST DEBUG] Anime encontrado! ID: $animeId")
+
+            // Agora buscar personagens
+            val charactersQuery = """
+                query(${"$"}id: Int) {
+                    Media(id: ${"$"}id) {
+                        characters(role: MAIN, sort: ROLE, perPage: 15) {
+                            edges {
+                                node {
+                                    name {
+                                        full
+                                    }
+                                    image {
+                                        large
+                                    }
+                                }
+                                voiceActors(language: JAPANESE) {
+                                    name {
+                                        full
+                                    }
+                                    image {
+                                        large
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            """.trimIndent()
+
+            val charactersVariables = mapOf("id" to animeId)
+            val charactersBody = mapOf(
+                "query" to charactersQuery,
+                "variables" to charactersVariables
+            )
+
+            val charactersResponse = app.post(
+                ANILIST_API_URL,
+                data = charactersBody,
+                headers = mapOf("Content-Type" to "application/json"),
+                timeout = 10_000
+            ).parsedSafe<AniListCharactersResponse>()
+
+            val characters = charactersResponse?.data?.Media?.characters?.edges?.mapNotNull { edge ->
+                val character = edge.node
+                val voiceActor = edge.voiceActors.firstOrNull()
+                
+                Actor(
+                    name = character.name.full,
+                    role = voiceActor?.name?.full ?: "Seiyuu não disponível", // Personagem → Seiyuu
+                    image = character.image?.large ?: voiceActor?.image?.large
+                )
+            } ?: emptyList()
+
+            println("✅ [ANILIST DEBUG] Personagens encontrados: ${characters.size}")
+            characters
+        } catch (e: Exception) {
+            println("❌ [ANILIST DEBUG] ERRO: ${e.message}")
+            emptyList()
         }
     }
 
@@ -364,53 +454,7 @@ class SuperFlix : MainAPI() {
         ?.let { (key, _, _) -> "https://www.youtube.com/watch?v=$key" }
     }
 
-    private suspend fun extractEpisodesFromSite(
-        document: org.jsoup.nodes.Document,
-        url: String,
-        isAnime: Boolean,
-        isSerie: Boolean
-    ): List<Episode> {
-        println("🔍 [SITE DEBUG] Extraindo episódios do site")
-        val episodes = mutableListOf<Episode>()
-
-        val episodeElements = document.select("button.bd-play[data-url], a.episode-card, .episode-item, .episode-link, [class*='episode']")
-        println("🔍 [SITE DEBUG] Elementos de episódio encontrados: ${episodeElements.size}")
-
-        if (episodeElements.isNotEmpty()) {
-            episodeElements.forEachIndexed { index, element ->
-                try {
-                    val dataUrl = element.attr("data-url") ?: element.attr("href") ?: ""
-                    if (dataUrl.isBlank()) {
-                        println("⚠️ [SITE DEBUG] Elemento $index sem data-url/href")
-                        return@forEachIndexed
-                    }
-
-                    val epNumber = extractEpisodeNumber(element, index + 1)
-                    val seasonNumber = element.attr("data-season").toIntOrNull() ?: 1
-
-                    val episode = newEpisode(fixUrl(dataUrl)) {
-                        this.name = "Episódio $epNumber"
-                        this.season = seasonNumber
-                        this.episode = epNumber
-                        
-                        element.selectFirst(".ep-desc, .description")?.text()?.trim()?.let { desc ->
-                            if (desc.isNotBlank()) {
-                                this.description = desc
-                            }
-                        }
-                    }
-
-                    episodes.add(episode)
-                } catch (e: Exception) {
-                    println("❌ [SITE DEBUG] Erro ao processar episódio $index: ${e.message}")
-                }
-            }
-        }
-
-        println("✅ [SITE DEBUG] Total de episódios extraídos do site: ${episodes.size}")
-        return episodes
-    }
-
+    // ============ FUNÇÕES AUXILIARES ============
     private fun extractRecommendationsFromSite(document: org.jsoup.nodes.Document): List<SearchResponse> {
         val recommendations = document.select(".recs-grid .rec-card, .recs-grid a").mapNotNull { element ->
             try {
@@ -449,112 +493,59 @@ class SuperFlix : MainAPI() {
                 null
             }
         }
-        
+
         println("🔍 [DEBUG] Recomendações encontradas no site: ${recommendations.size}")
         return recommendations
     }
 
-    private suspend fun createLoadResponseFromSite(
+    private suspend fun createLoadResponseWithExternalData(
+        tmdbInfo: TMDBInfo?,
+        actorsList: List<Actor>,
         document: org.jsoup.nodes.Document,
         url: String,
-        title: String,
+        cleanTitle: String,
         year: Int?,
-        isAnime: Boolean,
-        isSerie: Boolean
-    ): LoadResponse {
-        println("🏗️ [DEBUG] Criando resposta APENAS com dados do site")
-        
-        val ogImage = document.selectFirst("meta[property='og:image']")?.attr("content")
-        val poster = ogImage?.let { fixUrl(it) }
-        println("🏗️ [DEBUG] Poster do site: $poster")
-
-        val description = document.selectFirst("meta[name='description']")?.attr("content")
-        val synopsis = document.selectFirst(".syn, .description, .sinopse, .plot")?.text()
-        val plot = description ?: synopsis
-        println("🏗️ [DEBUG] Plot do site: ${plot?.take(50)}...")
-
-        val tags = document.select("a.chip, .chip, .genre, .tags").map { it.text() }
-            .takeIf { it.isNotEmpty() }?.toList()
-        println("🏗️ [DEBUG] Tags do site: $tags")
-
-        val siteRecommendations = extractRecommendationsFromSite(document)
-
-        return if (isAnime || isSerie) {
-            println("🏗️ [DEBUG] Criando série/Anime (apenas site)")
-            val type = if (isAnime) TvType.Anime else TvType.TvSeries
-            
-            // Extrair episódios do site
-            val episodes = extractEpisodesFromSite(document, url, isAnime, isSerie)
-
-            newTvSeriesLoadResponse(title, url, type, episodes) {
-                this.posterUrl = poster
-                this.year = year
-                this.plot = plot
-                this.tags = tags
-                this.recommendations = siteRecommendations.takeIf { it.isNotEmpty() }
-                println("🏗️ [DEBUG] Série criada com ${episodes.size} episódios")
-            }
-        } else {
-            println("🏗️ [DEBUG] Criando filme (apenas site)")
-            val playerUrl = findPlayerUrl(document)
-            println("🏗️ [DEBUG] Player URL: $playerUrl")
-            
-            newMovieLoadResponse(title, url, TvType.Movie, playerUrl ?: url) {
-                this.posterUrl = poster
-                this.year = year
-                this.plot = plot
-                this.tags = tags
-                this.recommendations = siteRecommendations.takeIf { it.isNotEmpty() }
-            }
-        }
-    }
-
-    private suspend fun createLoadResponseWithTMDB(
-        tmdbInfo: TMDBInfo,
-        url: String,
-        document: org.jsoup.nodes.Document,
         isAnime: Boolean,
         isSerie: Boolean,
         siteRecommendations: List<SearchResponse>
     ): LoadResponse {
-        println("🏗️ [DEBUG] Criando resposta com dados TMDB")
+        println("🏗️ [DEBUG] Criando resposta com dados externos (TMDB/AniList)")
 
         return if (isAnime || isSerie) {
-            println("🏗️ [DEBUG] Criando série/Anime")
+            println("🏗️ [DEBUG] Criando série/Anime com dados externos")
 
-            // AGORA COM DADOS DO TMDB!
+            // Extrair episódios COM DADOS DO TMDB (runtime, título, descrição, data)
             val episodes = extractEpisodesWithTMDBInfo(
                 document = document,
                 url = url,
                 tmdbInfo = tmdbInfo,
-                isAnime = isAnime,
-                isSerie = isSerie
+                isAnime = isAnime
             )
 
-            println("🏗️ [DEBUG] Total de episódios: ${episodes.size}")
+            println("🏗️ [DEBUG] Total de episódios extraídos: ${episodes.size}")
             val type = if (isAnime) TvType.Anime else TvType.TvSeries
 
             newTvSeriesLoadResponse(
-                name = tmdbInfo.title ?: "",
+                name = tmdbInfo?.title ?: cleanTitle,
                 url = url,
                 type = type,
                 episodes = episodes
             ) {
-                this.posterUrl = tmdbInfo.posterUrl
-                this.backgroundPosterUrl = tmdbInfo.backdropUrl
-                this.year = tmdbInfo.year
-                this.plot = tmdbInfo.overview
-                this.tags = tmdbInfo.genres
-                
-                // ADICIONANDO AVALIAÇÃO
-                this.rating = tmdbInfo.rating?.let { (it / 2).toInt() } // Converter de 10 para 5 estrelas
+                this.posterUrl = tmdbInfo?.posterUrl
+                this.backgroundPosterUrl = tmdbInfo?.backdropUrl
+                this.year = tmdbInfo?.year ?: year
+                this.plot = tmdbInfo?.overview
+                this.tags = tmdbInfo?.genres
 
-                tmdbInfo.actors?.let { actors ->
-                    println("🏗️ [DEBUG] Adicionando ${actors.size} atores")
-                    addActors(actors)
+                // ============ ADICIONAR ATORES/PERSONAGENS ============
+                if (actorsList.isNotEmpty()) {
+                    println("🏗️ [DEBUG] Adicionando ${actorsList.size} atores/personagens")
+                    actorsList.forEach { actor ->
+                        addActor(actor)
+                    }
                 }
 
-                tmdbInfo.youtubeTrailer?.let { trailerUrl ->
+                tmdbInfo?.youtubeTrailer?.let { trailerUrl ->
                     println("🏗️ [DEBUG] Adicionando trailer: $trailerUrl")
                     addTrailer(trailerUrl)
                 }
@@ -568,27 +559,27 @@ class SuperFlix : MainAPI() {
             println("🏗️ [DEBUG] Player URL: $playerUrl")
 
             newMovieLoadResponse(
-                name = tmdbInfo.title ?: "",
+                name = tmdbInfo?.title ?: cleanTitle,
                 url = url,
                 type = TvType.Movie,
                 dataUrl = playerUrl ?: url
             ) {
-                this.posterUrl = tmdbInfo.posterUrl
-                this.backgroundPosterUrl = tmdbInfo.backdropUrl
-                this.year = tmdbInfo.year
-                this.plot = tmdbInfo.overview
-                this.tags = tmdbInfo.genres
-                this.duration = tmdbInfo.duration
-                
-                // ADICIONANDO AVALIAÇÃO
-                this.rating = tmdbInfo.rating?.let { (it / 2).toInt() } // Converter de 10 para 5 estrelas
+                this.posterUrl = tmdbInfo?.posterUrl
+                this.backgroundPosterUrl = tmdbInfo?.backdropUrl
+                this.year = tmdbInfo?.year ?: year
+                this.plot = tmdbInfo?.overview
+                this.tags = tmdbInfo?.genres
+                this.duration = tmdbInfo?.duration
 
-                tmdbInfo.actors?.let { actors ->
-                    println("🏗️ [DEBUG] Adicionando ${actors.size} atores")
-                    addActors(actors)
+                // ============ ADICIONAR ATORES COM PERSONAGEM ============
+                if (actorsList.isNotEmpty()) {
+                    println("🏗️ [DEBUG] Adicionando ${actorsList.size} atores com personagem")
+                    actorsList.forEach { actor ->
+                        addActor(actor)
+                    }
                 }
 
-                tmdbInfo.youtubeTrailer?.let { trailerUrl ->
+                tmdbInfo?.youtubeTrailer?.let { trailerUrl ->
                     println("🏗️ [DEBUG] Adicionando trailer: $trailerUrl")
                     addTrailer(trailerUrl)
                 }
@@ -599,14 +590,14 @@ class SuperFlix : MainAPI() {
         }
     }
 
+    // ============ FUNÇÃO MELHORADA: Episódios COM RUNTIME ============
     private suspend fun extractEpisodesWithTMDBInfo(
         document: org.jsoup.nodes.Document,
         url: String,
         tmdbInfo: TMDBInfo?,
-        isAnime: Boolean,
-        isSerie: Boolean = false
+        isAnime: Boolean
     ): List<Episode> {
-        println("🔍 [DEBUG] Extraindo episódios da URL: $url")
+        println("🔍 [DEBUG] Extraindo episódios COM RUNTIME do TMDB")
         val episodes = mutableListOf<Episode>()
 
         val episodeElements = document.select("button.bd-play[data-url], a.episode-card, .episode-item, .episode-link, [class*='episode']")
@@ -621,23 +612,35 @@ class SuperFlix : MainAPI() {
                     val epNumber = extractEpisodeNumber(element, index + 1)
                     val seasonNumber = element.attr("data-season").toIntOrNull() ?: 1
 
-                    // AGORA COM DADOS DO TMDB!
+                    // Buscar dados do episódio no TMDB
                     val tmdbEpisode = findTMDBEpisode(tmdbInfo, seasonNumber, epNumber)
 
                     val episode = if (tmdbEpisode != null) {
-                        // Episódio com dados do TMDB - ADICIONANDO DURAÇÃO "-min" NA SINOPSE
-                        val descriptionWithDuration = buildDescriptionWithDuration(
-                            tmdbEpisode.overview,
-                            tmdbEpisode.runtime
-                        )
+                        // ============ EPISÓDIO COM DADOS COMPLETOS DO TMDB ============
+                        // Criar descrição com runtime
+                        val descriptionBuilder = StringBuilder()
+                        tmdbEpisode.overview?.let { desc ->
+                            descriptionBuilder.append(desc)
+                        }
+                        
+                        // Adicionar runtime se disponível
+                        tmdbEpisode.runtime?.let { runtime ->
+                            if (runtime > 0) {
+                                if (descriptionBuilder.isNotEmpty()) {
+                                    descriptionBuilder.append("\n\n")
+                                }
+                                descriptionBuilder.append("Duração: ${runtime} min")
+                            }
+                        }
 
                         newEpisode(fixUrl(dataUrl)) {
                             this.name = tmdbEpisode.name ?: "Episódio $epNumber"
                             this.season = seasonNumber
                             this.episode = epNumber
                             this.posterUrl = tmdbEpisode.still_path?.let { "$tmdbImageUrl/w300$it" }
-                            this.description = descriptionWithDuration
+                            this.description = descriptionBuilder.toString().takeIf { it.isNotEmpty() }
 
+                            // Adicionar data de lançamento
                             tmdbEpisode.air_date?.let { airDate ->
                                 try {
                                     val dateFormatter = SimpleDateFormat("yyyy-MM-dd")
@@ -656,6 +659,10 @@ class SuperFlix : MainAPI() {
                     }
 
                     episodes.add(episode)
+                    
+                    // Log dos detalhes
+                    println("📊 [DEBUG] Ep $epNumber (T${seasonNumber}): ${tmdbEpisode?.name ?: "Sem dados TMDB"} - ${tmdbEpisode?.runtime ?: "?"} min")
+                    
                 } catch (e: Exception) {
                     println("❌ [DEBUG] Erro episódio $index: ${e.message}")
                 }
@@ -664,18 +671,6 @@ class SuperFlix : MainAPI() {
 
         println("✅ [DEBUG] Total de episódios extraídos: ${episodes.size}")
         return episodes
-    }
-
-    private fun buildDescriptionWithDuration(overview: String?, runtime: Int?): String? {
-        return when {
-            overview != null && runtime != null && runtime > 0 -> {
-                // Adiciona "-min" no final da sinopse
-                "$overview\n\nDuração: $runtime min"
-            }
-            overview != null -> overview
-            runtime != null && runtime > 0 -> "Duração: $runtime min"
-            else -> null
-        }
     }
 
     private fun findTMDBEpisode(tmdbInfo: TMDBInfo?, season: Int, episode: Int): TMDBEpisode? {
@@ -688,6 +683,85 @@ class SuperFlix : MainAPI() {
         }
 
         return episodes.find { it.episode_number == episode }
+    }
+
+    private suspend fun createLoadResponseFromSiteOnly(
+        document: org.jsoup.nodes.Document,
+        url: String,
+        cleanTitle: String,
+        year: Int?,
+        isAnime: Boolean,
+        isSerie: Boolean
+    ): LoadResponse {
+        println("🏗️ [DEBUG] Criando resposta APENAS com dados do site")
+
+        val ogImage = document.selectFirst("meta[property='og:image']")?.attr("content")
+        val poster = ogImage?.let { fixUrl(it) }
+        println("🏗️ [DEBUG] Poster do site: $poster")
+
+        val description = document.selectFirst("meta[name='description']")?.attr("content")
+        val synopsis = document.selectFirst(".syn, .description, .sinopse, .plot")?.text()
+        val plot = description ?: synopsis
+
+        val tags = document.select("a.chip, .chip, .genre, .tags").map { it.text() }
+            .takeIf { it.isNotEmpty() }?.toList()
+
+        if (isAnime || isSerie) {
+            println("🏗️ [DEBUG] Criando série/Anime (apenas site)")
+            val type = if (isAnime) TvType.Anime else TvType.TvSeries
+
+            val episodes = extractEpisodesFromSiteOnly(document, url)
+
+            return newTvSeriesLoadResponse(cleanTitle, url, type, episodes) {
+                this.posterUrl = poster
+                this.year = year
+                this.plot = plot
+                this.tags = tags
+                println("🏗️ [DEBUG] Série criada com ${episodes.size} episódios")
+            }
+        } else {
+            println("🏗️ [DEBUG] Criando filme (apenas site)")
+            val playerUrl = findPlayerUrl(document)
+            println("🏗️ [DEBUG] Player URL: $playerUrl")
+
+            return newMovieLoadResponse(cleanTitle, url, TvType.Movie, playerUrl ?: url) {
+                this.posterUrl = poster
+                this.year = year
+                this.plot = plot
+                this.tags = tags
+            }
+        }
+    }
+
+    private suspend fun extractEpisodesFromSiteOnly(
+        document: org.jsoup.nodes.Document,
+        url: String
+    ): List<Episode> {
+        val episodes = mutableListOf<Episode>()
+
+        val episodeElements = document.select("button.bd-play[data-url], a.episode-card, .episode-item, .episode-link")
+        
+        if (episodeElements.isNotEmpty()) {
+            episodeElements.forEachIndexed { index, element ->
+                try {
+                    val dataUrl = element.attr("data-url") ?: element.attr("href") ?: ""
+                    if (dataUrl.isBlank()) return@forEachIndexed
+
+                    val epNumber = extractEpisodeNumber(element, index + 1)
+                    val seasonNumber = element.attr("data-season").toIntOrNull() ?: 1
+
+                    episodes.add(newEpisode(fixUrl(dataUrl)) {
+                        this.name = "Episódio $epNumber"
+                        this.season = seasonNumber
+                        this.episode = epNumber
+                    })
+                } catch (e: Exception) {
+                    // Ignorar erros
+                }
+            }
+        }
+
+        return episodes
     }
 
     private fun extractEpisodeNumber(element: Element, default: Int): Int {
@@ -705,23 +779,16 @@ class SuperFlix : MainAPI() {
             println("🔍 [DEBUG] Player URL encontrado no botão: $url")
             return url
         }
-        
+
         val iframe = document.selectFirst("iframe[src*='fembed'], iframe[src*='filemoon'], iframe[src*='player'], iframe[src*='embed']")
         if (iframe != null) {
             val url = iframe.attr("src")
             println("🔍 [DEBUG] Player URL encontrado no iframe: $url")
             return url
         }
-        
+
         val videoLink = document.selectFirst("a[href*='.m3u8'], a[href*='.mp4'], a[href*='watch']")
-        val url = videoLink?.attr("href")
-        if (url != null) {
-            println("🔍 [DEBUG] Player URL encontrado no link: $url")
-        } else {
-            println("⚠️ [DEBUG] Nenhum player URL encontrado")
-        }
-        
-        return url
+        return videoLink?.attr("href")
     }
 
     override suspend fun loadLinks(
@@ -746,9 +813,7 @@ class SuperFlix : MainAPI() {
         val actors: List<Actor>?,
         val youtubeTrailer: String?,
         val duration: Int?,
-        val seasonsEpisodes: Map<Int, List<TMDBEpisode>> = emptyMap(),
-        val rating: Float? = null,
-        val voteCount: Int? = null
+        val seasonsEpisodes: Map<Int, List<TMDBEpisode>> = emptyMap()
     )
 
     private data class TMDBSearchResponse(
@@ -761,9 +826,7 @@ class SuperFlix : MainAPI() {
         @JsonProperty("name") val name: String? = null,
         @JsonProperty("release_date") val release_date: String? = null,
         @JsonProperty("first_air_date") val first_air_date: String? = null,
-        @JsonProperty("poster_path") val poster_path: String?,
-        @JsonProperty("vote_average") val vote_average: Float? = null,
-        @JsonProperty("vote_count") val vote_count: Int? = null
+        @JsonProperty("poster_path") val poster_path: String?
     )
 
     private data class TMDBTVDetailsResponse(
@@ -797,3 +860,94 @@ class SuperFlix : MainAPI() {
         @JsonProperty("credits") val credits: TMDBCredits?,
         @JsonProperty("videos") val videos: TMDBVideos?
     )
+
+    private data class TMDBGenre(
+        @JsonProperty("name") val name: String
+    )
+
+    private data class TMDBCredits(
+        @JsonProperty("cast") val cast: List<TMDBCast>
+    )
+
+    private data class TMDBCast(
+        @JsonProperty("name") val name: String,
+        @JsonProperty("character") val character: String?,
+        @JsonProperty("profile_path") val profile_path: String?
+    )
+
+    private data class TMDBVideos(
+        @JsonProperty("results") val results: List<TMDBVideo>
+    )
+
+    private data class TMDBVideo(
+        @JsonProperty("key") val key: String,
+        @JsonProperty("site") val site: String,
+        @JsonProperty("type") val type: String,
+        @JsonProperty("official") val official: Boolean? = false
+    )
+
+    // ============ CLASSES ANILIST ============
+
+    private data class AniListSearchResponse(
+        @JsonProperty("data") val data: AniListSearchData?
+    )
+
+    private data class AniListSearchData(
+        @JsonProperty("Page") val Page: AniListPage?
+    )
+
+    private data class AniListPage(
+        @JsonProperty("media") val media: List<AniListMediaSearch>?
+    )
+
+    private data class AniListMediaSearch(
+        @JsonProperty("id") val id: Int,
+        @JsonProperty("idMal") val idMal: Int?,
+        @JsonProperty("title") val title: AniListTitle?
+    )
+
+    private data class AniListTitle(
+        @JsonProperty("romaji") val romaji: String?,
+        @JsonProperty("english") val english: String?,
+        @JsonProperty("native") val native: String?
+    )
+
+    private data class AniListCharactersResponse(
+        @JsonProperty("data") val data: AniListCharactersData?
+    )
+
+    private data class AniListCharactersData(
+        @JsonProperty("Media") val Media: AniListCharactersMedia?
+    )
+
+    private data class AniListCharactersMedia(
+        @JsonProperty("characters") val characters: AniListCharacters?
+    )
+
+    private data class AniListCharacters(
+        @JsonProperty("edges") val edges: List<AniListCharacterEdge>?
+    )
+
+    private data class AniListCharacterEdge(
+        @JsonProperty("node") val node: AniListCharacterNode,
+        @JsonProperty("voiceActors") val voiceActors: List<AniListVoiceActor>?
+    )
+
+    private data class AniListCharacterNode(
+        @JsonProperty("name") val name: AniListCharacterName,
+        @JsonProperty("image") val image: AniListImage?
+    )
+
+    private data class AniListCharacterName(
+        @JsonProperty("full") val full: String
+    )
+
+    private data class AniListImage(
+        @JsonProperty("large") val large: String?
+    )
+
+    private data class AniListVoiceActor(
+        @JsonProperty("name") val name: AniListCharacterName,
+        @JsonProperty("image") val image: AniListImage?
+    )
+}
