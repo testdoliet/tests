@@ -18,23 +18,20 @@ class AnimeFire : MainAPI() {
         private const val SEARCH_PATH = "/pesquisar"
     }
 
-    // CORRIGIDO: Cada aba com URL específica
+    // APENAS 4 ABAS DA PÁGINA INICIAL
     override val mainPage = mainPageOf(
-        "$mainUrl" to "Lançamentos",                     // Página inicial
-        "$mainUrl/animes" to "Animes Populares",         // Lista de animes
-        "$mainUrl/filmes" to "Filmes de Anime",          // Lista de filmes
-        "$mainUrl" to "Destaques da Semana",            // Seção específica da home
-        "$mainUrl" to "Últimos Animes Adicionados",     // Seção específica da home  
-        "$mainUrl" to "Últimos Episódios Adicionados"   // Seção específica da home
+        "$mainUrl" to "Lançamentos",                   // Carrossel principal "Em lançamento"
+        "$mainUrl" to "Destaques da Semana",          // Seção "Destaques da semana"
+        "$mainUrl" to "Últimos Animes Adicionados",   // Seção "Últimos animes adicionados"
+        "$mainUrl" to "Últimos Episódios Adicionados" // Seção "Últimos episódios adicionados"
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val document = app.get(request.data).document
+        // SEMPRE pega a página 1 (home) - sem paginação
+        val document = app.get(mainUrl).document
         
         val homeItems = when (request.name) {
-            "Lançamentos" -> extractEmLancamento(document)
-            "Animes Populares" -> extractAnimesPopulares(document, page)
-            "Filmes de Anime" -> extractFilmesAnime(document, page)
+            "Lançamentos" -> extractLancamentos(document)
             "Destaques da Semana" -> extractDestaquesSemana(document)
             "Últimos Animes Adicionados" -> extractUltimosAnimes(document)
             "Últimos Episódios Adicionados" -> extractUltimosEpisodios(document)
@@ -44,110 +41,82 @@ class AnimeFire : MainAPI() {
         return newHomePageResponse(request.name, homeItems.distinctBy { it.url })
     }
 
-    // CORRIGIDO: Extrai APENAS a seção "Em lançamento" (carrossel principal)
-    private fun extractEmLancamento(document: org.jsoup.nodes.Document): List<SearchResponse> {
+    // 1. LANÇAMENTOS - Primeiro carrossel
+    private fun extractLancamentos(document: org.jsoup.nodes.Document): List<SearchResponse> {
         val items = mutableListOf<SearchResponse>()
         
-        // Encontrar a seção "Em lançamento" pelo título
-        val lancamentoSection = document.selectFirst("h1.section2:contains(Em lançamento)")
-        lancamentoSection?.let { section ->
-            // Encontrar o carrossel correspondente (próximo elemento)
-            val carousel = section.parent()?.nextElementSibling()?.selectFirst(".owl-carousel-home")
+        // Buscar pelo título "Em lançamento"
+        val titleElement = document.selectFirst("h1.section2:contains(Em lançamento)")
+        titleElement?.let { title ->
+            // Encontrar o carrossel imediatamente após o título
+            val carousel = title.parent()?.nextElementSibling()?.selectFirst(".owl-carousel-home")
             carousel?.select(".divArticleLancamentos a.item")?.forEach { item ->
                 item.toSearchResult()?.let { items.add(it) }
             }
         }
         
-        return items.take(20) // Limitar para não repetir
+        // Limitar e retornar
+        return items.take(15).distinctBy { it.url }
     }
 
-    // CORRIGIDO: Extrai APENAS a seção "Destaques da semana"
+    // 2. DESTAQUES DA SEMANA - Seção específica
     private fun extractDestaquesSemana(document: org.jsoup.nodes.Document): List<SearchResponse> {
         val items = mutableListOf<SearchResponse>()
         
-        // Encontrar pela posição CSS que você forneceu
-        val destaquesSection = document.selectFirst("div.divSection:nth-child(4) h1.section2:contains(Destaques da semana)")
-        destaquesSection?.let { section ->
-            val carousel = section.parent()?.nextElementSibling()?.selectFirst(".owl-carousel-semana")
+        // Pelo seletor exato que você forneceu
+        val titleElement = document.selectFirst("div.divSection:nth-child(4) > h1.section2:contains(Destaques da semana)")
+        titleElement?.let { title ->
+            val carousel = title.parent()?.nextElementSibling()?.selectFirst(".owl-carousel-semana")
             carousel?.select(".divArticleLancamentos a.item")?.forEach { item ->
                 item.toSearchResult()?.let { items.add(it) }
             }
         }
         
-        return items.take(15) // Limitar
+        return items.take(15).distinctBy { it.url }
     }
 
-    // CORRIGIDO: Extrai APENAS a seção "Últimos animes adicionados"
+    // 3. ÚLTIMOS ANIMES ADICIONADOS - Seção específica
     private fun extractUltimosAnimes(document: org.jsoup.nodes.Document): List<SearchResponse> {
         val items = mutableListOf<SearchResponse>()
         
-        // Pela posição CSS: div.divSection:nth-child(6)
-        val ultimosAnimesSection = document.selectFirst("div.divSection:nth-child(6) h1.section2:contains(Últimos animes adicionados)")
-        ultimosAnimesSection?.let { section ->
-            val carousel = section.parent()?.nextElementSibling()?.selectFirst(".owl-carousel-l_dia")
+        // Pelo seletor exato: div.divSection:nth-child(6)
+        val titleElement = document.selectFirst("div.divSection:nth-child(6) > h1.section2:contains(Últimos animes adicionados)")
+        titleElement?.let { title ->
+            val carousel = title.parent()?.nextElementSibling()?.selectFirst(".owl-carousel-l_dia")
             carousel?.select(".divArticleLancamentos a.item")?.forEach { item ->
                 item.toSearchResult()?.let { items.add(it) }
             }
         }
         
-        return items.take(15) // Limitar
+        return items.take(15).distinctBy { it.url }
     }
 
-    // CORRIGIDO: Extrai APENAS a seção "Últimos episódios adicionados"
+    // 4. ÚLTIMOS EPISÓDIOS ADICIONADOS - Seção específica
     private fun extractUltimosEpisodios(document: org.jsoup.nodes.Document): List<SearchResponse> {
         val items = mutableListOf<SearchResponse>()
         
-        // Pela posição CSS: div.divSectionUltimosEpsHome:nth-child(3)
-        val episodiosSection = document.selectFirst("div.divSectionUltimosEpsHome:nth-child(3) h2.section2:contains(Últimos episódios adicionados)")
-        episodiosSection?.let { section ->
-            val container = section.parent()?.nextElementSibling()?.selectFirst(".card-group .row")
+        // Pelo seletor exato: div.divSectionUltimosEpsHome:nth-child(3)
+        val titleElement = document.selectFirst("div.divSectionUltimosEpsHome:nth-child(3) > h2.section2:contains(Últimos episódios adicionados)")
+        titleElement?.let { title ->
+            // Encontrar o container de cards
+            val container = title.parent()?.nextElementSibling()?.selectFirst(".row")
             container?.select(".divCardUltimosEpsHome")?.forEach { card ->
                 card.toEpisodeSearchResult()?.let { items.add(it) }
             }
         }
         
-        return items.take(20) // Limitar
+        return items.take(20).distinctBy { it.url }
     }
 
-    // CORRIGIDO: Animes populares com paginação REAL
-    private fun extractAnimesPopulares(document: org.jsoup.nodes.Document, page: Int): List<SearchResponse> {
-        val items = mutableListOf<SearchResponse>()
-        
-        // Se for página 1, pega da home também
-        if (page == 1) {
-            document.select(".divArticleLancamentos a.item").forEach { item ->
-                item.toSearchResult()?.let { items.add(it) }
-            }
-        }
-        
-        // Se tiver mais páginas, o site deve ter paginação própria
-        // A URL /animes já mostra todos os animes
-        
-        return items.take(30).distinctBy { it.url }
-    }
-
-    // CORRIGIDO: Filmes de anime com paginação REAL
-    private fun extractFilmesAnime(document: org.jsoup.nodes.Document, page: Int): List<SearchResponse> {
-        val items = mutableListOf<SearchResponse>()
-        
-        // Filtrar apenas filmes
-        document.select(".divArticleLancamentos a.item").forEach { item ->
-            val href = item.attr("href") ?: ""
-            val title = item.selectFirst("h3.animeTitle")?.text() ?: ""
-            
-            if (href.contains("/filmes/") || title.contains("Movie", ignoreCase = true)) {
-                item.toSearchResult()?.let { items.add(it) }
-            }
-        }
-        
-        return items.take(30).distinctBy { it.url }
-    }
-
+    // FUNÇÃO PARA ITENS NORMAIS (animes/filmes)
     private fun Element.toSearchResult(): SearchResponse? {
         val href = attr("href") ?: return null
+        if (href.isBlank()) return null
+        
         val titleElement = selectFirst("h3.animeTitle") ?: return null
         val title = titleElement.text().trim()
         
+        // Imagem (com lazy loading)
         val imgElement = selectFirst("img.imgAnimes, img.owl-lazy")
         val poster = when {
             imgElement?.hasAttr("data-src") == true -> imgElement.attr("data-src")
@@ -170,6 +139,7 @@ class AnimeFire : MainAPI() {
         }
     }
 
+    // FUNÇÃO ESPECIAL PARA EPISÓDIOS
     private fun Element.toEpisodeSearchResult(): SearchResponse? {
         val link = selectFirst("article.card a") ?: return null
         val href = link.attr("href") ?: return null
@@ -178,11 +148,11 @@ class AnimeFire : MainAPI() {
         val titleElement = selectFirst("h3.animeTitle") ?: return null
         val title = titleElement.text().trim()
         
-        // Extrair número do episódio
+        // Número do episódio
         val epNumberElement = selectFirst(".numEp")
         val epNumber = epNumberElement?.text()?.toIntOrNull() ?: 1
         
-        // Extrair imagem do episódio
+        // Imagem do episódio
         val imgElement = selectFirst("img.imgAnimesUltimosEps, img.transitioning_src")
         val poster = when {
             imgElement?.hasAttr("data-src") == true -> imgElement.attr("data-src")
@@ -190,6 +160,7 @@ class AnimeFire : MainAPI() {
             else -> selectFirst("img")?.attr("src")
         } ?: return null
         
+        // Título formatado: "Nome do Anime - Episódio X"
         val cleanTitle = "${title} - Episódio $epNumber"
         
         return newAnimeSearchResponse(cleanTitle, fixUrl(href), TvType.Anime) {
@@ -207,7 +178,7 @@ class AnimeFire : MainAPI() {
             } catch (e: Exception) {
                 null
             }
-        }.take(50) // Limitar resultados da busca
+        }.take(30) // Limitar busca
     }
 
     override suspend fun load(url: String): LoadResponse? {
@@ -234,7 +205,7 @@ class AnimeFire : MainAPI() {
         val tags = document.select(".animeInfo a.spanAnimeInfo, .spanGeneros").map { it.text().trim() }
             .takeIf { it.isNotEmpty() }?.toList()
         
-        // Lista de Episódios
+        // Episódios
         val episodes = mutableListOf<Episode>()
         val episodeElements = document.select(".div_video_list a.lEp, a[href*='/animes/'], a.lep")
         
@@ -266,7 +237,6 @@ class AnimeFire : MainAPI() {
         val isMovie = url.contains("/filmes/") || title.contains("Movie", ignoreCase = true) || sortedEpisodes.isEmpty()
 
         if (!isMovie && sortedEpisodes.isNotEmpty()) {
-            // É uma série/anime
             return newTvSeriesLoadResponse(title, url, TvType.Anime, sortedEpisodes) {
                 this.posterUrl = posterUrl?.let { fixUrl(it) }
                 this.plot = plot
@@ -274,7 +244,6 @@ class AnimeFire : MainAPI() {
                 this.tags = tags
             }
         } else {
-            // É um filme
             val playerUrl = if (sortedEpisodes.isNotEmpty()) {
                 sortedEpisodes.first().data
             } else {
