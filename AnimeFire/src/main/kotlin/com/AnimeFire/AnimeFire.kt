@@ -366,11 +366,6 @@ class AnimeFire : MainAPI() {
                     this.posterUrl = aniZipEpisode?.image
                     this.description = aniZipEpisode?.overview
                     
-                    // Se tiver dados da ani.zip, adicionar rating e runtime
-                    aniZipEpisode?.let { ep ->
-                        ep.runtime?.let { this.duration = it }
-                    }
-                    
                     println("✅ [EPISODE] Adicionado ep $episodeNumber: ${this.name}")
                 })
             } catch (e: Exception) {
@@ -400,7 +395,7 @@ class AnimeFire : MainAPI() {
     }
 
     // ============ CRIAR RESPOSTA COM ANI.ZIP ============
-    private fun createLoadResponseWithAniZip(
+    private suspend fun createLoadResponseWithAniZip(
         url: String,
         cleanTitle: String,
         year: Int?,
@@ -439,18 +434,17 @@ class AnimeFire : MainAPI() {
         println("✅ [RESPONSE] Tags: $finalTags")
         println("✅ [RESPONSE] Other Names: $otherNames")
         
-        if (isMovie) {
-            return newMovieLoadResponse(cleanTitle, url, type, url) {
+        return if (isMovie) {
+            newMovieLoadResponse(cleanTitle, url, type, url) {
                 this.year = finalYear
                 this.plot = finalPlot
                 this.tags = finalTags
                 this.posterUrl = finalPoster
                 this.backgroundPosterUrl = finalBackdrop
                 this.recommendations = recommendations.takeIf { it.isNotEmpty() }
-                otherNames?.let { this.otherNames = it }
             }
         } else {
-            return newAnimeLoadResponse(cleanTitle, url, type) {
+            newAnimeLoadResponse(cleanTitle, url, type) {
                 addEpisodes(DubStatus.Subbed, episodes)
                 
                 this.year = finalYear
@@ -459,7 +453,6 @@ class AnimeFire : MainAPI() {
                 this.posterUrl = finalPoster
                 this.backgroundPosterUrl = finalBackdrop
                 this.recommendations = recommendations.takeIf { it.isNotEmpty() }
-                otherNames?.let { this.otherNames = it }
             }
         }
     }
