@@ -23,6 +23,11 @@ class AnimeFire : MainAPI() {
     private val TMDB_PROXY_URL = "https://lawliet.euluan1912.workers.dev"
     private val tmdbImageUrl = "https://image.tmdb.org/t/p"
 
+    // ============ CONSTANTES ============
+    companion object {
+        private const val SEARCH_PATH = "/pesquisar" // CORRIGIDO: Definindo a constante
+    }
+
     // APENAS 4 ABAS DA PÁGINA INICIAL
     override val mainPage = mainPageOf(
         "$mainUrl" to "Lançamentos",
@@ -160,6 +165,7 @@ class AnimeFire : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
+        // CORRIGIDO: Usando SEARCH_PATH que agora está definido
         val searchUrl = "$mainUrl$SEARCH_PATH/${URLEncoder.encode(query, "UTF-8")}"
         val document = app.get(searchUrl).document
 
@@ -224,7 +230,7 @@ class AnimeFire : MainAPI() {
         }
     }
 
-    // ============ FUNÇÕES TMDB (IGUAL AO SUPERFLIX) ============
+    // ============ FUNÇÕES TMDB ============
 
     private suspend fun searchOnTMDB(query: String, year: Int?, isTv: Boolean): TMDBInfo? {
         println("🔍 [TMDB DEBUG] AnimeFire: Buscando no TMDB")
