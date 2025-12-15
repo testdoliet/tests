@@ -137,92 +137,167 @@ class AnimeFire : MainAPI() {
         val isMovie = url.contains("/filmes/") || rawTitle.contains("Movie", ignoreCase = true)
         val type = if (isMovie) TvType.Movie else TvType.Anime
 
-        // Buscar MAL ID (opcional - podemos remover se der problema)
-        val malId = try {
-            searchMALIdByName(cleanTitle)
-        } catch (e: Exception) {
-            null
-        }
-        
-        // Buscar dados ani.zip (opcional)
-        val aniZipData = if (malId != null) {
-            try {
-                fetchAniZipData(malId)
-            } catch (e: Exception) {
-                null
+        // 1. BUSCAR MAL ID PELO NOME DO ANIME
+        println("🔍 [ANIZIP] Buscando MAL ID para: $cleanTitle")
+        val malId = searchMALIdByName(cleanTitle)
+        println("✅ [ANIZIP] MAL ID encontrado: $malId")
+
+        // 2. BUSCAR DADOS DA ANI.ZIP
+        var aniZipData: AniZipData? = null
+        if (malId != null) {
+            println("🔍 [ANIZIP] Buscando dados da ani.zip para MAL ID: $malId")
+            aniZipData = fetchAniZipData(malId)
+            if (aniZipData != null) {
+                println("✅ [ANIZIP] Dados obtidos com sucesso!")
+                println("📊 [ANIZIP] Títulos: ${aniZipData.titles?.size ?: 0}")
+                println("📊 [ANIZIP] Imagens: ${aniZipData.images?.size ?: 0}")
+                println("📊 [ANIZIP] Episódios: ${aniZipData.episodes?.size ?: 0}")
+            } else {
+                println("❌ [ANIZIP] Não foi possível obter dados da ani.zip")
             }
         } else {
-            null
+            println("⚠️ [ANIZIP] Nenhum MAL ID encontrado, pulando ani.zip")
         }
 
-        // Extrair episódios (se for anime)
+        // 3. EXTRAIR METADADOS DO SITE
+        val siteMetadata = extractSiteMetadata(document)
+        
+        // 4. EXTRAIR EPISÓDIOS (com dados da ani.zip se disponível)
         val episodes = if (!isMovie) {
-            extractEpisodes(document)
+            extractEpisodesWithAniZipData(document, aniZipData)
         } else {
             emptyList()
         }
 
-        // Extrair metadados do SITE (isso é o mais importante)
-        val metadata = extractMetadata(document)
-        
-        // Extrair recomendações
+        // 5. EXTRAIR RECOMENDAÇÕES
         val recommendations = extractRecommendations(document)
 
-        // Criar resposta
-        return if (isMovie) {
-            newMovieLoadResponse(cleanTitle, url, type, url) {
-                this.year = year ?: metadata.year
-                this.plot = metadata.plot
-                this.tags = metadata.tags
-                this.posterUrl = metadata.poster
-                this.showStatus = metadata.status
-                this.recommendations = recommendations.takeIf { it.isNotEmpty() }
+        // 6. CRIAR RESPOSTA COM DADOS COMBINADOS
+        return createLoadResponseWithAniZip(
+            url = url,
+            cleanTitle = cleanTitle,
+            year = year,
+            isMovie = isMovie,
+            type = type,
+            siteMetadata = siteMetadata,
+            aniZipData = aniZipData,
+            episodes = episodes,
+            recommendations = recommendations
+        )
+    }
+
+    // ============ BUSCA MAL ID ============
+    private suspend fun searchMALIdByName(animeName: String): Int? {
+        return try {
+            // Limpar nome para busca
+            val cleanName = animeName
+                .replace(Regex("(?i)\\s*-\\s*Todos os Episódios"), "")
+                .replace(Regex("(?i)\\s*\\(Dublado\\)"), "")
+                .replace(Regex("(?i)\\s*\\(Legendado\\)"), "")
+                .trim()
+            
+            println("🔍 [MAL] Buscando: '$cleanName'")
+            
+            val query = """
+                query {
+                    Page(page: 1, perPage: 5) {
+                        media(search: "$cleanName", type: ANIME) {
+                            title { romaji english native }
+                            idMal
+                        }
+                    }
+                }
+            """.trimIndent()
+            
+            val response = app.post(
+                "https://graphql.anilist.co",
+                data = mapOf("query" to query),
+                headers = mapOf("Content-Type" to "application/json", "Accept" to "application/json"),
+                timeout = 10_000
+            )
+            
+            println("📡 [MAL] Resposta: ${response.code}")
+            
+            if (response.code == 200) {
+                val data = response.parsedSafe<AniListResponse>()
+                val malId = data?.data?.Page?.media?.firstOrNull()?.idMal
+                println("✅ [MAL] ID encontrado: $malId")
+                malId
+            } else {
+                println("❌ [MAL] Erro HTTP: ${response.code}")
+                null
             }
-        } else {
-            newAnimeLoadResponse(cleanTitle, url, type) {
-                addEpisodes(DubStatus.Subbed, episodes)
-                
-                // Metadados básicos do site
-                this.year = year ?: metadata.year
-                this.plot = metadata.plot
-                this.tags = metadata.tags
-                this.showStatus = metadata.status
-                this.posterUrl = metadata.poster
-                this.recommendations = recommendations.takeIf { it.isNotEmpty() }
-            }
+        } catch (e: Exception) {
+            println("❌ [MAL] Exception: ${e.message}")
+            null
         }
     }
 
-    // ============ FUNÇÕES AUXILIARES ============
+    // ============ BUSCA ANI.ZIP ============
+    private suspend fun fetchAniZipData(malId: Int): AniZipData? {
+        for (attempt in 1..MAX_TRIES) {
+            try {
+                println("🔍 [ANIZIP] Tentativa $attempt para MAL ID: $malId")
+                
+                val response = app.get("https://api.ani.zip/mappings?mal_id=$malId", timeout = 10_000)
+                
+                println("📡 [ANIZIP] Status: ${response.code}")
+                
+                if (response.code == 200) {
+                    val data = response.parsedSafe<AniZipData>()
+                    if (data != null) {
+                        println("✅ [ANIZIP] Dados parseados com sucesso!")
+                        return data
+                    } else {
+                        println("❌ [ANIZIP] Falha no parsing JSON")
+                    }
+                } else if (response.code == 404) {
+                    println("❌ [ANIZIP] MAL ID não encontrado")
+                    return null
+                } else {
+                    println("❌ [ANIZIP] Erro HTTP: ${response.code}")
+                }
+            } catch (e: Exception) {
+                println("❌ [ANIZIP] Exception: ${e.message}")
+            }
+            
+            if (attempt < MAX_TRIES) {
+                delay(RETRY_DELAY * attempt)
+            }
+        }
+        
+        println("❌ [ANIZIP] Todas as tentativas falharam")
+        return null
+    }
 
-    private data class Metadata(
-        val year: Int? = null,
+    // ============ METADADOS DO SITE ============
+    private data class SiteMetadata(
+        val poster: String? = null,
         val plot: String? = null,
         val tags: List<String>? = null,
-        val status: ShowStatus? = null,
-        val poster: String? = null
+        val year: Int? = null
     )
 
-    private fun extractMetadata(document: org.jsoup.nodes.Document): Metadata {
-        println("🔍 [DEBUG] Extraindo metadados...")
+    private fun extractSiteMetadata(document: org.jsoup.nodes.Document): SiteMetadata {
+        println("🔍 [SITE] Extraindo metadados do site...")
         
-        // 1. POSTER (mais importante)
+        // 1. POSTER
         val posterImg = document.selectFirst(".sub_animepage_img img.transitioning_src")
         val poster = when {
             posterImg?.hasAttr("src") == true -> {
                 val src = posterImg.attr("src")
-                println("✅ [POSTER] Encontrado no src: $src")
+                println("✅ [SITE] Poster src: $src")
                 fixUrl(src)
             }
             posterImg?.hasAttr("data-src") == true -> {
                 val dataSrc = posterImg.attr("data-src")
-                println("✅ [POSTER] Encontrado no data-src: $dataSrc")
+                println("✅ [SITE] Poster data-src: $dataSrc")
                 fixUrl(dataSrc)
             }
             else -> {
                 val fallback = document.selectFirst("img[src*='/img/animes/']:not([src*='logo'])")
                     ?.attr("src")
-                println("⚠️ [POSTER] Usando fallback: $fallback")
+                println("⚠️ [SITE] Poster fallback: $fallback")
                 fallback?.let { fixUrl(it) }
             }
         }
@@ -232,38 +307,29 @@ class AnimeFire : MainAPI() {
             ?.text()
             ?.trim()
             ?.replace(Regex("^Sinopse:\\s*"), "")
-        println("✅ [PLOT] Encontrada: ${plot?.take(50)}...")
+        println("✅ [SITE] Sinopse: ${plot?.take(50)}...")
 
         // 3. TAGS/GÊNEROS
         val tags = document.select("a.spanAnimeInfo.spanGeneros")
             .map { it.text().trim() }
             .filter { it.isNotBlank() }
             .takeIf { it.isNotEmpty() }?.toList()
-        println("✅ [TAGS] Encontradas: $tags")
+        println("✅ [SITE] Tags: $tags")
 
         // 4. ANO
         val year = document.selectFirst("div.animeInfo:contains(Ano:) span.spanAnimeInfo")
             ?.text()
             ?.trim()
             ?.toIntOrNull()
-        println("✅ [YEAR] Encontrado: $year")
+        println("✅ [SITE] Ano: $year")
 
-        // 5. STATUS
-        val statusText = document.selectFirst("div.animeInfo:contains(Status:) span.spanAnimeInfo")
-            ?.text()
-            ?.trim()
-        val status = when (statusText?.lowercase()) {
-            "completo", "finalizado" -> ShowStatus.Completed
-            "lançamento", "em andamento" -> ShowStatus.Ongoing
-            else -> null
-        }
-        println("✅ [STATUS] Encontrado: $status ($statusText)")
-
-        return Metadata(year, plot, tags, status, poster)
+        return SiteMetadata(poster, plot, tags, year)
     }
 
-    private suspend fun extractEpisodes(
-        document: org.jsoup.nodes.Document
+    // ============ EPISÓDIOS COM ANI.ZIP ============
+    private suspend fun extractEpisodesWithAniZipData(
+        document: org.jsoup.nodes.Document,
+        aniZipData: AniZipData?
     ): List<Episode> {
         val episodes = mutableListOf<Episode>()
         
@@ -281,13 +347,30 @@ class AnimeFire : MainAPI() {
                 // Extrair número do episódio
                 val episodeNumber = extractEpisodeNumber(text)
                 
-                // Extrair nome do episódio (remove o nome do anime)
-                val episodeName = text.substringAfterLast("-").trim()
+                // Buscar dados da ani.zip para este episódio
+                val aniZipEpisode = aniZipData?.episodes?.get(episodeNumber.toString())
+                
+                // Extrair nome do episódio
+                val episodeName = if (aniZipEpisode?.title?.isNotEmpty() == true) {
+                    // Prioridade: título da ani.zip
+                    aniZipEpisode.title.values.firstOrNull()
+                } else {
+                    // Fallback: do site
+                    text.substringAfterLast("-").trim()
+                }
                 
                 episodes.add(newEpisode(fixUrl(href)) {
                     this.episode = episodeNumber
                     this.season = 1
-                    this.name = if (episodeName.isNotBlank() && episodeName != text) episodeName else "Episódio $episodeNumber"
+                    this.name = episodeName ?: "Episódio $episodeNumber"
+                    this.posterUrl = aniZipEpisode?.image
+                    this.description = aniZipEpisode?.overview
+                    
+                    // Se tiver dados da ani.zip, adicionar rating e runtime
+                    aniZipEpisode?.let { ep ->
+                        ep.runtime?.let { this.duration = it }
+                    }
+                    
                     println("✅ [EPISODE] Adicionado ep $episodeNumber: ${this.name}")
                 })
             } catch (e: Exception) {
@@ -316,64 +399,74 @@ class AnimeFire : MainAPI() {
         return 1
     }
 
+    // ============ CRIAR RESPOSTA COM ANI.ZIP ============
+    private fun createLoadResponseWithAniZip(
+        url: String,
+        cleanTitle: String,
+        year: Int?,
+        isMovie: Boolean,
+        type: TvType,
+        siteMetadata: SiteMetadata,
+        aniZipData: AniZipData?,
+        episodes: List<Episode>,
+        recommendations: List<SearchResponse>
+    ): LoadResponse {
+        
+        println("🏗️ [RESPONSE] Criando resposta com ani.zip...")
+        
+        // DECISÕES FINAIS (prioridade: site > ani.zip)
+        val finalPoster = siteMetadata.poster ?: 
+            aniZipData?.images?.find { it.coverType.equals("Poster", ignoreCase = true) }?.url?.let { fixUrl(it) }
+        
+        val finalBackdrop = aniZipData?.images?.find { 
+            it.coverType.equals("Fanart", ignoreCase = true) 
+        }?.url?.let { fixUrl(it) }
+        
+        val finalPlot = siteMetadata.plot ?: 
+            aniZipData?.episodes?.values?.firstOrNull()?.overview
+        
+        val finalYear = year ?: siteMetadata.year
+        
+        val finalTags = siteMetadata.tags ?: emptyList()
+        
+        // Títulos alternativos da ani.zip
+        val otherNames = aniZipData?.titles?.values?.toList()
+        
+        println("✅ [RESPONSE] Poster: $finalPoster")
+        println("✅ [RESPONSE] Backdrop: $finalBackdrop")
+        println("✅ [RESPONSE] Plot: ${finalPlot?.take(50)}...")
+        println("✅ [RESPONSE] Ano: $finalYear")
+        println("✅ [RESPONSE] Tags: $finalTags")
+        println("✅ [RESPONSE] Other Names: $otherNames")
+        
+        if (isMovie) {
+            return newMovieLoadResponse(cleanTitle, url, type, url) {
+                this.year = finalYear
+                this.plot = finalPlot
+                this.tags = finalTags
+                this.posterUrl = finalPoster
+                this.backgroundPosterUrl = finalBackdrop
+                this.recommendations = recommendations.takeIf { it.isNotEmpty() }
+                otherNames?.let { this.otherNames = it }
+            }
+        } else {
+            return newAnimeLoadResponse(cleanTitle, url, type) {
+                addEpisodes(DubStatus.Subbed, episodes)
+                
+                this.year = finalYear
+                this.plot = finalPlot
+                this.tags = finalTags
+                this.posterUrl = finalPoster
+                this.backgroundPosterUrl = finalBackdrop
+                this.recommendations = recommendations.takeIf { it.isNotEmpty() }
+                otherNames?.let { this.otherNames = it }
+            }
+        }
+    }
+
     private fun extractRecommendations(document: org.jsoup.nodes.Document): List<SearchResponse> {
         return document.select(".owl-carousel-anime .divArticleLancamentos a.item")
             .mapNotNull { it.toSearchResponse() }
-    }
-
-    // ============ BUSCA MAL ID (OPCIONAL) ============
-    private suspend fun searchMALIdByName(animeName: String): Int? {
-        return try {
-            val cleanName = animeName
-                .replace(Regex("(?i)\\s*-\\s*Todos os Episódios"), "")
-                .replace(Regex("(?i)\\s*\\(Dublado\\)"), "")
-                .replace(Regex("(?i)\\s*\\(Legendado\\)"), "")
-                .trim()
-            
-            val query = """
-                query {
-                    Page(page: 1, perPage: 5) {
-                        media(search: "$cleanName", type: ANIME) {
-                            title { romaji english native }
-                            idMal
-                        }
-                    }
-                }
-            """.trimIndent()
-            
-            val response = app.post(
-                "https://graphql.anilist.co",
-                data = mapOf("query" to query),
-                headers = mapOf("Content-Type" to "application/json"),
-                timeout = 10_000
-            )
-            
-            if (response.code == 200) {
-                response.parsedSafe<AniListResponse>()?.data?.Page?.media?.firstOrNull()?.idMal
-            } else {
-                null
-            }
-        } catch (e: Exception) {
-            null
-        }
-    }
-
-    // ============ BUSCA ANI.ZIP (OPCIONAL) ============
-    private suspend fun fetchAniZipData(malId: Int): AniZipData? {
-        for (attempt in 1..MAX_TRIES) {
-            try {
-                val response = app.get("https://api.ani.zip/mappings?mal_id=$malId", timeout = 10_000)
-                
-                if (response.code == 200) {
-                    return response.parsedSafe<AniZipData>()
-                }
-            } catch (e: Exception) {
-                println("⚠️ Tentativa $attempt falhou: ${e.message}")
-            }
-            
-            if (attempt < MAX_TRIES) delay(RETRY_DELAY * attempt)
-        }
-        return null
     }
 
     // ============ LOAD LINKS SIMPLIFICADO ============
@@ -383,12 +476,11 @@ class AnimeFire : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // Retornamos false por enquanto - vamos focar nos metadados primeiro
-        println("⚠️ [LOAD LINKS] Ainda não implementado - focando nos metadados")
+        println("⚠️ [LOAD LINKS] Ainda não implementado")
         return false
     }
 
-    // ============ CLASSES DE DADOS ============
+    // ============ CLASSES DE DADOS ANI.ZIP ============
 
     @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
     private data class AniListResponse(
@@ -430,6 +522,7 @@ class AnimeFire : MainAPI() {
         @JsonProperty("overview") val overview: String?,
         @JsonProperty("image") val image: String?,
         @JsonProperty("runtime") val runtime: Int?,
+        @JsonProperty("rating") val rating: String?,
         @JsonProperty("airDateUtc") val airDateUtc: String?
     )
 }
