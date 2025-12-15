@@ -9,7 +9,8 @@ import org.jsoup.nodes.Element
 import com.fasterxml.jackson.annotation.JsonProperty
 import java.text.SimpleDateFormat
 import java.net.URLEncoder
-import kotlinx.coroutines.delay // ADICIONADO
+import kotlinx.coroutines.delay
+import com.fasterxml.jackson.databind.ObjectMapper
 
 class AnimeFire : MainAPI() {
     override var mainUrl = "https://animefire.plus"
@@ -20,10 +21,9 @@ class AnimeFire : MainAPI() {
     override val supportedTypes = setOf(TvType.Anime, TvType.Movie)
     override val usesWebView = true
 
-    // ============ API TVDB ============
-    private val TVDB_API_KEY = "7c700ee3-d51d-4ea4-b692-fcec71483fa4"
-    private val TVDB_BASE_URL = "https://api4.thetvdb.com/v4"
-    private val TVDB_IMAGE_BASE = "https://artworks.thetvdb.com"
+    // ============ API ANI.ZIP (GRATUITA) ============
+    private val ANIZIP_API_URL = "https://api.ani.zip"
+    private val objectMapper = ObjectMapper()
 
     // ============ CONSTANTES ============
     companion object {
@@ -32,9 +32,7 @@ class AnimeFire : MainAPI() {
         private const val RETRY_DELAY = 1000L
     }
 
-    private var tvdbToken: String? = null
-
-    // ============ APENAS 4 ABAS DA PÁGINA INICIAL ============
+    // APENAS 4 ABAS DA PÁGINA INICIAL
     override val mainPage = mainPageOf(
         "$mainUrl" to "Lançamentos",
         "$mainUrl" to "Destaques da Semana",
@@ -206,60 +204,121 @@ class AnimeFire : MainAPI() {
         
         println("🔍 [DEBUG] AnimeFire: Tipo - Anime: $isAnime, Movie: $isMovie, TV: $isTv")
 
-        // Buscar no TVDB (só para séries)
-        val tvdbInfo = if (isTv) {
-            println("🔍 [DEBUG] AnimeFire: Buscando no TVDB...")
-            searchOnTVDB(cleanTitle, year)
+        // Buscar MAL ID do site (para usar com ani.zip)
+        val malId = extractMALIdFromSite(document)
+        println("🔍 [DEBUG] AnimeFire: MAL ID encontrado: $malId")
+
+        // Buscar dados da ani.zip (se tiver MAL ID)
+        val aniZipData = if (malId != null) {
+            println("🔍 [DEBUG] AnimeFire: Buscando dados da ani.zip...")
+            fetchAniZipData(malId)
         } else {
-            println("⚠️ [DEBUG] AnimeFire: É filme, pulando TVDB")
+            println("⚠️ [DEBUG] AnimeFire: SEM MAL ID, pulando ani.zip")
             null
         }
 
-        if (tvdbInfo == null) {
-            println("⚠️ [DEBUG] AnimeFire: TVDB não retornou informações!")
+        if (aniZipData == null) {
+            println("⚠️ [DEBUG] AnimeFire: ani.zip não retornou informações!")
         } else {
-            println("✅ [DEBUG] AnimeFire: TVDB OK! Título: ${tvdbInfo.name}, Ano: ${tvdbInfo.year}")
-            println("✅ [DEBUG] AnimeFire: Poster: ${tvdbInfo.posterUrl}")
-            println("✅ [DEBUG] AnimeFire: Temporadas: ${tvdbInfo.seasonsEpisodes.size}")
+            println("✅ [DEBUG] AnimeFire: ani.zip OK!")
+            println("✅ [DEBUG] AnimeFire: Títulos: ${aniZipData.titles?.size}")
+            println("✅ [DEBUG] AnimeFire: Imagens: ${aniZipData.images?.size}")
+            println("✅ [DEBUG] AnimeFire: Episódios: ${aniZipData.episodes?.size}")
         }
 
         // Extrair recomendações do site
         val siteRecommendations = extractRecommendationsFromSite(document)
 
-        return if (tvdbInfo != null) {
-            println("✅ [DEBUG] AnimeFire: Criando resposta COM TVDB")
-            createLoadResponseWithTVDB(tvdbInfo, url, document, siteRecommendations)
-        } else {
-            println("⚠️ [DEBUG] AnimeFire: Criando resposta APENAS com dados do site")
-            createLoadResponseFromSite(document, url, cleanTitle, year, isAnime, isMovie)
+        // Criar resposta com dados combinados
+        return createCombinedLoadResponse(
+            siteDocument = document,
+            aniZipData = aniZipData,
+            url = url,
+            cleanTitle = cleanTitle,
+            year = year,
+            isAnime = isAnime,
+            isMovie = isMovie,
+            siteRecommendations = siteRecommendations
+        )
+    }
+
+    // ============ FUNÇÕES ANI.ZIP ============
+
+    private fun extractMALIdFromSite(document: org.jsoup.nodes.Document): Int? {
+        // Tenta encontrar MAL ID em diferentes lugares do site
+        return try {
+            // 1. Procurar em meta tags
+            val metaMalId = document.selectFirst("meta[property='mal:id'], meta[name='mal:id']")
+                ?.attr("content")?.toIntOrNull()
+            
+            if (metaMalId != null) {
+                println("✅ [MAL] Encontrado em meta tag: $metaMalId")
+                return metaMalId
+            }
+
+            // 2. Procurar em atributos data-
+            val dataMalId = document.selectFirst("[data-mal-id]")
+                ?.attr("data-mal-id")?.toIntOrNull()
+                ?: document.selectFirst("[data-mal]")
+                ?.attr("data-mal")?.toIntOrNull()
+            
+            if (dataMalId != null) {
+                println("✅ [MAL] Encontrado em data- attribute: $dataMalId")
+                return dataMalId
+            }
+
+            // 3. Procurar em links para MyAnimeList
+            val malLinks = document.select("a[href*='myanimelist.net']")
+            for (link in malLinks) {
+                val href = link.attr("href")
+                if (href.contains("/anime/")) {
+                    val hrefMalId = href
+                        .substringAfterLast("/anime/")
+                        .substringBefore("?")
+                        .substringBefore("/")
+                        .toIntOrNull()
+                    
+                    if (hrefMalId != null) {
+                        println("✅ [MAL] Encontrado em link: $hrefMalId")
+                        return hrefMalId
+                    }
+                }
+            }
+
+            // 4. Tentar buscar por nome (fallback)
+            println("⚠️ [MAL] Nenhum MAL ID encontrado no site")
+            null
+        } catch (e: Exception) {
+            println("❌ [MAL] Erro ao extrair MAL ID: ${e.message}")
+            null
         }
     }
 
-    // ============ FUNÇÕES TVDB ============
-
-    private suspend fun loginTVDB(): Boolean {
-        if (tvdbToken != null) return true
-        
+    private suspend fun fetchAniZipData(malId: Int): AniZipData? {
         for (attempt in 1..MAX_TRIES) {
             try {
-                println("🔐 [TVDB] Tentando login... (tentativa $attempt)")
-                val response = app.post(
-                    "$TVDB_BASE_URL/login",
-                    data = mapOf("apikey" to TVDB_API_KEY),
-                    headers = mapOf("Content-Type" to "application/json"),
-                    timeout = 10_000
-                )
+                println("🔍 [ANIZIP] Buscando dados para MAL ID: $malId (tentativa $attempt)")
+                
+                val response = app.get("$ANIZIP_API_URL/mappings?mal_id=$malId", timeout = 10_000)
+                
+                println("📡 [ANIZIP] Status: ${response.code}")
                 
                 if (response.code == 200) {
-                    val json = response.parsedSafe<TVDBLoginResponse>()
-                    tvdbToken = json?.data?.token
-                    if (tvdbToken != null) {
-                        println("✅ [TVDB] Login bem-sucedido")
-                        return true
+                    val data = response.parsedSafe<AniZipData>()
+                    if (data != null) {
+                        println("✅ [ANIZIP] Dados obtidos com sucesso!")
+                        return data
+                    } else {
+                        println("❌ [ANIZIP] Falha no parsing JSON")
                     }
+                } else if (response.code == 404) {
+                    println("❌ [ANIZIP] MAL ID não encontrado na ani.zip")
+                    return null
+                } else {
+                    println("❌ [ANIZIP] Erro HTTP: ${response.code}")
                 }
             } catch (e: Exception) {
-                println("❌ [TVDB] Erro no login: ${e.message}")
+                println("❌ [ANIZIP] Exception: ${e.message}")
             }
             
             if (attempt < MAX_TRIES) {
@@ -267,178 +326,9 @@ class AnimeFire : MainAPI() {
             }
         }
         
-        return false
-    }
-
-    private suspend fun searchOnTVDB(query: String, year: Int?): TVDBInfo? {
-        if (!loginTVDB()) {
-            println("❌ [TVDB] Falha no login")
-            return null
-        }
-
-        val token = tvdbToken ?: return null
-
-        println("🔍 [TVDB] Buscando: $query")
-        
-        try {
-            // Primeiro busca a série
-            val searchUrl = "$TVDB_BASE_URL/search?query=${URLEncoder.encode(query, "UTF-8")}&type=series"
-            val searchResponse = app.get(
-                searchUrl,
-                headers = mapOf("Authorization" to "Bearer $token"),
-                timeout = 10_000
-            )
-            
-            if (searchResponse.code != 200) {
-                println("❌ [TVDB] Erro na busca: ${searchResponse.code}")
-                return null
-            }
-
-            val searchResult = searchResponse.parsedSafe<TVDBSearchResponse>()
-            val series = searchResult?.data?.firstOrNull() ?: return null
-            println("✅ [TVDB] Série encontrada: ${series.name} (ID: ${series.id})")
-
-            // Buscar detalhes completos da série
-            val seriesDetails = getTVDBDetails(series.id, token) ?: return null
-
-            // Buscar atores
-            val actors = getTVDBActors(series.id, token)
-
-            // Buscar temporadas e episódios
-            val seasonsEpisodes = getTVDBSeasonsAndEpisodes(series.id, token)
-
-            return TVDBInfo(
-                id = series.id,
-                name = series.name,
-                year = series.year ?: year,
-                posterUrl = series.image,
-                bannerUrl = seriesDetails.artworks?.find { it.type == 1 }?.image, // Banner
-                overview = seriesDetails.overview,
-                actors = actors,
-                seasonsEpisodes = seasonsEpisodes
-            )
-        } catch (e: Exception) {
-            println("❌ [TVDB] Erro geral: ${e.message}")
-            return null
-        }
-    }
-
-    private suspend fun getTVDBDetails(seriesId: Int, token: String): TVDBSeriesDetails? {
-        try {
-            val response = app.get(
-                "$TVDB_BASE_URL/series/$seriesId/extended",
-                headers = mapOf("Authorization" to "Bearer $token"),
-                timeout = 10_000
-            )
-            
-            if (response.code == 200) {
-                return response.parsedSafe<TVDBSeriesDetailsResponse>()?.data
-            }
-        } catch (e: Exception) {
-            println("❌ [TVDB] Erro nos detalhes: ${e.message}")
-        }
+        println("❌ [ANIZIP] Todas as tentativas falharam")
         return null
     }
-
-    private suspend fun getTVDBActors(seriesId: Int, token: String): List<Actor> {
-        return try {
-            val response = app.get(
-                "$TVDB_BASE_URL/series/$seriesId/actors",
-                headers = mapOf("Authorization" to "Bearer $token"),
-                timeout = 10_000
-            )
-            
-            if (response.code == 200) {
-                val actorsData = response.parsedSafe<TVDBActorsResponse>()?.data
-                actorsData?.take(15)?.mapNotNull { actor ->
-                    if (actor.name.isNotBlank()) {
-                        // CORREÇÃO: Actor não tem parâmetro role no CloudStream3
-                        Actor(
-                            name = actor.name,
-                            image = actor.image?.let { "$TVDB_IMAGE_BASE$it" }
-                            // role = actor.role // Removido pois Actor não suporta
-                        )
-                    } else null
-                } ?: emptyList()
-            } else {
-                emptyList()
-            }
-        } catch (e: Exception) {
-            println("❌ [TVDB] Erro nos atores: ${e.message}")
-            emptyList()
-        }
-    }
-
-    private suspend fun getTVDBSeasonsAndEpisodes(seriesId: Int, token: String): Map<Int, List<TVDBEpisodeInfo>> {
-        val seasonsEpisodes = mutableMapOf<Int, List<TVDBEpisodeInfo>>()
-        
-        try {
-            // Primeiro busca todas as temporadas
-            val seasonsResponse = app.get(
-                "$TVDB_BASE_URL/series/$seriesId/seasons",
-                headers = mapOf("Authorization" to "Bearer $token"),
-                timeout = 10_000
-            )
-            
-            if (seasonsResponse.code != 200) {
-                return emptyMap()
-            }
-
-            val seasonsData = seasonsResponse.parsedSafe<TVDBSeasonsResponse>()?.data
-            if (seasonsData == null || seasonsData.isEmpty()) {
-                return emptyMap()
-            }
-
-            println("📊 [TVDB] Temporadas encontradas: ${seasonsData.size}")
-
-            // Para cada temporada, busca os episódios
-            for (seasonData in seasonsData) {
-                val seasonNumber = seasonData.number ?: continue
-                if (seasonNumber <= 0) continue // Pular temporada 0 (especiais)
-
-                try {
-                    val episodesResponse = app.get(
-                        "$TVDB_BASE_URL/seasons/$seasonData.id/episodes?page=0",
-                        headers = mapOf("Authorization" to "Bearer $token"),
-                        timeout = 10_000
-                    )
-                    
-                    if (episodesResponse.code == 200) {
-                        val episodesData = episodesResponse.parsedSafe<TVDBEpisodesResponse>()?.data
-                        if (episodesData != null && episodesData.isNotEmpty()) {
-                            println("📺 [TVDB] Temporada $seasonNumber: ${episodesData.size} episódios")
-                            
-                            val episodes = episodesData.mapNotNull { ep ->
-                                if (ep.number != null) {
-                                    TVDBEpisodeInfo(
-                                        seasonNumber = seasonNumber,
-                                        episodeNumber = ep.number,
-                                        name = ep.name ?: "Episódio ${ep.number}",
-                                        overview = ep.overview,
-                                        image = ep.image?.let { "$TVDB_IMAGE_BASE$it" },
-                                        airDate = ep.airDate,
-                                        runtime = ep.runtime
-                                    )
-                                } else null
-                            }
-                            
-                            seasonsEpisodes[seasonNumber] = episodes.sortedBy { it.episodeNumber }
-                        }
-                    }
-                } catch (e: Exception) {
-                    println("⚠️ [TVDB] Erro ao buscar episódios da temporada $seasonNumber: ${e.message}")
-                }
-                
-                delay(500) // CORREÇÃO: Agora delay está importado
-            }
-        } catch (e: Exception) {
-            println("❌ [TVDB] Erro ao buscar temporadas: ${e.message}")
-        }
-        
-        return seasonsEpisodes
-    }
-
-    // ============ FUNÇÕES DO SITE ============
 
     private fun extractRecommendationsFromSite(document: org.jsoup.nodes.Document): List<SearchResponse> {
         return document.select(".owl-carousel-anime .divArticleLancamentos a.item").mapNotNull { element ->
@@ -450,39 +340,82 @@ class AnimeFire : MainAPI() {
         }
     }
 
-    private suspend fun createLoadResponseFromSite(
-        document: org.jsoup.nodes.Document,
+    private suspend fun createCombinedLoadResponse(
+        siteDocument: org.jsoup.nodes.Document,
+        aniZipData: AniZipData?,
         url: String,
-        title: String,
+        cleanTitle: String,
         year: Int?,
         isAnime: Boolean,
-        isMovie: Boolean
+        isMovie: Boolean,
+        siteRecommendations: List<SearchResponse>
     ): LoadResponse {
         
-        // Poster do site
-        val posterImg = document.selectFirst("img.transitioning_src, .sub_anime_img img, img")
-        val posterUrl = posterImg?.attr("src") ?: posterImg?.attr("data-src")
+        println("🏗️ [DEBUG] Criando resposta combinada...")
         
-        // Sinopse do site
-        val plot = document.selectFirst(".divSinopse, .sinopse")?.text()?.trim()
+        // Dados do site
+        val posterImg = siteDocument.selectFirst("img.transitioning_src, .sub_anime_img img, img")
+        val sitePoster = posterImg?.attr("src") ?: posterImg?.attr("data-src")
+        val sitePlot = siteDocument.selectFirst(".divSinopse, .sinopse")?.text()?.trim()
         
-        // Tags do site
-        val tags = document.select(".animeInfo a.spanAnimeInfo, .spanGeneros").map { it.text().trim() }
+        // Dados da ani.zip (se disponíveis)
+        val aniZipTitle = aniZipData?.titles?.values?.firstOrNull()
+        val aniZipPoster = aniZipData?.images?.find { 
+            it.coverType.equals("Poster", ignoreCase = true) || 
+            it.coverType.equals("Banner", ignoreCase = true) 
+        }?.url
+        val aniZipBackdrop = aniZipData?.images?.find { 
+            it.coverType.equals("Fanart", ignoreCase = true) || 
+            it.coverType.equals("Background", ignoreCase = true) 
+        }?.url
+        val aniZipPlot = aniZipData?.episodes?.values?.firstOrNull()?.overview
+        
+        // Extrair gêneros/tags
+        val tags = siteDocument.select(".animeInfo a.spanAnimeInfo, .spanGeneros").map { it.text().trim() }
             .takeIf { it.isNotEmpty() }?.toList()
         
-        // Recomendações
-        val siteRecommendations = extractRecommendationsFromSite(document)
+        // Combinar dados (preferir ani.zip, fallback para site)
+        val finalTitle = aniZipTitle ?: cleanTitle
+        val finalPoster = aniZipPoster ?: sitePoster?.let { fixUrl(it) }
+        val finalBackdrop = aniZipBackdrop
+        val finalPlot = aniZipPlot ?: sitePlot
+        
+        println("🏗️ [DEBUG] Título final: $finalTitle")
+        println("🏗️ [DEBUG] Poster final: $finalPoster")
+        println("🏗️ [DEBUG] Backdrop final: $finalBackdrop")
+        println("🏗️ [DEBUG] Plot final (primeiros 50 chars): ${finalPlot?.take(50)}...")
+        println("🏗️ [DEBUG] Tags: $tags")
 
-        // Episódios do site
-        val episodes = extractEpisodesFromSite(document, url, isAnime, isMovie)
+        // Episódios
+        val episodes = if (isAnime && !isMovie) {
+            extractEpisodesWithAniZipData(
+                siteDocument = siteDocument,
+                aniZipData = aniZipData,
+                url = url
+            )
+        } else {
+            extractEpisodesFromSite(siteDocument, url, isAnime, isMovie)
+        }
+
+        println("🏗️ [DEBUG] Total episódios: ${episodes.size}")
 
         return if (isAnime && !isMovie) {
-            newTvSeriesLoadResponse(title, url, TvType.Anime, episodes) {
-                this.posterUrl = posterUrl?.let { fixUrl(it) }
+            newTvSeriesLoadResponse(finalTitle, url, TvType.Anime, episodes) {
+                this.posterUrl = finalPoster
+                this.backgroundPosterUrl = finalBackdrop
                 this.year = year
-                this.plot = plot
+                this.plot = finalPlot
                 this.tags = tags
                 this.recommendations = siteRecommendations.takeIf { it.isNotEmpty() }
+                
+                // Adicionar informações extras da ani.zip se disponíveis
+                aniZipData?.let { data ->
+                    // Tentar extrair gêneros dos títulos ou outras informações
+                    val extraGenres = extractGenresFromAniZipData(data)
+                    if (!extraGenres.isNullOrEmpty()) {
+                        this.tags = extraGenres
+                    }
+                }
             }
         } else {
             val playerUrl = if (episodes.isNotEmpty()) {
@@ -491,46 +424,14 @@ class AnimeFire : MainAPI() {
                 url
             }
             
-            newMovieLoadResponse(title, url, TvType.Movie, fixUrl(playerUrl)) {
-                this.posterUrl = posterUrl?.let { fixUrl(it) }
+            newMovieLoadResponse(finalTitle, url, TvType.Movie, fixUrl(playerUrl)) {
+                this.posterUrl = finalPoster
+                this.backgroundPosterUrl = finalBackdrop
                 this.year = year
-                this.plot = plot
+                this.plot = finalPlot
                 this.tags = tags
                 this.recommendations = siteRecommendations.takeIf { it.isNotEmpty() }
             }
-        }
-    }
-
-    private suspend fun createLoadResponseWithTVDB(
-        tvdbInfo: TVDBInfo,
-        url: String,
-        document: org.jsoup.nodes.Document,
-        siteRecommendations: List<SearchResponse>
-    ): LoadResponse {
-
-        // Episódios com dados TVDB
-        val episodes = extractEpisodesWithTVDBInfo(
-            document = document,
-            url = url,
-            tvdbInfo = tvdbInfo
-        )
-
-        return newTvSeriesLoadResponse(
-            name = tvdbInfo.name ?: "",
-            url = url,
-            type = TvType.Anime,
-            episodes = episodes
-        ) {
-            this.posterUrl = tvdbInfo.posterUrl?.let { fixUrl(it) }
-            this.backgroundPosterUrl = tvdbInfo.bannerUrl?.let { fixUrl(it) }
-            this.year = tvdbInfo.year
-            this.plot = tvdbInfo.overview
-
-            tvdbInfo.actors?.let { actors ->
-                addActors(actors)
-            }
-
-            this.recommendations = siteRecommendations.takeIf { it.isNotEmpty() }
         }
     }
 
@@ -568,81 +469,70 @@ class AnimeFire : MainAPI() {
         return episodes.sortedBy { it.episode }.distinctBy { it.episode }
     }
 
-    private suspend fun extractEpisodesWithTVDBInfo(
-        document: org.jsoup.nodes.Document,
-        url: String,
-        tvdbInfo: TVDBInfo?
+    private suspend fun extractEpisodesWithAniZipData(
+        siteDocument: org.jsoup.nodes.Document,
+        aniZipData: AniZipData?,
+        url: String
     ): List<Episode> {
         val episodes = mutableListOf<Episode>()
-
-        val episodeElements = document.select(".div_video_list a.lEp, a[href*='/animes/'], a.lep")
+        
+        // Primeiro extrair episódios do site
+        val episodeElements = siteDocument.select(".div_video_list a.lEp, a[href*='/animes/'], a.lep")
+        
+        println("🔍 [EPISODES] Elementos encontrados no site: ${episodeElements.size}")
         
         episodeElements.forEachIndexed { index, element ->
             try {
                 val episodeHref = element.attr("href") ?: return@forEachIndexed
                 val episodeText = element.text().trim()
                 
-                // Extrair número do episódio
                 val episodeNumber = extractEpisodeNumber(element, index + 1)
-                val seasonNumber = 1 // AnimeFire geralmente tem só 1 temporada
-
-                // Tentar encontrar episódio no TVDB
-                val tvdbEpisode = findTVDBEpisode(tvdbInfo, seasonNumber, episodeNumber)
-
-                val episode = if (tvdbEpisode != null) {
-                    val descriptionWithDuration = buildDescriptionWithDuration(
-                        tvdbEpisode.overview,
-                        tvdbEpisode.runtime
-                    )
-
+                val seasonNumber = 1
+                
+                println("🔍 [EPISODES] Processando episódio $episodeNumber")
+                
+                // Verificar se temos dados desse episódio na ani.zip
+                val aniZipEpisode = aniZipData?.episodes?.get(episodeNumber.toString())
+                
+                val episode = if (aniZipEpisode != null) {
+                    // Episódio com dados ricos da ani.zip
+                    println("✅ [EPISODES] Dados ani.zip encontrados para ep $episodeNumber")
+                    
                     newEpisode(fixUrl(episodeHref)) {
-                        this.name = tvdbEpisode.name ?: "Episódio $episodeNumber"
-                        this.season = tvdbEpisode.seasonNumber
-                        this.episode = tvdbEpisode.episodeNumber
-                        this.posterUrl = tvdbEpisode.image
-                        this.description = descriptionWithDuration
-
-                        tvdbEpisode.airDate?.let { airDate ->
+                        this.name = aniZipEpisode.title?.values?.firstOrNull() ?: "Episódio $episodeNumber"
+                        this.season = seasonNumber
+                        this.episode = episodeNumber
+                        this.posterUrl = aniZipEpisode.image
+                        this.description = aniZipEpisode.overview
+                        
+                        aniZipEpisode.airDateUtc?.let { airDate ->
                             try {
-                                val dateFormatter = SimpleDateFormat("yyyy-MM-dd")
+                                val dateFormatter = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'")
                                 val date = dateFormatter.parse(airDate)
                                 this.date = date.time
-                            } catch (e: Exception) {}
+                                println("✅ [EPISODES] Data adicionada: $airDate")
+                            } catch (e: Exception) {
+                                println("❌ [EPISODES] Erro ao parse data: ${e.message}")
+                            }
                         }
                     }
                 } else {
+                    // Episódio apenas com dados do site
                     newEpisode(fixUrl(episodeHref)) {
                         this.name = "Episódio $episodeNumber"
                         this.season = seasonNumber
                         this.episode = episodeNumber
                     }
                 }
-
+                
                 episodes.add(episode)
             } catch (e: Exception) {
-                // Ignorar erro
+                println("❌ [EPISODES] Erro ao processar episódio $index: ${e.message}")
             }
         }
-
+        
+        println("✅ [EPISODES] Total episódios processados: ${episodes.size}")
         return episodes.sortedBy { it.episode }.distinctBy { it.episode }
-    }
-
-    private fun findTVDBEpisode(tvdbInfo: TVDBInfo?, season: Int, episode: Int): TVDBEpisodeInfo? {
-        if (tvdbInfo == null) return null
-
-        val episodes = tvdbInfo.seasonsEpisodes[season]
-        return episodes?.find { it.episodeNumber == episode }
-    }
-
-    private fun buildDescriptionWithDuration(overview: String?, runtime: Int?): String? {
-        return when {
-            overview != null && runtime != null && runtime > 0 -> {
-                "$overview\n\nDuração: $runtime min"
-            }
-            overview != null -> overview
-            runtime != null && runtime > 0 -> "Duração: $runtime min"
-            else -> null
-        }
     }
 
     private fun extractEpisodeNumber(element: Element, default: Int): Int {
@@ -651,6 +541,25 @@ class AnimeFire : MainAPI() {
                Regex("Ep\\.?\\s*(\\d+)").find(element.text())?.groupValues?.get(1)?.toIntOrNull() ?:
                Regex("Epis[oó]dio\\s*(\\d+)").find(element.text())?.groupValues?.get(1)?.toIntOrNull() ?:
                default
+    }
+
+    private fun extractGenresFromAniZipData(data: AniZipData): List<String>? {
+        // Tentar extrair gêneros da sinopse ou outras informações
+        val episodes = data.episodes?.values?.firstOrNull()
+        val overview = episodes?.overview ?: return null
+        
+        // Lista comum de gêneros de anime
+        val commonGenres = listOf(
+            "Ação", "Aventura", "Comédia", "Drama", "Fantasia", "Horror",
+            "Mistério", "Romance", "Sci-Fi", "Slice of Life", "Esportes",
+            "Suspense", "Sobrenatural", "Mecha", "Shounen", "Shoujo",
+            "Seinen", "Josei", "Isekai", "Magia", "Escolar", "Musical",
+            "Histórico", "Psicológico", "Thriller"
+        )
+        
+        return commonGenres.filter { genre ->
+            overview.contains(genre, ignoreCase = true)
+        }.takeIf { it.isNotEmpty() }
     }
 
     override suspend fun loadLinks(
@@ -662,93 +571,29 @@ class AnimeFire : MainAPI() {
         return AnimeFireExtractor.extractVideoLinks(data, mainUrl, name, callback)
     }
 
-    // ============ CLASSES DE DADOS TVDB ============
+    // ============ CLASSES DE DADOS ANI.ZIP ============
 
-    private data class TVDBInfo(
-        val id: Int,
-        val name: String?,
-        val year: Int?,
-        val posterUrl: String?,
-        val bannerUrl: String?,
-        val overview: String?,
-        val actors: List<Actor>?,
-        val seasonsEpisodes: Map<Int, List<TVDBEpisodeInfo>>
+    @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
+    private data class AniZipData(
+        @JsonProperty("titles") val titles: Map<String, String>? = null,
+        @JsonProperty("images") val images: List<AniZipImage>? = null,
+        @JsonProperty("episodes") val episodes: Map<String, AniZipEpisode>? = null
     )
 
-    private data class TVDBEpisodeInfo(
-        val seasonNumber: Int,
-        val episodeNumber: Int,
-        val name: String,
-        val overview: String?,
-        val image: String?,
-        val airDate: String?,
-        val runtime: Int?
+    @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
+    private data class AniZipImage(
+        @JsonProperty("coverType") val coverType: String?,
+        @JsonProperty("url") val url: String?
     )
 
-    private data class TVDBLoginResponse(
-        @JsonProperty("data") val data: TVDBTokenData
-    )
-
-    private data class TVDBTokenData(
-        @JsonProperty("token") val token: String
-    )
-
-    private data class TVDBSearchResponse(
-        @JsonProperty("data") val data: List<TVDBSeriesSearch>
-    )
-
-    private data class TVDBSeriesSearch(
-        @JsonProperty("id") val id: Int,
-        @JsonProperty("name") val name: String,
-        @JsonProperty("year") val year: Int?,
-        @JsonProperty("image") val image: String?
-    )
-
-    private data class TVDBSeriesDetailsResponse(
-        @JsonProperty("data") val data: TVDBSeriesDetails
-    )
-
-    private data class TVDBSeriesDetails(
+    @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
+    private data class AniZipEpisode(
+        @JsonProperty("episode") val episode: String?,
+        @JsonProperty("title") val title: Map<String, String>?,
         @JsonProperty("overview") val overview: String?,
-        @JsonProperty("artworks") val artworks: List<TVDBArtwork>?
-    )
-
-    private data class TVDBArtwork(
-        @JsonProperty("type") val type: Int,
-        @JsonProperty("image") val image: String
-    )
-
-    private data class TVDBActorsResponse(
-        @JsonProperty("data") val data: List<TVDBActor>
-    )
-
-    private data class TVDBActor(
-        @JsonProperty("name") val name: String,
         @JsonProperty("image") val image: String?,
-        @JsonProperty("role") val role: String?
-    )
-
-    private data class TVDBSeasonsResponse(
-        @JsonProperty("data") val data: List<TVDBSeason>
-    )
-
-    private data class TVDBSeason(
-        @JsonProperty("id") val id: Int,
-        @JsonProperty("number") val number: Int?
-    )
-
-    private data class TVDBEpisodesResponse(
-        @JsonProperty("data") val data: List<TVDBEpisode>
-    )
-
-    private data class TVDBEpisode(
-        @JsonProperty("id") val id: Int,
-        @JsonProperty("name") val name: String?,
-        @JsonProperty("overview") val overview: String?,
-        @JsonProperty("number") val number: Int?,
-        @JsonProperty("seasonNumber") val seasonNumber: Int?,
-        @JsonProperty("image") val image: String?,
-        @JsonProperty("airDate") val airDate: String?,
-        @JsonProperty("runtime") val runtime: Int?
+        @JsonProperty("runtime") val runtime: Int?,
+        @JsonProperty("rating") val rating: String?,
+        @JsonProperty("airDateUtc") val airDateUtc: String?
     )
 }
