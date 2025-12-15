@@ -644,4 +644,81 @@ class AnimeFire : MainAPI() {
         val year: Int?,
         val posterUrl: String?,
         val backdropUrl: String?,
-        val
+        val overview: String?,
+        val genres: List<String>?,
+        val actors: List<Actor>?,
+        val youtubeTrailer: String?,
+        val duration: Int?,
+        val seasonsEpisodes: Map<Int, List<TMDBEpisode>> = emptyMap()
+    )
+
+    private data class TMDBSearchResponse(
+        @JsonProperty("results") val results: List<TMDBResult>
+    )
+
+    private data class TMDBResult(
+        @JsonProperty("id") val id: Int,
+        @JsonProperty("title") val title: String? = null,
+        @JsonProperty("name") val name: String? = null,
+        @JsonProperty("release_date") val release_date: String? = null,
+        @JsonProperty("first_air_date") val first_air_date: String? = null,
+        @JsonProperty("poster_path") val poster_path: String?
+    )
+
+    private data class TMDBTVDetailsResponse(
+        @JsonProperty("seasons") val seasons: List<TMDBSeasonInfo>
+    )
+
+    private data class TMDBSeasonInfo(
+        @JsonProperty("season_number") val season_number: Int,
+        @JsonProperty("episode_count") val episode_count: Int
+    )
+
+    private data class TMDBSeasonResponse(
+        @JsonProperty("episodes") val episodes: List<TMDBEpisode>,
+        @JsonProperty("air_date") val air_date: String?
+    )
+
+    private data class TMDBEpisode(
+        @JsonProperty("episode_number") val episode_number: Int,
+        @JsonProperty("name") val name: String,
+        @JsonProperty("overview") val overview: String?,
+        @JsonProperty("still_path") val still_path: String?,
+        @JsonProperty("runtime") val runtime: Int?,
+        @JsonProperty("air_date") val air_date: String?
+    )
+
+    private data class TMDBDetailsResponse(
+        @JsonProperty("overview") val overview: String?,
+        @JsonProperty("backdrop_path") val backdrop_path: String?,
+        @JsonProperty("runtime") val runtime: Int?,
+        @JsonProperty("genres") val genres: List<TMDBGenre>?,
+        @JsonProperty("credits") val credits: TMDBCredits?,
+        @JsonProperty("videos") val videos: TMDBVideos?
+    )
+
+    private data class TMDBGenre(
+        @JsonProperty("name") val name: String
+    )
+
+    private data class TMDBCredits(
+        @JsonProperty("cast") val cast: List<TMDBCast>
+    )
+
+    private data class TMDBCast(
+        @JsonProperty("name") val name: String,
+        @JsonProperty("character") val character: String?,
+        @JsonProperty("profile_path") val profile_path: String?
+    )
+
+    private data class TMDBVideos(
+        @JsonProperty("results") val results: List<TMDBVideo>
+    )
+
+    private data class TMDBVideo(
+        @JsonProperty("key") val key: String,
+        @JsonProperty("site") val site: String,
+        @JsonProperty("type") val type: String,
+        @JsonProperty("official") val official: Boolean? = false
+    )
+}
