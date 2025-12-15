@@ -9,6 +9,7 @@ import org.jsoup.nodes.Element
 import com.fasterxml.jackson.annotation.JsonProperty
 import java.text.SimpleDateFormat
 import java.net.URLEncoder
+import kotlinx.coroutines.delay // ADICIONADO
 
 class AnimeFire : MainAPI() {
     override var mainUrl = "https://animefire.plus"
@@ -351,10 +352,11 @@ class AnimeFire : MainAPI() {
                 val actorsData = response.parsedSafe<TVDBActorsResponse>()?.data
                 actorsData?.take(15)?.mapNotNull { actor ->
                     if (actor.name.isNotBlank()) {
+                        // CORREÇÃO: Actor não tem parâmetro role no CloudStream3
                         Actor(
                             name = actor.name,
-                            image = actor.image?.let { "$TVDB_IMAGE_BASE$it" },
-                            role = actor.role
+                            image = actor.image?.let { "$TVDB_IMAGE_BASE$it" }
+                            // role = actor.role // Removido pois Actor não suporta
                         )
                     } else null
                 } ?: emptyList()
@@ -427,7 +429,7 @@ class AnimeFire : MainAPI() {
                     println("⚠️ [TVDB] Erro ao buscar episódios da temporada $seasonNumber: ${e.message}")
                 }
                 
-                delay(500) // Delay para não sobrecarregar a API
+                delay(500) // CORREÇÃO: Agora delay está importado
             }
         } catch (e: Exception) {
             println("❌ [TVDB] Erro ao buscar temporadas: ${e.message}")
