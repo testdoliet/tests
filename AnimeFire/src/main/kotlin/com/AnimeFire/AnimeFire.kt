@@ -11,6 +11,10 @@ import java.text.SimpleDateFormat
 import java.net.URLEncoder
 import kotlinx.coroutines.delay
 import com.fasterxml.jackson.databind.ObjectMapper
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class AnimeFire : MainAPI() {
     override var mainUrl = "https://animefire.io"
@@ -86,7 +90,7 @@ class AnimeFire : MainAPI() {
         val href = attr("href")?.takeIf { it.isNotBlank() } ?: return null
         val title = selectFirst("h3.animeTitle")?.text()?.trim() ?: return null
         
-        // CORREÇÃO: Buscar imagem de forma mais específica
+        // Buscar imagem de forma mais específica
         val imgElement = selectFirst("img.imgAnimes, img[src*='animes'], img.owl-lazy, img:not([src*='logo'])")
         val poster = when {
             imgElement?.hasAttr("data-src") == true -> imgElement.attr("data-src")
@@ -124,7 +128,7 @@ class AnimeFire : MainAPI() {
         val epNumberElement = selectFirst(".numEp")
         val epNumber = epNumberElement?.text()?.toIntOrNull() ?: 1
         
-        // CORREÇÃO: Buscar imagem específica para episódios
+        // Buscar imagem específica para episódios
         val imgElement = selectFirst("img.imgAnimesUltimosEps, img[src*='animes'], img.transitioning_src, img:not([src*='logo'])")
         val poster = when {
             imgElement?.hasAttr("data-src") == true -> imgElement.attr("data-src")
@@ -180,7 +184,7 @@ class AnimeFire : MainAPI() {
         val isMovie = url.contains("/filmes/") || title.contains("Movie", ignoreCase = true)
         val isTv = !isMovie && (url.contains("/animes/") || title.contains("Episódio", ignoreCase = true))
         
-        // Buscar MAL ID pelo nome (usando múltiplas fontes)
+        // Buscar MAL ID pelo nome (modificado para evitar chamada suspend)
         val malId = findMALId(cleanTitle, document)
         println("🔍 [DEBUG] AnimeFire: MAL ID encontrado: $malId")
 
@@ -193,7 +197,7 @@ class AnimeFire : MainAPI() {
             null
         }
 
-        // CORREÇÃO: Buscar poster correto no site
+        // Buscar poster correto no site
         val sitePoster = findSitePoster(document)
         val sitePlot = findSitePlot(document)
         val tags = findSiteTags(document)
@@ -258,41 +262,17 @@ class AnimeFire : MainAPI() {
         val metaTag = document.selectFirst("meta[property='mal:anime_id'], meta[name='mal-id']")
         metaTag?.attr("content")?.toIntOrNull()?.let { return it }
         
-        // Tentar buscar por nome usando AniList (fallback)
-        return try {
-            val cleanName = animeName.replace(Regex(" - Episódio \\d+$"), "")
-            searchMALIdByAniList(cleanName)
-        } catch (e: Exception) {
-            null
+        // Tentar extrair do link MyAnimeList na página
+        val malLink = document.selectFirst("a[href*='myanimelist.net/anime/'], a[href*='mal.co/']")
+        malLink?.attr("href")?.let { href ->
+            Regex("anime/(\\d+)").find(href)?.groupValues?.get(1)?.toIntOrNull()?.let { return it }
         }
-    }
-
-    private suspend fun searchMALIdByAniList(animeName: String): Int? {
-        try {
-            val query = """
-                query {
-                    Page(page: 1, perPage: 1) {
-                        media(search: "$animeName", type: ANIME, sort: POPULARITY_DESC) {
-                            idMal
-                        }
-                    }
-                }
-            """.trimIndent()
-            
-            val response = app.post(
-                "https://graphql.anilist.co",
-                data = mapOf("query" to query),
-                headers = mapOf("Content-Type" to "application/json", "Accept" to "application/json"),
-                timeout = 10_000
-            )
-            
-            if (response.code == 200) {
-                val json = response.parsedSafe<AniListResponse>()
-                return json?.data?.Page?.media?.firstOrNull()?.idMal
-            }
-        } catch (e: Exception) {
-            println("❌ [ANILIST] Erro: ${e.message}")
-        }
+        
+        // Tentar extrair de dados embutidos
+        val scriptContent = document.select("script").html()
+        Regex("mal[_-]?id[=:]['\"]?(\\d+)").find(scriptContent)?.groupValues?.get(1)?.toIntOrNull()?.let { return it }
+        
+        // Último recurso: buscar pelo título (removido chamada suspend aqui)
         return null
     }
 
