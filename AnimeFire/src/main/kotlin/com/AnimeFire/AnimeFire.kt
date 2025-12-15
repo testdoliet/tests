@@ -345,115 +345,110 @@ class AnimeFire : MainAPI() {
     }
 
     private suspend fun createCombinedLoadResponse(
-        siteDocument: org.jsoup.nodes.Document,
-        aniZipData: AniZipData?,
-        url: String,
-        cleanTitle: String,
-        year: Int?,
-        isAnime: Boolean,
-        isMovie: Boolean,
-        siteRecommendations: List<SearchResponse>
-    ): LoadResponse {
-        
-        println("🏗️ [DEBUG] Criando resposta combinada...")
-        
-        // ============ 1. POSTER DO SITE (PRIORIDADE) ============
-        // Primeiro tenta pegar a imagem principal da página do anime
-        val posterImg = siteDocument.selectFirst(".sub_animepage_img img.transitioning_src")
-        val sitePoster = posterImg?.attr("src") ?: posterImg?.attr("data-src")
-        
-        // Fallback: procura outras imagens do anime
-        val fallbackPoster = if (sitePoster.isNullOrBlank()) {
-            siteDocument.selectFirst("img[src*='/img/animes/']:not([src*='logo'])")?.attr("src")
-        } else {
-            sitePoster
+    siteDocument: org.jsoup.nodes.Document,
+    aniZipData: AniZipData?,
+    url: String,
+    cleanTitle: String,
+    year: Int?,
+    isAnime: Boolean,
+    isMovie: Boolean,
+    siteRecommendations: List<SearchResponse>
+): LoadResponse {
+    
+    println("🏗️ [DEBUG] Criando resposta combinada...")
+    
+    // ============ 1. POSTER DO SITE (PRIORIDADE) ============
+    val posterImg = siteDocument.selectFirst(".sub_animepage_img img.transitioning_src")
+    val sitePoster = posterImg?.attr("src") ?: posterImg?.attr("data-src")
+    
+    val fallbackPoster = if (sitePoster.isNullOrBlank()) {
+        siteDocument.selectFirst("img[src*='/img/animes/']:not([src*='logo'])")?.attr("src")
+    } else {
+        sitePoster
+    }
+    
+    val safePosterUrl = fixUrl(fallbackPoster ?: "https://animefire.io/img/lt/nekog.webp")
+    
+    println("✅ [POSTER] URL final: $safePosterUrl")
+    
+    // ============ 2. SINOPSE/PLOT DO SITE ============
+    val sitePlot = siteDocument.selectFirst("div.divSinopse span.spanAnimeInfo")?.text()?.trim()
+    val cleanPlot = sitePlot?.replace(Regex("^Sinopse:\\s*"), "") ?: ""
+    
+    // ============ 3. TAGS/GÊNEROS DO SITE ============
+    val tags = siteDocument.select("a.spanAnimeInfo.spanGeneros")
+        .map { it.text().trim() }
+        .filter { it.isNotBlank() }
+        .takeIf { it.isNotEmpty() }?.toList() ?: emptyList()
+    
+    // ============ 4. ANO DO SITE ============
+    val siteYear = year ?: siteDocument.selectFirst("div.animeInfo:contains(Ano:) span.spanAnimeInfo")
+        ?.text()?.trim()?.toIntOrNull()
+    
+    // ============ 5. DADOS DA ANI.ZIP (APENAS SUPLEMENTARES) ============
+    val aniZipTitle = aniZipData?.titles?.values?.firstOrNull()
+    val aniZipPoster = aniZipData?.images?.find { 
+        it.coverType.equals("Poster", ignoreCase = true) 
+    }?.url
+    val aniZipBackdrop = aniZipData?.images?.find { 
+        it.coverType.equals("Fanart", ignoreCase = true) 
+    }?.url
+    val aniZipPlot = aniZipData?.episodes?.values?.firstOrNull()?.overview
+    
+    // ============ 6. DECISÕES FINAIS ============
+    val finalTitle = cleanTitle
+    val finalPoster = if (sitePoster.isNullOrBlank()) aniZipPoster ?: safePosterUrl else safePosterUrl
+    val finalBackdrop = aniZipBackdrop
+    val finalPlot = if (cleanPlot.isNotBlank()) cleanPlot else aniZipPlot ?: ""
+    val finalYear = siteYear
+    val finalTags = if (tags.isNotEmpty()) tags else emptyList()
+    
+    println("✅ [RESUMO] Título: $finalTitle")
+    println("✅ [RESUMO] Poster: $finalPoster")
+    println("✅ [RESUMO] Backdrop: $finalBackdrop")
+    println("✅ [RESUMO] Plot: ${finalPlot.take(50)}...")
+    println("✅ [RESUMO] Ano: $finalYear")
+    println("✅ [RESUMO] Tags: $finalTags")
+    
+    // ============ 7. EPISÓDIOS ============
+    val episodes = if (isAnime && !isMovie) {
+        extractEpisodesWithAniZipData(
+            siteDocument = siteDocument,
+            aniZipData = aniZipData,
+            url = url
+        )
+    } else {
+        emptyList()
+    }
+    
+    println("✅ [RESUMO] Total episódios: ${episodes.size}")
+    
+    // ============ 8. CRIAR RESPOSTA FINAL ============
+    return if (isAnime && !isMovie) {
+        newTvSeriesLoadResponse(finalTitle, url, TvType.Anime, episodes) {
+            this.posterUrl = finalPoster
+            this.backgroundPosterUrl = finalBackdrop
+            this.year = finalYear
+            this.plot = finalPlot
+            this.tags = finalTags
+            this.recommendations = siteRecommendations.takeIf { it.isNotEmpty() }
+            // Removido a linha problemática do rating
         }
+    } else {
+        val playerUrl = findPlayerUrl(siteDocument) ?: url
         
-        // Fallback definitivo se não encontrar nenhuma imagem
-        val safePosterUrl = fixUrl(fallbackPoster ?: "https://animefire.io/img/lt/nekog.webp")
-        
-        println("✅ [POSTER] URL final: $safePosterUrl")
-        
-        // ============ 2. SINOPSE/PLOT DO SITE ============
-        val sitePlot = siteDocument.selectFirst("div.divSinopse span.spanAnimeInfo")?.text()?.trim()
-        val cleanPlot = sitePlot?.replace(Regex("^Sinopse:\\s*"), "") ?: ""
-        
-        // ============ 3. TAGS/GÊNEROS DO SITE ============
-        val tags = siteDocument.select("a.spanAnimeInfo.spanGeneros")
-            .map { it.text().trim() }
-            .filter { it.isNotBlank() }
-            .takeIf { it.isNotEmpty() }?.toList() ?: emptyList()
-        
-        // ============ 4. ANO DO SITE ============
-        val siteYear = year ?: siteDocument.selectFirst("div.animeInfo:contains(Ano:) span.spanAnimeInfo")
-            ?.text()?.trim()?.toIntOrNull()
-        
-        // ============ 5. DADOS DA ANI.ZIP (APENAS SUPLEMENTARES) ============
-        val aniZipTitle = aniZipData?.titles?.values?.firstOrNull()
-        val aniZipPoster = aniZipData?.images?.find { 
-            it.coverType.equals("Poster", ignoreCase = true) 
-        }?.url
-        val aniZipBackdrop = aniZipData?.images?.find { 
-            it.coverType.equals("Fanart", ignoreCase = true) 
-        }?.url
-        val aniZipPlot = aniZipData?.episodes?.values?.firstOrNull()?.overview
-        
-        // ============ 6. DECISÕES FINAIS ============
-        // Prioridade: Site primeiro, depois ani.zip
-        val finalTitle = cleanTitle // Já vem limpo do site
-        val finalPoster = if (sitePoster.isNullOrBlank()) aniZipPoster ?: safePosterUrl else safePosterUrl
-        val finalBackdrop = aniZipBackdrop // Geralmente só a API tem backdrop
-        val finalPlot = if (cleanPlot.isNotBlank()) cleanPlot else aniZipPlot ?: ""
-        val finalYear = siteYear
-        val finalTags = if (tags.isNotEmpty()) tags else emptyList()
-        
-        println("✅ [RESUMO] Título: $finalTitle")
-        println("✅ [RESUMO] Poster: $finalPoster")
-        println("✅ [RESUMO] Backdrop: $finalBackdrop")
-        println("✅ [RESUMO] Plot: ${finalPlot.take(50)}...")
-        println("✅ [RESUMO] Ano: $finalYear")
-        println("✅ [RESUMO] Tags: $finalTags")
-        
-        // ============ 7. EPISÓDIOS ============
-        val episodes = if (isAnime && !isMovie) {
-            extractEpisodesWithAniZipData(
-                siteDocument = siteDocument,
-                aniZipData = aniZipData,
-                url = url
-            )
-        } else {
-            emptyList()
-        }
-        
-        println("✅ [RESUMO] Total episódios: ${episodes.size}")
-        
-        // ============ 8. CRIAR RESPOSTA FINAL ============
-        return if (isAnime && !isMovie) {
-            newTvSeriesLoadResponse(finalTitle, url, TvType.Anime, episodes) {
-                this.posterUrl = finalPoster
-                this.backgroundPosterUrl = finalBackdrop
-                this.year = finalYear
-                this.plot = finalPlot
-                this.tags = finalTags
-                this.recommendations = siteRecommendations.takeIf { it.isNotEmpty() }
-                // Adicionar score se disponível no site
-                val scoreText = siteDocument.selectFirst("#anime_score")?.text()?.toFloatOrNull()
-                scoreText?.let { this.rating = it / 10.0f } // Converter de 10 para 5 estrelas
-            }
-        } else {
-            val playerUrl = findPlayerUrl(siteDocument) ?: url
-            
-            newMovieLoadResponse(finalTitle, url, TvType.Movie, fixUrl(playerUrl)) {
-                this.posterUrl = finalPoster
-                this.backgroundPosterUrl = finalBackdrop
-                this.year = finalYear
-                this.plot = finalPlot
-                this.tags = finalTags
-                this.recommendations = siteRecommendations.takeIf { it.isNotEmpty() }
-            }
+        newMovieLoadResponse(finalTitle, url, TvType.Movie, fixUrl(playerUrl)) {
+            this.posterUrl = finalPoster
+            this.backgroundPosterUrl = finalBackdrop
+            this.year = finalYear
+            this.plot = finalPlot
+            this.tags = finalTags
+            this.recommendations = siteRecommendations.takeIf { it.isNotEmpty() }
         }
     }
-
+}
+            
+            
     private suspend fun extractEpisodesWithAniZipData(
         siteDocument: org.jsoup.nodes.Document,
         aniZipData: AniZipData?,
