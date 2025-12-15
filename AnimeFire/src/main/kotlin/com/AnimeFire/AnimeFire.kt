@@ -2,11 +2,8 @@ package com.AnimeFire
 
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.cloudstream3.*
-import com.lagradost.cloudstream3.LoadResponse.Companion.addActors
-import com.lagradost.cloudstream3.LoadResponse.Companion.addTrailer
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.app
-import org.jsoup.Jsoup
 import org.jsoup.nodes.Element
 import java.net.URLEncoder
 import kotlinx.coroutines.delay
@@ -128,7 +125,8 @@ class AnimeFire : MainAPI() {
         val document = app.get(url).document
 
         // Título
-        val titleElement = document.selectFirst("h1.quicksand400, .main_div_anime_info h1, h1") ?: return null
+        val titleElement = document.selectFirst("h1.quicksand400, .main_div_anime_info h1, h1") ?: 
+            throw ErrorLoadingException("Não foi possível encontrar o título")
         val rawTitle = titleElement.text().trim()
         
         // Limpar título
@@ -163,22 +161,35 @@ class AnimeFire : MainAPI() {
         val recommendations = extractRecommendations(document)
 
         // Criar resposta
-        return newAnimeLoadResponse(cleanTitle, url, type) {
-            if (!isMovie) {
-                addEpisodes(DubStatus.Subbed, episodes)
+        return if (isMovie) {
+            newMovieLoadResponse(cleanTitle, url, type, url) {
+                this.year = year ?: metadata.year
+                this.plot = metadata.plot
+                this.tags = metadata.tags
+                this.posterUrl = metadata.poster
+                this.backgroundPosterUrl = aniZipData?.images
+                    ?.firstOrNull { it.coverType.equals("Fanart", ignoreCase = true) }?.url
+                this.recommendations = recommendations.takeIf { it.isNotEmpty() }
             }
-            
-            addMalId(malId)
-            
-            // Metadados
-            this.year = year ?: metadata.year
-            this.plot = metadata.plot
-            this.tags = metadata.tags
-            this.showStatus = metadata.status
-            this.posterUrl = metadata.poster
-            this.backgroundPosterUrl = aniZipData?.images
-                ?.firstOrNull { it.coverType.equals("Fanart", ignoreCase = true) }?.url
-            this.recommendations = recommendations.takeIf { it.isNotEmpty() }
+        } else {
+            newAnimeLoadResponse(cleanTitle, url, type) {
+                addEpisodes(DubStatus.Subbed, episodes)
+                
+                // Adicionar MAL ID usando a propriedade diretamente
+                if (malId != null) {
+                    this.malId = malId
+                }
+                
+                // Metadados
+                this.year = year ?: metadata.year
+                this.plot = metadata.plot
+                this.tags = metadata.tags
+                this.showStatus = metadata.status
+                this.posterUrl = metadata.poster
+                this.backgroundPosterUrl = aniZipData?.images
+                    ?.firstOrNull { it.coverType.equals("Fanart", ignoreCase = true) }?.url
+                this.recommendations = recommendations.takeIf { it.isNotEmpty() }
+            }
         }
     }
 
@@ -212,7 +223,7 @@ class AnimeFire : MainAPI() {
         val tags = document.select("a.spanAnimeInfo.spanGeneros")
             .map { it.text().trim() }
             .filter { it.isNotBlank() }
-            .takeIf { it.isNotEmpty() }
+            .takeIf { it.isNotEmpty() }?.toList()
 
         // Ano
         val year = document.selectFirst("div.animeInfo:contains(Ano:) span.spanAnimeInfo")
@@ -340,7 +351,51 @@ class AnimeFire : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        return AnimeFireExtractor.extractVideoLinks(data, mainUrl, name, subtitleCallback, callback)
+        return extractVideoLinks(data, mainUrl, name, subtitleCallback, callback)
+    }
+
+    // ============ EXTRACTOR ============
+    private suspend fun extractVideoLinks(
+        data: String,
+        mainUrl: String,
+        name: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        try {
+            val document = app.get(data).document
+            
+            // Procura por iframes
+            document.select("iframe[src]").forEach { iframe ->
+                val src = iframe.attr("src")
+                if (src.isNotBlank()) {
+                    loadExtractor(src, "$name - Iframe", subtitleCallback, callback)
+                }
+            }
+            
+            // Procura por links diretos
+            document.select("a[href*='.mp4'], a[href*='.m3u8']").forEach { link ->
+                val href = link.attr("href")
+                if (href.isNotBlank()) {
+                    val quality = Qualities.Unknown.value
+                    callback.invoke(
+                        newExtractorLink(
+                            source = name,
+                            name = "$name - Direct",
+                            url = href,
+                            referer = mainUrl,
+                            quality = quality,
+                            isM3u8 = href.contains(".m3u8")
+                        )
+                    )
+                }
+            }
+            
+            return document.select("iframe[src]").isNotEmpty() || 
+                   document.select("a[href*='.mp4'], a[href*='.m3u8']").isNotEmpty()
+        } catch (e: Exception) {
+            return false
+        }
     }
 
     // ============ CLASSES DE DADOS ============
@@ -387,49 +442,4 @@ class AnimeFire : MainAPI() {
         @JsonProperty("runtime") val runtime: Int?,
         @JsonProperty("airDateUtc") val airDateUtc: String?
     )
-}
-
-// ============ EXTRACTOR ============
-object AnimeFireExtractor {
-    suspend fun extractVideoLinks(
-        data: String,
-        mainUrl: String,
-        name: String,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        try {
-            val document = app.get(data).document
-            
-            // Procura por iframes
-            document.select("iframe[src]").forEach { iframe ->
-                val src = iframe.attr("src")
-                if (src.isNotBlank()) {
-                    loadExtractor(src, "$name - Iframe", subtitleCallback, callback)
-                }
-            }
-            
-            // Procura por links diretos
-            document.select("a[href*='.mp4'], a[href*='.m3u8']").forEach { link ->
-                val href = link.attr("href")
-                if (href.isNotBlank()) {
-                    callback.invoke(
-                        ExtractorLink(
-                            source = name,
-                            name = "$name - Direct",
-                            url = href,
-                            referer = mainUrl,
-                            quality = Qualities.Unknown.value,
-                            isM3u8 = href.contains(".m3u8")
-                        )
-                    )
-                }
-            }
-            
-            return document.select("iframe[src]").isNotEmpty() || 
-                   document.select("a[href*='.mp4'], a[href*='.m3u8']").isNotEmpty()
-        } catch (e: Exception) {
-            return false
-        }
-    }
 }
