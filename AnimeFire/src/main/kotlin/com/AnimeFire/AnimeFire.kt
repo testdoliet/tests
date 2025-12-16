@@ -297,7 +297,6 @@ class AnimeFire : MainAPI() {
 
         // Extrair informações adicionais
         val data = document.selectFirst("div#media-info, div.anime-info")
-        val status = getStatus(data?.select("div:contains(Status:) > span > a")?.text()?.trim())
         val genres = data?.select("div:contains(Genre:), div:contains(Gênero:) > span > a")?.map { it.text() }
 
         // CRIAR RESPOSTA COM TRADUÇÃO
@@ -312,8 +311,7 @@ class AnimeFire : MainAPI() {
             tmdbInfo = tmdbInfo,
             episodes = episodes,
             recommendations = recommendations,
-            genres = genres,
-            status = status
+            genres = genres
         )
     }
 
@@ -339,8 +337,7 @@ class AnimeFire : MainAPI() {
         tmdbInfo: TMDBInfo?,
         episodes: List<Episode>,
         recommendations: List<SearchResponse>,
-        genres: List<String>?,
-        status: ShowStatus?
+        genres: List<String>?
     ): LoadResponse {
         
         // TRADUZIR SINOPSE
@@ -393,11 +390,6 @@ class AnimeFire : MainAPI() {
                 this.backgroundPosterUrl = finalBackdrop
                 this.recommendations = recommendations.takeIf { it.isNotEmpty() }
                 
-                // Adicionar status CORRETAMENTE usando addStatus
-                if (status != null) {
-                    this.addStatus(status)
-                }
-                
                 // Adicionar trailer do TMDB
                 tmdbInfo?.youtubeTrailer?.let { trailerUrl ->
                     addTrailer(trailerUrl)
@@ -413,11 +405,6 @@ class AnimeFire : MainAPI() {
                 this.posterUrl = finalPoster
                 this.backgroundPosterUrl = finalBackdrop
                 this.recommendations = recommendations.takeIf { it.isNotEmpty() }
-                
-                // Adicionar status CORRETAMENTE usando addStatus
-                if (status != null) {
-                    this.addStatus(status)
-                }
                 
                 // Adicionar trailer do TMDB
                 tmdbInfo?.youtubeTrailer?.let { trailerUrl ->
@@ -529,14 +516,6 @@ class AnimeFire : MainAPI() {
             }
         }
         return null
-    }
-
-    private fun getStatus(t: String?): ShowStatus {
-        return when (t?.lowercase()) {
-            "finished airing", "concluído", "completo" -> ShowStatus.Completed
-            "updating", "atualizando", "em andamento" -> ShowStatus.Ongoing
-            else -> ShowStatus.Completed
-        }
     }
 
     // ============ FUNÇÕES RESTANTES ============
