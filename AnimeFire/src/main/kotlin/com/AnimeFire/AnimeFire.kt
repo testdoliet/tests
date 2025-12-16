@@ -31,7 +31,8 @@ class AnimeFire : MainAPI() {
         private const val tmdbImageUrl = "https://image.tmdb.org/t/p"
         private const val TRANSLATION_ENABLED = true
         private const val WORKERS_URL = "https://animefire.euluan1912.workers.dev"
-    }
+        private const val MAX_CACHE_SIZE = 500
+    }    
 
     override val mainPage = mainPageOf(
         "$mainUrl" to "Lançamentos",
@@ -44,8 +45,7 @@ class AnimeFire : MainAPI() {
     // Cache que economiza 90% das requisições
     private val translationCache = mutableMapOf<String, String>()
     private val cacheHits = mutableMapOf<String, Int>()
-    private const val MAX_CACHE_SIZE = 500
-    
+   
     // Sistema de tradução COM CACHE
     private suspend fun translateWithCache(text: String): String {
         if (!TRANSLATION_ENABLED || text.isBlank() || text.length < 3) return text
