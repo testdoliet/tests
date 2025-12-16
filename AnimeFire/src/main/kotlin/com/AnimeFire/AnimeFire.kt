@@ -27,7 +27,7 @@ class AnimeFire : MainAPI() {
         private const val MAX_TRIES = 3
         private const val RETRY_DELAY = 1000L
         
-        // Proxy TMDB (igual ao seu código)
+        // Proxy TMDB (apenas para trailer e detalhes dos episódios)
         private const val TMDB_PROXY_URL = "https://lawliet.euluan1912.workers.dev"
         private const val tmdbImageUrl = "https://image.tmdb.org/t/p"
     }
@@ -155,7 +155,7 @@ class AnimeFire : MainAPI() {
         val malId = searchMALIdByName(cleanTitle)
         println("📌 MAL ID encontrado: $malId")
 
-        // 2. BUSCAR DADOS DA ANI.ZIP
+        // 2. BUSCAR DADOS DA ANI.ZIP (PRIORIDADE MÁXIMA para poster/backdrop/atores)
         var aniZipData: AniZipData? = null
         if (malId != null) {
             println("🔍 Buscando dados da ani.zip para MAL ID: $malId")
@@ -165,6 +165,10 @@ class AnimeFire : MainAPI() {
                 println("   📊 Títulos: ${aniZipData.titles?.size ?: 0}")
                 println("   📊 Imagens: ${aniZipData.images?.size ?: 0}")
                 println("   📊 Episódios: ${aniZipData.episodes?.size ?: 0}")
+                
+                // Verificar se tem atores no AniZip
+                val hasAniZipActors = aniZipData.episodes?.values?.any { it.overview?.contains("Voice Actor") == true } ?: false
+                println("   🎭 Atores no AniZip: ${if (hasAniZipActors) "Sim" else "Não"}")
             } else {
                 println("❌ Não foi possível obter dados da ani.zip")
             }
@@ -172,27 +176,23 @@ class AnimeFire : MainAPI() {
             println("⚠️ Nenhum MAL ID encontrado, pulando ani.zip")
         }
 
-        // 3. BUSCAR NO TMDB (para trailer e detalhes dos episódios)
-        println("\n🔍 Buscando no TMDB...")
-        val tmdbInfo = searchOnTMDB(cleanTitle, year, !isMovie) // true para séries/animes
+        // 3. BUSCAR NO TMDB (APENAS para trailer e detalhes dos episódios)
+        println("\n🔍 Buscando no TMDB (apenas para trailer e detalhes dos episódios)...")
+        val tmdbInfo = searchOnTMDB(cleanTitle, year, !isMovie)
         
         if (tmdbInfo == null) {
             println("⚠️ TMDB não retornou informações!")
         } else {
             println("✅ TMDB OK! Título: ${tmdbInfo.title}, Ano: ${tmdbInfo.year}")
-            println("✅ Poster URL: ${tmdbInfo.posterUrl}")
-            println("✅ Backdrop URL: ${tmdbInfo.backdropUrl}")
-            println("✅ Overview: ${tmdbInfo.overview?.take(50)}...")
-            println("✅ Atores: ${tmdbInfo.actors?.size ?: 0}")
-            println("✅ Trailer: ${tmdbInfo.youtubeTrailer}")
-            println("✅ Temporadas/Episódios TMDB: ${tmdbInfo.seasonsEpisodes.size}")
+            println("✅ Trailer encontrado: ${tmdbInfo.youtubeTrailer != null}")
+            println("✅ Detalhes dos episódios: ${tmdbInfo.seasonsEpisodes.size} temporadas")
         }
 
         // 4. EXTRAIR METADADOS DO SITE
         println("\n🔍 Extraindo metadados do site...")
         val siteMetadata = extractSiteMetadata(document)
         
-        // 5. EXTRAIR EPISÓDIOS (com dados do TMDB)
+        // 5. EXTRAIR EPISÓDIOS (com dados do TMDB quando disponível)
         println("\n🔍 Extraindo episódios...")
         val episodes = if (!isMovie) {
             extractEpisodesWithTMDB(document, tmdbInfo)
@@ -323,18 +323,18 @@ class AnimeFire : MainAPI() {
         val poster = when {
             posterImg?.hasAttr("src") == true -> {
                 val src = posterImg.attr("src")
-                println("📸 Poster src: $src")
+                println("📸 Poster do site: $src")
                 fixUrl(src)
             }
             posterImg?.hasAttr("data-src") == true -> {
                 val dataSrc = posterImg.attr("data-src")
-                println("📸 Poster data-src: $dataSrc")
+                println("📸 Poster data-src do site: $dataSrc")
                 fixUrl(dataSrc)
             }
             else -> {
                 val fallback = document.selectFirst("img[src*='/img/animes/']:not([src*='logo'])")
                     ?.attr("src")
-                println("⚠️ Poster fallback: $fallback")
+                println("⚠️ Poster fallback do site: $fallback")
                 fallback?.let { fixUrl(it) }
             }
         }
@@ -344,32 +344,29 @@ class AnimeFire : MainAPI() {
             ?.text()
             ?.trim()
             ?.replace(Regex("^Sinopse:\\s*"), "")
-        println("📝 Sinopse extraída: ${plot?.length ?: 0} caracteres")
+        println("📝 Sinopse do site: ${plot?.length ?: 0} caracteres")
 
         // 3. TAGS/GÊNEROS
         val tags = document.select("a.spanAnimeInfo.spanGeneros")
             .map { it.text().trim() }
             .filter { it.isNotBlank() }
             .takeIf { it.isNotEmpty() }?.toList()
-        println("🏷️ Tags encontradas: ${tags?.size ?: 0}")
+        println("🏷️ Tags do site: ${tags?.size ?: 0}")
 
         // 4. ANO
         val year = document.selectFirst("div.animeInfo:contains(Ano:) span.spanAnimeInfo")
             ?.text()
             ?.trim()
             ?.toIntOrNull()
-        println("📅 Ano: $year")
+        println("📅 Ano do site: $year")
 
         return SiteMetadata(poster, plot, tags, year)
     }
 
-    // ============ TMDB FUNCTIONS (do seu código) ============
+    // ============ TMDB FUNCTIONS (apenas para trailer e episódios) ============
     private suspend fun searchOnTMDB(query: String, year: Int?, isTv: Boolean): TMDBInfo? {
-        println("🔍 [TMDB] Iniciando busca no TMDB")
-        println("🔍 [TMDB] Query: $query")
-        println("🔍 [TMDB] Ano: $year")
-        println("🔍 [TMDB] Tipo: ${if (isTv) "TV" else "Movie"}")
-
+        println("🔍 [TMDB] Buscando no TMDB (apenas para trailer e episódios)")
+        
         return try {
             val type = if (isTv) "tv" else "movie"
             val encodedQuery = URLEncoder.encode(query, "UTF-8")
@@ -379,34 +376,23 @@ class AnimeFire : MainAPI() {
             println("🔗 [TMDB] URL da busca: $searchUrl")
 
             val response = app.get(searchUrl, timeout = 10_000)
-            println("📡 [TMDB] Status da resposta: ${response.code}")
+            println("📡 [TMDB] Status: ${response.code}")
 
             if (response.code != 200) return null
 
             val searchResult = response.parsedSafe<TMDBSearchResponse>() ?: return null
-            println("✅ [TMDB] Parsing OK! Resultados: ${searchResult.results.size}")
+            println("✅ [TMDB] Resultados: ${searchResult.results.size}")
 
             val result = searchResult.results.firstOrNull() ?: return null
 
-            // Buscar detalhes completos
-            val details = getTMDBDetails(result.id, isTv) ?: return null
-
-            // Extrair atores
-            val allActors = details.credits?.cast?.take(15)?.mapNotNull { actor ->
-                if (actor.name.isNotBlank()) {
-                    Actor(
-                        name = actor.name,
-                        image = actor.profile_path?.let { "$tmdbImageUrl/w185$it" }
-                    )
-                } else null
-            }
+            // Buscar detalhes completos (apenas para verificar se tem trailer)
+            val details = getTMDBDetails(result.id, isTv)
 
             // Buscar trailer
-            val youtubeTrailer = getHighQualityTrailer(details.videos?.results)
+            val youtubeTrailer = getHighQualityTrailer(details?.videos?.results)
 
-            // Buscar temporadas se for série
+            // Buscar temporadas se for série (para detalhes dos episódios)
             val seasonsEpisodes = if (isTv) {
-                println("🔍 [TMDB] Buscando temporadas...")
                 getTMDBAllSeasons(result.id)
             } else {
                 emptyMap()
@@ -420,54 +406,41 @@ class AnimeFire : MainAPI() {
                 } else {
                     result.release_date?.substring(0, 4)?.toIntOrNull()
                 },
-                posterUrl = result.poster_path?.let { "$tmdbImageUrl/w500$it" },
-                backdropUrl = details.backdrop_path?.let { "$tmdbImageUrl/original$it" },
-                overview = details.overview,
-                genres = details.genres?.map { it.name },
-                actors = allActors,
+                posterUrl = null, // NÃO USAR POSTER DO TMDB (prioridade AniZip)
+                backdropUrl = null, // NÃO USAR BACKDROP DO TMDB (prioridade AniZip)
+                overview = null, // NÃO USAR OVERVIEW DO TMDB (prioridade AniZip/Site)
+                genres = null, // NÃO USAR GÊNEROS DO TMDB (prioridade AniZip/Site)
+                actors = null, // NÃO USAR ATORES DO TMDB (prioridade AniZip)
                 youtubeTrailer = youtubeTrailer,
-                duration = if (!isTv) details.runtime else null,
+                duration = null, // NÃO USAR DURAÇÃO DO TMDB
                 seasonsEpisodes = seasonsEpisodes
             )
         } catch (e: Exception) {
-            println("❌ [TMDB] ERRO na busca do TMDB: ${e.message}")
+            println("❌ [TMDB] Erro: ${e.message}")
             null
         }
     }
 
     private suspend fun getTMDBAllSeasons(seriesId: Int): Map<Int, List<TMDBEpisode>> {
-        println("🔍 [TMDB] Buscando todas as temporadas para série ID: $seriesId")
+        println("🔍 [TMDB] Buscando temporadas para detalhes dos episódios...")
 
         return try {
-            // Primeiro, pegar detalhes da série para saber quantas temporadas
             val seriesDetailsUrl = "$TMDB_PROXY_URL/tv/$seriesId"
-            println("🔗 [TMDB] URL detalhes série: $seriesDetailsUrl")
-
             val seriesResponse = app.get(seriesDetailsUrl, timeout = 10_000)
-            println("📡 [TMDB] Status da resposta: ${seriesResponse.code}")
 
-            if (seriesResponse.code != 200) {
-                println("❌ [TMDB] Erro HTTP: ${seriesResponse.code}")
-                return emptyMap()
-            }
+            if (seriesResponse.code != 200) return emptyMap()
 
             val seriesDetails = seriesResponse.parsedSafe<TMDBTVDetailsResponse>() ?: return emptyMap()
-
-            println("✅ [TMDB] Série OK! Total temporadas: ${seriesDetails.seasons.size}")
+            println("✅ [TMDB] Total temporadas: ${seriesDetails.seasons.size}")
 
             val seasonsEpisodes = mutableMapOf<Int, List<TMDBEpisode>>()
 
-            // Agora buscar cada temporada individualmente
             for (season in seriesDetails.seasons) {
-                if (season.season_number > 0) { // Ignorar temporada 0 (especiais)
+                if (season.season_number > 0) {
                     val seasonNumber = season.season_number
-                    println("🔍 [TMDB] Buscando temporada $seasonNumber...")
-
+                    
                     val seasonUrl = "$TMDB_PROXY_URL/tv/$seriesId/season/$seasonNumber"
-                    println("🔗 [TMDB] URL temporada: $seasonUrl")
-
                     val seasonResponse = app.get(seasonUrl, timeout = 10_000)
-                    println("📡 [TMDB] Status temporada: ${seasonResponse.code}")
 
                     if (seasonResponse.code == 200) {
                         val seasonData = seasonResponse.parsedSafe<TMDBSeasonResponse>()
@@ -475,36 +448,27 @@ class AnimeFire : MainAPI() {
                             seasonsEpisodes[seasonNumber] = episodes
                             println("✅ [TMDB] Temporada $seasonNumber: ${episodes.size} episódios")
                         }
-                    } else {
-                        println("❌ [TMDB] Falha na temporada $seasonNumber")
                     }
                 }
             }
 
-            println("✅ [TMDB] Total temporadas com dados: ${seasonsEpisodes.size}")
             seasonsEpisodes
         } catch (e: Exception) {
-            println("❌ [TMDB] ERRO ao buscar temporadas: ${e.message}")
+            println("❌ [TMDB] Erro ao buscar temporadas: ${e.message}")
             emptyMap()
         }
     }
 
     private suspend fun getTMDBDetails(id: Int, isTv: Boolean): TMDBDetailsResponse? {
-        println("🔍 [TMDB] Buscando detalhes para ID $id")
-
         return try {
             val type = if (isTv) "tv" else "movie"
             val url = "$TMDB_PROXY_URL/$type/$id"
-            println("🔗 [TMDB] URL detalhes: $url")
 
             val response = app.get(url, timeout = 10_000)
-            println("📡 [TMDB] Status: ${response.code}")
-
             if (response.code != 200) return null
 
             response.parsedSafe<TMDBDetailsResponse>()
         } catch (e: Exception) {
-            println("❌ [TMDB] ERRO detalhes: ${e.message}")
             null
         }
     }
@@ -539,7 +503,6 @@ class AnimeFire : MainAPI() {
         
         println("🔍 [EPISODES] Buscando episódios...")
         
-        // Tentar múltiplos seletores do AnimeFire
         val selectors = listOf(
             "a.lEp.epT",
             "a.lEp",
@@ -551,12 +514,7 @@ class AnimeFire : MainAPI() {
         
         val episodeElements = selectors.firstNotNullOfOrNull { selector ->
             val elements = document.select(selector)
-            if (elements.isNotEmpty()) {
-                println("✅ [EPISODES] Seletor '$selector' encontrou ${elements.size} elementos")
-                elements
-            } else {
-                null
-            }
+            if (elements.isNotEmpty()) elements else null
         } ?: document.select("a").filter { 
             it.attr("href").contains("video") || it.attr("href").contains("episodio") 
         }
@@ -571,15 +529,14 @@ class AnimeFire : MainAPI() {
                 val text = element.text().trim()
                 if (text.isBlank()) return@forEachIndexed
                 
-                // Extrair número do episódio
                 val episodeNumber = extractEpisodeNumber(text)
                 val seasonNumber = 1 // Anime geralmente tem só temporada 1
                 
-                // Buscar dados do TMDB para este episódio
+                // Buscar dados do TMDB para este episódio (apenas para detalhes)
                 val tmdbEpisode = findTMDBEpisode(tmdbInfo, seasonNumber, episodeNumber)
 
                 val episode = if (tmdbEpisode != null) {
-                    // Episódio com dados do TMDB - ADICIONANDO DURAÇÃO "-min" NA SINOPSE
+                    // Episódio com dados do TMDB (apenas detalhes)
                     val descriptionWithDuration = buildDescriptionWithDuration(
                         tmdbEpisode.overview,
                         tmdbEpisode.runtime
@@ -589,7 +546,7 @@ class AnimeFire : MainAPI() {
                         this.name = tmdbEpisode.name ?: "Episódio $episodeNumber"
                         this.season = seasonNumber
                         this.episode = episodeNumber
-                        this.posterUrl = tmdbEpisode.still_path?.let { "$tmdbImageUrl/w300$it" }
+                        this.posterUrl = null // Não usar poster do TMDB
                         this.description = descriptionWithDuration
 
                         tmdbEpisode.air_date?.let { airDate ->
@@ -601,7 +558,7 @@ class AnimeFire : MainAPI() {
                         }
                     }
                 } else {
-                    // Episódio sem dados do TMDB (usar dados do site)
+                    // Episódio sem dados do TMDB
                     val episodeName = element.selectFirst(".ep-name, .title")?.text()?.trim()
                         ?: text.substringAfterLast("-").trim()
                         ?: "Episódio $episodeNumber"
@@ -615,14 +572,10 @@ class AnimeFire : MainAPI() {
                 
                 episodes.add(episode)
                 
-                if (index < 5) { // Log apenas dos primeiros 5
-                    println("   ✅ Ep $episodeNumber: ${episode.name}")
-                }
             } catch (e: Exception) {
                 println("❌ [EPISODE ERROR] Erro ao extrair episódio ${index + 1}: ${e.message}")
             }
             
-            // Delay para não sobrecarregar
             if (index < episodeElements.size - 1) {
                 delay(50)
             }
@@ -645,44 +598,23 @@ class AnimeFire : MainAPI() {
             val match = pattern.find(text)
             if (match != null) {
                 val num = match.groupValues[1].toIntOrNull()
-                if (num != null) {
-                    return num
-                }
+                if (num != null) return num
             }
         }
         
-        // Fallback: extrair qualquer número no texto
-        val anyNumber = Regex("\\d+").find(text)?.value?.toIntOrNull()
-        return anyNumber ?: 1
+        return Regex("\\d+").find(text)?.value?.toIntOrNull() ?: 1
     }
 
     private fun findTMDBEpisode(tmdbInfo: TMDBInfo?, season: Int, episode: Int): TMDBEpisode? {
         if (tmdbInfo == null) return null
-
-        val episodes = tmdbInfo.seasonsEpisodes[season]
-        if (episodes == null) {
-            println("⚠️ [TMDB] Temporada $season não encontrada no TMDB")
-            return null
-        }
-
-        return episodes.find { it.episode_number == episode }
+        return tmdbInfo.seasonsEpisodes[season]?.find { it.episode_number == episode }
     }
 
-    // Função para adicionar "-min" no final da sinopse
     private fun buildDescriptionWithDuration(overview: String?, runtime: Int?): String? {
         return when {
-            overview != null && runtime != null && runtime > 0 -> {
-                // Adiciona "-min" no final da sinopse
-                "$overview\n\nDuração: $runtime min"
-            }
-            overview != null -> {
-                // Mantém apenas a sinopse se não houver duração
-                overview
-            }
-            runtime != null && runtime > 0 -> {
-                // Se não houver sinopse mas houver duração
-                "Duração: $runtime min"
-            }
+            overview != null && runtime != null && runtime > 0 -> "$overview\n\nDuração: $runtime min"
+            overview != null -> overview
+            runtime != null && runtime > 0 -> "Duração: $runtime min"
             else -> null
         }
     }
@@ -703,40 +635,41 @@ class AnimeFire : MainAPI() {
         
         println("\n🏗️ Criando resposta final...")
         
-        // DECISÕES FINAIS (prioridade: TMDB > AniZip > Site)
+        // PRIORIDADE: AniZip > Site > TMDB (apenas para trailer)
         
-        // POSTER: TMDB > AniZip > Site
-        val finalPoster = tmdbInfo?.posterUrl ?: 
-            aniZipData?.images?.find { it.coverType.equals("Poster", ignoreCase = true) }?.url?.let { fixUrl(it) } ?:
-            siteMetadata.poster
+        // POSTER: AniZip > Site (NUNCA TMDB)
+        val finalPoster = aniZipData?.images?.find { it.coverType.equals("Poster", ignoreCase = true) }?.url?.let { fixUrl(it) } ?:
+                          siteMetadata.poster
         
-        // BACKDROP: TMDB > AniZip
-        val finalBackdrop = tmdbInfo?.backdropUrl ?: 
-            aniZipData?.images?.find { it.coverType.equals("Fanart", ignoreCase = true) }?.url?.let { fixUrl(it) }
+        // BACKDROP: AniZip > Site (NUNCA TMDB)
+        val finalBackdrop = aniZipData?.images?.find { it.coverType.equals("Fanart", ignoreCase = true) }?.url?.let { fixUrl(it) } ?:
+                           siteMetadata.poster?.let { fixUrl(it) } // Fallback para poster
         
-        // SINOPSE: TMDB > Site > AniZip
-        val finalPlot = tmdbInfo?.overview ?: 
-            siteMetadata.plot ?:
-            aniZipData?.episodes?.values?.firstOrNull()?.overview
+        // SINOPSE: Site > AniZip (NUNCA TMDB)
+        val finalPlot = siteMetadata.plot ?:
+                        aniZipData?.episodes?.values?.firstOrNull()?.overview
         
-        // ANO: Site > TMDB > AniZip
+        // ANO: Site > AniZip > TMDB
         val finalYear = year ?: 
-            siteMetadata.year ?:
-            tmdbInfo?.year
+                        siteMetadata.year ?:
+                        aniZipData?.episodes?.values?.firstOrNull()?.airDateUtc?.substring(0, 4)?.toIntOrNull() ?:
+                        tmdbInfo?.year
         
-        // TAGS/GÊNEROS: TMDB > Site > AniZip
-        val finalTags = tmdbInfo?.genres ?:
-            siteMetadata.tags ?: emptyList()
+        // TAGS/GÊNEROS: Site > AniZip (NUNCA TMDB)
+        val finalTags = siteMetadata.tags ?: emptyList()
+        
+        // ATORES: Apenas extrair do AniZip se disponível
+        val aniZipActors = extractActorsFromAniZip(aniZipData)
         
         println("📊 [RESPONSE SUMMARY]")
-        println("   🖼️  Poster: ${finalPoster ?: "Não encontrado"}")
-        println("   🎬 Backdrop: ${finalBackdrop ?: "Não encontrado"}")
-        println("   📖 Plot: ${finalPlot?.take(80)}...")
-        println("   📅 Ano: $finalYear")
-        println("   🏷️  Tags: ${finalTags.take(3).joinToString()}")
+        println("   🖼️  Poster (AniZip/Site): ${finalPoster ?: "Não encontrado"}")
+        println("   🎬 Backdrop (AniZip/Site): ${finalBackdrop ?: "Não encontrado"}")
+        println("   📖 Plot (Site/AniZip): ${finalPlot?.take(80)}...")
+        println("   📅 Ano (Site/AniZip/TMDB): $finalYear")
+        println("   🏷️  Tags (Site/AniZip): ${finalTags.take(3).joinToString()}")
         println("   📺 Episódios: ${episodes.size}")
-        println("   🎬 Trailer: ${tmdbInfo?.youtubeTrailer ?: "Não encontrado"}")
-        println("   🎭 Atores: ${tmdbInfo?.actors?.size ?: 0}")
+        println("   🎬 Trailer (TMDB): ${tmdbInfo?.youtubeTrailer ?: "Não encontrado"}")
+        println("   🎭 Atores (AniZip): ${aniZipActors.size}")
         
         return if (isMovie) {
             newMovieLoadResponse(cleanTitle, url, type, url) {
@@ -745,15 +678,14 @@ class AnimeFire : MainAPI() {
                 this.tags = finalTags
                 this.posterUrl = finalPoster
                 this.backgroundPosterUrl = finalBackdrop
-                this.duration = tmdbInfo?.duration
                 this.recommendations = recommendations.takeIf { it.isNotEmpty() }
                 
-                // Adicionar atores do TMDB
-                tmdbInfo?.actors?.let { actors ->
-                    addActors(actors)
+                // Adicionar atores do AniZip
+                if (aniZipActors.isNotEmpty()) {
+                    addActors(aniZipActors)
                 }
                 
-                // Adicionar trailer do TMDB
+                // Adicionar trailer do TMDB (apenas se tiver)
                 tmdbInfo?.youtubeTrailer?.let { trailerUrl ->
                     addTrailer(trailerUrl)
                 }
@@ -769,17 +701,56 @@ class AnimeFire : MainAPI() {
                 this.backgroundPosterUrl = finalBackdrop
                 this.recommendations = recommendations.takeIf { it.isNotEmpty() }
                 
-                // Adicionar atores do TMDB
-                tmdbInfo?.actors?.let { actors ->
-                    addActors(actors)
+                // Adicionar atores do AniZip
+                if (aniZipActors.isNotEmpty()) {
+                    addActors(aniZipActors)
                 }
                 
-                // Adicionar trailer do TMDB
+                // Adicionar trailer do TMDB (apenas se tiver)
                 tmdbInfo?.youtubeTrailer?.let { trailerUrl ->
                     addTrailer(trailerUrl)
                 }
             }
         }
+    }
+
+    // Extrair atores do AniZip (se disponível)
+    private fun extractActorsFromAniZip(aniZipData: AniZipData?): List<Actor> {
+        val actors = mutableListOf<Actor>()
+        
+        if (aniZipData == null) return actors
+        
+        // Tentar extrair informações de atores/dubladores dos episódios
+        aniZipData.episodes?.values?.forEach { episode ->
+            episode.overview?.let { overview ->
+                // Procurar por menções a dubladores no overview
+                if (overview.contains("Voice Actor:", ignoreCase = true) ||
+                    overview.contains("Seiyū:", ignoreCase = true) ||
+                    overview.contains("Cast:", ignoreCase = true)) {
+                    
+                    // Aqui você poderia extrair nomes de atores
+                    // Exemplo simplificado:
+                    val lines = overview.split("\n")
+                    lines.forEach { line ->
+                        if (line.contains(":", ignoreCase = true) && 
+                            (line.contains("Voice", ignoreCase = true) || 
+                             line.contains("Seiyū", ignoreCase = true))) {
+                            
+                            val parts = line.split(":")
+                            if (parts.size > 1) {
+                                val actorName = parts[1].trim()
+                                if (actorName.isNotBlank() && !actors.any { it.name == actorName }) {
+                                    actors.add(Actor(name = actorName))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        println("🎭 [ANIZIP] Atores extraídos: ${actors.size}")
+        return actors.take(10) // Limitar a 10 atores
     }
 
     private fun extractRecommendations(document: org.jsoup.nodes.Document): List<SearchResponse> {
@@ -799,7 +770,6 @@ class AnimeFire : MainAPI() {
     }
 
     // ============ CLASSES DE DADOS ============
-
     @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
     private data class AniListResponse(
         @JsonProperty("data") val data: AniListData? = null
@@ -844,18 +814,18 @@ class AnimeFire : MainAPI() {
         @JsonProperty("airDateUtc") val airDateUtc: String? = null
     )
 
-    // ============ CLASSES TMDB (do seu código) ============
+    // ============ CLASSES TMDB ============
     private data class TMDBInfo(
         val id: Int,
         val title: String?,
         val year: Int?,
-        val posterUrl: String?,
-        val backdropUrl: String?,
-        val overview: String?,
-        val genres: List<String>?,
-        val actors: List<Actor>?,
-        val youtubeTrailer: String?,
-        val duration: Int?,
+        val posterUrl: String?, // Sempre null (não usar)
+        val backdropUrl: String?, // Sempre null (não usar)
+        val overview: String?, // Sempre null (não usar)
+        val genres: List<String>?, // Sempre null (não usar)
+        val actors: List<Actor>?, // Sempre null (não usar)
+        val youtubeTrailer: String?, // Apenas isso será usado
+        val duration: Int?, // Sempre null (não usar)
         val seasonsEpisodes: Map<Int, List<TMDBEpisode>> = emptyMap()
     )
 
