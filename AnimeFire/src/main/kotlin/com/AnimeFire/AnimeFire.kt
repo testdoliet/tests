@@ -3,9 +3,12 @@ package com.AnimeFire
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
+import com.lagradost.cloudstream3.LoadResponse.Companion.addActors
+import com.lagradost.cloudstream3.LoadResponse.Companion.addTrailer
 import com.lagradost.cloudstream3.app
 import org.jsoup.nodes.Element
 import java.net.URLEncoder
+import java.text.SimpleDateFormat
 import kotlinx.coroutines.delay
 
 class AnimeFire : MainAPI() {
@@ -24,8 +27,9 @@ class AnimeFire : MainAPI() {
         private const val MAX_TRIES = 3
         private const val RETRY_DELAY = 1000L
         
-        // Cloudflare Workers AI para tradução
-        private const val CF_WORKER_URL = "https://animefire.euluan1912.workers.dev/"
+        // Proxy TMDB (igual ao seu código)
+        private const val TMDB_PROXY_URL = "https://lawliet.euluan1912.workers.dev"
+        private const val tmdbImageUrl = "https://image.tmdb.org/t/p"
     }
 
     // 4 ABAS DA PÁGINA INICIAL
@@ -124,7 +128,7 @@ class AnimeFire : MainAPI() {
 
     override suspend fun load(url: String): LoadResponse {
         println("\n" + "=".repeat(80))
-        println("🚀 [INÍCIO] AnimeFire.load() chamado para URL: $url")
+        println("🚀 AnimeFire.load() para URL: $url")
         println("=".repeat(80))
         
         val document = app.get(url).document
@@ -142,46 +146,56 @@ class AnimeFire : MainAPI() {
         val isMovie = url.contains("/filmes/") || rawTitle.contains("Movie", ignoreCase = true)
         val type = if (isMovie) TvType.Movie else TvType.Anime
         
-        println("📌 [METADATA] Título: $cleanTitle")
-        println("📌 [METADATA] Ano: $year")
-        println("📌 [METADATA] Tipo: ${if (isMovie) "Movie" else "Anime"}")
+        println("📌 Título: $cleanTitle")
+        println("📌 Ano: $year")
+        println("📌 Tipo: ${if (isMovie) "Movie" else "Anime"}")
 
-        // 1. TESTAR WORKER PRIMEIRO
-        println("\n🧪 [TESTE] Testando conexão com Cloudflare Worker...")
-        testWorkerConnection()
-        println("\n🧪 [TESTE] Testando tradução simples...")
-        testSimpleTranslation()
-
-        // 2. BUSCAR MAL ID PELO NOME DO ANIME
-        println("\n🔍 [ANIZIP] Buscando MAL ID para: $cleanTitle")
+        // 1. BUSCAR MAL ID PELO NOME DO ANIME (para AniZip)
+        println("\n🔍 Buscando MAL ID para: $cleanTitle")
         val malId = searchMALIdByName(cleanTitle)
-        println("📌 [ANIZIP] MAL ID encontrado: $malId")
+        println("📌 MAL ID encontrado: $malId")
 
-        // 3. BUSCAR DADOS DA ANI.ZIP
+        // 2. BUSCAR DADOS DA ANI.ZIP
         var aniZipData: AniZipData? = null
         if (malId != null) {
-            println("🔍 [ANIZIP] Buscando dados da ani.zip para MAL ID: $malId")
+            println("🔍 Buscando dados da ani.zip para MAL ID: $malId")
             aniZipData = fetchAniZipData(malId)
             if (aniZipData != null) {
-                println("✅ [ANIZIP] Dados obtidos com sucesso!")
+                println("✅ Dados obtidos com sucesso!")
                 println("   📊 Títulos: ${aniZipData.titles?.size ?: 0}")
                 println("   📊 Imagens: ${aniZipData.images?.size ?: 0}")
                 println("   📊 Episódios: ${aniZipData.episodes?.size ?: 0}")
             } else {
-                println("❌ [ANIZIP] Não foi possível obter dados da ani.zip")
+                println("❌ Não foi possível obter dados da ani.zip")
             }
         } else {
-            println("⚠️ [ANIZIP] Nenhum MAL ID encontrado, pulando ani.zip")
+            println("⚠️ Nenhum MAL ID encontrado, pulando ani.zip")
+        }
+
+        // 3. BUSCAR NO TMDB (para trailer e detalhes dos episódios)
+        println("\n🔍 Buscando no TMDB...")
+        val tmdbInfo = searchOnTMDB(cleanTitle, year, !isMovie) // true para séries/animes
+        
+        if (tmdbInfo == null) {
+            println("⚠️ TMDB não retornou informações!")
+        } else {
+            println("✅ TMDB OK! Título: ${tmdbInfo.title}, Ano: ${tmdbInfo.year}")
+            println("✅ Poster URL: ${tmdbInfo.posterUrl}")
+            println("✅ Backdrop URL: ${tmdbInfo.backdropUrl}")
+            println("✅ Overview: ${tmdbInfo.overview?.take(50)}...")
+            println("✅ Atores: ${tmdbInfo.actors?.size ?: 0}")
+            println("✅ Trailer: ${tmdbInfo.youtubeTrailer}")
+            println("✅ Temporadas/Episódios TMDB: ${tmdbInfo.seasonsEpisodes.size}")
         }
 
         // 4. EXTRAIR METADADOS DO SITE
-        println("\n🔍 [SITE] Extraindo metadados do site...")
+        println("\n🔍 Extraindo metadados do site...")
         val siteMetadata = extractSiteMetadata(document)
         
-        // 5. EXTRAIR EPISÓDIOS (com dados da ani.zip e tradução)
-        println("\n🔍 [EPISÓDIOS] Extraindo episódios...")
+        // 5. EXTRAIR EPISÓDIOS (com dados do TMDB)
+        println("\n🔍 Extraindo episódios...")
         val episodes = if (!isMovie) {
-            extractEpisodesWithTranslation(document, aniZipData)
+            extractEpisodesWithTMDB(document, tmdbInfo)
         } else {
             emptyList()
         }
@@ -190,8 +204,8 @@ class AnimeFire : MainAPI() {
         val recommendations = extractRecommendations(document)
 
         // 7. CRIAR RESPOSTA COM DADOS COMBINADOS
-        println("\n🏗️ [RESPONSE] Criando resposta final...")
-        val response = createLoadResponseWithTranslation(
+        println("\n🏗️ Criando resposta final...")
+        val response = createLoadResponseWithCombinedData(
             url = url,
             cleanTitle = cleanTitle,
             year = year,
@@ -199,250 +213,16 @@ class AnimeFire : MainAPI() {
             type = type,
             siteMetadata = siteMetadata,
             aniZipData = aniZipData,
+            tmdbInfo = tmdbInfo,
             episodes = episodes,
             recommendations = recommendations
         )
         
         println("\n" + "=".repeat(80))
-        println("✅ [FIM] AnimeFire.load() concluído com sucesso!")
+        println("✅ AnimeFire.load() concluído com sucesso!")
         println("=".repeat(80))
         
         return response
-    }
-
-    // ============ DEBUG DETALHADO DA TRADUÇÃO ============
-    
-    private suspend fun testWorkerConnection() {
-        println("🔧 [WORKER TEST] Testando conexão básica...")
-        
-        try {
-            val response = app.get(CF_WORKER_URL, timeout = 10_000)
-            println("📡 [WORKER TEST] Status: ${response.code}")
-            println("📡 [WORKER TEST] Headers: ${response.headers}")
-            println("📡 [WORKER TEST] Body (primeiros 500 chars): ${response.text.take(500)}")
-            
-            if (response.code == 200) {
-                println("✅ [WORKER TEST] Worker respondeu com sucesso!")
-            } else {
-                println("❌ [WORKER TEST] Worker retornou status não-200")
-            }
-        } catch (e: Exception) {
-            println("💥 [WORKER TEST] Exception: ${e.javaClass.name}: ${e.message}")
-            e.printStackTrace()
-        }
-    }
-    
-    private suspend fun testSimpleTranslation() {
-        val testText = "Hello world, this is a test from Cloudstream3"
-        println("🧪 [TRANSLATE TEST] Traduzindo: '$testText'")
-        
-        // Teste com método 1: JSON string direta
-        println("\n1️⃣ Método 1: JSON string direta")
-        val result1 = translateWithMethod1(testText)
-        println("   Resultado: $result1")
-        
-        // Teste com método 2: Map de dados
-        println("\n2️⃣ Método 2: Map de dados")
-        val result2 = translateWithMethod2(testText)
-        println("   Resultado: $result2")
-        
-        // Teste com método 3: Form encoded
-        println("\n3️⃣ Método 3: Form encoded")
-        val result3 = translateWithMethod3(testText)
-        println("   Resultado: $result3")
-    }
-    
-    private suspend fun translateWithMethod1(text: String): String? {
-        println("   🛠️  Preparando payload JSON string...")
-        
-        // Escapar caracteres especiais
-        val escapedText = text
-            .replace("\\", "\\\\")
-            .replace("\"", "\\\"")
-            .replace("\n", "\\n")
-            .replace("\r", "\\r")
-            .replace("\t", "\\t")
-        
-        val payload = """{"text":"$escapedText","source_lang":"auto","target_lang":"pt"}"""
-        
-        println("   📦 Payload (${payload.length} chars):")
-        println("   $payload")
-        
-        return try {
-            // CORREÇÃO: Criar um Map<String, String> em vez de enviar String direta
-            val response = app.post(
-                url = CF_WORKER_URL,
-                data = mapOf(
-                    "text" to escapedText,
-                    "source_lang" to "auto",
-                    "target_lang" to "pt"
-                ),
-                headers = mapOf(
-                    "Content-Type" to "application/json",
-                    "Accept" to "application/json"
-                ),
-                timeout = 30_000,
-                allowRedirects = true
-            )
-            
-            println("   📡 Response Code: ${response.code}")
-            println("   📡 Response Body (${response.text.length} chars): ${response.text.take(200)}")
-            
-            if (response.code == 200) {
-                val parsed = response.parsedSafe<TranslationResponse>()
-                parsed?.translatedText
-            } else {
-                null
-            }
-        } catch (e: Exception) {
-            println("   💥 Exception: ${e.javaClass.name}: ${e.message}")
-            null
-        }
-    }
-    
-    private suspend fun translateWithMethod2(text: String): String? {
-        println("   🛠️  Preparando payload Map...")
-        
-        val payload = mapOf(
-            "text" to text,
-            "source_lang" to "auto",
-            "target_lang" to "pt"
-        )
-        
-        println("   📦 Payload Map: $payload")
-        
-        return try {
-            val response = app.post(
-                url = CF_WORKER_URL,
-                data = payload,
-                headers = mapOf(
-                    "Content-Type" to "application/json",
-                    "Accept" to "application/json"
-                ),
-                timeout = 30_000
-            )
-            
-            println("   📡 Response Code: ${response.code}")
-            println("   📡 Response Body: ${response.text.take(200)}")
-            
-            if (response.code == 200) {
-                val parsed = response.parsedSafe<TranslationResponse>()
-                parsed?.translatedText
-            } else {
-                null
-            }
-        } catch (e: Exception) {
-            println("   💥 Exception: ${e.javaClass.name}: ${e.message}")
-            null
-        }
-    }
-    
-    private suspend fun translateWithMethod3(text: String): String? {
-        println("   🛠️  Preparando payload Form encoded...")
-        
-        // Para Form encoded, precisamos criar um string manualmente
-        val formData = "text=${URLEncoder.encode(text, "UTF-8")}&source_lang=auto&target_lang=pt"
-        
-        println("   📦 Form data: $formData")
-        
-        return try {
-            // CORREÇÃO: Para form encoded, usar data como Map<String, String>
-            // com "Content-Type": "application/x-www-form-urlencoded"
-            val response = app.post(
-                url = CF_WORKER_URL,
-                data = mapOf(
-                    "text" to text,
-                    "source_lang" to "auto",
-                    "target_lang" to "pt"
-                ),
-                headers = mapOf(
-                    "Content-Type" to "application/x-www-form-urlencoded",
-                    "Accept" to "application/json"
-                ),
-                timeout = 30_000
-            )
-            
-            println("   📡 Response Code: ${response.code}")
-            println("   📡 Response Body: ${response.text.take(200)}")
-            
-            if (response.code == 200) {
-                val parsed = response.parsedSafe<TranslationResponse>()
-                parsed?.translatedText
-            } else {
-                null
-            }
-        } catch (e: Exception) {
-            println("   💥 Exception: ${e.javaClass.name}: ${e.message}")
-            null
-        }
-    }
-    
-    private suspend fun translateText(text: String, sourceLang: String = "auto", targetLang: String = "pt"): String? {
-        if (text.isBlank()) return null
-        
-        println("\n" + "-".repeat(60))
-        println("🔤 [TRANSLATE] Iniciando tradução para: '${text.take(50)}${if (text.length > 50) "..." else ""}'")
-        println("📏 Comprimento: ${text.length} caracteres")
-        
-        // Usar método que funcionar melhor
-        val result = translateWithMethod1(text)
-            ?: translateWithMethod2(text)
-            ?: translateWithMethod3(text)
-        
-        if (result != null) {
-            println("✅ [TRANSLATE] Traduzido: '${result.take(50)}${if (result.length > 50) "..." else ""}'")
-        } else {
-            println("❌ [TRANSLATE] Falha na tradução")
-        }
-        
-        println("-".repeat(60))
-        
-        return result
-    }
-    
-    // Tradução inteligente: detecta idioma e traduz se não for português
-    private suspend fun smartTranslate(text: String): String {
-        if (text.isBlank()) return text
-        
-        // Se o texto já parece estar em português, não traduz
-        if (isProbablyPortuguese(text)) {
-            println("🇧🇷 [SMART] Texto já em português, pulando tradução")
-            return text
-        }
-        
-        println("🌐 [SMART] Texto não-português detectado, tentando traduzir...")
-        
-        // Tenta traduzir
-        return translateText(text) ?: text
-    }
-    
-    private fun isProbablyPortuguese(text: String): Boolean {
-        // Lista de palavras comuns em português
-        val portugueseWords = setOf(
-            "de", "da", "do", "das", "dos", "em", "no", "na", "nos", "nas",
-            "é", "são", "está", "estão", "para", "por", "com", "sem", "que",
-            "como", "mas", "e", "ou", "se", "não", "sim", "o", "a", "os", "as",
-            "um", "uma", "uns", "umas", "meu", "minha", "teu", "tua", "seu", "sua",
-            "nosso", "nossa", "você", "vocês", "ele", "ela", "eles", "elas",
-            "aquele", "aquela", "aquilo", "isto", "isso", "este", "esta",
-            "onde", "quando", "porque", "porquê", "talvez", "sempre", "nunca",
-            "também", "muito", "pouco", "grande", "pequeno", "bom", "mal",
-            "hoje", "ontem", "amanhã", "agora", "antes", "depois"
-        )
-        
-        val words = text.lowercase()
-            .replace(Regex("[^a-záéíóúâêîôûàèìòùãõç\\s]"), "")
-            .split("\\s+".toRegex())
-            .filter { it.length > 1 }
-        
-        if (words.isEmpty()) return false
-        
-        val portugueseCount = words.count { it in portugueseWords }
-        val percentage = portugueseCount.toFloat() / words.size
-        
-        println("   📊 [LANG DETECT] Palavras: ${words.size}, PT: $portugueseCount, Percentual: ${"%.1f".format(percentage * 100)}%")
-        
-        return percentage > 0.2
     }
 
     // ============ BUSCA MAL ID ============
@@ -468,14 +248,10 @@ class AnimeFire : MainAPI() {
                 }
             """.trimIndent()
             
-            // CORREÇÃO: Enviar query como String no campo "query" do Map
             val response = app.post(
                 "https://graphql.anilist.co",
                 data = mapOf("query" to query),
-                headers = mapOf(
-                    "Content-Type" to "application/json",
-                    "Accept" to "application/json"
-                ),
+                headers = mapOf("Content-Type" to "application/json", "Accept" to "application/json"),
                 timeout = 10_000
             )
             
@@ -547,18 +323,18 @@ class AnimeFire : MainAPI() {
         val poster = when {
             posterImg?.hasAttr("src") == true -> {
                 val src = posterImg.attr("src")
-                println("📸 [SITE] Poster src: $src")
+                println("📸 Poster src: $src")
                 fixUrl(src)
             }
             posterImg?.hasAttr("data-src") == true -> {
                 val dataSrc = posterImg.attr("data-src")
-                println("📸 [SITE] Poster data-src: $dataSrc")
+                println("📸 Poster data-src: $dataSrc")
                 fixUrl(dataSrc)
             }
             else -> {
                 val fallback = document.selectFirst("img[src*='/img/animes/']:not([src*='logo'])")
                     ?.attr("src")
-                println("⚠️ [SITE] Poster fallback: $fallback")
+                println("⚠️ Poster fallback: $fallback")
                 fallback?.let { fixUrl(it) }
             }
         }
@@ -568,35 +344,202 @@ class AnimeFire : MainAPI() {
             ?.text()
             ?.trim()
             ?.replace(Regex("^Sinopse:\\s*"), "")
-        println("📝 [SITE] Sinopse extraída: ${plot?.length ?: 0} caracteres")
+        println("📝 Sinopse extraída: ${plot?.length ?: 0} caracteres")
 
         // 3. TAGS/GÊNEROS
         val tags = document.select("a.spanAnimeInfo.spanGeneros")
             .map { it.text().trim() }
             .filter { it.isNotBlank() }
             .takeIf { it.isNotEmpty() }?.toList()
-        println("🏷️ [SITE] Tags encontradas: ${tags?.size ?: 0}")
+        println("🏷️ Tags encontradas: ${tags?.size ?: 0}")
 
         // 4. ANO
         val year = document.selectFirst("div.animeInfo:contains(Ano:) span.spanAnimeInfo")
             ?.text()
             ?.trim()
             ?.toIntOrNull()
-        println("📅 [SITE] Ano: $year")
+        println("📅 Ano: $year")
 
         return SiteMetadata(poster, plot, tags, year)
     }
 
-    // ============ EPISÓDIOS COM TRADUÇÃO ============
-    private suspend fun extractEpisodesWithTranslation(
+    // ============ TMDB FUNCTIONS (do seu código) ============
+    private suspend fun searchOnTMDB(query: String, year: Int?, isTv: Boolean): TMDBInfo? {
+        println("🔍 [TMDB] Iniciando busca no TMDB")
+        println("🔍 [TMDB] Query: $query")
+        println("🔍 [TMDB] Ano: $year")
+        println("🔍 [TMDB] Tipo: ${if (isTv) "TV" else "Movie"}")
+
+        return try {
+            val type = if (isTv) "tv" else "movie"
+            val encodedQuery = URLEncoder.encode(query, "UTF-8")
+            val yearParam = year?.let { "&year=$it" } ?: ""
+
+            val searchUrl = "$TMDB_PROXY_URL/search?query=$encodedQuery&type=$type$yearParam"
+            println("🔗 [TMDB] URL da busca: $searchUrl")
+
+            val response = app.get(searchUrl, timeout = 10_000)
+            println("📡 [TMDB] Status da resposta: ${response.code}")
+
+            if (response.code != 200) return null
+
+            val searchResult = response.parsedSafe<TMDBSearchResponse>() ?: return null
+            println("✅ [TMDB] Parsing OK! Resultados: ${searchResult.results.size}")
+
+            val result = searchResult.results.firstOrNull() ?: return null
+
+            // Buscar detalhes completos
+            val details = getTMDBDetails(result.id, isTv) ?: return null
+
+            // Extrair atores
+            val allActors = details.credits?.cast?.take(15)?.mapNotNull { actor ->
+                if (actor.name.isNotBlank()) {
+                    Actor(
+                        name = actor.name,
+                        image = actor.profile_path?.let { "$tmdbImageUrl/w185$it" }
+                    )
+                } else null
+            }
+
+            // Buscar trailer
+            val youtubeTrailer = getHighQualityTrailer(details.videos?.results)
+
+            // Buscar temporadas se for série
+            val seasonsEpisodes = if (isTv) {
+                println("🔍 [TMDB] Buscando temporadas...")
+                getTMDBAllSeasons(result.id)
+            } else {
+                emptyMap()
+            }
+
+            TMDBInfo(
+                id = result.id,
+                title = if (isTv) result.name else result.title,
+                year = if (isTv) {
+                    result.first_air_date?.substring(0, 4)?.toIntOrNull()
+                } else {
+                    result.release_date?.substring(0, 4)?.toIntOrNull()
+                },
+                posterUrl = result.poster_path?.let { "$tmdbImageUrl/w500$it" },
+                backdropUrl = details.backdrop_path?.let { "$tmdbImageUrl/original$it" },
+                overview = details.overview,
+                genres = details.genres?.map { it.name },
+                actors = allActors,
+                youtubeTrailer = youtubeTrailer,
+                duration = if (!isTv) details.runtime else null,
+                seasonsEpisodes = seasonsEpisodes
+            )
+        } catch (e: Exception) {
+            println("❌ [TMDB] ERRO na busca do TMDB: ${e.message}")
+            null
+        }
+    }
+
+    private suspend fun getTMDBAllSeasons(seriesId: Int): Map<Int, List<TMDBEpisode>> {
+        println("🔍 [TMDB] Buscando todas as temporadas para série ID: $seriesId")
+
+        return try {
+            // Primeiro, pegar detalhes da série para saber quantas temporadas
+            val seriesDetailsUrl = "$TMDB_PROXY_URL/tv/$seriesId"
+            println("🔗 [TMDB] URL detalhes série: $seriesDetailsUrl")
+
+            val seriesResponse = app.get(seriesDetailsUrl, timeout = 10_000)
+            println("📡 [TMDB] Status da resposta: ${seriesResponse.code}")
+
+            if (seriesResponse.code != 200) {
+                println("❌ [TMDB] Erro HTTP: ${seriesResponse.code}")
+                return emptyMap()
+            }
+
+            val seriesDetails = seriesResponse.parsedSafe<TMDBTVDetailsResponse>() ?: return emptyMap()
+
+            println("✅ [TMDB] Série OK! Total temporadas: ${seriesDetails.seasons.size}")
+
+            val seasonsEpisodes = mutableMapOf<Int, List<TMDBEpisode>>()
+
+            // Agora buscar cada temporada individualmente
+            for (season in seriesDetails.seasons) {
+                if (season.season_number > 0) { // Ignorar temporada 0 (especiais)
+                    val seasonNumber = season.season_number
+                    println("🔍 [TMDB] Buscando temporada $seasonNumber...")
+
+                    val seasonUrl = "$TMDB_PROXY_URL/tv/$seriesId/season/$seasonNumber"
+                    println("🔗 [TMDB] URL temporada: $seasonUrl")
+
+                    val seasonResponse = app.get(seasonUrl, timeout = 10_000)
+                    println("📡 [TMDB] Status temporada: ${seasonResponse.code}")
+
+                    if (seasonResponse.code == 200) {
+                        val seasonData = seasonResponse.parsedSafe<TMDBSeasonResponse>()
+                        seasonData?.episodes?.let { episodes ->
+                            seasonsEpisodes[seasonNumber] = episodes
+                            println("✅ [TMDB] Temporada $seasonNumber: ${episodes.size} episódios")
+                        }
+                    } else {
+                        println("❌ [TMDB] Falha na temporada $seasonNumber")
+                    }
+                }
+            }
+
+            println("✅ [TMDB] Total temporadas com dados: ${seasonsEpisodes.size}")
+            seasonsEpisodes
+        } catch (e: Exception) {
+            println("❌ [TMDB] ERRO ao buscar temporadas: ${e.message}")
+            emptyMap()
+        }
+    }
+
+    private suspend fun getTMDBDetails(id: Int, isTv: Boolean): TMDBDetailsResponse? {
+        println("🔍 [TMDB] Buscando detalhes para ID $id")
+
+        return try {
+            val type = if (isTv) "tv" else "movie"
+            val url = "$TMDB_PROXY_URL/$type/$id"
+            println("🔗 [TMDB] URL detalhes: $url")
+
+            val response = app.get(url, timeout = 10_000)
+            println("📡 [TMDB] Status: ${response.code}")
+
+            if (response.code != 200) return null
+
+            response.parsedSafe<TMDBDetailsResponse>()
+        } catch (e: Exception) {
+            println("❌ [TMDB] ERRO detalhes: ${e.message}")
+            null
+        }
+    }
+
+    private fun getHighQualityTrailer(videos: List<TMDBVideo>?): String? {
+        if (videos.isNullOrEmpty()) return null
+
+        return videos.mapNotNull { video ->
+            when {
+                video.site == "YouTube" && video.type == "Trailer" && video.official == true ->
+                    Triple(video.key, 10, "YouTube Trailer Oficial")
+                video.site == "YouTube" && video.type == "Trailer" ->
+                    Triple(video.key, 9, "YouTube Trailer")
+                video.site == "YouTube" && video.type == "Teaser" && video.official == true ->
+                    Triple(video.key, 8, "YouTube Teaser Oficial")
+                video.site == "YouTube" && video.type == "Teaser" ->
+                    Triple(video.key, 7, "YouTube Teaser")
+                else -> null
+            }
+        }
+        ?.sortedByDescending { it.second }
+        ?.firstOrNull()
+        ?.let { (key, _, _) -> "https://www.youtube.com/watch?v=$key" }
+    }
+
+    // ============ EPISÓDIOS COM TMDB ============
+    private suspend fun extractEpisodesWithTMDB(
         document: org.jsoup.nodes.Document,
-        aniZipData: AniZipData?
+        tmdbInfo: TMDBInfo?
     ): List<Episode> {
         val episodes = mutableListOf<Episode>()
         
         println("🔍 [EPISODES] Buscando episódios...")
         
-        // Tentar múltiplos seletores
+        // Tentar múltiplos seletores do AnimeFire
         val selectors = listOf(
             "a.lEp.epT",
             "a.lEp",
@@ -620,9 +563,6 @@ class AnimeFire : MainAPI() {
         
         println("📊 [EPISODES] Total encontrados: ${episodeElements.size}")
         
-        // Limitar tradução para não sobrecarregar
-        val maxEpisodesToTranslate = 5
-        
         episodeElements.forEachIndexed { index, element ->
             try {
                 val href = element.attr("href")
@@ -633,55 +573,58 @@ class AnimeFire : MainAPI() {
                 
                 // Extrair número do episódio
                 val episodeNumber = extractEpisodeNumber(text)
+                val seasonNumber = 1 // Anime geralmente tem só temporada 1
                 
-                // Buscar dados da ani.zip para este episódio
-                val aniZipEpisode = aniZipData?.episodes?.get(episodeNumber.toString())
-                
-                // Determinar nome do episódio
-                var episodeName = if (aniZipEpisode?.title?.isNotEmpty() == true) {
-                    // Prioridade: título da ani.zip
-                    aniZipEpisode.title.values.firstOrNull() ?: "Episódio $episodeNumber"
+                // Buscar dados do TMDB para este episódio
+                val tmdbEpisode = findTMDBEpisode(tmdbInfo, seasonNumber, episodeNumber)
+
+                val episode = if (tmdbEpisode != null) {
+                    // Episódio com dados do TMDB - ADICIONANDO DURAÇÃO "-min" NA SINOPSE
+                    val descriptionWithDuration = buildDescriptionWithDuration(
+                        tmdbEpisode.overview,
+                        tmdbEpisode.runtime
+                    )
+
+                    newEpisode(fixUrl(href)) {
+                        this.name = tmdbEpisode.name ?: "Episódio $episodeNumber"
+                        this.season = seasonNumber
+                        this.episode = episodeNumber
+                        this.posterUrl = tmdbEpisode.still_path?.let { "$tmdbImageUrl/w300$it" }
+                        this.description = descriptionWithDuration
+
+                        tmdbEpisode.air_date?.let { airDate ->
+                            try {
+                                val dateFormatter = SimpleDateFormat("yyyy-MM-dd")
+                                val date = dateFormatter.parse(airDate)
+                                this.date = date.time
+                            } catch (e: Exception) {}
+                        }
+                    }
                 } else {
-                    // Fallback: do site
-                    val nameFromSite = text.substringAfterLast("-").trim()
-                    if (nameFromSite.isNotBlank() && nameFromSite != text) {
-                        nameFromSite
-                    } else {
-                        "Episódio $episodeNumber"
+                    // Episódio sem dados do TMDB (usar dados do site)
+                    val episodeName = element.selectFirst(".ep-name, .title")?.text()?.trim()
+                        ?: text.substringAfterLast("-").trim()
+                        ?: "Episódio $episodeNumber"
+
+                    newEpisode(fixUrl(href)) {
+                        this.name = episodeName
+                        this.season = seasonNumber
+                        this.episode = episodeNumber
                     }
                 }
                 
-                println("\n📺 [EP-$episodeNumber] Processando...")
-                println("   📝 Nome original: '$episodeName'")
+                episodes.add(episode)
                 
-                // Traduzir nome do episódio se não for português (limitado aos primeiros)
-                if (index < maxEpisodesToTranslate) {
-                    val translatedName = smartTranslate(episodeName)
-                    if (translatedName != episodeName) {
-                        println("   🌐 Nome traduzido: '$translatedName'")
-                        episodeName = translatedName
-                    }
+                if (index < 5) { // Log apenas dos primeiros 5
+                    println("   ✅ Ep $episodeNumber: ${episode.name}")
                 }
-                
-                // Determinar descrição
-                var description = aniZipEpisode?.overview
-                
-                episodes.add(newEpisode(fixUrl(href)) {
-                    this.episode = episodeNumber
-                    this.season = 1
-                    this.name = episodeName
-                    this.posterUrl = aniZipEpisode?.image
-                    this.description = description
-                })
-                
-                println("   ✅ Adicionado: $episodeName")
             } catch (e: Exception) {
                 println("❌ [EPISODE ERROR] Erro ao extrair episódio ${index + 1}: ${e.message}")
             }
             
             // Delay para não sobrecarregar
             if (index < episodeElements.size - 1) {
-                delay(100)
+                delay(50)
             }
         }
         
@@ -713,8 +656,39 @@ class AnimeFire : MainAPI() {
         return anyNumber ?: 1
     }
 
-    // ============ CRIAR RESPOSTA COM TRADUÇÃO ============
-    private suspend fun createLoadResponseWithTranslation(
+    private fun findTMDBEpisode(tmdbInfo: TMDBInfo?, season: Int, episode: Int): TMDBEpisode? {
+        if (tmdbInfo == null) return null
+
+        val episodes = tmdbInfo.seasonsEpisodes[season]
+        if (episodes == null) {
+            println("⚠️ [TMDB] Temporada $season não encontrada no TMDB")
+            return null
+        }
+
+        return episodes.find { it.episode_number == episode }
+    }
+
+    // Função para adicionar "-min" no final da sinopse
+    private fun buildDescriptionWithDuration(overview: String?, runtime: Int?): String? {
+        return when {
+            overview != null && runtime != null && runtime > 0 -> {
+                // Adiciona "-min" no final da sinopse
+                "$overview\n\nDuração: $runtime min"
+            }
+            overview != null -> {
+                // Mantém apenas a sinopse se não houver duração
+                overview
+            }
+            runtime != null && runtime > 0 -> {
+                // Se não houver sinopse mas houver duração
+                "Duração: $runtime min"
+            }
+            else -> null
+        }
+    }
+
+    // ============ CRIAR RESPOSTA COM DADOS COMBINADOS ============
+    private suspend fun createLoadResponseWithCombinedData(
         url: String,
         cleanTitle: String,
         year: Int?,
@@ -722,32 +696,37 @@ class AnimeFire : MainAPI() {
         type: TvType,
         siteMetadata: SiteMetadata,
         aniZipData: AniZipData?,
+        tmdbInfo: TMDBInfo?,
         episodes: List<Episode>,
         recommendations: List<SearchResponse>
     ): LoadResponse {
         
-        println("\n🏗️ [RESPONSE] Criando resposta final...")
+        println("\n🏗️ Criando resposta final...")
         
-        // DECISÕES FINAIS (prioridade: site > ani.zip)
-        val finalPoster = siteMetadata.poster ?: 
-            aniZipData?.images?.find { it.coverType.equals("Poster", ignoreCase = true) }?.url?.let { fixUrl(it) }
+        // DECISÕES FINAIS (prioridade: TMDB > AniZip > Site)
         
-        val finalBackdrop = aniZipData?.images?.find { 
-            it.coverType.equals("Fanart", ignoreCase = true) 
-        }?.url?.let { fixUrl(it) }
+        // POSTER: TMDB > AniZip > Site
+        val finalPoster = tmdbInfo?.posterUrl ?: 
+            aniZipData?.images?.find { it.coverType.equals("Poster", ignoreCase = true) }?.url?.let { fixUrl(it) } ?:
+            siteMetadata.poster
         
-        // Sinopse: traduzir se não for português
-        var finalPlot = siteMetadata.plot ?: 
+        // BACKDROP: TMDB > AniZip
+        val finalBackdrop = tmdbInfo?.backdropUrl ?: 
+            aniZipData?.images?.find { it.coverType.equals("Fanart", ignoreCase = true) }?.url?.let { fixUrl(it) }
+        
+        // SINOPSE: TMDB > Site > AniZip
+        val finalPlot = tmdbInfo?.overview ?: 
+            siteMetadata.plot ?:
             aniZipData?.episodes?.values?.firstOrNull()?.overview
         
-        if (finalPlot != null && finalPlot.isNotBlank() && !isProbablyPortuguese(finalPlot)) {
-            println("📝 [PLOT] Traduzindo sinopse...")
-            finalPlot = smartTranslate(finalPlot)
-        }
+        // ANO: Site > TMDB > AniZip
+        val finalYear = year ?: 
+            siteMetadata.year ?:
+            tmdbInfo?.year
         
-        val finalYear = year ?: siteMetadata.year
-        
-        val finalTags = siteMetadata.tags ?: emptyList()
+        // TAGS/GÊNEROS: TMDB > Site > AniZip
+        val finalTags = tmdbInfo?.genres ?:
+            siteMetadata.tags ?: emptyList()
         
         println("📊 [RESPONSE SUMMARY]")
         println("   🖼️  Poster: ${finalPoster ?: "Não encontrado"}")
@@ -756,6 +735,8 @@ class AnimeFire : MainAPI() {
         println("   📅 Ano: $finalYear")
         println("   🏷️  Tags: ${finalTags.take(3).joinToString()}")
         println("   📺 Episódios: ${episodes.size}")
+        println("   🎬 Trailer: ${tmdbInfo?.youtubeTrailer ?: "Não encontrado"}")
+        println("   🎭 Atores: ${tmdbInfo?.actors?.size ?: 0}")
         
         return if (isMovie) {
             newMovieLoadResponse(cleanTitle, url, type, url) {
@@ -764,7 +745,18 @@ class AnimeFire : MainAPI() {
                 this.tags = finalTags
                 this.posterUrl = finalPoster
                 this.backgroundPosterUrl = finalBackdrop
+                this.duration = tmdbInfo?.duration
                 this.recommendations = recommendations.takeIf { it.isNotEmpty() }
+                
+                // Adicionar atores do TMDB
+                tmdbInfo?.actors?.let { actors ->
+                    addActors(actors)
+                }
+                
+                // Adicionar trailer do TMDB
+                tmdbInfo?.youtubeTrailer?.let { trailerUrl ->
+                    addTrailer(trailerUrl)
+                }
             }
         } else {
             newAnimeLoadResponse(cleanTitle, url, type) {
@@ -776,6 +768,16 @@ class AnimeFire : MainAPI() {
                 this.posterUrl = finalPoster
                 this.backgroundPosterUrl = finalBackdrop
                 this.recommendations = recommendations.takeIf { it.isNotEmpty() }
+                
+                // Adicionar atores do TMDB
+                tmdbInfo?.actors?.let { actors ->
+                    addActors(actors)
+                }
+                
+                // Adicionar trailer do TMDB
+                tmdbInfo?.youtubeTrailer?.let { trailerUrl ->
+                    addTrailer(trailerUrl)
+                }
             }
         }
     }
@@ -842,17 +844,100 @@ class AnimeFire : MainAPI() {
         @JsonProperty("airDateUtc") val airDateUtc: String? = null
     )
 
+    // ============ CLASSES TMDB (do seu código) ============
+    private data class TMDBInfo(
+        val id: Int,
+        val title: String?,
+        val year: Int?,
+        val posterUrl: String?,
+        val backdropUrl: String?,
+        val overview: String?,
+        val genres: List<String>?,
+        val actors: List<Actor>?,
+        val youtubeTrailer: String?,
+        val duration: Int?,
+        val seasonsEpisodes: Map<Int, List<TMDBEpisode>> = emptyMap()
+    )
+
     @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
-    private data class TranslationResponse(
-        @JsonProperty("success") val success: Boolean? = false,
-        @JsonProperty("translatedText") val translatedText: String? = null,
-        @JsonProperty("originalText") val originalText: String? = null,
-        @JsonProperty("originalLength") val originalLength: Int? = null,
-        @JsonProperty("translatedLength") val translatedLength: Int? = null,
-        @JsonProperty("sourceLang") val sourceLang: String? = null,
-        @JsonProperty("targetLang") val targetLang: String? = null,
-        @JsonProperty("error") val error: String? = null,
-        @JsonProperty("details") val details: String? = null,
-        @JsonProperty("note") val note: String? = null
+    private data class TMDBSearchResponse(
+        @JsonProperty("results") val results: List<TMDBResult>
+    )
+
+    @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
+    private data class TMDBResult(
+        @JsonProperty("id") val id: Int,
+        @JsonProperty("title") val title: String? = null,
+        @JsonProperty("name") val name: String? = null,
+        @JsonProperty("release_date") val release_date: String? = null,
+        @JsonProperty("first_air_date") val first_air_date: String? = null,
+        @JsonProperty("poster_path") val poster_path: String?
+    )
+
+    @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
+    private data class TMDBTVDetailsResponse(
+        @JsonProperty("seasons") val seasons: List<TMDBSeasonInfo>
+    )
+
+    @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
+    private data class TMDBSeasonInfo(
+        @JsonProperty("season_number") val season_number: Int,
+        @JsonProperty("episode_count") val episode_count: Int
+    )
+
+    @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
+    private data class TMDBSeasonResponse(
+        @JsonProperty("episodes") val episodes: List<TMDBEpisode>,
+        @JsonProperty("air_date") val air_date: String?
+    )
+
+    @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
+    private data class TMDBEpisode(
+        @JsonProperty("episode_number") val episode_number: Int,
+        @JsonProperty("name") val name: String,
+        @JsonProperty("overview") val overview: String?,
+        @JsonProperty("still_path") val still_path: String?,
+        @JsonProperty("runtime") val runtime: Int?,
+        @JsonProperty("air_date") val air_date: String?
+    )
+
+    @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
+    private data class TMDBDetailsResponse(
+        @JsonProperty("overview") val overview: String?,
+        @JsonProperty("backdrop_path") val backdrop_path: String?,
+        @JsonProperty("runtime") val runtime: Int?,
+        @JsonProperty("genres") val genres: List<TMDBGenre>?,
+        @JsonProperty("credits") val credits: TMDBCredits?,
+        @JsonProperty("videos") val videos: TMDBVideos?
+    )
+
+    @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
+    private data class TMDBGenre(
+        @JsonProperty("name") val name: String
+    )
+
+    @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
+    private data class TMDBCredits(
+        @JsonProperty("cast") val cast: List<TMDBCast>
+    )
+
+    @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
+    private data class TMDBCast(
+        @JsonProperty("name") val name: String,
+        @JsonProperty("character") val character: String?,
+        @JsonProperty("profile_path") val profile_path: String?
+    )
+
+    @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
+    private data class TMDBVideos(
+        @JsonProperty("results") val results: List<TMDBVideo>
+    )
+
+    @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
+    private data class TMDBVideo(
+        @JsonProperty("key") val key: String,
+        @JsonProperty("site") val site: String,
+        @JsonProperty("type") val type: String,
+        @JsonProperty("official") val official: Boolean? = false
     )
 }
