@@ -83,7 +83,7 @@ class AnimeFire : MainAPI() {
         }
         
         // Se não encontrou no AniZip, tentar TMDB
-        val tmdbInfo = searchOnTMDB(title, year, isTv, fetchSeasons = false)
+        val tmdbInfo = searchOnTMDB(title, year, isTv)
         return tmdbInfo?.posterUrl
     }
 
@@ -93,43 +93,51 @@ class AnimeFire : MainAPI() {
         val homeItems = when (request.name) {
             "Lançamentos" -> 
                 document.select(".owl-carousel-home .divArticleLancamentos a.item")
-                    .mapNotNull { it.toSearchResponse() }
+                    .mapNotNull { element -> 
+                        runCatching { element.toSearchResponse() }.getOrNull()
+                    }
             "Destaques da Semana" -> 
                 document.select(".owl-carousel-semana .divArticleLancamentos a.item")
-                    .mapNotNull { it.toSearchResponse() }
+                    .mapNotNull { element -> 
+                        runCatching { element.toSearchResponse() }.getOrNull()
+                    }
             "Últimos Animes Adicionados" -> 
                 document.select(".owl-carousel-l_dia .divArticleLancamentos a.item")
-                    .mapNotNull { it.toSearchResponse() }
+                    .mapNotNull { element -> 
+                        runCatching { element.toSearchResponse() }.getOrNull()
+                    }
             "Últimos Episódios Adicionados" -> {
                 document.select(".divCardUltimosEpsHome").mapNotNull { card ->
-                    val link = card.selectFirst("article.card a") ?: return@mapNotNull null
-                    val href = link.attr("href") ?: return@mapNotNull null
-                    
-                    val titleElement = card.selectFirst("h3.animeTitle") ?: return@mapNotNull null
-                    val rawTitle = titleElement.text().trim()
-                    
-                    val epNumber = card.selectFirst(".numEp")?.text()?.toIntOrNull() ?: 1
-                    
-                    val cleanTitle = rawTitle.replace(Regex("(?i)(dublado|legendado|todos os episódios|\\(\\d{4}\\))$"), "").trim()
-                    val displayTitle = "${cleanTitle} - Episódio $epNumber"
-                    
-                    // Buscar poster de alta qualidade
-                    val year = Regex("\\((\\d{4})\\)").find(rawTitle)?.groupValues?.get(1)?.toIntOrNull()
-                    val highQualityPoster = getHighQualityPosterForSearch(cleanTitle, year, true)
-                    
-                    // Poster do site (fallback)
-                    val sitePoster = card.selectFirst("img.imgAnimesUltimosEps, img[src*='animes']")?.let { img ->
-                        when {
-                            img.hasAttr("data-src") -> img.attr("data-src")
-                            img.hasAttr("src") -> img.attr("src")
-                            else -> null
-                        }?.takeIf { !it.contains("logo", ignoreCase = true) }
-                    } ?: card.selectFirst("img:not([src*='logo'])")?.attr("src")
-                    
-                    newAnimeSearchResponse(displayTitle, fixUrl(href)) {
-                        this.posterUrl = highQualityPoster ?: sitePoster?.let { fixUrl(it) }
-                        this.type = TvType.Anime
-                    }
+                    runCatching {
+                        val link = card.selectFirst("article.card a") ?: return@runCatching null
+                        val href = link.attr("href") ?: return@runCatching null
+                        
+                        val titleElement = card.selectFirst("h3.animeTitle") ?: return@runCatching null
+                        val rawTitle = titleElement.text().trim()
+                        
+                        val epNumber = card.selectFirst(".numEp")?.text()?.toIntOrNull() ?: 1
+                        
+                        val cleanTitle = rawTitle.replace(Regex("(?i)(dublado|legendado|todos os episódios|\\(\\d{4}\\))$"), "").trim()
+                        val displayTitle = "${cleanTitle} - Episódio $epNumber"
+                        
+                        // Buscar poster de alta qualidade
+                        val year = Regex("\\((\\d{4})\\)").find(rawTitle)?.groupValues?.get(1)?.toIntOrNull()
+                        val highQualityPoster = getHighQualityPosterForSearch(cleanTitle, year, true)
+                        
+                        // Poster do site (fallback)
+                        val sitePoster = card.selectFirst("img.imgAnimesUltimosEps, img[src*='animes']")?.let { img ->
+                            when {
+                                img.hasAttr("data-src") -> img.attr("data-src")
+                                img.hasAttr("src") -> img.attr("src")
+                                else -> null
+                            }?.takeIf { !it.contains("logo", ignoreCase = true) }
+                        } ?: card.selectFirst("img:not([src*='logo'])")?.attr("src")
+                        
+                        newAnimeSearchResponse(displayTitle, fixUrl(href)) {
+                            this.posterUrl = highQualityPoster ?: sitePoster?.let { fixUrl(it) }
+                            this.type = TvType.Anime
+                        }
+                    }.getOrNull()
                 }
             }
             else -> emptyList()
@@ -143,7 +151,9 @@ class AnimeFire : MainAPI() {
         val document = app.get(searchUrl).document
 
         return document.select("article.containerAnimes a.item")
-            .mapNotNull { it.toSearchResponse() }
+            .mapNotNull { element -> 
+                runCatching { element.toSearchResponse() }.getOrNull()
+            }
             .take(30)
     }
 
@@ -173,7 +183,7 @@ class AnimeFire : MainAPI() {
         }
 
         // 3. BUSCAR NO TMDB (apenas para poster, sinopse e trailer)
-        val tmdbInfo = searchOnTMDB(cleanTitle, year, !isMovie, fetchSeasons = false)
+        val tmdbInfo = searchOnTMDB(cleanTitle, year, !isMovie)
 
         // 4. EXTRAIR METADADOS DO SITE
         val siteMetadata = extractSiteMetadata(document)
@@ -298,8 +308,7 @@ class AnimeFire : MainAPI() {
     private suspend fun searchOnTMDB(
         query: String, 
         year: Int?, 
-        isTv: Boolean,
-        fetchSeasons: Boolean = false
+        isTv: Boolean
     ): TMDBInfo? {
         return try {
             val type = if (isTv) "tv" else "movie"
@@ -330,12 +339,13 @@ class AnimeFire : MainAPI() {
             // Extrair gêneros do TMDB
             val genres = details?.genres?.map { it.name }?.takeIf { it.isNotEmpty() }
 
-            // Extrair atores do TMDB
+            // Extrair atores do TMDB (corrigido - Actor não tem parâmetro 'role')
             val actors = details?.credits?.cast?.take(10)?.mapNotNull { cast ->
                 if (cast.name.isNotBlank()) {
                     Actor(
                         name = cast.name,
-                        role = cast.character,
+                        // Não usar 'role' pois Actor não tem esse parâmetro
+                        // character = cast.character, // Removido
                         image = cast.profile_path?.let { "$tmdbImageUrl/w185$it" }
                     )
                 } else null
@@ -398,7 +408,7 @@ class AnimeFire : MainAPI() {
     }
 
     // ============ EPISÓDIOS APENAS DO SITE ============
-    private suspend fun extractEpisodesFromSite(document: org.jsoup.nodes.Document): List<Episode> {
+    private fun extractEpisodesFromSite(document: org.jsoup.nodes.Document): List<Episode> {
         val episodes = mutableListOf<Episode>()
         
         val episodeElements = document.select("a.lEp.epT, a.lEp, .divListaEps a, [href*='/video/'], [href*='/episodio/']")
@@ -603,9 +613,11 @@ class AnimeFire : MainAPI() {
         return actors
     }
 
-    private fun extractRecommendations(document: org.jsoup.nodes.Document): List<SearchResponse> {
+    private suspend fun extractRecommendations(document: org.jsoup.nodes.Document): List<SearchResponse> {
         return document.select(".owl-carousel-anime .divArticleLancamentos a.item")
-            .mapNotNull { it.toSearchResponse() }
+            .mapNotNull { element -> 
+                runCatching { element.toSearchResponse() }.getOrNull()
+            }
     }
 
     override suspend fun loadLinks(
