@@ -834,4 +834,4 @@ class AnimeFire : MainAPI() {
         @JsonProperty("originalText") val originalText: String? = null,
         @JsonProperty("originalLength") val originalLength: Int? = null,
         @JsonProperty("translatedLength") val translatedLength: Int? = null,
-        @JsonProperty("sourceLang
+        @JsonProperty("source
