@@ -129,7 +129,7 @@ class AnimeFire : MainAPI() {
         }
     }
 
-    // ============ CLASSES DE DADOS (CORRIGIDAS - usando data classes imutáveis) ============
+    // ============ CLASSES DE DADOS ============
     
     @JsonIgnoreProperties(ignoreUnknown = true)
     data class AniZipImage(
@@ -147,25 +147,7 @@ class AnimeFire : MainAPI() {
         @JsonProperty("rating") val rating: String?,
         @JsonProperty("airDateUtc") val airDateUtc: String?,
         @JsonProperty("finaleType") val finaleType: String?
-    ) {
-        // Funções auxiliares para obter dados traduzidos SEM modificar o objeto original
-        fun getTranslatedOverview(translateFunction: suspend (String) -> String): String? {
-            return overview?.takeIf { it.isNotBlank() }
-        }
-        
-        fun getTranslatedTitle(translateFunction: suspend (String) -> String): Map<String, String> {
-            val englishTitle = title?.get("en")
-            val portugueseTitle = if (englishTitle != null && englishTitle.isNotBlank()) {
-                // Não traduzimos aqui, apenas retornamos o título original
-                // A tradução será feita na função de criar episódios
-                englishTitle
-            } else {
-                title?.values?.firstOrNull() ?: ""
-            }
-            
-            return title ?: mapOf("en" to portugueseTitle)
-        }
-    }
+    )
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     data class AniZipData(
@@ -335,7 +317,7 @@ class AnimeFire : MainAPI() {
         )
     }
 
-    // Função parseAnimeData corrigida (sem tentar modificar objetos imutáveis)
+    // Função parseAnimeData 
     private fun parseAnimeData(jsonString: String): AniZipData? {
         return try {
             val objectMapper = ObjectMapper()
@@ -410,7 +392,11 @@ class AnimeFire : MainAPI() {
                 this.posterUrl = finalPoster
                 this.backgroundPosterUrl = finalBackdrop
                 this.recommendations = recommendations.takeIf { it.isNotEmpty() }
-                this.status = status // CORRIGIDO: showStatus -> status
+                
+                // Adicionar status CORRETAMENTE usando addStatus
+                if (status != null) {
+                    this.addStatus(status)
+                }
                 
                 // Adicionar trailer do TMDB
                 tmdbInfo?.youtubeTrailer?.let { trailerUrl ->
@@ -427,7 +413,11 @@ class AnimeFire : MainAPI() {
                 this.posterUrl = finalPoster
                 this.backgroundPosterUrl = finalBackdrop
                 this.recommendations = recommendations.takeIf { it.isNotEmpty() }
-                this.status = status // CORRIGIDO: showStatus -> status
+                
+                // Adicionar status CORRETAMENTE usando addStatus
+                if (status != null) {
+                    this.addStatus(status)
+                }
                 
                 // Adicionar trailer do TMDB
                 tmdbInfo?.youtubeTrailer?.let { trailerUrl ->
