@@ -193,45 +193,73 @@ class AnimeFire : MainAPI() {
     // ============ TRADUÇÃO COM CLOUDFLARE WORKERS AI ============
     
     private suspend fun translateText(text: String, sourceLang: String = "auto", targetLang: String = "pt"): String? {
-        if (text.isBlank()) return null
+    if (text.isBlank()) return null
+    
+    return try {
+        println("🔤 [TRANSLATE] Traduzindo: ${text.take(50)}...")
         
-        return try {
-            println("🔤 [TRANSLATE] Traduzindo: ${text.take(50)}...")
-            
-            val payload = mapOf(
-                "text" to text,
-                "source_lang" to sourceLang,
-                "target_lang" to targetLang
-            )
-            
-            val headers = mutableMapOf(
-                "Content-Type" to "application/json"
-            )
-            
-            // Se precisar de token (opcional)
-            if (CF_API_TOKEN.isNotBlank()) {
-                headers["Authorization"] = "Bearer $CF_API_TOKEN"
-            }
-            
-            val response = app.post(
-                CF_WORKER_URL,
+        // 1. LIMITAR TAMANHO DO TEXTO (a API tem limites)
+        val textToTranslate = if (text.length > 3000) {
+            println("⚠️ [TRANSLATE] Texto muito longo (${text.length} chars), truncando...")
+            text.substring(0, 3000)
+        } else {
+            text
+        }
+        
+        // 2. CRIAR PAYLOAD CORRETO
+        val payload = mapOf(
+            "text" to textToTranslate,
+            "source_lang" to sourceLang,
+            "target_lang" to targetLang
+        )
+        
+        println("📤 [TRANSLATE] Enviando para Worker...")
+        
+        // 3. REQUISIÇÃO COM TIMEOUT E TRATAMENTO DE ERRO
+        val response = try {
+            app.post(
+                "https://animefire.euluan1912.workers.dev", // SUA URL CORRETA!
                 data = payload,
-                headers = headers,
-                timeout = 15_000
+                headers = mapOf("Content-Type" to "application/json"),
+                timeout = 30_000 // 30 segundos timeout
             )
-            
-            if (response.code == 200) {
-                val translated = response.parsedSafe<TranslationResponse>()?.translatedText
-                println("✅ [TRANSLATE] Traduzido: ${translated?.take(50)}...")
-                translated
-            } else {
-                println("❌ [TRANSLATE] Erro HTTP: ${response.code}")
+        } catch (e: Exception) {
+            println("❌ [TRANSLATE] Erro de rede: ${e.message}")
+            return null
+        }
+        
+        println("📥 [TRANSLATE] Resposta recebida: ${response.code}")
+        
+        // 4. VERIFICAR STATUS CODE
+        when (response.code) {
+            200 -> {
+                val result = response.parsedSafe<TranslationResponse>()
+                if (result?.success == true) {
+                    println("✅ [TRANSLATE] Traduzido: ${result.translatedText?.take(50)}...")
+                    result.translatedText
+                } else {
+                    println("❌ [TRANSLATE] Resposta sem sucesso: ${response.text}")
+                    null
+                }
+            }
+            400 -> {
+                println("❌ [TRANSLATE] Bad Request (JSON inválido)")
                 null
             }
-        } catch (e: Exception) {
-            println("❌ [TRANSLATE] Exception: ${e.message}")
-            null
+            500 -> {
+                println("❌ [TRANSLATE] Erro interno no Worker: ${response.text}")
+                null
+            }
+            else -> {
+                println("❌ [TRANSLATE] Erro HTTP ${response.code}: ${response.text}")
+                null
+            }
         }
+        
+    } catch (e: Exception) {
+        println("❌ [TRANSLATE] Exception geral: ${e.message}")
+        null
+    }
     }
     
     // Tradução inteligente: detecta idioma e traduz se não for português
@@ -614,9 +642,11 @@ class AnimeFire : MainAPI() {
         @JsonProperty("rating") val rating: String?,
         @JsonProperty("airDateUtc") val airDateUtc: String?
     )
-
     @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
-    private data class TranslationResponse(
-        @JsonProperty("translatedText") val translatedText: String?
+private data class TranslationResponse(
+    @JsonProperty("success") val success: Boolean? = false,
+    @JsonProperty("translatedText") val translatedText: String? = null,
+    @JsonProperty("error") val error: String? = null,
+    @JsonProperty("details") val details: String? = null
     )
 }
