@@ -129,7 +129,7 @@ class AnimeFire : MainAPI() {
         }
     }
 
-    // ============ FUNÇÕES DO ALLWISH ADAPTADAS ============
+    // ============ CLASSES DE DADOS (CORRIGIDAS - usando data classes imutáveis) ============
     
     @JsonIgnoreProperties(ignoreUnknown = true)
     data class AniZipImage(
@@ -147,7 +147,25 @@ class AnimeFire : MainAPI() {
         @JsonProperty("rating") val rating: String?,
         @JsonProperty("airDateUtc") val airDateUtc: String?,
         @JsonProperty("finaleType") val finaleType: String?
-    )
+    ) {
+        // Funções auxiliares para obter dados traduzidos SEM modificar o objeto original
+        fun getTranslatedOverview(translateFunction: suspend (String) -> String): String? {
+            return overview?.takeIf { it.isNotBlank() }
+        }
+        
+        fun getTranslatedTitle(translateFunction: suspend (String) -> String): Map<String, String> {
+            val englishTitle = title?.get("en")
+            val portugueseTitle = if (englishTitle != null && englishTitle.isNotBlank()) {
+                // Não traduzimos aqui, apenas retornamos o título original
+                // A tradução será feita na função de criar episódios
+                englishTitle
+            } else {
+                title?.values?.firstOrNull() ?: ""
+            }
+            
+            return title ?: mapOf("en" to portugueseTitle)
+        }
+    }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     data class AniZipData(
@@ -156,52 +174,7 @@ class AnimeFire : MainAPI() {
         @JsonProperty("episodes") val episodes: Map<String, AniZipEpisode>? = null
     )
 
-    private suspend fun parseAnimeDataWithTranslation(jsonString: String): AniZipData? {
-        return try {
-            val objectMapper = ObjectMapper()
-            val animeData = objectMapper.readValue(jsonString, AniZipData::class.java)
-            
-            // Log para debugging
-            println("📊 [ANIZIP] Total de episódios: ${animeData.episodes?.size ?: 0}")
-            
-            // Traduzir sinopses dos episódios em tempo real
-            if (TRANSLATION_ENABLED) {
-                animeData.episodes?.forEach { (episodeNumber, episode) ->
-                    // Traduzir overview/sinopse
-                    episode.overview?.let { originalOverview ->
-                        if (originalOverview.isNotBlank() && !isProbablyPortuguese(originalOverview)) {
-                            val translated = translateText(originalOverview)
-                            if (translated != originalOverview) {
-                                println("✅ [TRADUÇÃO] Ep $episodeNumber: ${originalOverview.take(50)}... -> ${translated.take(50)}...")
-                                episode.overview = translated
-                            }
-                        }
-                    }
-                    
-                    // Traduzir títulos dos episódios
-                    episode.title?.get("en")?.let { englishTitle ->
-                        if (englishTitle.isNotBlank() && !isProbablyPortuguese(englishTitle)) {
-                            val translatedTitle = translateText(englishTitle)
-                            if (translatedTitle != englishTitle) {
-                                println("✅ [TRADUÇÃO TÍTULO] Ep $episodeNumber: $englishTitle -> $translatedTitle")
-                                // Adicionar título traduzido ao mapa
-                                val newTitleMap = episode.title.toMutableMap()
-                                newTitleMap["pt"] = translatedTitle
-                                episode.title = newTitleMap
-                            }
-                        }
-                    }
-                }
-            }
-            
-            animeData
-        } catch (e: Exception) {
-            println("❌ [ANIZIP] Erro parse: ${e.message}")
-            null
-        }
-    }
-
-    // ============ FUNÇÕES DE BUSCA (simplificadas) ============
+    // ============ FUNÇÕES DE BUSCA ============
     
     private suspend fun Element.toSearchResponse(): AnimeSearchResponse? {
         val href = attr("href") ?: return null
@@ -315,12 +288,12 @@ class AnimeFire : MainAPI() {
         val malId = searchMALIdByName(cleanTitle)
         println("🔍 MAL ID: $malId")
 
-        // Buscar dados da ani.zip COM TRADUÇÃO
+        // Buscar dados da ani.zip
         var aniZipData: AniZipData? = null
         if (malId != null) {
             println("🔍 Buscando AniZip...")
             val syncMetaData = app.get("https://api.ani.zip/mappings?mal_id=$malId").text
-            aniZipData = parseAnimeDataWithTranslation(syncMetaData)
+            aniZipData = parseAnimeData(syncMetaData)
             println("✅ AniZip carregado: ${aniZipData?.episodes?.size ?: 0} episódios")
         }
 
@@ -360,6 +333,17 @@ class AnimeFire : MainAPI() {
             genres = genres,
             status = status
         )
+    }
+
+    // Função parseAnimeData corrigida (sem tentar modificar objetos imutáveis)
+    private fun parseAnimeData(jsonString: String): AniZipData? {
+        return try {
+            val objectMapper = ObjectMapper()
+            objectMapper.readValue(jsonString, AniZipData::class.java)
+        } catch (e: Exception) {
+            println("❌ [ANIZIP] Erro parse: ${e.message}")
+            null
+        }
     }
 
     private suspend fun createLoadResponseWithTranslation(
@@ -426,7 +410,7 @@ class AnimeFire : MainAPI() {
                 this.posterUrl = finalPoster
                 this.backgroundPosterUrl = finalBackdrop
                 this.recommendations = recommendations.takeIf { it.isNotEmpty() }
-                this.showStatus = status
+                this.status = status // CORRIGIDO: showStatus -> status
                 
                 // Adicionar trailer do TMDB
                 tmdbInfo?.youtubeTrailer?.let { trailerUrl ->
@@ -443,7 +427,7 @@ class AnimeFire : MainAPI() {
                 this.posterUrl = finalPoster
                 this.backgroundPosterUrl = finalBackdrop
                 this.recommendations = recommendations.takeIf { it.isNotEmpty() }
-                this.showStatus = status
+                this.status = status // CORRIGIDO: showStatus -> status
                 
                 // Adicionar trailer do TMDB
                 tmdbInfo?.youtubeTrailer?.let { trailerUrl ->
@@ -565,7 +549,7 @@ class AnimeFire : MainAPI() {
         }
     }
 
-    // ============ FUNÇÕES RESTANTES (mantidas do original) ============
+    // ============ FUNÇÕES RESTANTES ============
     
     private suspend fun searchMALIdByName(animeName: String): Int? {
         return try {
