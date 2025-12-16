@@ -8,7 +8,11 @@ import com.lagradost.cloudstream3.LoadResponse.Companion.addTrailer
 import com.lagradost.cloudstream3.app
 import org.jsoup.nodes.Element
 import java.net.URLEncoder
+import java.text.SimpleDateFormat
 import kotlinx.coroutines.delay
+import com.fasterxml.jackson.databind.ObjectMapper
+import com.google.gson.JsonParser
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 
 class AnimeFire : MainAPI() {
     override var mainUrl = "https://animefire.io"
@@ -16,7 +20,7 @@ class AnimeFire : MainAPI() {
     override val hasMainPage = true
     override var lang = "pt-br"
     override val hasDownloadSupport = true
-    override val supportedTypes = setOf(TvType.Anime, TvType.Movie)
+    override val supportedTypes = setOf(TvType.Anime, TvType.Movie, TvType.OVA)
     override val usesWebView = true
 
     companion object {
@@ -25,6 +29,8 @@ class AnimeFire : MainAPI() {
         private const val RETRY_DELAY = 1000L
         private const val TMDB_PROXY_URL = "https://lawliet.euluan1912.workers.dev"
         private const val tmdbImageUrl = "https://image.tmdb.org/t/p"
+        private const val TRANSLATION_ENABLED = true
+        private const val WORKERS_URL = "https://animefire.euluan1912.workers.dev"
     }
 
     override val mainPage = mainPageOf(
@@ -34,47 +40,169 @@ class AnimeFire : MainAPI() {
         "$mainUrl" to "Últimos Episódios Adicionados"
     )
 
-    // ============ BUSCAR THUMB DE ALTA QUALIDADE PARA PESQUISA ============
-    private suspend fun getHighQualityThumbForSearch(title: String, year: Int?, isTv: Boolean): String? {
-        // PRIORIDADE: TMDB > AniZip > Site
-        val tmdbThumb = getTMDBThumbForSearch(title, year, isTv)
-        if (tmdbThumb != null) return tmdbThumb
+    // ============ SISTEMA DE TRADUÇÃO OTIMIZADO ============
+    
+    private suspend fun translateText(text: String): String {
+        if (!TRANSLATION_ENABLED || text.isBlank() || text.length < 3) return text
         
-        // Se não encontrou no TMDB, tentar AniZip
-        val malId = searchMALIdByName(title)
-        if (malId != null) {
-            val aniZipData = fetchAniZipData(malId)
-            val aniZipPoster = aniZipData?.images?.find { it.coverType.equals("Poster", ignoreCase = true) }?.url
-            if (aniZipPoster != null) {
-                return fixUrl(aniZipPoster)
-            }
+        // Não traduzir se já parece estar em português
+        if (isProbablyPortuguese(text)) return text
+        
+        return try {
+            // Tenta primeiro com o workers
+            val workersTranslated = translateWithWorkers(text)
+            if (workersTranslated != text) return workersTranslated
+            
+            // Fallback para método direto
+            translateDirectGoogle(text)
+        } catch (e: Exception) {
+            text // Sempre retorna algo em caso de erro
         }
+    }
+    
+    private fun isProbablyPortuguese(text: String): Boolean {
+        val portugueseWords = listOf("episódio", "temporada", "sinopse", "dublado", 
+            "legendado", "assistir", "anime", "filme", "série", "ação", "aventura")
         
-        // Retornar null para usar o poster do site (fallback)
-        return null
+        val lowerText = text.lowercase()
+        return portugueseWords.any { lowerText.contains(it) } ||
+               lowerText.contains(Regex("[áéíóúãõç]"))
+    }
+    
+    private suspend fun translateWithWorkers(text: String): String {
+        return try {
+            val encodedText = URLEncoder.encode(text, "UTF-8")
+            val url = "$WORKERS_URL/translate?text=$encodedText&target=pt"
+            
+            println("🔍 [TRADUÇÃO] Chamando workers: $url")
+            
+            val response = app.get(url, timeout = 5000)
+            
+            println("📡 [TRADUÇÃO] Resposta workers: ${response.code}")
+            
+            if (response.code == 200) {
+                val json = JsonParser.parseString(response.text)
+                
+                // Tenta diferentes formatos de resposta
+                val translated = when {
+                    json.isJsonObject -> {
+                        json.asJsonObject.get("translatedText")?.asString
+                            ?: json.asJsonObject.get("text")?.asString
+                    }
+                    json.isJsonPrimitive -> json.asString
+                    else -> null
+                }
+                
+                translated?.takeIf { it.isNotBlank() && it != text } ?: text
+            } else {
+                text
+            }
+        } catch (e: Exception) {
+            println("❌ [TRADUÇÃO] Erro workers: ${e.message}")
+            text
+        }
+    }
+    
+    private suspend fun translateDirectGoogle(text: String): String {
+        return try {
+            val encodedText = URLEncoder.encode(text, "UTF-8")
+            val url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=pt&dt=t&q=$encodedText"
+            
+            val response = app.get(url, timeout = 3000)
+            
+            if (response.code == 200) {
+                val json = JsonParser.parseString(response.text)
+                val translated = StringBuilder()
+                
+                json.asJsonArray?.get(0)?.asJsonArray?.forEach { arrayElement ->
+                    arrayElement.asJsonArray?.get(0)?.asString?.let { 
+                        translated.append(it) 
+                    }
+                }
+                
+                translated.toString().ifBlank { text }
+            } else {
+                text
+            }
+        } catch (e: Exception) {
+            text
+        }
     }
 
-    private suspend fun getTMDBThumbForSearch(title: String, year: Int?, isTv: Boolean): String? {
+    // ============ FUNÇÕES DO ALLWISH ADAPTADAS ============
+    
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    data class AniZipImage(
+        @JsonProperty("coverType") val coverType: String?,
+        @JsonProperty("url") val url: String?
+    )
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    data class AniZipEpisode(
+        @JsonProperty("episode") val episode: String?,
+        @JsonProperty("title") val title: Map<String, String>?,
+        @JsonProperty("overview") val overview: String?,
+        @JsonProperty("image") val image: String?,
+        @JsonProperty("runtime") val runtime: Int?,
+        @JsonProperty("rating") val rating: String?,
+        @JsonProperty("airDateUtc") val airDateUtc: String?,
+        @JsonProperty("finaleType") val finaleType: String?
+    )
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    data class AniZipData(
+        @JsonProperty("titles") val titles: Map<String, String>? = null,
+        @JsonProperty("images") val images: List<AniZipImage>? = null,
+        @JsonProperty("episodes") val episodes: Map<String, AniZipEpisode>? = null
+    )
+
+    private suspend fun parseAnimeDataWithTranslation(jsonString: String): AniZipData? {
         return try {
-            val type = if (isTv) "tv" else "movie"
-            val encodedQuery = URLEncoder.encode(title, "UTF-8")
-            val yearParam = year?.let { "&year=$it" } ?: ""
-
-            val searchUrl = "$TMDB_PROXY_URL/search?query=$encodedQuery&type=$type$yearParam"
-            val response = app.get(searchUrl, timeout = 10_000)
-
-            if (response.code != 200) return null
-
-            val searchResult = response.parsedSafe<TMDBSearchResponse>() ?: return null
-            val result = searchResult.results.firstOrNull() ?: return null
-
-            result.poster_path?.let { "$tmdbImageUrl/w300$it" } // Tamanho menor para thumbs
+            val objectMapper = ObjectMapper()
+            val animeData = objectMapper.readValue(jsonString, AniZipData::class.java)
+            
+            // Log para debugging
+            println("📊 [ANIZIP] Total de episódios: ${animeData.episodes?.size ?: 0}")
+            
+            // Traduzir sinopses dos episódios em tempo real
+            if (TRANSLATION_ENABLED) {
+                animeData.episodes?.forEach { (episodeNumber, episode) ->
+                    // Traduzir overview/sinopse
+                    episode.overview?.let { originalOverview ->
+                        if (originalOverview.isNotBlank() && !isProbablyPortuguese(originalOverview)) {
+                            val translated = translateText(originalOverview)
+                            if (translated != originalOverview) {
+                                println("✅ [TRADUÇÃO] Ep $episodeNumber: ${originalOverview.take(50)}... -> ${translated.take(50)}...")
+                                episode.overview = translated
+                            }
+                        }
+                    }
+                    
+                    // Traduzir títulos dos episódios
+                    episode.title?.get("en")?.let { englishTitle ->
+                        if (englishTitle.isNotBlank() && !isProbablyPortuguese(englishTitle)) {
+                            val translatedTitle = translateText(englishTitle)
+                            if (translatedTitle != englishTitle) {
+                                println("✅ [TRADUÇÃO TÍTULO] Ep $episodeNumber: $englishTitle -> $translatedTitle")
+                                // Adicionar título traduzido ao mapa
+                                val newTitleMap = episode.title.toMutableMap()
+                                newTitleMap["pt"] = translatedTitle
+                                episode.title = newTitleMap
+                            }
+                        }
+                    }
+                }
+            }
+            
+            animeData
         } catch (e: Exception) {
+            println("❌ [ANIZIP] Erro parse: ${e.message}")
             null
         }
     }
 
-    // ============ FUNÇÃO AUXILIAR PARA SEARCH RESPONSE ============
+    // ============ FUNÇÕES DE BUSCA (simplificadas) ============
+    
     private suspend fun Element.toSearchResponse(): AnimeSearchResponse? {
         val href = attr("href") ?: return null
         if (href.isBlank()) return null
@@ -82,19 +210,9 @@ class AnimeFire : MainAPI() {
         val titleElement = selectFirst("h3.animeTitle") ?: return null
         val rawTitle = titleElement.text().trim()
         
-        // Limpar título
         val cleanTitle = rawTitle.replace(Regex("(?i)(dublado|legendado|todos os episódios|\\(\\d{4}\\))$"), "").trim()
-        
-        // Verificar se é filme
         val isMovie = href.contains("/filmes/") || rawTitle.contains("Movie", ignoreCase = true)
         
-        // Extrair ano do título se disponível
-        val year = Regex("\\((\\d{4})\\)").find(rawTitle)?.groupValues?.get(1)?.toIntOrNull()
-        
-        // Buscar thumb de alta qualidade (TMDB > AniZip > Site)
-        val highQualityThumb = getHighQualityThumbForSearch(cleanTitle, year, !isMovie)
-        
-        // Poster do site (fallback)
         val sitePoster = selectFirst("img.imgAnimes, img.owl-lazy, img[src*='animes']")?.let { img ->
             when {
                 img.hasAttr("data-src") -> img.attr("data-src")
@@ -104,7 +222,7 @@ class AnimeFire : MainAPI() {
         } ?: selectFirst("img:not([src*='logo']):not([src*='Logo'])")?.attr("src")
 
         return newAnimeSearchResponse(cleanTitle, fixUrl(href)) {
-            this.posterUrl = highQualityThumb ?: sitePoster?.let { fixUrl(it) }
+            this.posterUrl = sitePoster?.let { fixUrl(it) }
             this.type = if (isMovie) TvType.Movie else TvType.Anime
         }
     }
@@ -138,15 +256,9 @@ class AnimeFire : MainAPI() {
                         val rawTitle = titleElement.text().trim()
                         
                         val epNumber = card.selectFirst(".numEp")?.text()?.toIntOrNull() ?: 1
-                        
                         val cleanTitle = rawTitle.replace(Regex("(?i)(dublado|legendado|todos os episódios|\\(\\d{4}\\))$"), "").trim()
                         val displayTitle = "${cleanTitle} - Episódio $epNumber"
                         
-                        // Buscar thumb de alta qualidade
-                        val year = Regex("\\((\\d{4})\\)").find(rawTitle)?.groupValues?.get(1)?.toIntOrNull()
-                        val highQualityThumb = getHighQualityThumbForSearch(cleanTitle, year, true)
-                        
-                        // Poster do site (fallback)
                         val sitePoster = card.selectFirst("img.imgAnimesUltimosEps, img[src*='animes']")?.let { img ->
                             when {
                                 img.hasAttr("data-src") -> img.attr("data-src")
@@ -156,7 +268,7 @@ class AnimeFire : MainAPI() {
                         } ?: card.selectFirst("img:not([src*='logo'])")?.attr("src")
                         
                         newAnimeSearchResponse(displayTitle, fixUrl(href)) {
-                            this.posterUrl = highQualityThumb ?: sitePoster?.let { fixUrl(it) }
+                            this.posterUrl = sitePoster?.let { fixUrl(it) }
                             this.type = TvType.Anime
                         }
                     }.getOrNull()
@@ -179,7 +291,11 @@ class AnimeFire : MainAPI() {
             .take(30)
     }
 
+    // ============ LOAD PRINCIPAL COM TRADUÇÃO ============
+    
     override suspend fun load(url: String): LoadResponse {
+        println("\n🚀 AnimeFire.load() para URL: $url")
+        
         val document = app.get(url).document
 
         // Título
@@ -187,41 +303,50 @@ class AnimeFire : MainAPI() {
             throw ErrorLoadingException("Não foi possível encontrar o título")
         val rawTitle = titleElement.text().trim()
         
-        // Limpar título
         val year = Regex("\\((\\d{4})\\)").find(rawTitle)?.groupValues?.get(1)?.toIntOrNull()
         val cleanTitle = rawTitle.replace(Regex("\\(\\d{4}\\)"), "").trim()
         
-        // Determinar tipo
         val isMovie = url.contains("/filmes/") || rawTitle.contains("Movie", ignoreCase = true)
         val type = if (isMovie) TvType.Movie else TvType.Anime
 
-        // 1. BUSCAR MAL ID PELO NOME DO ANIME (para AniZip)
-        val malId = searchMALIdByName(cleanTitle)
+        println("📌 Título: $cleanTitle, Ano: $year, Tipo: $type")
 
-        // 2. BUSCAR DADOS DA ANI.ZIP (para elenco e próximo episódio)
+        // Buscar MAL ID
+        val malId = searchMALIdByName(cleanTitle)
+        println("🔍 MAL ID: $malId")
+
+        // Buscar dados da ani.zip COM TRADUÇÃO
         var aniZipData: AniZipData? = null
         if (malId != null) {
-            aniZipData = fetchAniZipData(malId)
+            println("🔍 Buscando AniZip...")
+            val syncMetaData = app.get("https://api.ani.zip/mappings?mal_id=$malId").text
+            aniZipData = parseAnimeDataWithTranslation(syncMetaData)
+            println("✅ AniZip carregado: ${aniZipData?.episodes?.size ?: 0} episódios")
         }
 
-        // 3. BUSCAR NO TMDB (apenas para poster, sinopse, ano, tags e trailer)
+        // Buscar no TMDB
         val tmdbInfo = searchOnTMDB(cleanTitle, year, !isMovie)
 
-        // 4. EXTRAIR METADADOS DO SITE
+        // Extrair metadados do site
         val siteMetadata = extractSiteMetadata(document)
         
-        // 5. EXTRAIR EPISÓDIOS (apenas do site)
+        // Extrair episódios do site
         val episodes = if (!isMovie) {
-            extractEpisodesFromSite(document)
+            extractEpisodesFromSite(document, cleanTitle, aniZipData)
         } else {
             emptyList()
         }
 
-        // 6. EXTRAIR RECOMENDAÇÕES
+        // Extrair recomendações
         val recommendations = extractRecommendations(document)
 
-        // 7. CRIAR RESPOSTA COM AS PRIORIDADES DEFINIDAS
-        return createLoadResponseWithPriorities(
+        // Extrair informações adicionais
+        val data = document.selectFirst("div#media-info, div.anime-info")
+        val status = getStatus(data?.select("div:contains(Status:) > span > a")?.text()?.trim())
+        val genres = data?.select("div:contains(Genre:), div:contains(Gênero:) > span > a")?.map { it.text() }
+
+        // CRIAR RESPOSTA COM TRADUÇÃO
+        return createLoadResponseWithTranslation(
             url = url,
             cleanTitle = cleanTitle,
             year = year,
@@ -231,11 +356,217 @@ class AnimeFire : MainAPI() {
             aniZipData = aniZipData,
             tmdbInfo = tmdbInfo,
             episodes = episodes,
-            recommendations = recommendations
+            recommendations = recommendations,
+            genres = genres,
+            status = status
         )
     }
 
-    // ============ BUSCA MAL ID ============
+    private suspend fun createLoadResponseWithTranslation(
+        url: String,
+        cleanTitle: String,
+        year: Int?,
+        isMovie: Boolean,
+        type: TvType,
+        siteMetadata: SiteMetadata,
+        aniZipData: AniZipData?,
+        tmdbInfo: TMDBInfo?,
+        episodes: List<Episode>,
+        recommendations: List<SearchResponse>,
+        genres: List<String>?,
+        status: ShowStatus?
+    ): LoadResponse {
+        
+        // TRADUZIR SINOPSE
+        val finalPlot = if (TRANSLATION_ENABLED && siteMetadata.plot != null) {
+            val originalPlot = siteMetadata.plot!!
+            if (!isProbablyPortuguese(originalPlot)) {
+                println("🔍 Traduzindo sinopse...")
+                val translated = translateText(originalPlot)
+                if (translated != originalPlot) {
+                    println("✅ Sinopse traduzida!")
+                    translated
+                } else {
+                    originalPlot
+                }
+            } else {
+                originalPlot
+            }
+        } else {
+            siteMetadata.plot ?: tmdbInfo?.overview ?: aniZipData?.episodes?.values?.firstOrNull()?.overview
+        }
+        
+        // PRIORIDADES
+        val finalPoster = tmdbInfo?.posterUrl ?:
+                         aniZipData?.images?.find { it.coverType.equals("Poster", ignoreCase = true) }?.url?.let { fixUrl(it) } ?:
+                         siteMetadata.poster
+        
+        val finalBackdrop = tmdbInfo?.backdropUrl ?:
+                           aniZipData?.images?.find { it.coverType.equals("Fanart", ignoreCase = true) }?.url?.let { fixUrl(it) } ?:
+                           siteMetadata.poster?.let { fixUrl(it) }
+        
+        val finalYear = tmdbInfo?.year ?: year ?: siteMetadata.year ?:
+                       aniZipData?.episodes?.values?.firstOrNull()?.airDateUtc?.substring(0, 4)?.toIntOrNull()
+        
+        val finalTags = (tmdbInfo?.genres ?: emptyList()) + 
+                       (genres ?: emptyList()) + 
+                       (siteMetadata.tags ?: emptyList())
+
+        println("🏗️ Criando resposta final...")
+        println("📖 Sinopse: ${finalPlot?.take(50)}...")
+        println("📅 Ano: $finalYear")
+        println("🏷️ Tags: ${finalTags.take(3).joinToString()}")
+        println("📺 Episódios: ${episodes.size}")
+
+        return if (isMovie) {
+            newMovieLoadResponse(cleanTitle, url, type, url) {
+                this.year = finalYear
+                this.plot = finalPlot
+                this.tags = finalTags.distinct().take(10)
+                this.posterUrl = finalPoster
+                this.backgroundPosterUrl = finalBackdrop
+                this.recommendations = recommendations.takeIf { it.isNotEmpty() }
+                this.showStatus = status
+                
+                // Adicionar trailer do TMDB
+                tmdbInfo?.youtubeTrailer?.let { trailerUrl ->
+                    addTrailer(trailerUrl)
+                }
+            }
+        } else {
+            newAnimeLoadResponse(cleanTitle, url, type) {
+                addEpisodes(DubStatus.Subbed, episodes)
+                
+                this.year = finalYear
+                this.plot = finalPlot
+                this.tags = finalTags.distinct().take(10)
+                this.posterUrl = finalPoster
+                this.backgroundPosterUrl = finalBackdrop
+                this.recommendations = recommendations.takeIf { it.isNotEmpty() }
+                this.showStatus = status
+                
+                // Adicionar trailer do TMDB
+                tmdbInfo?.youtubeTrailer?.let { trailerUrl ->
+                    addTrailer(trailerUrl)
+                }
+            }
+        }
+    }
+
+    private suspend fun extractEpisodesFromSite(
+        document: org.jsoup.nodes.Document,
+        animeTitle: String,
+        aniZipData: AniZipData?
+    ): List<Episode> {
+        val episodes = mutableListOf<Episode>()
+        
+        val episodeElements = document.select("a.lEp.epT, a.lEp, .divListaEps a, [href*='/video/'], [href*='/episodio/']")
+        
+        println("🔍 Encontrados ${episodeElements.size} episódios no site")
+        
+        episodeElements.forEachIndexed { index, element ->
+            try {
+                val href = element.attr("href")
+                if (href.isBlank()) return@forEachIndexed
+                
+                val text = element.text().trim()
+                if (text.isBlank()) return@forEachIndexed
+                
+                val episodeNumber = extractEpisodeNumber(text) ?: (index + 1)
+                val seasonNumber = 1
+                
+                // Buscar dados do AniZip para este episódio
+                val aniZipEpisode = aniZipData?.episodes?.get(episodeNumber.toString())
+                
+                // Título do episódio (com tradução se necessário)
+                val episodeName = element.selectFirst(".ep-name, .title")?.text()?.trim()
+                    ?: text.substringAfterLast("-").trim()
+                    ?: "Episódio $episodeNumber"
+                
+                // Traduzir título se não estiver em português
+                val finalEpisodeName = if (TRANSLATION_ENABLED && !isProbablyPortuguese(episodeName)) {
+                    val translated = translateText(episodeName)
+                    if (translated != episodeName) translated else episodeName
+                } else {
+                    episodeName
+                }
+                
+                // Descrição do episódio (com tradução)
+                val episodeDescription = if (aniZipEpisode?.overview != null && TRANSLATION_ENABLED) {
+                    val overview = aniZipEpisode.overview!!
+                    if (!isProbablyPortuguese(overview)) {
+                        translateText(overview)
+                    } else {
+                        overview
+                    }
+                } else {
+                    aniZipEpisode?.overview ?: "Nenhuma descrição disponível"
+                }
+
+                episodes.add(
+                    newEpisode(fixUrl(href)) {
+                        this.name = finalEpisodeName
+                        this.season = seasonNumber
+                        this.episode = episodeNumber
+                        this.description = episodeDescription
+                        this.posterUrl = aniZipEpisode?.image ?: aniZipData?.images?.firstOrNull()?.url
+                        this.score = Score.from10(aniZipEpisode?.rating)
+                        this.runTime = aniZipEpisode?.runtime
+                        
+                        // Data do episódio
+                        aniZipEpisode?.airDateUtc?.let { dateStr ->
+                            try {
+                                val formatter = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'")
+                                val date = formatter.parse(dateStr)
+                                this.date = date.time
+                            } catch (e: Exception) {
+                                // Ignorar erro de parsing
+                            }
+                        }
+                    }
+                )
+                
+                // Log a cada 10 episódios
+                if (index % 10 == 0 || index == episodeElements.size - 1) {
+                    println("✅ Ep $episodeNumber: $finalEpisodeName")
+                }
+                
+            } catch (e: Exception) {
+                println("❌ Erro episódio ${index + 1}: ${e.message}")
+            }
+        }
+        
+        return episodes.sortedBy { it.episode }
+    }
+
+    private fun extractEpisodeNumber(text: String): Int? {
+        val patterns = listOf(
+            Regex("Epis[oó]dio\\s*(\\d+)"),
+            Regex("Ep\\.?\\s*(\\d+)"),
+            Regex("(\\d{1,3})\\s*-"),
+            Regex("#(\\d+)"),
+            Regex("\\b(\\d{1,4})\\b")
+        )
+        
+        for (pattern in patterns) {
+            val match = pattern.find(text)
+            if (match != null) {
+                return match.groupValues[1].toIntOrNull()
+            }
+        }
+        return null
+    }
+
+    private fun getStatus(t: String?): ShowStatus {
+        return when (t?.lowercase()) {
+            "finished airing", "concluído", "completo" -> ShowStatus.Completed
+            "updating", "atualizando", "em andamento" -> ShowStatus.Ongoing
+            else -> ShowStatus.Completed
+        }
+    }
+
+    // ============ FUNÇÕES RESTANTES (mantidas do original) ============
+    
     private suspend fun searchMALIdByName(animeName: String): Int? {
         return try {
             val cleanName = animeName
@@ -271,23 +602,6 @@ class AnimeFire : MainAPI() {
         }
     }
 
-    // ============ BUSCA ANI.ZIP ============
-    private suspend fun fetchAniZipData(malId: Int): AniZipData? {
-        for (attempt in 1..MAX_TRIES) {
-            try {
-                val response = app.get("https://api.ani.zip/mappings?mal_id=$malId", timeout = 10_000)
-                
-                if (response.code == 200) {
-                    return response.parsedSafe<AniZipData>()
-                }
-            } catch (e: Exception) {
-                delay(RETRY_DELAY * attempt)
-            }
-        }
-        return null
-    }
-
-    // ============ METADADOS DO SITE ============
     private data class SiteMetadata(
         val poster: String? = null,
         val plot: String? = null,
@@ -296,7 +610,6 @@ class AnimeFire : MainAPI() {
     )
 
     private fun extractSiteMetadata(document: org.jsoup.nodes.Document): SiteMetadata {
-        // 1. POSTER
         val posterImg = document.selectFirst(".sub_animepage_img img.transitioning_src")
         val poster = when {
             posterImg?.hasAttr("src") == true -> fixUrl(posterImg.attr("src"))
@@ -305,19 +618,16 @@ class AnimeFire : MainAPI() {
                 ?.attr("src")?.let { fixUrl(it) }
         }
 
-        // 2. SINOPSE
         val plot = document.selectFirst("div.divSinopse span.spanAnimeInfo")
             ?.text()
             ?.trim()
             ?.replace(Regex("^Sinopse:\\s*"), "")
 
-        // 3. TAGS/GÊNEROS
         val tags = document.select("a.spanAnimeInfo.spanGeneros")
             .map { it.text().trim() }
             .filter { it.isNotBlank() }
             .takeIf { it.isNotEmpty() }?.toList()
 
-        // 4. ANO
         val year = document.selectFirst("div.animeInfo:contains(Ano:) span.spanAnimeInfo")
             ?.text()
             ?.trim()
@@ -326,12 +636,7 @@ class AnimeFire : MainAPI() {
         return SiteMetadata(poster, plot, tags, year)
     }
 
-    // ============ TMDB FUNCTIONS (APENAS PARA CERTAS INFORMAÇÕES) ============
-    private suspend fun searchOnTMDB(
-        query: String, 
-        year: Int?, 
-        isTv: Boolean
-    ): TMDBInfo? {
+    private suspend fun searchOnTMDB(query: String, year: Int?, isTv: Boolean): TMDBInfo? {
         return try {
             val type = if (isTv) "tv" else "movie"
             val encodedQuery = URLEncoder.encode(query, "UTF-8")
@@ -345,17 +650,8 @@ class AnimeFire : MainAPI() {
             val searchResult = response.parsedSafe<TMDBSearchResponse>() ?: return null
             val result = searchResult.results.firstOrNull() ?: return null
 
-            // Buscar detalhes completos
             val details = getTMDBDetails(result.id, isTv)
-
-            // Buscar trailer (SOMENTE TRAILER DO TMDB - PRIORIDADE TMDB)
             val youtubeTrailer = getHighQualityTrailer(details?.videos?.results)
-
-            // Extrair sinopse do TMDB (para prioridade TMDB > site > AniZip)
-            val overview = details?.overview?.takeIf { it.isNotBlank() }
-
-            // Extrair gêneros do TMDB (para prioridade TMDB > site)
-            val genres = details?.genres?.map { it.name }?.takeIf { it.isNotEmpty() }
 
             TMDBInfo(
                 id = result.id,
@@ -365,11 +661,11 @@ class AnimeFire : MainAPI() {
                 } else {
                     result.release_date?.substring(0, 4)?.toIntOrNull()
                 },
-                posterUrl = result.poster_path?.let { "$tmdbImageUrl/w500$it" }, // Para prioridade poster
+                posterUrl = result.poster_path?.let { "$tmdbImageUrl/w500$it" },
                 backdropUrl = details?.backdrop_path?.let { "$tmdbImageUrl/w1280$it" },
-                overview = overview, // Para prioridade sinopse
-                genres = genres, // Para prioridade tags
-                youtubeTrailer = youtubeTrailer, // Para prioridade trailer
+                overview = details?.overview,
+                genres = details?.genres?.map { it.name },
+                youtubeTrailer = youtubeTrailer,
                 duration = details?.runtime
             )
         } catch (e: Exception) {
@@ -380,7 +676,7 @@ class AnimeFire : MainAPI() {
     private suspend fun getTMDBDetails(id: Int, isTv: Boolean): TMDBDetailsResponse? {
         return try {
             val type = if (isTv) "tv" else "movie"
-            val url = "$TMDB_PROXY_URL/$type/$id?append_to_response=videos" // Só videos para trailer
+            val url = "$TMDB_PROXY_URL/$type/$id?append_to_response=videos"
 
             val response = app.get(url, timeout = 10_000)
             if (response.code != 200) return null
@@ -410,242 +706,6 @@ class AnimeFire : MainAPI() {
         ?.sortedByDescending { it.second }
         ?.firstOrNull()
         ?.let { (key, _, _) -> "https://www.youtube.com/watch?v=$key" }
-    }
-
-    // ============ EPISÓDIOS APENAS DO SITE ============
-    private fun extractEpisodesFromSite(document: org.jsoup.nodes.Document): List<Episode> {
-        val episodes = mutableListOf<Episode>()
-        
-        val episodeElements = document.select("a.lEp.epT, a.lEp, .divListaEps a, [href*='/video/'], [href*='/episodio/']")
-        
-        episodeElements.forEachIndexed { index, element ->
-            try {
-                val href = element.attr("href")
-                if (href.isBlank()) return@forEachIndexed
-                
-                val text = element.text().trim()
-                if (text.isBlank()) return@forEachIndexed
-                
-                val episodeNumber = extractEpisodeNumber(text)
-                val seasonNumber = 1
-                
-                val episodeName = element.selectFirst(".ep-name, .title")?.text()?.trim()
-                    ?: text.substringAfterLast("-").trim()
-                    ?: "Episódio $episodeNumber"
-
-                episodes.add(
-                    newEpisode(fixUrl(href)) {
-                        this.name = episodeName
-                        this.season = seasonNumber
-                        this.episode = episodeNumber
-                    }
-                )
-                
-            } catch (e: Exception) {
-                // Ignorar erro e continuar
-            }
-        }
-        
-        return episodes.sortedBy { it.episode }
-    }
-
-    private fun extractEpisodeNumber(text: String): Int {
-        val patterns = listOf(
-            Regex("Epis[oó]dio\\s*(\\d+)"),
-            Regex("Ep\\.?\\s*(\\d+)"),
-            Regex("(\\d{1,3})\\s*-"),
-            Regex("#(\\d+)"),
-            Regex("\\b(\\d{1,4})\\b")
-        )
-        
-        for (pattern in patterns) {
-            val match = pattern.find(text)
-            if (match != null) {
-                val num = match.groupValues[1].toIntOrNull()
-                if (num != null) return num
-            }
-        }
-        
-        return Regex("\\d+").find(text)?.value?.toIntOrNull() ?: 1
-    }
-
-    // ============ CRIAR RESPOSTA COM PRIORIDADES ESPECÍFICAS ============
-    private suspend fun createLoadResponseWithPriorities(
-        url: String,
-        cleanTitle: String,
-        year: Int?,
-        isMovie: Boolean,
-        type: TvType,
-        siteMetadata: SiteMetadata,
-        aniZipData: AniZipData?,
-        tmdbInfo: TMDBInfo?,
-        episodes: List<Episode>,
-        recommendations: List<SearchResponse>
-    ): LoadResponse {
-        
-        // ============ APLICAR PRIORIDADES DEFINIDAS ============
-        
-        // 1. POSTER FINAL: TMDB > AniZip > Site
-        val finalPoster = tmdbInfo?.posterUrl ?:
-                         aniZipData?.images?.find { it.coverType.equals("Poster", ignoreCase = true) }?.url?.let { fixUrl(it) } ?:
-                         siteMetadata.poster
-        
-        // 2. BACKDROP: TMDB > AniZip > Site
-        val finalBackdrop = tmdbInfo?.backdropUrl ?:
-                           aniZipData?.images?.find { it.coverType.equals("Fanart", ignoreCase = true) }?.url?.let { fixUrl(it) } ?:
-                           siteMetadata.poster?.let { fixUrl(it) }
-        
-        // 3. SINOPSE: TMDB > Site > AniZip
-        val finalPlot = tmdbInfo?.overview?.takeIf { it.isNotBlank() } ?:
-                       siteMetadata.plot?.takeIf { it.isNotBlank() } ?:
-                       aniZipData?.episodes?.values?.firstOrNull()?.overview?.takeIf { it.isNotBlank() }
-        
-        // 4. ANO: TMDB > Site > AniZip
-        val finalYear = tmdbInfo?.year ?:
-                       year ?:
-                       siteMetadata.year ?:
-                       aniZipData?.episodes?.values?.firstOrNull()?.airDateUtc?.substring(0, 4)?.toIntOrNull()
-        
-        // 5. TAGS: TMDB > Site
-        val finalTags = (tmdbInfo?.genres ?: emptyList()) + 
-                       (siteMetadata.tags ?: emptyList())
-        
-        // 6. ELENCO: AniZip > TMDB
-        val actors = extractActorsWithPriority(aniZipData, tmdbInfo)
-        
-        // 7. LANÇAMENTO DO PRÓXIMO EPISÓDIO (apenas do AniZip)
-        val nextEpisodeDate = extractNextEpisodeDate(aniZipData)
-        
-        // 8. TRAILER: TMDB (apenas)
-        val trailer = tmdbInfo?.youtubeTrailer
-        
-        return if (isMovie) {
-            newMovieLoadResponse(cleanTitle, url, type, url) {
-                this.year = finalYear
-                this.plot = finalPlot
-                this.tags = finalTags.distinct().take(10)
-                this.posterUrl = finalPoster
-                this.backgroundPosterUrl = finalBackdrop
-                this.recommendations = recommendations.takeIf { it.isNotEmpty() }
-                
-                // Adicionar atores com prioridade AniZip > TMDB
-                if (actors.isNotEmpty()) {
-                    addActors(actors)
-                }
-                
-                // Adicionar trailer do TMDB (apenas TMDB)
-                trailer?.let { trailerUrl ->
-                    addTrailer(trailerUrl)
-                }
-            }
-        } else {
-            newAnimeLoadResponse(cleanTitle, url, type) {
-                addEpisodes(DubStatus.Subbed, episodes)
-                
-                this.year = finalYear
-                this.plot = finalPlot
-                this.tags = finalTags.distinct().take(10)
-                this.posterUrl = finalPoster
-                this.backgroundPosterUrl = finalBackdrop
-                this.recommendations = recommendations.takeIf { it.isNotEmpty() }
-                
-                // Adicionar atores com prioridade AniZip > TMDB
-                if (actors.isNotEmpty()) {
-                    addActors(actors)
-                }
-                
-                // Adicionar trailer do TMDB (apenas TMDB)
-                trailer?.let { trailerUrl ->
-                    addTrailer(trailerUrl)
-                }
-            }
-        }
-    }
-
-    // ============ EXTRAIR ATORES COM PRIORIDADE ANIZIP > TMDB ============
-    private fun extractActorsWithPriority(aniZipData: AniZipData?, tmdbInfo: TMDBInfo?): List<Actor> {
-        val actors = mutableListOf<Actor>()
-        
-        // 1. PRIMEIRO: Extrair atores do AniZip (PRIORIDADE ANIZIP)
-        if (aniZipData != null) {
-            val aniZipActors = extractActorsFromAniZip(aniZipData)
-            actors.addAll(aniZipActors)
-        }
-        
-        // 2. DEPOIS: Se não tem atores suficientes do AniZip, pegar do TMDB
-        if (actors.size < 5 && tmdbInfo != null) {
-            // Extrair atores do TMDB (removido porque elenco tem prioridade AniZip > TMDB)
-            // Mas podemos usar se não tiver nenhum do AniZip
-        }
-        
-        return actors.take(10)
-    }
-
-    private fun extractActorsFromAniZip(aniZipData: AniZipData?): List<Actor> {
-        val actors = mutableListOf<Actor>()
-        
-        if (aniZipData == null) return actors
-        
-        // Procurar por informações de atores/dubladores nos episódios
-        aniZipData.episodes?.values?.forEach { episode ->
-            episode.overview?.let { overview ->
-                // Procurar por padrões comuns de informações de dubladores (em japonês/inglês)
-                val actorPatterns = listOf(
-                    Regex("Voice Actor[:\\.]\\s*(.+)", RegexOption.IGNORE_CASE),
-                    Regex("Seiyū[:\\.]\\s*(.+)", RegexOption.IGNORE_CASE),
-                    Regex("Cast[:\\.]\\s*(.+)", RegexOption.IGNORE_CASE),
-                    Regex("Starring[:\\.]\\s*(.+)", RegexOption.IGNORE_CASE),
-                    Regex("Performed by[:\\.]\\s*(.+)", RegexOption.IGNORE_CASE),
-                    Regex("声優[:\\.]\\s*(.+)"), // Japonês para seiyū
-                    Regex("CV[:\\.]\\s*(.+)") // Character Voice
-                )
-                
-                actorPatterns.forEach { pattern ->
-                    val match = pattern.find(overview)
-                    if (match != null) {
-                        val actorsText = match.groupValues[1].trim()
-                        // Tentar extrair múltiplos atores separados por vírgula, "and", "、", "・"
-                        val actorNames = actorsText.split(",", " and ", "&", "、", "・", "/")
-                            .map { it.trim() }
-                            .filter { it.isNotBlank() }
-                        
-                        actorNames.forEach { actorName ->
-                            if (actorName.isNotBlank() && !actors.any { it.name.equals(actorName, ignoreCase = true) }) {
-                                actors.add(Actor(name = actorName))
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        
-        return actors
-    }
-
-    // ============ EXTRAIR DATA DO PRÓXIMO EPISÓDIO DO ANIZIP ============
-    private fun extractNextEpisodeDate(aniZipData: AniZipData?): Long? {
-        if (aniZipData == null) return null
-        
-        // Procurar por episódios futuros no AniZip
-        aniZipData.episodes?.values?.forEach { episode ->
-            episode.airDateUtc?.let { airDateStr ->
-                try {
-                    // Formato esperado: "2024-01-01T00:00:00Z"
-                    val dateFormatter = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'")
-                    val date = dateFormatter.parse(airDateStr)
-                    val now = System.currentTimeMillis()
-                    
-                    // Se a data do episódio for no futuro, retornar
-                    if (date.time > now) {
-                        return date.time
-                    }
-                } catch (e: Exception) {
-                    // Ignorar se não conseguir parsear a data
-                }
-            }
-        }
-        
-        return null
     }
 
     private suspend fun extractRecommendations(document: org.jsoup.nodes.Document): List<SearchResponse> {
@@ -683,43 +743,6 @@ class AnimeFire : MainAPI() {
     @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
     private data class AniListMedia(
         @JsonProperty("idMal") val idMal: Int? = null
-    )
-
-    @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
-    private data class AniZipData(
-        @JsonProperty("titles") val titles: Map<String, String>? = null,
-        @JsonProperty("images") val images: List<AniZipImage>? = null,
-        @JsonProperty("episodes") val episodes: Map<String, AniZipEpisode>? = null
-    )
-
-    @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
-    private data class AniZipImage(
-        @JsonProperty("coverType") val coverType: String? = null,
-        @JsonProperty("url") val url: String? = null
-    )
-
-    @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
-    private data class AniZipEpisode(
-        @JsonProperty("episode") val episode: String? = null,
-        @JsonProperty("title") val title: Map<String, String>? = null,
-        @JsonProperty("overview") val overview: String? = null,
-        @JsonProperty("image") val image: String? = null,
-        @JsonProperty("runtime") val runtime: Int? = null,
-        @JsonProperty("rating") val rating: String? = null,
-        @JsonProperty("airDateUtc") val airDateUtc: String? = null
-    )
-
-    // ============ CLASSES TMDB ============
-    private data class TMDBInfo(
-        val id: Int,
-        val title: String?,
-        val year: Int?,
-        val posterUrl: String?,
-        val backdropUrl: String?,
-        val overview: String?,
-        val genres: List<String>?,
-        val youtubeTrailer: String?,
-        val duration: Int?
     )
 
     @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
@@ -762,5 +785,17 @@ class AnimeFire : MainAPI() {
         @JsonProperty("site") val site: String,
         @JsonProperty("type") val type: String,
         @JsonProperty("official") val official: Boolean? = false
+    )
+
+    private data class TMDBInfo(
+        val id: Int,
+        val title: String?,
+        val year: Int?,
+        val posterUrl: String?,
+        val backdropUrl: String?,
+        val overview: String?,
+        val genres: List<String>?,
+        val youtubeTrailer: String?,
+        val duration: Int?
     )
 }
