@@ -335,18 +335,15 @@ class AnimeFire : MainAPI() {
     private suspend fun translateWithMethod3(text: String): String? {
         println("   🛠️  Preparando payload Form encoded...")
         
-        val form = listOf(
-            "text" to text,
-            "source_lang" to "auto",
-            "target_lang" to "pt"
-        )
+        // Para Form encoded, precisamos criar um string manualmente
+        val formData = "text=${URLEncoder.encode(text, "UTF-8")}&source_lang=auto&target_lang=pt"
         
-        println("   📦 Form data: $form")
+        println("   📦 Form data: $formData")
         
         return try {
             val response = app.post(
                 url = CF_WORKER_URL,
-                data = form,
+                data = formData, // Enviar como string
                 headers = mapOf(
                     "Content-Type" to "application/x-www-form-urlencoded",
                     "Accept" to "application/json"
@@ -788,22 +785,22 @@ class AnimeFire : MainAPI() {
 
     @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
     private data class AniListResponse(
-        @JsonProperty("data") val data: AniListData?
+        @JsonProperty("data") val data: AniListData? = null
     )
 
     @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
     private data class AniListData(
-        @JsonProperty("Page") val Page: AniListPage?
+        @JsonProperty("Page") val Page: AniListPage? = null
     )
 
     @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
     private data class AniListPage(
-        @JsonProperty("media") val media: List<AniListMedia>?
+        @JsonProperty("media") val media: List<AniListMedia>? = null
     )
 
     @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
     private data class AniListMedia(
-        @JsonProperty("idMal") val idMal: Int?
+        @JsonProperty("idMal") val idMal: Int? = null
     )
 
     @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
@@ -815,19 +812,19 @@ class AnimeFire : MainAPI() {
 
     @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
     private data class AniZipImage(
-        @JsonProperty("coverType") val coverType: String?,
-        @JsonProperty("url") val url: String?
+        @JsonProperty("coverType") val coverType: String? = null,
+        @JsonProperty("url") val url: String? = null
     )
 
     @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
     private data class AniZipEpisode(
-        @JsonProperty("episode") val episode: String?,
-        @JsonProperty("title") val title: Map<String, String>?,
-        @JsonProperty("overview") val overview: String?,
-        @JsonProperty("image") val image: String?,
-        @JsonProperty("runtime") val runtime: Int?,
-        @JsonProperty("rating") val rating: String?,
-        @JsonProperty("airDateUtc") val airDateUtc: String?
+        @JsonProperty("episode") val episode: String? = null,
+        @JsonProperty("title") val title: Map<String, String>? = null,
+        @JsonProperty("overview") val overview: String? = null,
+        @JsonProperty("image") val image: String? = null,
+        @JsonProperty("runtime") val runtime: Int? = null,
+        @JsonProperty("rating") val rating: String? = null,
+        @JsonProperty("airDateUtc") val airDateUtc: String? = null
     )
 
     @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
@@ -837,7 +834,4 @@ class AnimeFire : MainAPI() {
         @JsonProperty("originalText") val originalText: String? = null,
         @JsonProperty("originalLength") val originalLength: Int? = null,
         @JsonProperty("translatedLength") val translatedLength: Int? = null,
-        @JsonProperty("sourceLang") val sourceLang: String? = null,
-        @JsonProperty("targetLang") val targetLang: String? = null,
-        @JsonProperty("error") val error: String? = null,
-        @JsonProperty("details") val details: String? = null,
+        @JsonProperty("sourceLang
