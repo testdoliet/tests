@@ -50,12 +50,18 @@ class AnimeFire : MainAPI() {
     private val cacheCleanupThreshold = 1500
     private val PREF_NAME = "AnimeFire_Cache_v2"
     
-    // Inicialização do cache
-    override fun initialize(context: Context) {
-        super.initialize(context)
-        sharedPrefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
-        loadPersistentCache()
-        println("✅ [CACHE] Sistema iniciado: ${memoryCache.size} itens carregados")
+    // ============ INICIALIZAÇÃO DO CACHE ============
+    // Esta função é chamada AUTOMATICAMENTE pelo CloudStream
+    override fun onInitialize() {
+        try {
+            // Usa o contexto padrão do CloudStream
+            val context = app.context ?: return
+            sharedPrefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+            loadPersistentCache()
+            println("✅ [CACHE] Sistema iniciado: ${memoryCache.size} itens carregados")
+        } catch (e: Exception) {
+            println("❌ [CACHE] Erro na inicialização: ${e.message}")
+        }
     }
     
     // Carrega cache persistente na memória
