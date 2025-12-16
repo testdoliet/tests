@@ -13,6 +13,8 @@ import kotlinx.coroutines.delay
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.google.gson.JsonParser
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties
+import android.content.Context
+import android.content.SharedPreferences
 
 class AnimeFire : MainAPI() {
     override var mainUrl = "https://animefire.io"
@@ -40,25 +42,131 @@ class AnimeFire : MainAPI() {
         "$mainUrl" to "Últimos Episódios Adicionados"
     )
 
-    // ============ SISTEMA DE TRADUÇÃO OTIMIZADO ============
+    // ============ SISTEMA DE CACHE PERSISTENTE ============
     
+    private lateinit var sharedPrefs: SharedPreferences
+    private val memoryCache = mutableMapOf<String, String>()
+    private val cacheMaxSize = 1000
+    private val cacheCleanupThreshold = 1500
+    private val PREF_NAME = "AnimeFire_Cache_v2"
+    
+    // Inicialização do cache
+    override fun initialize(context: Context) {
+        super.initialize(context)
+        sharedPrefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+        loadPersistentCache()
+        println("✅ [CACHE] Sistema iniciado: ${memoryCache.size} itens carregados")
+    }
+    
+    // Carrega cache persistente na memória
+    private fun loadPersistentCache() {
+        try {
+            val allEntries = sharedPrefs.all
+            var loadedCount = 0
+            
+            allEntries.forEach { (key, value) ->
+                if (key.startsWith("t_") && value is String) {
+                    val originalText = key.substring(2)
+                    memoryCache[originalText] = value
+                    loadedCount++
+                    
+                    // Limita carregamento para evitar memória excessiva
+                    if (loadedCount >= cacheMaxSize) return@forEach
+                }
+            }
+            println("📦 [CACHE] Carregados $loadedCount itens do armazenamento")
+        } catch (e: Exception) {
+            println("❌ [CACHE] Erro ao carregar cache: ${e.message}")
+        }
+    }
+    
+    // Sistema de tradução com cache duplo (memória + persistente)
+    private suspend fun translateWithCache(text: String): String {
+        // Verificações básicas
+        if (!TRANSLATION_ENABLED || text.isBlank() || text.length < 3) return text
+        if (isProbablyPortuguese(text)) return text
+        
+        // 1. Verifica cache em memória (mais rápido)
+        memoryCache[text]?.let {
+            println("⚡ [CACHE] Hit memória: \"${text.take(40)}...\"")
+            return it
+        }
+        
+        // 2. Verifica cache persistente
+        try {
+            val key = "t_${text.hashCode()}"
+            sharedPrefs.getString(key, null)?.let { cachedTranslation ->
+                println("💾 [CACHE] Hit persistente: \"${text.take(40)}...\"")
+                // Armazena também em memória para acesso futuro rápido
+                memoryCache[text] = cachedTranslation
+                return cachedTranslation
+            }
+        } catch (e: Exception) {
+            // Ignora erro e vai para workers
+        }
+        
+        // 3. Se não tem cache, busca no workers
+        println("🌐 [CACHE] Miss: buscando \"${text.take(40)}...\"")
+        val translated = translateText(text)
+        
+        // 4. Armazena apenas se a tradução for válida e diferente
+        if (translated != text && translated.isNotBlank() && translated.length > 2) {
+            storeTranslation(text, translated)
+            println("✅ [CACHE] Armazenado (Total memória: ${memoryCache.size})")
+        }
+        
+        return translated
+    }
+    
+    // Armazena em ambos os caches
+    private fun storeTranslation(original: String, translated: String) {
+        // Gerencia tamanho do cache em memória
+        if (memoryCache.size >= cacheCleanupThreshold) {
+            cleanupMemoryCache()
+        }
+        
+        if (memoryCache.size < cacheMaxSize) {
+            memoryCache[original] = translated
+        }
+        
+        // Armazena no persistente (sem limite de tamanho)
+        try {
+            val key = "t_${original.hashCode()}"
+            with(sharedPrefs.edit()) {
+                putString(key, translated)
+                apply()
+            }
+        } catch (e: Exception) {
+            println("⚠️ [CACHE] Erro ao salvar no cache persistente: ${e.message}")
+        }
+    }
+    
+    // Limpa cache em memória quando necessário
+    private fun cleanupMemoryCache() {
+        println("🧹 [CACHE] Limpando cache em memória (${memoryCache.size} itens)")
+        // Remove 30% dos itens mais antigos (baseado na ordem)
+        val itemsToRemove = memoryCache.keys.take((memoryCache.size * 0.3).toInt())
+        itemsToRemove.forEach { memoryCache.remove(it) }
+        println("✅ [CACHE] Cache limpo: ${memoryCache.size} itens restantes")
+    }
+    
+    // Função original de tradução (mantida para workers)
     private suspend fun translateText(text: String): String {
         if (!TRANSLATION_ENABLED || text.isBlank() || text.length < 3) return text
         
-        // Não traduzir se já parece estar em português
         if (isProbablyPortuguese(text)) return text
         
         return try {
-            // Tenta primeiro com o workers
             val workersTranslated = translateWithWorkers(text)
             if (workersTranslated != text) return workersTranslated
             
-            // Fallback para método direto
             translateDirectGoogle(text)
         } catch (e: Exception) {
-            text // Sempre retorna algo em caso de erro
+            text
         }
     }
+
+    // ============ SISTEMA DE TRADUÇÃO ORIGINAL (MANTIDO) ============
     
     private fun isProbablyPortuguese(text: String): Boolean {
         val portugueseWords = listOf("episódio", "temporada", "sinopse", "dublado", 
@@ -74,7 +182,7 @@ class AnimeFire : MainAPI() {
             val encodedText = URLEncoder.encode(text, "UTF-8")
             val url = "$WORKERS_URL/translate?text=$encodedText&target=pt"
             
-            println("🔍 [TRADUÇÃO] Chamando workers: $url")
+            println("🔍 [TRADUÇÃO] Chamando workers: ${url.take(80)}...")
             
             val response = app.get(url, timeout = 5000)
             
@@ -83,7 +191,6 @@ class AnimeFire : MainAPI() {
             if (response.code == 200) {
                 val json = JsonParser.parseString(response.text)
                 
-                // Tenta diferentes formatos de resposta
                 val translated = when {
                     json.isJsonObject -> {
                         json.asJsonObject.get("translatedText")?.asString
@@ -340,12 +447,12 @@ class AnimeFire : MainAPI() {
         genres: List<String>?
     ): LoadResponse {
         
-        // TRADUZIR SINOPSE
+        // TRADUZIR SINOPSE (COM CACHE)
         val finalPlot = if (TRANSLATION_ENABLED && siteMetadata.plot != null) {
             val originalPlot = siteMetadata.plot!!
             if (!isProbablyPortuguese(originalPlot)) {
-                println("🔍 Traduzindo sinopse...")
-                val translated = translateText(originalPlot)
+                println("🔍 Traduzindo sinopse (com cache)...")
+                val translated = translateWithCache(originalPlot)  // <--- USA CACHE AQUI
                 if (translated != originalPlot) {
                     println("✅ Sinopse traduzida!")
                     translated
@@ -374,6 +481,11 @@ class AnimeFire : MainAPI() {
         val finalTags = (tmdbInfo?.genres ?: emptyList()) + 
                        (genres ?: emptyList()) + 
                        (siteMetadata.tags ?: emptyList())
+
+        // Estatísticas do cache a cada 10 carregamentos
+        if (memoryCache.size % 10 == 0) {
+            println("📊 [CACHE] Estatísticas: ${memoryCache.size} itens em memória")
+        }
 
         println("🏗️ Criando resposta final...")
         println("📖 Sinopse: ${finalPlot?.take(50)}...")
@@ -444,19 +556,18 @@ class AnimeFire : MainAPI() {
                     ?: text.substringAfterLast("-").trim()
                     ?: "Episódio $episodeNumber"
                 
-                // Traduzir título se não estiver em português
+                // Traduzir título se não estiver em português (COM CACHE)
                 val finalEpisodeName = if (TRANSLATION_ENABLED && !isProbablyPortuguese(episodeName)) {
-                    val translated = translateText(episodeName)
-                    if (translated != episodeName) translated else episodeName
+                    translateWithCache(episodeName)  // <--- USA CACHE AQUI
                 } else {
                     episodeName
                 }
                 
-                // Descrição do episódio (com tradução)
+                // Descrição do episódio (com tradução COM CACHE)
                 val episodeDescription = if (aniZipEpisode?.overview != null && TRANSLATION_ENABLED) {
                     val overview = aniZipEpisode.overview!!
                     if (!isProbablyPortuguese(overview)) {
-                        translateText(overview)
+                        translateWithCache(overview)  // <--- USA CACHE AQUI
                     } else {
                         overview
                     }
