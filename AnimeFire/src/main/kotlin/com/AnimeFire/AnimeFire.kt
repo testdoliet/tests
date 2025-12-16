@@ -269,9 +269,14 @@ class AnimeFire : MainAPI() {
         println("   $payload")
         
         return try {
+            // CORREÇÃO: Criar um Map<String, String> em vez de enviar String direta
             val response = app.post(
                 url = CF_WORKER_URL,
-                data = payload,
+                data = mapOf(
+                    "text" to escapedText,
+                    "source_lang" to "auto",
+                    "target_lang" to "pt"
+                ),
                 headers = mapOf(
                     "Content-Type" to "application/json",
                     "Accept" to "application/json"
@@ -341,9 +346,15 @@ class AnimeFire : MainAPI() {
         println("   📦 Form data: $formData")
         
         return try {
+            // CORREÇÃO: Para form encoded, usar data como Map<String, String>
+            // com "Content-Type": "application/x-www-form-urlencoded"
             val response = app.post(
                 url = CF_WORKER_URL,
-                data = formData, // Enviar como string
+                data = mapOf(
+                    "text" to text,
+                    "source_lang" to "auto",
+                    "target_lang" to "pt"
+                ),
                 headers = mapOf(
                     "Content-Type" to "application/x-www-form-urlencoded",
                     "Accept" to "application/json"
@@ -457,10 +468,14 @@ class AnimeFire : MainAPI() {
                 }
             """.trimIndent()
             
+            // CORREÇÃO: Enviar query como String no campo "query" do Map
             val response = app.post(
                 "https://graphql.anilist.co",
                 data = mapOf("query" to query),
-                headers = mapOf("Content-Type" to "application/json", "Accept" to "application/json"),
+                headers = mapOf(
+                    "Content-Type" to "application/json",
+                    "Accept" to "application/json"
+                ),
                 timeout = 10_000
             )
             
