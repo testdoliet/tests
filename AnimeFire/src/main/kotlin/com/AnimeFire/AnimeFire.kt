@@ -646,7 +646,14 @@ class AnimeFire : MainAPI() {
 private data class TranslationResponse(
     @JsonProperty("success") val success: Boolean? = false,
     @JsonProperty("translatedText") val translatedText: String? = null,
+    @JsonProperty("originalText") val originalText: String? = null,
+    @JsonProperty("originalLength") val originalLength: Int? = null,
+    @JsonProperty("translatedLength") val translatedLength: Int? = null,
+    @JsonProperty("sourceLang") val sourceLang: String? = null,
+    @JsonProperty("targetLang") val targetLang: String? = null,
     @JsonProperty("error") val error: String? = null,
-    @JsonProperty("details") val details: String? = null
+    @JsonProperty("details") val details: String? = null,
+    @JsonProperty("note") val note: String? = null
+)
     )
 }
