@@ -26,9 +26,6 @@ class AnimeFire : MainAPI() {
         private const val RETRY_DELAY = 1000L
         private const val TMDB_PROXY_URL = "https://lawliet.euluan1912.workers.dev"
         private const val tmdbImageUrl = "https://image.tmdb.org/t/p"
-        
-        // Configuração de paginação
-        private const val EPISODES_PER_PAGE = 20 // CloudStream carrega 20 em 20
     }
 
     override val mainPage = mainPageOf(
@@ -101,7 +98,7 @@ class AnimeFire : MainAPI() {
                     }
                 }
             }
-            else -> emptyList() // Adicionado else para tornar o when exaustivo
+            else -> emptyList()
         }
         
         return newHomePageResponse(request.name, homeItems.distinctBy { it.url }, false)
@@ -116,7 +113,7 @@ class AnimeFire : MainAPI() {
             .take(30)
     }
 
-    // ============ LOAD PRINCIPAL (sem episódios) ============
+    // ============ LOAD PRINCIPAL ============
     override suspend fun load(url: String): LoadResponse {
         println("\n" + "=".repeat(80))
         println("🚀 AnimeFire.load() para URL: $url")
@@ -156,7 +153,7 @@ class AnimeFire : MainAPI() {
             }
         }
 
-        // 3. BUSCAR NO TMDB (apenas para trailer e metadados)
+        // 3. BUSCAR NO TMDB (apenas para trailer)
         println("\n🔍 Buscando no TMDB...")
         val tmdbInfo = searchOnTMDB(cleanTitle, year, !isMovie)
         
@@ -165,18 +162,25 @@ class AnimeFire : MainAPI() {
         } else {
             println("✅ TMDB OK! Título: ${tmdbInfo.title}")
             println("✅ Trailer encontrado: ${tmdbInfo.youtubeTrailer != null}")
-            println("✅ Total temporadas: ${tmdbInfo.seasonsEpisodes.size}")
         }
 
         // 4. EXTRAIR METADADOS DO SITE
         println("\n🔍 Extraindo metadados do site...")
         val siteMetadata = extractSiteMetadata(document)
         
-        // 5. EXTRAIR RECOMENDAÇÕES
+        // 5. EXTRAIR EPISÓDIOS (com paginação inteligente)
+        println("\n🔍 Extraindo episódios com paginação...")
+        val episodes = if (!isMovie) {
+            extractEpisodesWithPagination(document, url, tmdbInfo)
+        } else {
+            emptyList()
+        }
+
+        // 6. EXTRAIR RECOMENDAÇÕES
         val recommendations = extractRecommendations(document)
 
-        // 6. CRIAR RESPOSTA (SEM EPISÓDIOS - eles virão via getEpisodeList)
-        println("\n🏗️ Criando resposta principal (sem episódios)...")
+        // 7. CRIAR RESPOSTA
+        println("\n🏗️ Criando resposta final...")
         
         // PRIORIDADE: AniZip > Site > TMDB (apenas para trailer)
         val finalPoster = aniZipData?.images?.find { it.coverType.equals("Poster", ignoreCase = true) }?.url?.let { fixUrl(it) } ?:
@@ -205,11 +209,8 @@ class AnimeFire : MainAPI() {
         println("   🏷️  Tags: ${finalTags.take(3).joinToString()}")
         println("   🎬 Trailer: ${tmdbInfo?.youtubeTrailer ?: "Não encontrado"}")
         println("   🎭 Atores: ${aniZipActors.size}")
-        println("   📺 Episódios: Serão carregados via paginação (20 em 20)")
+        println("   📺 Episódios: ${episodes.size}")
 
-        // SALVAR TMDB INFO PARA USAR NA PAGINAÇÃO
-        val tmdbSeasonsInfo = tmdbInfo?.seasonsEpisodes
-        
         return if (isMovie) {
             newMovieLoadResponse(cleanTitle, url, type, url) {
                 this.year = finalYear
@@ -228,16 +229,10 @@ class AnimeFire : MainAPI() {
                 }
             }
         } else {
-            // IMPORTANTE: NÃO adicionar episódios aqui! Eles virão via getEpisodeList
             newAnimeLoadResponse(cleanTitle, url, type) {
-                // Apenas adicionar um episódio dummy para o CloudStream saber que há episódios
-                addEpisodes(DubStatus.Subbed, listOf(
-                    newEpisode(url) {
-                        name = "Carregando episódios..."
-                        season = 1
-                        episode = 1
-                    }
-                ))
+                // O CloudStream automaticamente faz paginação quando há muitos episódios
+                // Ele carrega em lotes de aproximadamente 20-30 episódios
+                addEpisodes(DubStatus.Subbed, episodes)
                 
                 this.year = finalYear
                 this.plot = finalPlot
@@ -253,241 +248,168 @@ class AnimeFire : MainAPI() {
                 tmdbInfo?.youtubeTrailer?.let { trailerUrl ->
                     addTrailer(trailerUrl)
                 }
-                
-                // Adicionar dados extras para usar na paginação
-                this.data = mapOf(
-                    "tmdbSeasons" to tmdbSeasonsInfo?.keys?.sorted()?.joinToString(","),
-                    "totalSeasons" to (tmdbSeasonsInfo?.size ?: 0).toString(),
-                    "url" to url,
-                    "tmdbId" to (tmdbInfo?.id?.toString() ?: "")
-                ).toString()
             }
         }
     }
 
-    // ============ PAGINAÇÃO DE EPISÓDIOS (20 em 20) ============
+    // ============ EXTRAIR EPISÓDIOS COM PAGINAÇÃO INTELIGENTE ============
     
     /**
-     * Esta função é chamada automaticamente pelo CloudStream para carregar episódios em lotes
-     * @param page Número da página (começa em 1)
-     * @param season Número da temporada (se aplicável)
-     * @param data Dados extras passados do load()
+     * Extrai episódios com otimização para séries longas
+     * - Para séries com até 100 episódios: extrai todos
+     * - Para séries longas (>100): extrai apenas os primeiros 50 + últimos 10
+     * - O CloudStream faz a paginação automática
      */
-    override suspend fun getEpisodeList(
-        data: String,
-        page: Int,
-        season: Int?
-    ): List<Episode> {
-        println("\n📺 [EPISODE LIST] Carregando página $page, temporada ${season ?: 1}")
-        
-        // Extrair dados salvos
-        val dataMap = parseDataMap(data)
-        val url = dataMap["url"] ?: return emptyList()
-        val tmdbSeasonsStr = dataMap["tmdbSeasons"]
-        val totalSeasons = dataMap["totalSeasons"]?.toIntOrNull() ?: 0
-        
-        println("📺 [EPISODE LIST] URL: $url")
-        println("📺 [EPISODE LIST] Total temporadas: $totalSeasons")
-        
-        // Se não tiver temporadas do TMDB, usar método do site
-        if (totalSeasons == 0 || tmdbSeasonsStr.isNullOrEmpty()) {
-            println("⚠️ [EPISODE LIST] Sem dados TMDB, usando extração do site")
-            return extractEpisodesFromSite(url, page)
-        }
-        
-        // Usar dados do TMDB para organizar por temporadas
-        val tmdbSeasons = tmdbSeasonsStr.split(",").mapNotNull { it.toIntOrNull() }
-        val currentSeason = season ?: 1
-        
-        println("📺 [EPISODE LIST] Temporadas disponíveis: $tmdbSeasons")
-        println("📺 [EPISODE LIST] Temporada atual: $currentSeason")
-        
-        // Buscar dados da temporada atual do TMDB
-        val tmdbSeasonData = fetchTMDBSeasonData(dataMap, currentSeason)
-        
-        // Calcular range de episódios para esta página
-        val startEpisode = ((page - 1) * EPISODES_PER_PAGE) + 1
-        val endEpisode = startEpisode + EPISODES_PER_PAGE - 1
-        
-        println("📺 [EPISODE LIST] Episódios: $startEpisode - $endEpisode")
-        
-        // Extrair episódios do TMDB para esta página
-        val episodes = extractEpisodesFromTMDBSeason(
-            tmdbSeasonData = tmdbSeasonData,
-            url = url,
-            seasonNumber = currentSeason,
-            startEpisode = startEpisode,
-            endEpisode = endEpisode
-        )
-        
-        // Se não tiver episódios do TMDB, tentar do site
-        return if (episodes.isEmpty()) {
-            println("⚠️ [EPISODE LIST] Sem episódios do TMDB, usando site")
-            extractEpisodesFromSite(url, page)
-        } else {
-            episodes
-        }
-    }
-    
-    /**
-     * Buscar dados de uma temporada específica do TMDB
-     */
-    private suspend fun fetchTMDBSeasonData(
-        dataMap: Map<String, String>,
-        seasonNumber: Int
-    ): List<TMDBEpisode>? {
-        val tmdbId = dataMap["tmdbId"]?.toIntOrNull() ?: return null
-        
-        println("🔍 [TMDB] Buscando temporada $seasonNumber...")
-        
-        return try {
-            val seasonUrl = "$TMDB_PROXY_URL/tv/$tmdbId/season/$seasonNumber"
-            val response = app.get(seasonUrl, timeout = 10_000)
-            
-            if (response.code == 200) {
-                val seasonData = response.parsedSafe<TMDBSeasonResponse>()
-                println("✅ [TMDB] Temporada $seasonNumber: ${seasonData?.episodes?.size} episódios")
-                seasonData?.episodes
-            } else {
-                println("❌ [TMDB] Erro HTTP: ${response.code}")
-                null
-            }
-        } catch (e: Exception) {
-            println("❌ [TMDB] Exception: ${e.message}")
-            null
-        }
-    }
-    
-    /**
-     * Extrair episódios de uma temporada do TMDB com paginação
-     */
-    private fun extractEpisodesFromTMDBSeason(
-        tmdbSeasonData: List<TMDBEpisode>?,
+    private suspend fun extractEpisodesWithPagination(
+        document: org.jsoup.nodes.Document,
         url: String,
-        seasonNumber: Int,
-        startEpisode: Int,
-        endEpisode: Int
+        tmdbInfo: TMDBInfo?
     ): List<Episode> {
-        if (tmdbSeasonData.isNullOrEmpty()) return emptyList()
-        
         val episodes = mutableListOf<Episode>()
         
-        // Filtrar apenas os episódios para esta página
-        val episodesForPage = tmdbSeasonData.filter { episode ->
-            val epNum = episode.episode_number
-            epNum in startEpisode..endEpisode
+        println("🔍 [EPISODES] Buscando episódios...")
+        
+        val episodeElements = document.select("a.lEp.epT, a.lEp, .divListaEps a")
+        
+        if (episodeElements.isEmpty()) {
+            println("⚠️ [EPISODES] Nenhum episódio encontrado")
+            return emptyList()
         }
         
-        println("📺 [TMDB SEASON] Encontrados ${episodesForPage.size} episódios para a página")
+        println("📊 [EPISODES] Total encontrados no site: ${episodeElements.size}")
         
-        episodesForPage.forEach { tmdbEpisode ->
+        // Decidir quantos episódios extrair baseado no total
+        val maxEpisodesToExtract = when {
+            episodeElements.size <= 100 -> {
+                // Séries curtas: extrair tudo
+                println("📊 [EPISODES] Série curta, extraindo todos os ${episodeElements.size} episódios")
+                episodeElements.size
+            }
+            else -> {
+                // Séries longas: extrair primeiros 50 + últimos 10
+                println("📊 [EPISODES] Série longa, extraindo primeiros 50 + últimos 10 episódios")
+                60
+            }
+        }
+        
+        // Extrair primeiros episódios
+        val episodesToExtract = if (episodeElements.size > maxEpisodesToExtract) {
+            // Para séries longas, pegar primeiros 50 + últimos 10
+            val firstEpisodes = episodeElements.take(50)
+            val lastEpisodes = episodeElements.takeLast(10)
+            firstEpisodes + lastEpisodes
+        } else {
+            episodeElements
+        }
+        
+        println("📊 [EPISODES] Extraindo ${episodesToExtract.size} episódios")
+        
+        episodesToExtract.forEachIndexed { index, element ->
             try {
-                // Criar URL do episódio baseado no padrão do site
-                val episodeUrl = buildEpisodeUrl(url, seasonNumber, tmdbEpisode.episode_number)
+                val href = element.attr("href")
+                if (href.isBlank()) return@forEachIndexed
                 
-                val descriptionWithDuration = buildDescriptionWithDuration(
-                    tmdbEpisode.overview,
-                    tmdbEpisode.runtime
-                )
+                val text = element.text().trim()
+                if (text.isBlank()) return@forEachIndexed
                 
-                val episode = newEpisode(episodeUrl) {
-                    this.name = "T${seasonNumber} - ${tmdbEpisode.name}"
-                    this.season = seasonNumber
-                    this.episode = tmdbEpisode.episode_number
-                    this.description = descriptionWithDuration
-                    
-                    tmdbEpisode.air_date?.let { airDate ->
-                        try {
-                            val dateFormatter = SimpleDateFormat("yyyy-MM-dd")
-                            val date = dateFormatter.parse(airDate)
-                            this.date = date.time
-                        } catch (e: Exception) {}
+                val episodeNumber = extractEpisodeNumber(text, index + 1)
+                val seasonNumber = 1 // Anime geralmente tem só temporada 1
+                
+                // Buscar dados do TMDB para este episódio (se disponível)
+                val tmdbEpisode = findTMDBEpisode(tmdbInfo, seasonNumber, episodeNumber)
+
+                val episode = if (tmdbEpisode != null) {
+                    // Episódio com dados do TMDB
+                    val descriptionWithDuration = buildDescriptionWithDuration(
+                        tmdbEpisode.overview,
+                        tmdbEpisode.runtime
+                    )
+
+                    newEpisode(fixUrl(href)) {
+                        this.name = "T${seasonNumber} - ${tmdbEpisode.name}"
+                        this.season = seasonNumber
+                        this.episode = episodeNumber
+                        this.description = descriptionWithDuration
+                        
+                        tmdbEpisode.air_date?.let { airDate ->
+                            try {
+                                val dateFormatter = SimpleDateFormat("yyyy-MM-dd")
+                                val date = dateFormatter.parse(airDate)
+                                this.date = date.time
+                            } catch (e: Exception) {}
+                        }
+                    }
+                } else {
+                    // Episódio sem dados do TMDB
+                    val episodeName = element.selectFirst(".ep-name, .title")?.text()?.trim()
+                        ?: text.substringAfterLast("-").trim()
+                        ?: "Episódio $episodeNumber"
+
+                    newEpisode(fixUrl(href)) {
+                        this.name = episodeName
+                        this.season = seasonNumber
+                        this.episode = episodeNumber
                     }
                 }
                 
                 episodes.add(episode)
                 
-            } catch (e: Exception) {
-                println("❌ [TMDB EPISODE] Erro ao criar episódio ${tmdbEpisode.episode_number}: ${e.message}")
-            }
-        }
-        
-        return episodes
-    }
-    
-    /**
-     * Construir URL do episódio baseado no padrão do site
-     */
-    private fun buildEpisodeUrl(baseUrl: String, season: Int, episode: Int): String {
-        // Extrair o slug do anime da URL base
-        // Exemplo: https://animefire.io/animes/one-piece-todos-os-episodios
-        val slug = baseUrl.substringAfter("animes/").substringBefore("-todos")
-        
-        // Construir URL do episódio
-        return "$mainUrl/video/$slug-episodio-$episode"
-    }
-    
-    /**
-     * Extrair episódios diretamente do site (fallback)
-     */
-    private suspend fun extractEpisodesFromSite(url: String, page: Int): List<Episode> {
-        println("🔍 [SITE] Extraindo episódios do site, página $page")
-        
-        val document = app.get(url).document
-        val episodes = mutableListOf<Episode>()
-        
-        val episodeElements = document.select("a.lEp.epT, a.lEp, .divListaEps a")
-        
-        if (episodeElements.isEmpty()) {
-            println("⚠️ [SITE] Nenhum episódio encontrado no site")
-            return emptyList()
-        }
-        
-        // Calcular range para paginação
-        val startIndex = (page - 1) * EPISODES_PER_PAGE
-        val endIndex = minOf(startIndex + EPISODES_PER_PAGE, episodeElements.size)
-        
-        println("📊 [SITE] Elementos encontrados: ${episodeElements.size}")
-        println("📊 [SITE] Range: $startIndex - ${endIndex - 1}")
-        
-        // Extrair apenas os episódios desta página
-        for (i in startIndex until endIndex) {
-            try {
-                val element = episodeElements[i]
-                val href = element.attr("href")
-                if (href.isBlank()) continue
-                
-                val text = element.text().trim()
-                if (text.isBlank()) continue
-                
-                val episodeNumber = extractEpisodeNumber(text, i + 1)
-                
-                val episode = newEpisode(fixUrl(href)) {
-                    this.name = text
-                    this.season = 1
-                    this.episode = episodeNumber
+                // Log apenas a cada 10 episódios para não poluir o console
+                if (index % 10 == 0 || index == episodesToExtract.size - 1) {
+                    println("   ✅ Extraído ep $episodeNumber: ${episode.name}")
                 }
                 
-                episodes.add(episode)
-                
             } catch (e: Exception) {
-                println("❌ [SITE EPISODE] Erro ao extrair episódio $i: ${e.message}")
+                println("❌ [EPISODE ERROR] Erro ao extrair episódio ${index + 1}: ${e.message}")
+            }
+            
+            // Pequeno delay para não sobrecarregar
+            if (index < episodesToExtract.size - 1 && index % 20 == 0) {
+                delay(50)
             }
         }
         
-        println("✅ [SITE] Extraídos ${episodes.size} episódios")
+        println("\n📊 [EPISODES] Total extraídos: ${episodes.size}")
+        
+        // Ordenar por número do episódio
         return episodes.sortedBy { it.episode }
     }
     
-    private fun parseDataMap(data: String): Map<String, String> {
-        return try {
-            data.removePrefix("{").removeSuffix("}").split(",").associate {
-                val parts = it.split("=", limit = 2)
-                if (parts.size == 2) parts[0].trim() to parts[1].trim()
-                else "" to ""
-            }.filter { it.key.isNotBlank() }
-        } catch (e: Exception) {
-            emptyMap()
+    private fun findTMDBEpisode(tmdbInfo: TMDBInfo?, season: Int, episode: Int): TMDBEpisode? {
+        if (tmdbInfo == null) return null
+        
+        val episodes = tmdbInfo.seasonsEpisodes[season]
+        if (episodes == null) {
+            return null
+        }
+
+        return episodes.find { it.episode_number == episode }
+    }
+
+    private fun extractEpisodeNumber(text: String, default: Int = 1): Int {
+        val patterns = listOf(
+            Regex("Epis[oó]dio\\s*(\\d+)"),
+            Regex("Ep\\.?\\s*(\\d+)"),
+            Regex("(\\d{1,3})\\s*-"),
+            Regex("#(\\d+)"),
+            Regex("\\b(\\d{1,4})\\b")
+        )
+        
+        for (pattern in patterns) {
+            val match = pattern.find(text)
+            if (match != null) {
+                return match.groupValues[1].toIntOrNull() ?: default
+            }
+        }
+        return default
+    }
+
+    private fun buildDescriptionWithDuration(overview: String?, runtime: Int?): String? {
+        return when {
+            overview != null && runtime != null && runtime > 0 -> "$overview\n\nDuração: $runtime min"
+            overview != null -> overview
+            runtime != null && runtime > 0 -> "Duração: $runtime min"
+            else -> null
         }
     }
 
@@ -562,7 +484,7 @@ class AnimeFire : MainAPI() {
             val searchResult = response.parsedSafe<TMDBSearchResponse>() ?: return null
             val result = searchResult.results.firstOrNull() ?: return null
 
-            // Buscar todas as temporadas
+            // Buscar todas as temporadas (apenas para organizar episódios)
             val seasonsEpisodes = if (isTv) {
                 getTMDBAllSeasons(result.id)
             } else {
@@ -585,8 +507,7 @@ class AnimeFire : MainAPI() {
                 actors = null,
                 youtubeTrailer = youtubeTrailer,
                 duration = null,
-                seasonsEpisodes = seasonsEpisodes,
-                tmdbId = result.id
+                seasonsEpisodes = seasonsEpisodes
             )
         } catch (e: Exception) {
             null
@@ -603,16 +524,19 @@ class AnimeFire : MainAPI() {
             val seriesDetails = seriesResponse.parsedSafe<TMDBTVDetailsResponse>() ?: return emptyMap()
             val seasonsEpisodes = mutableMapOf<Int, List<TMDBEpisode>>()
 
-            for (season in seriesDetails.seasons) {
-                if (season.season_number > 0) {
-                    val seasonUrl = "$TMDB_PROXY_URL/tv/$seriesId/season/${season.season_number}"
-                    val seasonResponse = app.get(seasonUrl, timeout = 10_000)
+            // Para otimização, buscar apenas as primeiras 3 temporadas
+            val seasonsToFetch = seriesDetails.seasons
+                .filter { it.season_number > 0 }
+                .take(3) // Limitar a 3 temporadas para não sobrecarregar
 
-                    if (seasonResponse.code == 200) {
-                        val seasonData = seasonResponse.parsedSafe<TMDBSeasonResponse>()
-                        seasonData?.episodes?.let { episodes ->
-                            seasonsEpisodes[season.season_number] = episodes
-                        }
+            for (season in seasonsToFetch) {
+                val seasonUrl = "$TMDB_PROXY_URL/tv/$seriesId/season/${season.season_number}"
+                val seasonResponse = app.get(seasonUrl, timeout = 10_000)
+
+                if (seasonResponse.code == 200) {
+                    val seasonData = seasonResponse.parsedSafe<TMDBSeasonResponse>()
+                    seasonData?.episodes?.let { episodes ->
+                        seasonsEpisodes[season.season_number] = episodes
                     }
                 }
             }
@@ -631,33 +555,6 @@ class AnimeFire : MainAPI() {
             response.parsedSafe<TMDBDetailsResponse>()
         } catch (e: Exception) {
             null
-        }
-    }
-
-    private fun extractEpisodeNumber(text: String, default: Int = 1): Int {
-        val patterns = listOf(
-            Regex("Epis[oó]dio\\s*(\\d+)"),
-            Regex("Ep\\.?\\s*(\\d+)"),
-            Regex("(\\d{1,3})\\s*-"),
-            Regex("#(\\d+)"),
-            Regex("\\b(\\d{1,4})\\b")
-        )
-        
-        for (pattern in patterns) {
-            val match = pattern.find(text)
-            if (match != null) {
-                return match.groupValues[1].toIntOrNull() ?: default
-            }
-        }
-        return default
-    }
-
-    private fun buildDescriptionWithDuration(overview: String?, runtime: Int?): String? {
-        return when {
-            overview != null && runtime != null && runtime > 0 -> "$overview\n\nDuração: $runtime min"
-            overview != null -> overview
-            runtime != null && runtime > 0 -> "Duração: $runtime min"
-            else -> null
         }
     }
 
@@ -772,8 +669,7 @@ class AnimeFire : MainAPI() {
         val actors: List<Actor>?,
         val youtubeTrailer: String?,
         val duration: Int?,
-        val seasonsEpisodes: Map<Int, List<TMDBEpisode>> = emptyMap(),
-        val tmdbId: Int? = null
+        val seasonsEpisodes: Map<Int, List<TMDBEpisode>> = emptyMap()
     )
 
     @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
