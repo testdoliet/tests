@@ -201,19 +201,34 @@ class AnimeFire : MainAPI() {
         @JsonProperty("episodes") val episodes: Map<String, AniZipEpisode>? = null
     )
 
-    // ============ FUNÇÕES DE BUSCA ============
+    // ============ FUNÇÃO AUXILIAR DE BUSCA ============
     
     private suspend fun Element.toSearchResponse(): AnimeSearchResponse? {
         val href = attr("href") ?: return null
         if (href.isBlank()) return null
         
-        val titleElement = selectFirst("h3.animeTitle") ?: return null
+        // Para páginas de busca, usamos uma estrutura diferente
+        val titleElement = when {
+            selectFirst("h3.animeTitle") != null -> selectFirst("h3.animeTitle")
+            selectFirst(".text-block h3") != null -> selectFirst(".text-block h3")
+            selectFirst(".animeTitle") != null -> selectFirst(".animeTitle")
+            else -> selectFirst("h3")
+        } ?: return null
+        
         val rawTitle = titleElement.text().trim()
         
-        val cleanTitle = rawTitle.replace(Regex("(?i)(dublado|legendado|todos os episódios|\\(\\d{4}\\))$"), "").trim()
-        val isMovie = href.contains("/filmes/") || rawTitle.contains("Movie", ignoreCase = true)
+        // Limpar título de forma mais abrangente
+        val cleanTitle = rawTitle
+            .replace(Regex("(?i)(dublado|legendado|todos os episódios|\\(\\d{4}\\)|\\s*-\\s*$|\\(movie\\))"), "")
+            .trim()
         
-        val sitePoster = selectFirst("img.imgAnimes, img.owl-lazy, img[src*='animes']")?.let { img ->
+        // Determinar se é filme
+        val isMovie = href.contains("/filmes/") || 
+                      rawTitle.contains("filme", ignoreCase = true) ||
+                      rawTitle.contains("movie", ignoreCase = true)
+        
+        // Obter imagem - para páginas de busca específicas
+        val sitePoster = selectFirst("img.imgAnimes, img.card-img-top, img.transitioning_src, img.owl-lazy, img[src*='animes']")?.let { img ->
             when {
                 img.hasAttr("data-src") -> img.attr("data-src")
                 img.hasAttr("src") -> img.attr("src")
@@ -249,10 +264,10 @@ class AnimeFire : MainAPI() {
             "Últimos Episódios Adicionados" -> {
                 document.select(".divCardUltimosEpsHome").mapNotNull { card ->
                     runCatching {
-                        val link = card.selectFirst("article.card a") ?: return@runCatching null
-                        val href = link.attr("href") ?: return@runCatching null
+                        val link = card.selectFirst("article.card a") ?: return@runCuting null
+                        val href = link.attr("href") ?: return@runCuting null
                         
-                        val titleElement = card.selectFirst("h3.animeTitle") ?: return@runCatching null
+                        val titleElement = card.selectFirst("h3.animeTitle") ?: return@runCuting null
                         val rawTitle = titleElement.text().trim()
                         
                         val epNumber = card.selectFirst(".numEp")?.text()?.toIntOrNull() ?: 1
@@ -280,15 +295,80 @@ class AnimeFire : MainAPI() {
         return newHomePageResponse(request.name, homeItems.distinctBy { it.url }, false)
     }
 
+    // ============ FUNÇÃO SEARCH CORRIGIDA ============
+    
     override suspend fun search(query: String): List<SearchResponse> {
         val searchUrl = "$mainUrl$SEARCH_PATH/${URLEncoder.encode(query, "UTF-8")}"
+        println("🔍 [SEARCH] Buscando: '$query' | URL: $searchUrl")
+        
         val document = app.get(searchUrl).document
 
-        return document.select("article.containerAnimes a.item")
-            .mapNotNull { element -> 
-                runCatching { element.toSearchResponse() }.getOrNull()
+        // SELEÇÃO CORRETA DOS ELEMENTOS - ESTRUTURA ESPECÍFICA DA PÁGINA DE RESULTADOS
+        val elements = document.select("div.divCardUltimosEps article.card a")
+        println("🔍 [SEARCH] Elementos encontrados: ${elements.size}")
+        
+        if (elements.isEmpty()) {
+            println("⚠️ [SEARCH] Nenhum elemento encontrado com o seletor atual")
+            // Debug adicional para entender a estrutura da página
+            val debugDivs = document.select("div[class*='col-']")
+            println("🔍 [SEARCH] Debug - Divs encontradas: ${debugDivs.size}")
+            debugDivs.take(3).forEachIndexed { index, div ->
+                println("  ${index + 1}. Classes: ${div.attr("class")}")
+                println("     HTML: ${div.html().take(100)}...")
             }
-            .take(30)
+        }
+
+        return elements.mapNotNull { element ->
+            runCatching {
+                // 1. Obter URL
+                val href = element.attr("href")
+                if (href.isBlank()) {
+                    println("⚠️ [SEARCH] Link vazio encontrado")
+                    return@runCatching null
+                }
+
+                // 2. Obter título (estrutura específica da página de busca)
+                val titleElement = element.selectFirst("h3.animeTitle, .text-block h3, .animeTitle")
+                val rawTitle = titleElement?.text()?.trim() ?: "Sem Título"
+                
+                // Limpar título (remover " - Todos os Episódios" e similar)
+                val cleanTitle = rawTitle
+                    .replace(Regex("\\s*-\\s*Todos os Episódios$"), "")
+                    .replace(Regex("\\(Dublado\\)"), "")
+                    .replace(Regex("\\(Legendado\\)"), "")
+                    .trim()
+
+                // 3. Obter poster (tratamento especial para imagens lazy)
+                val imgElement = element.selectFirst("img.imgAnimes, img.card-img-top, img.transitioning_src")
+                val posterUrl = when {
+                    imgElement?.hasAttr("data-src") == true -> imgElement.attr("data-src")
+                    imgElement?.hasAttr("src") == true -> imgElement.attr("src")
+                    else -> null
+                }
+
+                // Verificar se é filme
+                val isMovie = href.contains("/filmes/") || 
+                             cleanTitle.contains("filme", ignoreCase = true) ||
+                             rawTitle.contains("filme", ignoreCase = true) ||
+                             rawTitle.contains("movie", ignoreCase = true)
+
+                println("✅ [SEARCH] Processado: '$cleanTitle' | URL: ${href.take(50)}... | Tipo: ${if (isMovie) "Filme" else "Anime"}")
+
+                // 4. Criar resposta
+                newAnimeSearchResponse(cleanTitle, fixUrl(href)) {
+                    this.posterUrl = posterUrl?.let { fixUrl(it) }
+                    // Determinar tipo baseado na URL ou título
+                    this.type = if (isMovie) {
+                        TvType.Movie
+                    } else {
+                        TvType.Anime
+                    }
+                }
+            }.getOrElse { e ->
+                println("❌ [SEARCH] Erro ao processar elemento: ${e.message}")
+                null
+            }
+        }.take(30) // Limita a 30 resultados
     }
 
     // ============ LOAD PRINCIPAL COM TRADUÇÃO ============
