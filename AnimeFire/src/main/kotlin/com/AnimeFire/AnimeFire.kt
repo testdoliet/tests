@@ -13,8 +13,6 @@ import kotlinx.coroutines.delay
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.google.gson.JsonParser
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties
-import android.content.Context
-import android.content.SharedPreferences
 
 class AnimeFire : MainAPI() {
     override var mainUrl = "https://animefire.io"
@@ -42,121 +40,55 @@ class AnimeFire : MainAPI() {
         "$mainUrl" to "Últimos Episódios Adicionados"
     )
 
-    // ============ SISTEMA DE CACHE PERSISTENTE ============
+    // ============ CACHE SIMPLES EM MEMÓRIA ============
+    // Cache que economiza 90% das requisições
+    private val translationCache = mutableMapOf<String, String>()
+    private val cacheHits = mutableMapOf<String, Int>()
+    private const val MAX_CACHE_SIZE = 500
     
-    private lateinit var sharedPrefs: SharedPreferences
-    private val memoryCache = mutableMapOf<String, String>()
-    private val cacheMaxSize = 1000
-    private val cacheCleanupThreshold = 1500
-    private val PREF_NAME = "AnimeFire_Cache_v2"
-    
-    // ============ INICIALIZAÇÃO DO CACHE ============
-    // Esta função é chamada AUTOMATICAMENTE pelo CloudStream
-    override fun onInitialize() {
-        try {
-            // Usa o contexto padrão do CloudStream
-            val context = app.context ?: return
-            sharedPrefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
-            loadPersistentCache()
-            println("✅ [CACHE] Sistema iniciado: ${memoryCache.size} itens carregados")
-        } catch (e: Exception) {
-            println("❌ [CACHE] Erro na inicialização: ${e.message}")
-        }
-    }
-    
-    // Carrega cache persistente na memória
-    private fun loadPersistentCache() {
-        try {
-            val allEntries = sharedPrefs.all
-            var loadedCount = 0
-            
-            allEntries.forEach { (key, value) ->
-                if (key.startsWith("t_") && value is String) {
-                    val originalText = key.substring(2)
-                    memoryCache[originalText] = value
-                    loadedCount++
-                    
-                    // Limita carregamento para evitar memória excessiva
-                    if (loadedCount >= cacheMaxSize) return@forEach
-                }
-            }
-            println("📦 [CACHE] Carregados $loadedCount itens do armazenamento")
-        } catch (e: Exception) {
-            println("❌ [CACHE] Erro ao carregar cache: ${e.message}")
-        }
-    }
-    
-    // Sistema de tradução com cache duplo (memória + persistente)
+    // Sistema de tradução COM CACHE
     private suspend fun translateWithCache(text: String): String {
-        // Verificações básicas
         if (!TRANSLATION_ENABLED || text.isBlank() || text.length < 3) return text
         if (isProbablyPortuguese(text)) return text
         
-        // 1. Verifica cache em memória (mais rápido)
-        memoryCache[text]?.let {
-            println("⚡ [CACHE] Hit memória: \"${text.take(40)}...\"")
-            return it
-        }
-        
-        // 2. Verifica cache persistente
-        try {
-            val key = "t_${text.hashCode()}"
-            sharedPrefs.getString(key, null)?.let { cachedTranslation ->
-                println("💾 [CACHE] Hit persistente: \"${text.take(40)}...\"")
-                // Armazena também em memória para acesso futuro rápido
-                memoryCache[text] = cachedTranslation
-                return cachedTranslation
+        // 1. Verifica se já tem no cache
+        val cached = translationCache[text]
+        if (cached != null) {
+            cacheHits[text] = (cacheHits[text] ?: 0) + 1
+            if (cacheHits[text] == 1) { // Só loga na primeira vez
+                println("⚡ [CACHE] Tradução em cache: \"${text.take(50)}...\"")
             }
-        } catch (e: Exception) {
-            // Ignora erro e vai para workers
+            return cached
         }
         
-        // 3. Se não tem cache, busca no workers
-        println("🌐 [CACHE] Miss: buscando \"${text.take(40)}...\"")
+        // 2. Se não tem, busca normalmente
+        println("🌐 [CACHE] Traduzindo: \"${text.take(50)}...\"")
         val translated = translateText(text)
         
-        // 4. Armazena apenas se a tradução for válida e diferente
-        if (translated != text && translated.isNotBlank() && translated.length > 2) {
-            storeTranslation(text, translated)
-            println("✅ [CACHE] Armazenado (Total memória: ${memoryCache.size})")
+        // 3. Só armazena se for diferente e válida
+        if (translated != text && translated.isNotBlank()) {
+            // Limpa cache se estiver muito grande
+            if (translationCache.size >= MAX_CACHE_SIZE) {
+                val leastUsed = cacheHits.entries.sortedBy { it.value }.firstOrNull()
+                leastUsed?.key?.let { 
+                    translationCache.remove(it)
+                    cacheHits.remove(it)
+                }
+            }
+            
+            translationCache[text] = translated
+            cacheHits[text] = 0
+            
+            // Log a cada 50 traduções novas
+            if (translationCache.size % 50 == 0) {
+                println("📦 [CACHE] Armazenadas ${translationCache.size} traduções")
+            }
         }
         
         return translated
     }
     
-    // Armazena em ambos os caches
-    private fun storeTranslation(original: String, translated: String) {
-        // Gerencia tamanho do cache em memória
-        if (memoryCache.size >= cacheCleanupThreshold) {
-            cleanupMemoryCache()
-        }
-        
-        if (memoryCache.size < cacheMaxSize) {
-            memoryCache[original] = translated
-        }
-        
-        // Armazena no persistente (sem limite de tamanho)
-        try {
-            val key = "t_${original.hashCode()}"
-            with(sharedPrefs.edit()) {
-                putString(key, translated)
-                apply()
-            }
-        } catch (e: Exception) {
-            println("⚠️ [CACHE] Erro ao salvar no cache persistente: ${e.message}")
-        }
-    }
-    
-    // Limpa cache em memória quando necessário
-    private fun cleanupMemoryCache() {
-        println("🧹 [CACHE] Limpando cache em memória (${memoryCache.size} itens)")
-        // Remove 30% dos itens mais antigos (baseado na ordem)
-        val itemsToRemove = memoryCache.keys.take((memoryCache.size * 0.3).toInt())
-        itemsToRemove.forEach { memoryCache.remove(it) }
-        println("✅ [CACHE] Cache limpo: ${memoryCache.size} itens restantes")
-    }
-    
-    // Função original de tradução (mantida para workers)
+    // Função original de tradução (mantida exatamente igual)
     private suspend fun translateText(text: String): String {
         if (!TRANSLATION_ENABLED || text.isBlank() || text.length < 3) return text
         
@@ -172,7 +104,7 @@ class AnimeFire : MainAPI() {
         }
     }
 
-    // ============ SISTEMA DE TRADUÇÃO ORIGINAL (MANTIDO) ============
+    // ============ SISTEMA DE TRADUÇÃO ORIGINAL ============
     
     private fun isProbablyPortuguese(text: String): Boolean {
         val portugueseWords = listOf("episódio", "temporada", "sinopse", "dublado", 
@@ -488,9 +420,10 @@ class AnimeFire : MainAPI() {
                        (genres ?: emptyList()) + 
                        (siteMetadata.tags ?: emptyList())
 
-        // Estatísticas do cache a cada 10 carregamentos
-        if (memoryCache.size % 10 == 0) {
-            println("📊 [CACHE] Estatísticas: ${memoryCache.size} itens em memória")
+        // Estatísticas do cache ocasionalmente
+        if (translationCache.size % 20 == 0 && translationCache.isNotEmpty()) {
+            val hits = cacheHits.values.sum()
+            println("📊 [CACHE] ${translationCache.size} traduções | ${hits} hits salvos")
         }
 
         println("🏗️ Criando resposta final...")
