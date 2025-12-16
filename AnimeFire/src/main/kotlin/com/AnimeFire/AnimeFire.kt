@@ -23,6 +23,10 @@ class AnimeFire : MainAPI() {
         private const val SEARCH_PATH = "/pesquisar"
         private const val MAX_TRIES = 3
         private const val RETRY_DELAY = 1000L
+        
+        // Cloudflare Workers AI para tradução
+        private const val CF_WORKER_URL = "https://animefire.euluan1912.workers.dev/" // SUBSTITUA COM SUA URL
+        private const val CF_API_TOKEN = "" // SE PRECISAR DE TOKEN
     }
 
     // 4 ABAS DA PÁGINA INICIAL
@@ -162,9 +166,9 @@ class AnimeFire : MainAPI() {
         // 3. EXTRAIR METADADOS DO SITE
         val siteMetadata = extractSiteMetadata(document)
         
-        // 4. EXTRAIR EPISÓDIOS (com dados da ani.zip se disponível)
+        // 4. EXTRAIR EPISÓDIOS (com dados da ani.zip e tradução)
         val episodes = if (!isMovie) {
-            extractEpisodesWithAniZipData(document, aniZipData)
+            extractEpisodesWithTranslation(document, aniZipData)
         } else {
             emptyList()
         }
@@ -173,7 +177,7 @@ class AnimeFire : MainAPI() {
         val recommendations = extractRecommendations(document)
 
         // 6. CRIAR RESPOSTA COM DADOS COMBINADOS
-        return createLoadResponseWithAniZip(
+        return createLoadResponseWithTranslation(
             url = url,
             cleanTitle = cleanTitle,
             year = year,
@@ -184,6 +188,79 @@ class AnimeFire : MainAPI() {
             episodes = episodes,
             recommendations = recommendations
         )
+    }
+
+    // ============ TRADUÇÃO COM CLOUDFLARE WORKERS AI ============
+    
+    private suspend fun translateText(text: String, sourceLang: String = "auto", targetLang: String = "pt"): String? {
+        if (text.isBlank()) return null
+        
+        return try {
+            println("🔤 [TRANSLATE] Traduzindo: ${text.take(50)}...")
+            
+            val payload = mapOf(
+                "text" to text,
+                "source_lang" to sourceLang,
+                "target_lang" to targetLang
+            )
+            
+            val headers = mutableMapOf(
+                "Content-Type" to "application/json"
+            )
+            
+            // Se precisar de token (opcional)
+            if (CF_API_TOKEN.isNotBlank()) {
+                headers["Authorization"] = "Bearer $CF_API_TOKEN"
+            }
+            
+            val response = app.post(
+                CF_WORKER_URL,
+                data = payload,
+                headers = headers,
+                timeout = 15_000
+            )
+            
+            if (response.code == 200) {
+                val translated = response.parsedSafe<TranslationResponse>()?.translatedText
+                println("✅ [TRANSLATE] Traduzido: ${translated?.take(50)}...")
+                translated
+            } else {
+                println("❌ [TRANSLATE] Erro HTTP: ${response.code}")
+                null
+            }
+        } catch (e: Exception) {
+            println("❌ [TRANSLATE] Exception: ${e.message}")
+            null
+        }
+    }
+    
+    // Tradução inteligente: detecta idioma e traduz se não for português
+    private suspend fun smartTranslate(text: String): String {
+        if (text.isBlank()) return text
+        
+        // Se o texto já parece estar em português, não traduz
+        if (isProbablyPortuguese(text)) {
+            return text
+        }
+        
+        // Tenta traduzir
+        return translateText(text) ?: text
+    }
+    
+    private fun isProbablyPortuguese(text: String): Boolean {
+        val portugueseWords = listOf(
+            "de", "da", "do", "das", "dos", "em", "no", "na", "nos", "nas",
+            "é", "são", "está", "estão", "para", "por", "com", "sem", "que",
+            "como", "mas", "e", "ou", "se", "não", "sim", "o", "a", "os", "as",
+            "um", "uma", "uns", "umas", "meu", "minha", "teu", "tua", "seu", "sua",
+            "nosso", "nossa", "você", "vocês", "ele", "ela", "eles", "elas"
+        )
+        
+        val words = text.lowercase().split("\\s+".toRegex())
+        val portugueseCount = words.count { it in portugueseWords }
+        
+        // Se mais de 30% das palavras são português, assume que já está em PT
+        return (portugueseCount.toFloat() / words.size) > 0.3
     }
 
     // ============ BUSCA MAL ID ============
@@ -326,8 +403,8 @@ class AnimeFire : MainAPI() {
         return SiteMetadata(poster, plot, tags, year)
     }
 
-    // ============ EPISÓDIOS COM ANI.ZIP ============
-    private suspend fun extractEpisodesWithAniZipData(
+    // ============ EPISÓDIOS COM TRADUÇÃO ============
+    private suspend fun extractEpisodesWithTranslation(
         document: org.jsoup.nodes.Document,
         aniZipData: AniZipData?
     ): List<Episode> {
@@ -337,10 +414,13 @@ class AnimeFire : MainAPI() {
         val episodeElements = document.select("a.lEp.epT, a.lEp")
         println("✅ [EPISODES] Encontrados ${episodeElements.size} elementos")
         
-        episodeElements.forEach { element ->
+        // Limitar tradução para os primeiros episódios (para não sobrecarregar)
+        val maxEpisodesToTranslate = 10
+        
+        episodeElements.forEachIndexed { index, element ->
             try {
                 val href = element.attr("href")
-                if (href.isBlank()) return@forEach
+                if (href.isBlank()) return@forEachIndexed
                 
                 val text = element.text().trim()
                 
@@ -350,8 +430,8 @@ class AnimeFire : MainAPI() {
                 // Buscar dados da ani.zip para este episódio
                 val aniZipEpisode = aniZipData?.episodes?.get(episodeNumber.toString())
                 
-                // Extrair nome do episódio
-                val episodeName = if (aniZipEpisode?.title?.isNotEmpty() == true) {
+                // Determinar nome do episódio
+                var episodeName = if (aniZipEpisode?.title?.isNotEmpty() == true) {
                     // Prioridade: título da ani.zip
                     aniZipEpisode.title.values.firstOrNull()
                 } else {
@@ -359,12 +439,27 @@ class AnimeFire : MainAPI() {
                     text.substringAfterLast("-").trim()
                 }
                 
+                // Traduzir nome do episódio se não for português (apenas para primeiros episódios)
+                if (index < maxEpisodesToTranslate && episodeName != null && !isProbablyPortuguese(episodeName)) {
+                    val translatedName = translateText(episodeName, targetLang = "pt")
+                    episodeName = translatedName ?: episodeName
+                }
+                
+                // Determinar descrição
+                var description = aniZipEpisode?.overview
+                
+                // Traduzir descrição se não for português (apenas para primeiros episódios)
+                if (index < maxEpisodesToTranslate && description != null && !isProbablyPortuguese(description)) {
+                    val translatedDesc = translateText(description, targetLang = "pt")
+                    description = translatedDesc ?: description
+                }
+                
                 episodes.add(newEpisode(fixUrl(href)) {
                     this.episode = episodeNumber
                     this.season = 1
                     this.name = episodeName ?: "Episódio $episodeNumber"
                     this.posterUrl = aniZipEpisode?.image
-                    this.description = aniZipEpisode?.overview
+                    this.description = description
                     
                     println("✅ [EPISODE] Adicionado ep $episodeNumber: ${this.name}")
                 })
@@ -394,8 +489,8 @@ class AnimeFire : MainAPI() {
         return 1
     }
 
-    // ============ CRIAR RESPOSTA COM ANI.ZIP ============
-    private suspend fun createLoadResponseWithAniZip(
+    // ============ CRIAR RESPOSTA COM TRADUÇÃO ============
+    private suspend fun createLoadResponseWithTranslation(
         url: String,
         cleanTitle: String,
         year: Int?,
@@ -407,7 +502,7 @@ class AnimeFire : MainAPI() {
         recommendations: List<SearchResponse>
     ): LoadResponse {
         
-        println("🏗️ [RESPONSE] Criando resposta com ani.zip...")
+        println("🏗️ [RESPONSE] Criando resposta com tradução...")
         
         // DECISÕES FINAIS (prioridade: site > ani.zip)
         val finalPoster = siteMetadata.poster ?: 
@@ -417,22 +512,23 @@ class AnimeFire : MainAPI() {
             it.coverType.equals("Fanart", ignoreCase = true) 
         }?.url?.let { fixUrl(it) }
         
-        val finalPlot = siteMetadata.plot ?: 
+        // Sinopse: traduzir se não for português
+        var finalPlot = siteMetadata.plot ?: 
             aniZipData?.episodes?.values?.firstOrNull()?.overview
+        
+        if (finalPlot != null && !isProbablyPortuguese(finalPlot)) {
+            finalPlot = smartTranslate(finalPlot)
+        }
         
         val finalYear = year ?: siteMetadata.year
         
         val finalTags = siteMetadata.tags ?: emptyList()
-        
-        // Títulos alternativos da ani.zip
-        val otherNames = aniZipData?.titles?.values?.toList()
         
         println("✅ [RESPONSE] Poster: $finalPoster")
         println("✅ [RESPONSE] Backdrop: $finalBackdrop")
         println("✅ [RESPONSE] Plot: ${finalPlot?.take(50)}...")
         println("✅ [RESPONSE] Ano: $finalYear")
         println("✅ [RESPONSE] Tags: $finalTags")
-        println("✅ [RESPONSE] Other Names: $otherNames")
         
         return if (isMovie) {
             newMovieLoadResponse(cleanTitle, url, type, url) {
@@ -473,7 +569,7 @@ class AnimeFire : MainAPI() {
         return false
     }
 
-    // ============ CLASSES DE DADOS ANI.ZIP ============
+    // ============ CLASSES DE DADOS ============
 
     @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
     private data class AniListResponse(
@@ -517,5 +613,10 @@ class AnimeFire : MainAPI() {
         @JsonProperty("runtime") val runtime: Int?,
         @JsonProperty("rating") val rating: String?,
         @JsonProperty("airDateUtc") val airDateUtc: String?
+    )
+
+    @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
+    private data class TranslationResponse(
+        @JsonProperty("translatedText") val translatedText: String?
     )
 }
