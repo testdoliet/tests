@@ -4,7 +4,7 @@ import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.network.WebViewResolver
 import com.lagradost.cloudstream3.utils.newExtractorLink
-import com.lagradost.cloudstream3.utils.newExtractorLinkType
+import com.lagradost.cloudstream3.utils.ExtractorLinkType
 
 object AnimeFireExtractor {
 
