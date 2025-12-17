@@ -29,14 +29,57 @@ jobs:
             - name: Grant execute permission for gradlew
               run: chmod +x gradlew
 
+            # 3. CONFIGURAR BUILD CONFIG COM SECRETS
+            - name: Configurar BuildConfig com Secrets
+              run: |
+                  # Verificar se as secrets existem
+                  if [[ -z "${{ secrets.TMDB_API_KEY }}" ]]; then
+                    echo "⚠️ TMDB_API_KEY não configurada no GitHub Secrets"
+                    echo "Usando valor dummy"
+                    TMDB_API_KEY="dummy_api_key"
+                  else
+                    TMDB_API_KEY="${{ secrets.TMDB_API_KEY }}"
+                  fi
+                  
+                  if [[ -z "${{ secrets.TMDB_ACCESS_TOKEN }}" ]]; then
+                    echo "⚠️ TMDB_ACCESS_TOKEN não configurada no GitHub Secrets"
+                    echo "Usando valor dummy"
+                    TMDB_ACCESS_TOKEN="dummy_access_token"
+                  else
+                    TMDB_ACCESS_TOKEN="${{ secrets.TMDB_ACCESS_TOKEN }}"
+                  fi
+                  
+                  # Criar arquivo local.properties para Gradle
+                  echo "TMDB_API_KEY=$TMDB_API_KEY" > local.properties
+                  echo "TMDB_ACCESS_TOKEN=$TMDB_ACCESS_TOKEN" >> local.properties
+                  
+                  # Verificar se o arquivo foi criado
+                  echo "✅ Arquivo local.properties criado:"
+                  cat local.properties | sed 's/\(TMDB_API_KEY\|TMDB_ACCESS_TOKEN\)=.*/\1=********/g'
+
+            # 4. BUILD COM PARÂMETROS
             - name: Build with Gradle (Cria os .cs3 e .jar)
-              run: ./gradlew assemble --refresh-dependencies --info
+              run: |
+                  # Carregar variáveis do local.properties
+                  if [ -f local.properties ]; then
+                    source local.properties
+                    export TMDB_API_KEY
+                    export TMDB_ACCESS_TOKEN
+                  fi
+                  
+                  ./gradlew assemble --refresh-dependencies --info \
+                    -PTMDB_API_KEY="${TMDB_API_KEY:-dummy_api_key}" \
+                    -PTMDB_ACCESS_TOKEN="${TMDB_ACCESS_TOKEN:-dummy_access_token}"
 
-            # 3. GERAÇÃO DO MANIFESTO DE PROVEDORES
+            # 5. GERAÇÃO DO MANIFESTO DE PROVEDORES
             - name: Generate plugins.json at correct path
-              run: ./gradlew makePluginsJson -PoutputFile="build/plugins.json"
+              run: |
+                  source local.properties 2>/dev/null || true
+                  ./gradlew makePluginsJson -PoutputFile="build/plugins.json" \
+                    -PTMDB_API_KEY="${TMDB_API_KEY:-dummy_api_key}" \
+                    -PTMDB_ACCESS_TOKEN="${TMDB_ACCESS_TOKEN:-dummy_access_token}"
 
-            # 4. CRIAÇÃO DA ESTRUTURA FINAL E CORREÇÃO DE URL (Regex de Captura Reversa)
+            # 6. CRIAÇÃO DA ESTRUTURA FINAL E CORREÇÃO DE URL
             - name: Mover, Corrigir URLs Internas e Criar repo.json principal
               run: |
                   # Define a base da URL funcional para o download no GitHub
@@ -53,8 +96,6 @@ jobs:
                   REPO_BASE_URL_ESCAPED=$(echo $REPO_BASE_URL | sed 's/\//\\\//g')
 
                   # 4. CRÍTICO: Substitui a URL do .cs3 no plugins.json
-                  # Captura a parte do nome do arquivo, que é tudo que não é barra ou aspas.
-                  # Remove TUDO ANTES da última barra e substitui pela URL RAW.
                   sed -i -E 's|"url": "[^"]*/([^/]+)\.cs3"|"url": "'"$REPO_BASE_URL_ESCAPED"'/\1.cs3"|g' builds/plugins.json
 
                   # 5. CRÍTICO: Substitui a URL do .jar no plugins.json
@@ -72,10 +113,17 @@ jobs:
                   find . -type f -name "*.cs3" -exec cp {} builds/ \; || true
                   find . -type f -name "*.jar" -exec cp {} builds/ \; || true
 
-            # 5. DEPLOY FINAL COM AÇÃO DE COMMIT DIRETO 
+                  # 8. Log dos arquivos gerados
+                  echo "📁 Conteúdo da pasta builds:"
+                  ls -la builds/
+                  echo ""
+                  echo "📄 Conteúdo do plugins.json:"
+                  cat builds/plugins.json | head -50
+
+            # 7. DEPLOY FINAL COM AÇÃO DE COMMIT DIRETO 
             - name: Commit Providers to main branch
               uses: stefanzweifel/git-auto-commit-action@v5
               with:
-                  commit_message: "minor fixing"
+                  commit_message: "Build: Atualização de plugins $(date +'%Y-%m-%d %H:%M')"
                   branch: main
                   file_pattern: builds/*
