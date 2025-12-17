@@ -1,5 +1,47 @@
 version = 1
 
+plugins {
+    kotlin("android")
+    id("com.android.library")
+}
+
+android {
+    buildFeatures {
+    buildConfig = true
+    namespace = "com.SuperFlix"
+    compileSdk = 33
+}
+    defaultConfig {
+        minSdk = 24
+        targetSdk = 33
+
+        // VARIÁVEIS DE BUILD PARA TMDB
+        // API KEY: Usada em queries (?api_key=xxx)
+        buildConfigField("String", "TMDB_API_KEY", 
+            "\"${System.getenv("TMDB_API_KEY") ?: "dummy_api_key"}\"")
+        
+        // ACCESS TOKEN: Usada em headers (Authorization: Bearer xxx)
+        buildConfigField("String", "TMDB_ACCESS_TOKEN", 
+            "\"${System.getenv("TMDB_ACCESS_TOKEN") ?: "dummy_access_token"}\"")
+    }
+
+    buildTypes {
+        getByName("release") {
+            isMinifyEnabled = false
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
+        }
+    }
+    
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_1_8
+        targetCompatibility = JavaVersion.VERSION_1_8
+    }
+    
+    kotlinOptions {
+        jvmTarget = "1.8"
+    }
+}
+
 cloudstream {
 	description = "Site de animes em português"
 	language = "pt-br"
@@ -10,17 +52,3 @@ cloudstream {
 	isCrossPlatform = true 
 }
 
-// TAREFA PARA CRIAR ARQUIVO .cs3 (igual ao SuperFlix)
-tasks.register<Jar>("cs3Jar") {
-    dependsOn(tasks.named("jar"))
-    archiveBaseName.set("AnimeFire")
-    archiveExtension.set("cs3")
-    
-    from(tasks.named("jar").get().outputs.files) {
-        into("")
-    }
-    
-    doLast {
-        println("✅ Arquivo .cs3 criado: ${archiveFile.get()}")
-    }
-}
