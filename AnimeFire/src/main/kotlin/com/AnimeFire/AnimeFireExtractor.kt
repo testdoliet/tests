@@ -1,3 +1,12 @@
+package com.AnimeFire
+
+import com.lagradost.cloudstream3.*
+import com.lagradost.cloudstream3.network.WebViewResolver
+import com.lagradost.cloudstream3.utils.ExtractorLink
+import com.lagradost.cloudstream3.utils.ExtractorLinkType
+import com.lagradost.cloudstream3.utils.M3u8Helper
+import com.lagradost.cloudstream3.utils.Qualities
+
 object AnimeFireExtractor {
 
     suspend fun extractVideoLinks(
@@ -99,6 +108,7 @@ object AnimeFireExtractor {
             }
         } catch (e: Exception) {
             println("💥 AnimeFireExtractor: Erro - ${e.message}")
+            e.printStackTrace()
             false
         }
     }
