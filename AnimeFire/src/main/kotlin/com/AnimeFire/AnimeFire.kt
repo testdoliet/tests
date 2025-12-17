@@ -52,9 +52,13 @@ class AnimeFire : MainAPI() {
         val cached = translationCache[text]
         if (cached != null) {
             cacheHits[text] = (cacheHits[text] ?: 0) + 1
+            if (cacheHits[text] == 1) {
+                println("⚡ [CACHE] Tradução em cache: \"${text.take(50)}...\"")
+            }
             return cached
         }
         
+        println("🌐 [CACHE] Traduzindo: \"${text.take(50)}...\"")
         val translated = translateText(text)
         
         if (translated != text && translated.isNotBlank()) {
@@ -68,6 +72,10 @@ class AnimeFire : MainAPI() {
             
             translationCache[text] = translated
             cacheHits[text] = 0
+            
+            if (translationCache.size % 50 == 0) {
+                println("📦 [CACHE] Armazenadas ${translationCache.size} traduções")
+            }
         }
         
         return translated
@@ -102,7 +110,11 @@ class AnimeFire : MainAPI() {
             val encodedText = URLEncoder.encode(text, "UTF-8")
             val url = "$WORKERS_URL/translate?text=$encodedText&target=pt"
             
+            println("🔍 [TRADUÇÃO] Chamando workers: ${url.take(80)}...")
+            
             val response = app.get(url, timeout = 5000)
+            
+            println("📡 [TRADUÇÃO] Resposta workers: ${response.code}")
             
             if (response.code == 200) {
                 val json = JsonParser.parseString(response.text)
@@ -121,6 +133,7 @@ class AnimeFire : MainAPI() {
                 text
             }
         } catch (e: Exception) {
+            println("❌ [TRADUÇÃO] Erro workers: ${e.message}")
             text
         }
     }
@@ -178,29 +191,12 @@ class AnimeFire : MainAPI() {
         @JsonProperty("episodes") val episodes: Map<String, AniZipEpisode>? = null
     )
 
-    // ============ ESTRUTURA PARA ARMAZENAR NOMES MÚLTIPLOS ============
-    
-    data class AnimeNames(
-        val japanese: String? = null,
-        val english: String? = null,
-        val portuguese: String? = null,
-        val displayName: String = "",
-        val searchableNames: List<String> = emptyList()
-    ) {
-        fun toSearchString(): String {
-            return listOfNotNull(japanese, english, portuguese)
-                .distinct()
-                .joinToString("|")
-        }
-    }
-
-    // ============ FUNÇÃO AUXILIAR DE BUSCA ATUALIZADA ============
+    // ============ FUNÇÃO AUXILIAR DE BUSCA ============
     
     private suspend fun Element.toSearchResponse(): AnimeSearchResponse? {
         val href = attr("href") ?: return null
         if (href.isBlank()) return null
         
-        // Para páginas de busca
         val titleElement = when {
             selectFirst("h3.animeTitle") != null -> selectFirst("h3.animeTitle")
             selectFirst(".text-block h3") != null -> selectFirst(".text-block h3")
@@ -210,26 +206,14 @@ class AnimeFire : MainAPI() {
         
         val rawTitle = titleElement.text().trim()
         
-        // Limpar título
         val cleanTitle = rawTitle
             .replace(Regex("(?i)(dublado|legendado|todos os episódios|\\(\\d{4}\\)|\\s*-\\s*$|\\(movie\\))"), "")
             .trim()
         
-        // Tentar extrair diferentes nomes do HTML
-        val japaneseName = selectFirst("h6.text-gray:nth-of-type(2)")?.text()?.trim()?.takeIf { 
-            it.contains(Regex("[\\u3040-\\u309F\\u30A0-\\u30FF\\u4E00-\\u9FFF]")) 
-        }
-        
-        val englishName = selectFirst("h6.text-gray:first-of-type")?.text()?.trim()?.takeIf { 
-            !it.contains(Regex("[\\u3040-\\u309F\\u30A0-\\u30FF\\u4E00-\\u9FFF]")) && it.isNotBlank()
-        }
-        
-        // Determinar se é filme
         val isMovie = href.contains("/filmes/") || 
                       rawTitle.contains("filme", ignoreCase = true) ||
                       rawTitle.contains("movie", ignoreCase = true)
         
-        // Obter imagem
         val sitePoster = selectFirst("img.imgAnimes, img.card-img-top, img.transitioning_src, img.owl-lazy, img[src*='animes']")?.let { img ->
             when {
                 img.hasAttr("data-src") -> img.attr("data-src")
@@ -238,30 +222,9 @@ class AnimeFire : MainAPI() {
             }?.takeIf { !it.contains("logo", ignoreCase = true) }
         } ?: selectFirst("img:not([src*='logo']):not([src*='Logo'])")?.attr("src")
 
-        // Criar objeto com nomes múltiplos
-        val animeNames = AnimeNames(
-            japanese = japaneseName,
-            english = englishName,
-            portuguese = cleanTitle,
-            displayName = japaneseName ?: cleanTitle, // Prioriza japonês para exibição
-            searchableNames = listOfNotNull(japaneseName, englishName, cleanTitle).distinct()
-        )
-
-        return newAnimeSearchResponse(animeNames.displayName, fixUrl(href)) {
+        return newAnimeSearchResponse(cleanTitle, fixUrl(href)) {
             this.posterUrl = sitePoster?.let { fixUrl(it) }
             this.type = if (isMovie) TvType.Movie else TvType.Anime
-            
-            // Adicionar nome alternativo para pesquisa
-            if (animeNames.searchableNames.size > 1) {
-                val altNames = animeNames.searchableNames.filter { it != animeNames.displayName }
-                if (altNames.isNotEmpty()) {
-                    this.name = animeNames.displayName
-                    // Armazenar nomes alternativos como metadata extra
-                    this.data = mapOf(
-                        "alt_names" to altNames.joinToString("|")
-                    )
-                }
-            }
         }
     }
 
@@ -318,7 +281,7 @@ class AnimeFire : MainAPI() {
         return newHomePageResponse(request.name, homeItems.distinctBy { it.url }, false)
     }
 
-    // ============ FUNÇÃO SEARCH COM SUPORTE A NOMES MÚLTIPLOS ============
+    // ============ FUNÇÃO SEARCH CORRIGIDA ============
     
     override suspend fun search(query: String): List<SearchResponse> {
         val searchUrl = "$mainUrl$SEARCH_PATH/${URLEncoder.encode(query, "UTF-8")}"
@@ -333,50 +296,23 @@ class AnimeFire : MainAPI() {
             println("⚠️ [SEARCH] Nenhum elemento encontrado com o seletor atual")
         }
 
-        val results = mutableListOf<SearchResponse>()
-        
-        elements.forEach { element ->
+        return elements.mapNotNull { element ->
             runCatching {
                 val href = element.attr("href")
-                if (href.isBlank()) return@runCatching null
-
-                // Obter nomes dos elementos HTML
-                val japaneseName = element.selectFirst("h6.text-gray:nth-of-type(2)")?.text()?.trim()?.takeIf { 
-                    it.contains(Regex("[\\u3040-\\u309F\\u30A0-\\u30FF\\u4E00-\\u9FFF]")) 
-                }
-                
-                val englishName = element.selectFirst("h6.text-gray:first-of-type")?.text()?.trim()?.takeIf { 
-                    !it.contains(Regex("[\\u3040-\\u309F\\u30A0-\\u30FF\\u4E00-\\u9FFF]")) && it.isNotBlank()
-                }
-                
-                val portugueseName = element.selectFirst("h3.animeTitle, .animeTitle")?.text()?.trim()?.let { rawTitle ->
-                    rawTitle
-                        .replace(Regex("(?i)(dublado|legendado|todos os episódios|\\(\\d{4}\\))$"), "")
-                        .trim()
+                if (href.isBlank()) {
+                    println("⚠️ [SEARCH] Link vazio encontrado")
+                    return@runCatching null
                 }
 
-                // Criar lista de nomes para pesquisa
-                val allNames = listOfNotNull(japaneseName, englishName, portugueseName).distinct()
+                val titleElement = element.selectFirst("h3.animeTitle, .text-block h3, .animeTitle")
+                val rawTitle = titleElement?.text()?.trim() ?: "Sem Título"
                 
-                // Verificar se a query corresponde a algum dos nomes
-                val matchesQuery = allNames.any { name ->
-                    name.contains(query, ignoreCase = true) || 
-                    query.contains(name, ignoreCase = true)
-                }
-                
-                // Se não houver correspondência direta, usar fuzzy matching
-                if (!matchesQuery) {
-                    val fuzzyMatch = allNames.any { name ->
-                        name.lowercase().contains(query.lowercase()) ||
-                        query.lowercase().contains(name.lowercase())
-                    }
-                    if (!fuzzyMatch) return@runCatching null
-                }
+                val cleanTitle = rawTitle
+                    .replace(Regex("\\s*-\\s*Todos os Episódios$"), "")
+                    .replace(Regex("\\(Dublado\\)"), "")
+                    .replace(Regex("\\(Legendado\\)"), "")
+                    .trim()
 
-                // Determinar nome de exibição (prioriza japonês)
-                val displayName = japaneseName ?: portugueseName ?: englishName ?: "Sem Título"
-                
-                // Obter imagem
                 val imgElement = element.selectFirst("img.imgAnimes, img.card-img-top, img.transitioning_src")
                 val posterUrl = when {
                     imgElement?.hasAttr("data-src") == true -> imgElement.attr("data-src")
@@ -384,64 +320,50 @@ class AnimeFire : MainAPI() {
                     else -> null
                 }
 
-                // Verificar se é filme
                 val isMovie = href.contains("/filmes/") || 
-                             portugueseName?.contains("filme", ignoreCase = true) == true ||
-                             englishName?.contains("movie", ignoreCase = true) == true
+                             cleanTitle.contains("filme", ignoreCase = true) ||
+                             rawTitle.contains("filme", ignoreCase = true) ||
+                             rawTitle.contains("movie", ignoreCase = true)
 
-                println("✅ [SEARCH] Processado: '$displayName' | Nomes: ${allNames.joinToString(", ")}")
+                println("✅ [SEARCH] Processado: '$cleanTitle' | URL: ${href.take(50)}... | Tipo: ${if (isMovie) "Filme" else "Anime"}")
 
-                newAnimeSearchResponse(displayName, fixUrl(href)) {
+                newAnimeSearchResponse(cleanTitle, fixUrl(href)) {
                     this.posterUrl = posterUrl?.let { fixUrl(it) }
-                    this.type = if (isMovie) TvType.Movie else TvType.Anime
-                    
-                    // Adicionar nomes alternativos para pesquisa
-                    if (allNames.size > 1) {
-                        val altNames = allNames.filter { it != displayName }
-                        if (altNames.isNotEmpty()) {
-                            this.data = mapOf(
-                                "alt_names" to altNames.joinToString("|")
-                            )
-                        }
+                    this.type = if (isMovie) {
+                        TvType.Movie
+                    } else {
+                        TvType.Anime
                     }
                 }
             }.getOrElse { e ->
                 println("❌ [SEARCH] Erro ao processar elemento: ${e.message}")
                 null
-            }?.let { results.add(it) }
-        }
-        
-        return results.take(30)
+            }
+        }.take(30)
     }
 
-    // ============ LOAD PRINCIPAL ATUALIZADO ============
+    // ============ LOAD PRINCIPAL COM TRADUÇÃO ============
     
     override suspend fun load(url: String): LoadResponse {
         println("\n🚀 AnimeFire.load() para URL: $url")
         
         val document = app.get(url).document
 
-        // Extrair TODOS os nomes da página
-        val names = extractAnimeNames(document)
-        println("📌 Nomes extraídos: ${names.toSearchString()}")
-
-        // Usar nome japonês para exibição, se disponível
-        val displayTitle = names.japanese ?: names.portuguese ?: "Sem Título"
-        println("📌 Título de exibição: $displayTitle")
-
-        val year = Regex("\\((\\d{4})\\)").find(displayTitle)?.groupValues?.get(1)?.toIntOrNull()
-        val cleanTitle = displayTitle.replace(Regex("\\(\\d{4}\\)"), "").trim()
+        val titleElement = document.selectFirst("h1.quicksand400, .main_div_anime_info h1, h1") ?: 
+            throw ErrorLoadingException("Não foi possível encontrar o título")
+        val rawTitle = titleElement.text().trim()
         
-        val isMovie = url.contains("/filmes/") || displayTitle.contains("Movie", ignoreCase = true)
+        val year = Regex("\\((\\d{4})\\)").find(rawTitle)?.groupValues?.get(1)?.toIntOrNull()
+        val cleanTitle = rawTitle.replace(Regex("\\(\\d{4}\\)"), "").trim()
+        
+        val isMovie = url.contains("/filmes/") || rawTitle.contains("Movie", ignoreCase = true)
         val type = if (isMovie) TvType.Movie else TvType.Anime
 
-        println("📌 Ano: $year, Tipo: $type")
+        println("📌 Título: $cleanTitle, Ano: $year, Tipo: $type")
 
-        // Buscar MAL ID usando o nome japonês primeiro
-        val malId = searchMALIdByName(names.japanese ?: names.english ?: names.portuguese ?: cleanTitle)
+        val malId = searchMALIdByName(cleanTitle)
         println("🔍 MAL ID: $malId")
 
-        // Buscar dados da ani.zip
         var aniZipData: AniZipData? = null
         if (malId != null) {
             println("🔍 Buscando AniZip...")
@@ -450,30 +372,24 @@ class AnimeFire : MainAPI() {
             println("✅ AniZip carregado: ${aniZipData?.episodes?.size ?: 0} episódios")
         }
 
-        // Buscar no TMDB usando nome inglês se disponível
-        val tmdbInfo = searchOnTMDB(names.english ?: cleanTitle, year, !isMovie)
+        val tmdbInfo = searchOnTMDB(cleanTitle, year, !isMovie)
 
-        // Extrair metadados do site
         val siteMetadata = extractSiteMetadata(document)
         
-        // Extrair episódios do site
         val episodes = if (!isMovie) {
             extractEpisodesFromSite(document, cleanTitle, aniZipData)
         } else {
             emptyList()
         }
 
-        // Extrair recomendações
         val recommendations = extractRecommendations(document)
 
-        // Extrair informações adicionais
         val data = document.selectFirst("div#media-info, div.anime-info")
         val genres = data?.select("div:contains(Genre:), div:contains(Gênero:) > span > a")?.map { it.text() }
 
-        // CRIAR RESPOSTA COM TRADUÇÃO
         return createLoadResponseWithTranslation(
             url = url,
-            animeNames = names,
+            cleanTitle = cleanTitle,
             year = year,
             isMovie = isMovie,
             type = type,
@@ -486,59 +402,19 @@ class AnimeFire : MainAPI() {
         )
     }
 
-    // ============ FUNÇÃO PARA EXTRAIR TODOS OS NOMES ============
-    
-    private fun extractAnimeNames(document: org.jsoup.nodes.Document): AnimeNames {
-        // Extrair h1 (nome principal em português)
-        val portugueseName = document.selectFirst("h1.quicksand400")?.text()?.trim()?.let { rawTitle ->
-            rawTitle.replace(Regex("\\(\\d{4}\\)"), "").trim()
-        }
-        
-        // Extrair h6.text-gray (nome inglês e japonês)
-        val grayTexts = document.select("div.div_anime_names h6.text-gray")
-        var englishName: String? = null
-        var japaneseName: String? = null
-        
-        grayTexts.forEachIndexed { index, element ->
-            val text = element.text().trim()
-            if (text.isNotBlank()) {
-                // Verificar se é japonês (contém caracteres japoneses)
-                if (text.contains(Regex("[\\u3040-\\u309F\\u30A0-\\u30FF\\u4E00-\\u9FFF]"))) {
-                    japaneseName = text
-                } else if (index == 0 && englishName == null) {
-                    // Primeiro h6.text-gray geralmente é inglês
-                    englishName = text
-                }
-            }
-        }
-        
-        // Determinar nome de exibição (prioriza japonês)
-        val displayName = japaneseName ?: portugueseName ?: englishName ?: "Sem Título"
-        
-        // Criar lista de nomes para pesquisa
-        val searchableNames = listOfNotNull(japaneseName, englishName, portugueseName).distinct()
-        
-        return AnimeNames(
-            japanese = japaneseName,
-            english = englishName,
-            portuguese = portugueseName,
-            displayName = displayName,
-            searchableNames = searchableNames
-        )
-    }
-
     private fun parseAnimeData(jsonString: String): AniZipData? {
         return try {
             val objectMapper = ObjectMapper()
             objectMapper.readValue(jsonString, AniZipData::class.java)
         } catch (e: Exception) {
+            println("❌ [ANIZIP] Erro parse: ${e.message}")
             null
         }
     }
 
     private suspend fun createLoadResponseWithTranslation(
         url: String,
-        animeNames: AnimeNames,
+        cleanTitle: String,
         year: Int?,
         isMovie: Boolean,
         type: TvType,
@@ -553,8 +429,10 @@ class AnimeFire : MainAPI() {
         val finalPlot = if (TRANSLATION_ENABLED && siteMetadata.plot != null) {
             val originalPlot = siteMetadata.plot!!
             if (!isProbablyPortuguese(originalPlot)) {
+                println("🔍 Traduzindo sinopse (com cache)...")
                 val translated = translateWithCache(originalPlot)
                 if (translated != originalPlot) {
+                    println("✅ Sinopse traduzida!")
                     translated
                 } else {
                     originalPlot
@@ -581,14 +459,19 @@ class AnimeFire : MainAPI() {
                        (genres ?: emptyList()) + 
                        (siteMetadata.tags ?: emptyList())
 
+        if (translationCache.size % 20 == 0 && translationCache.isNotEmpty()) {
+            val hits = cacheHits.values.sum()
+            println("📊 [CACHE] ${translationCache.size} traduções | ${hits} hits salvos")
+        }
+
         println("🏗️ Criando resposta final...")
-        println("📖 Nome: ${animeNames.displayName}")
-        println("📖 Nomes alternativos: ${animeNames.searchableNames.joinToString(", ")}")
+        println("📖 Sinopse: ${finalPlot?.take(50)}...")
         println("📅 Ano: $finalYear")
+        println("🏷️ Tags: ${finalTags.take(3).joinToString()}")
         println("📺 Episódios: ${episodes.size}")
 
         return if (isMovie) {
-            newMovieLoadResponse(animeNames.displayName, url, type, url) {
+            newMovieLoadResponse(cleanTitle, url, type, url) {
                 this.year = finalYear
                 this.plot = finalPlot
                 this.tags = finalTags.distinct().take(10)
@@ -596,17 +479,12 @@ class AnimeFire : MainAPI() {
                 this.backgroundPosterUrl = finalBackdrop
                 this.recommendations = recommendations.takeIf { it.isNotEmpty() }
                 
-                // Adicionar nomes alternativos como metadados
-                if (animeNames.searchableNames.size > 1) {
-                    this.altName = animeNames.searchableNames.joinToString(" / ")
-                }
-                
                 tmdbInfo?.youtubeTrailer?.let { trailerUrl ->
                     addTrailer(trailerUrl)
                 }
             }
         } else {
-            newAnimeLoadResponse(animeNames.displayName, url, type) {
+            newAnimeLoadResponse(cleanTitle, url, type) {
                 addEpisodes(DubStatus.Subbed, episodes)
                 
                 this.year = finalYear
@@ -615,11 +493,6 @@ class AnimeFire : MainAPI() {
                 this.posterUrl = finalPoster
                 this.backgroundPosterUrl = finalBackdrop
                 this.recommendations = recommendations.takeIf { it.isNotEmpty() }
-                
-                // Adicionar nomes alternativos como metadados
-                if (animeNames.searchableNames.size > 1) {
-                    this.altName = animeNames.searchableNames.joinToString(" / ")
-                }
                 
                 tmdbInfo?.youtubeTrailer?.let { trailerUrl ->
                     addTrailer(trailerUrl)
@@ -694,6 +567,10 @@ class AnimeFire : MainAPI() {
                         }
                     }
                 )
+                
+                if (index % 10 == 0 || index == episodeElements.size - 1) {
+                    println("✅ Ep $episodeNumber: $finalEpisodeName")
+                }
                 
             } catch (e: Exception) {
                 println("❌ Erro episódio ${index + 1}: ${e.message}")
