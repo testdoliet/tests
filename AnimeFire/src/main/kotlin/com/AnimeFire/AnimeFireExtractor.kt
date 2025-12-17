@@ -2,10 +2,10 @@ package com.AnimeFire
 
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.app
+import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.WebViewResolver
-import com.lagradost.cloudstream3.utils.newExtractorLink
 import org.jsoup.Jsoup
 
 object AnimeFireExtractor {
@@ -18,248 +18,229 @@ object AnimeFireExtractor {
         return try {
             println("🔗 AnimeFireExtractor: Extraindo de $url")
             
-            // PASSO 1: INTERCEPTAR COM WEBVIEW
-            println("🌐 Iniciando WebViewResolver...")
-            
-            // Configurar o WebViewResolver CORRETAMENTE
+            // Tentar com WebView primeiro
             val resolver = WebViewResolver(
                 regex = Regex("""lightspeedst\.net.*\.mp4"""),
-                useOkhttp = false,
-                timeout = 15000L
+                useOkhttp = false
             )
             
-            // Fazer a requisição com interceptor
             val response = app.get(url, interceptor = resolver)
             val interceptedUrl = response.url
             
-            println("✅ URL interceptada: $interceptedUrl")
-            
-            if (interceptedUrl.isNotEmpty() && interceptedUrl.contains("lightspeedst.net") && interceptedUrl.contains(".mp4")) {
-                // PASSO 2: EXTRAIR INFORMAÇÕES DA URL
-                println("🔍 Analisando URL interceptada...")
+            if (interceptedUrl.isNotEmpty() && interceptedUrl.contains("lightspeedst.net")) {
+                println("✅ Link interceptado: $interceptedUrl")
                 
-                // Tentar extrair base e episódio
-                val baseInfo = extractBaseInfo(interceptedUrl)
+                // ============ PARTE MODIFICADA ============
+                // Analisar QUALIDADE atual
+                val currentQuality = when {
+                    interceptedUrl.contains("/fhd/") -> "fhd"
+                    interceptedUrl.contains("/hd/") -> "hd"
+                    interceptedUrl.contains("/sd/") -> "sd"
+                    else -> "sd" // padrão
+                }
                 
-                if (baseInfo != null) {
-                    val (basePath, episodeNum) = baseInfo
-                    println("📁 Base encontrada: $basePath")
+                println("🎯 Qualidade atual detectada: $currentQuality")
+                
+                // Extrair informações do link
+                val basePattern = """(https://lightspeedst\.net/s\d+/mp4/[^/]+)/(sd|hd|fhd)/(\d+)\.mp4""".toRegex()
+                val match = basePattern.find(interceptedUrl)
+                
+                if (match != null) {
+                    val basePath = match.groupValues[1]  // https://lightspeedst.net/s4/mp4/haikyuu-dublado
+                    val episodeNum = match.groupValues[3] // 1
+                    
+                    println("📁 Base: $basePath")
                     println("🎬 Episódio: $episodeNum")
                     
-                    // PASSO 3: GERAR TODAS AS QUALIDADES
-                    // Ordem de preferência: fhd > hd > sd
+                    // QUALIDADES NA ORDEM DE PREFERÊNCIA
                     val qualities = listOf(
-                        "fhd" to 1080,
-                        "hd" to 720, 
-                        "sd" to 480
+                        Pair("fhd", 1080),  // 1ª preferência
+                        Pair("hd", 720),    // 2ª preferência  
+                        Pair("sd", 480)     // 3ª preferência
                     )
                     
                     var foundAny = false
                     
-                    for ((qualityName, qualityValue) in qualities) {
-                        // Construir URL para esta qualidade
-                        val videoUrl = "$basePath/$qualityName/$episodeNum.mp4"
-                        println("🔄 Gerando: $qualityName ($videoUrl)")
+                    for (qualityPair in qualities) {
+                        val qualityName = qualityPair.first
+                        val qualityValue = qualityPair.second
                         
-                        // Verificar se existe (sem usar HEAD instável)
-                        if (checkUrlExists(videoUrl)) {
-                            println("✅ $qualityName DISPONÍVEL!")
-                            
-                            // Criar ExtractorLink
+                        // Se já estamos nessa qualidade, pular (já foi interceptada)
+                        if (qualityName == currentQuality) {
+                            // Adicionar a qualidade interceptada
                             callback.invoke(
-                                ExtractorLink(
+                                newExtractorLink(
                                     source = name,
                                     name = "$name ($qualityName)",
-                                    url = videoUrl,
+                                    url = interceptedUrl,  // Usa a URL interceptada
                                     referer = "$mainUrl/",
                                     quality = qualityValue,
-                                    type = ExtractorLinkType.VIDEO,
                                     headers = mapOf(
                                         "Referer" to url,
-                                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                                        "Accept" to "video/mp4,video/*;q=0.9,*/*;q=0.8"
-                                    )
+                                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                                    ),
+                                    type = ExtractorLinkType.VIDEO
                                 )
                             )
                             foundAny = true
-                        } else {
-                            println("⚠️ $qualityName não encontrada")
+                            println("✅ Qualidade $qualityName (interceptada)")
+                            continue
+                        }
+                        
+                        // Construir URL para outras qualidades
+                        val videoUrl = "$basePath/$qualityName/$episodeNum.mp4"
+                        
+                        println("🔄 Tentando qualidade: $qualityName ($videoUrl)")
+                        
+                        // Verificar se o link existe (sem usar app.head() instável)
+                        try {
+                            // Usar GET com range request em vez de HEAD
+                            val headers = mapOf(
+                                "Range" to "bytes=0-1",
+                                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                            )
+                            
+                            val test = app.get(videoUrl, headers = headers, timeout = 3000)
+                            
+                            if (test.code == 206 || test.code == 200) { // 206 = Partial Content, 200 = OK
+                                println("✅ Qualidade $qualityName disponível!")
+                                
+                                callback.invoke(
+                                    ExtractorLink(
+                                        source = name,
+                                        name = "$name ($qualityName)",
+                                        url = videoUrl,
+                                        referer = "$mainUrl/",
+                                        quality = qualityValue,
+                                        headers = mapOf(
+                                            "Referer" to url,
+                                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                                        ),
+                                        type = ExtractorLinkType.VIDEO
+                                    )
+                                )
+                                foundAny = true
+                            } else {
+                                println("❌ $qualityName não disponível (código: ${test.code})")
+                            }
+                        } catch (e: Exception) {
+                            println("⚠️ $qualityName falhou: ${e.message}")
                         }
                     }
                     
                     if (foundAny) {
-                        println("🎉 Sucesso! Qualidades extraídas via WebView")
+                        println("🎉 Todas as qualidades processadas!")
                         return true
                     }
-                } else {
-                    println("⚠️ Não conseguiu extrair informações da URL")
-                }
-            } else {
-                println("❌ WebView não interceptou link válido")
-            }
-            
-            // PASSO 4: FALLBACK - Usar URL interceptada diretamente
-            if (interceptedUrl.isNotEmpty() && interceptedUrl.contains(".mp4")) {
-                println("🔄 Fallback: usando URL interceptada direta")
-                
-                val quality = guessQuality(interceptedUrl)
-                
-                callback.invoke(
-                    ExtractorLink(
-                        source = name,
-                        name = "$name (${quality.first})",
-                        url = interceptedUrl,
-                        referer = "$mainUrl/",
-                        quality = quality.second,
-                        type = ExtractorLinkType.VIDEO,
-                        headers = mapOf(
-                            "Referer" to url,
-                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-                        )
-                    )
-                )
-                return true
-            }
-            
-            // PASSO 5: ÚLTIMO RECURSO - Buscar no HTML
-            println("🔄 Tentando extração via HTML...")
-            return extractFromHtmlFallback(url, mainUrl, name, callback)
-            
-        } catch (e: Exception) {
-            println("💥 AnimeFireExtractor Erro: ${e.message}")
-            e.printStackTrace()
-            
-            // Fallback para HTML em caso de erro
-            extractFromHtmlFallback(url, mainUrl, name, callback)
-        }
-    }
-    
-    // ============ FUNÇÕES AUXILIARES ============
-    
-    private fun extractBaseInfo(url: String): Pair<String, String>? {
-        try {
-            println("🔧 Extraindo base info de: ${url.take(80)}...")
-            
-            // Padrão 1: https://lightspeedst.net/s4/mp4/haikyuu-dublado/sd/1.mp4
-            val pattern1 = Regex("""(https://lightspeedst\.net/s\d+/mp4/[^/]+)/(sd|hd|fhd)/(\d+)\.mp4""")
-            val match1 = pattern1.find(url)
-            
-            if (match1 != null) {
-                val basePath = match1.groupValues[1]
-                val episodeNum = match1.groupValues[3]
-                println("✅ Padrão 1 encontrado: base=$basePath, ep=$episodeNum")
-                return Pair(basePath, episodeNum)
-            }
-            
-            // Padrão 2: https://lightspeedst.net/s4/mp4/haikyuu-dublado/1.mp4 (sem qualidade)
-            val pattern2 = Regex("""(https://lightspeedst\.net/s\d+/mp4/[^/]+)/(\d+)\.mp4""")
-            val match2 = pattern2.find(url)
-            
-            if (match2 != null) {
-                val fullPath = match2.groupValues[1]
-                val episodeNum = match2.groupValues[2]
-                
-                // Remover qualquer qualidade que possa estar no path
-                val basePath = fullPath.replace(Regex("/(sd|hd|fhd)$"), "")
-                println("✅ Padrão 2 encontrado: base=$basePath, ep=$episodeNum")
-                return Pair(basePath, episodeNum)
-            }
-            
-            // Padrão 3: Mais genérico
-            val pattern3 = Regex("""(https://lightspeedst\.net/s\d+/mp4/[^/]+/[^/]+)/(\d+)\.mp4""")
-            val match3 = pattern3.find(url)
-            
-            if (match3 != null) {
-                val basePath = match3.groupValues[1].substringBeforeLast("/")
-                val episodeNum = match3.groupValues[2]
-                println("✅ Padrão 3 encontrado: base=$basePath, ep=$episodeNum")
-                return Pair(basePath, episodeNum)
-            }
-            
-            println("❌ Nenhum padrão encontrado")
-            return null
-            
-        } catch (e: Exception) {
-            println("⚠️ Erro extractBaseInfo: ${e.message}")
-            return null
-        }
-    }
-    
-    private suspend fun checkUrlExists(url: String): Boolean {
-        return try {
-            // Usar GET com range request (mais seguro que HEAD)
-            val headers = mapOf(
-                "Range" to "bytes=0-1",
-                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-            )
-            
-            val response = app.get(url, headers = headers, timeout = 3000, allowRedirects = false)
-            
-            // Código 206 (Partial Content) ou 200 (OK) são válidos
-            response.code == 206 || response.code == 200
-            
-        } catch (e: Exception) {
-            println("⚠️ checkUrlExists falhou para $url: ${e.message}")
-            false
-        }
-    }
-    
-    private fun guessQuality(url: String): Pair<String, Int> {
-        return when {
-            url.contains("/fhd/") || url.contains("1080") -> Pair("fhd", 1080)
-            url.contains("/hd/") || url.contains("720") -> Pair("hd", 720)
-            url.contains("/sd/") || url.contains("480") -> Pair("sd", 480)
-            else -> Pair("SD", 480)
-        }
-    }
-    
-    private suspend fun extractFromHtmlFallback(
-        url: String,
-        mainUrl: String,
-        name: String,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        return try {
-            println("📄 Extraindo do HTML como fallback...")
-            
-            val doc = app.get(url).document
-            val html = doc.html()
-            
-            // Buscar links no HTML
-            val pattern = Regex("""https://lightspeedst\.net/s\d+/mp4/[^"'\s]+\.mp4""")
-            val matches = pattern.findAll(html)
-            
-            var foundAny = false
-            
-            matches.forEach { match ->
-                val foundUrl = match.value
-                if (foundUrl.contains(".mp4")) {
-                    println("🔍 Encontrado no HTML: ${foundUrl.take(80)}...")
                     
-                    val quality = guessQuality(foundUrl)
+                } else {
+                    // Se não encontrou o padrão, usar o link direto (fallback)
+                    println("⚠️ Padrão não encontrado, usando fallback")
+                    val quality = when {
+                        interceptedUrl.contains("1080") || interceptedUrl.contains("fhd") -> Pair("fhd", 1080)
+                        interceptedUrl.contains("720") || interceptedUrl.contains("hd") -> Pair("hd", 720)
+                        else -> Pair("sd", 480)
+                    }
                     
                     callback.invoke(
                         ExtractorLink(
                             source = name,
                             name = "$name (${quality.first})",
-                            url = foundUrl,
+                            url = interceptedUrl,
                             referer = "$mainUrl/",
                             quality = quality.second,
-                            type = ExtractorLinkType.VIDEO,
                             headers = mapOf(
                                 "Referer" to url,
                                 "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-                            )
+                            ),
+                            type = ExtractorLinkType.VIDEO
                         )
                     )
-                    foundAny = true
+                    return true
+                }
+                // ============ FIM DA PARTE MODIFICADA ============
+            }
+            
+            // Resto do seu código original (HTML fallback)
+            println("🔄 WebView não funcionou, buscando no HTML...")
+            
+            val doc = app.get(url).document
+            val html = doc.html()
+            
+            // Buscar links no HTML
+            val regex = Regex("""https://lightspeedst\.net/s\d+/mp4/[^"'\s]+""")
+            val matches = regex.findAll(html)
+            
+            var foundInHtml = false
+            
+            matches.forEach { match ->
+                val videoUrl = match.value
+                if (videoUrl.contains(".mp4")) {
+                    println("✅ Encontrado no HTML: $videoUrl")
+                    
+                    val quality = when {
+                        videoUrl.contains("/fhd/") -> Pair("fhd", 1080)
+                        videoUrl.contains("/hd/") -> Pair("hd", 720)
+                        else -> Pair("sd", 480)
+                    }
+                    
+                    callback.invoke(
+                        ExtractorLink(
+                            source = name,
+                            name = "$name (${quality.first})",
+                            url = videoUrl,
+                            referer = "$mainUrl/",
+                            quality = quality.second,
+                            headers = mapOf(
+                                "Referer" to url,
+                                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                            ),
+                            type = ExtractorLinkType.VIDEO
+                        )
+                    )
+                    
+                    foundInHtml = true
                 }
             }
             
-            foundAny
+            // Último recurso: tentar extrair de scripts JavaScript
+            if (!foundInHtml) {
+                println("🔄 Buscando em scripts JS...")
+                
+                val scripts = doc.select("script")
+                for (script in scripts) {
+                    val scriptContent = script.html()
+                    if (scriptContent.contains("lightspeedst")) {
+                        val jsRegex = Regex("""["'](https://lightspeedst\.net[^"']+)["']""")
+                        val jsMatches = jsRegex.findAll(scriptContent)
+                        
+                        jsMatches.forEach { jsMatch ->
+                            val jsUrl = jsMatch.groupValues[1]
+                            if (jsUrl.contains(".mp4")) {
+                                println("✅ Encontrado em JS: $jsUrl")
+                                
+                                callback.invoke(
+                                    ExtractorLink(
+                                        source = name,
+                                        name = name,
+                                        url = jsUrl,
+                                        referer = "$mainUrl/",
+                                        quality = 480,
+                                        type = ExtractorLinkType.VIDEO
+                                    )
+                                )
+                                return true
+                            }
+                        }
+                    }
+                }
+            }
+            
+            foundInHtml
             
         } catch (e: Exception) {
-            println("❌ HTML fallback falhou: ${e.message}")
+            println("💥 AnimeFireExtractor: Erro - ${e.message}")
+            e.printStackTrace()
             false
         }
     }
