@@ -59,14 +59,15 @@ object AnimeFireExtractor {
                 Regex(""""url"\s*:\s*"([^"]+\.mp4)"""),
                 Regex(""""src"\s*:\s*"([^"]+\.mp4)"""),
                 Regex(""""file"\s*:\s*"([^"]+\.mp4)"""),
-                Regex("""['"]((?:https?:)?//lightspeedst\.net[^"'\s<>]+\.mp4)['"]"""),
-                Regex("""\["(https?://lightspeedst\.net[^"]+\.mp4)"(?:,"[^"]+")*\]""")
+                Regex(""""((?:https?:)?//lightspeedst\.net[^"'\s<>]+\.mp4)"""),
+                Regex("""\['((?:https?:)?//lightspeedst\.net[^']+\.mp4)'"""),
+                Regex("""\["((?:https?:)?//lightspeedst\.net[^"]+\.mp4)"""")
             )
             
             for (pattern in urlPatterns) {
                 val matches = pattern.findAll(html)
                 matches.forEach { match ->
-                    var foundUrl = match.groupValues[1].ifEmpty { match.value }
+                    var foundUrl = if (match.groupValues.size > 1) match.groupValues[1] else match.value
                     // Garantir que tenha protocolo
                     if (foundUrl.startsWith("//")) {
                         foundUrl = "https:$foundUrl"
@@ -98,7 +99,7 @@ object AnimeFireExtractor {
                         println("📦 Array encontrado: $arrayContent")
                         
                         // Extrair URLs do array
-                        val urlsInArray = Regex("""['"]((?:https?:)?//lightspeedst\.net[^'"]+\.mp4)['"]""")
+                        val urlsInArray = Regex(""""((?:https?:)?//lightspeedst\.net[^"]+\.mp4)"""")
                             .findAll(arrayContent)
                             .map { it.groupValues[1] }
                             .toList()
@@ -146,7 +147,7 @@ object AnimeFireExtractor {
                                 println("⚠️ Não consegui analisar JSON: ${e.message}")
                                 
                                 // Fallback: extrair URLs do texto
-                                val urlMatches = Regex("""['"]((?:https?:)?//lightspeedst\.net[^'"]+\.mp4)['"]""")
+                                val urlMatches = Regex(""""((?:https?:)?//lightspeedst\.net[^"]+\.mp4)"""")
                                     .findAll(jsonStr)
                                     .map { it.groupValues[1] }
                                     .toList()
@@ -277,7 +278,7 @@ object AnimeFireExtractor {
             
             for (quality in qualities) {
                 val qualityUrl = response.url.toString()
-                    .replace(Regex("/[^/]+\.mp4$"), "/$quality.mp4")
+                    .replace(Regex("/[^/]+\\.mp4$"), "/$quality.mp4")
                 
                 println("🔗 Tentando URL de qualidade: $qualityUrl")
                 
@@ -348,4 +349,33 @@ object AnimeFireExtractor {
             else -> "SD"
         }
     }
-}
+    
+    // Função de debug para scripts
+    private fun debugScripts(doc: org.jsoup.nodes.Document) {
+        val scripts = doc.select("script")
+        println("📊 Total de scripts: ${scripts.size}")
+        
+        scripts.forEachIndexed { index, script ->
+            val content = script.html()
+            if (content.contains("lightspeedst") || content.contains("mp4") || content.contains("sources")) {
+                println("\n=== SCRIPT $index ===")
+                println("Tamanho: ${content.length} chars")
+                println("Primeiros 500 chars:")
+                println(content.take(500))
+                
+                // Procurar padrões específicos
+                val patterns = listOf(
+                    """sources\s*:\s*\[""",
+                    """lightspeedst\.net""",
+                    """\.mp4"""
+                )
+                
+                patterns.forEach { pattern ->
+                    if (content.contains(pattern.toRegex())) {
+                        println("✅ Contém: $pattern")
+                    }
+                }
+            }
+        }
+    }
+                                                       }
