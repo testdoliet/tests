@@ -8,7 +8,7 @@ plugins {
 android {
     buildFeatures {
     buildConfig = true
-    namespace = "com.SuperFlix"
+    namespace = "com.AnimeFire"
     compileSdk = 33
 }
     defaultConfig {
