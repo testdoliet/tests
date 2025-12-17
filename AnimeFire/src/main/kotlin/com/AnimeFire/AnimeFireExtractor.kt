@@ -6,7 +6,6 @@ import com.lagradost.cloudstream3.network.WebViewResolver
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
-import com.lagradost.cloudstream3.utils.loadExtractor
 
 object AnimeFireExtractor {
     suspend fun extractVideoLinks(
@@ -18,9 +17,9 @@ object AnimeFireExtractor {
         return try {
             println("🔗 AnimeFireExtractor: Extraindo de $url")
 
-            // 1. Primeiro, tenta o método tradicional com WebView (para capturar o link base)
+            // 1. Interceptar com WebView
             val streamResolver = WebViewResolver(
-                interceptUrl = Regex("""lightspeedst\.net.*\.mp4(?:\?|$)"""),
+                interceptUrl = Regex("""lightspeedst\.net.*\.mp4"""),
                 useOkhttp = false,
                 timeout = 15_000L
             )
@@ -28,249 +27,144 @@ object AnimeFireExtractor {
             val response = app.get(url, interceptor = streamResolver)
             val intercepted = response.url
 
-            println("🌐 AnimeFireExtractor: URL interceptada: $intercepted")
+            println("🌐 URL interceptada: $intercepted")
 
-            // Lista de qualidades na ordem de preferência (da maior para a menor)
-            val qualities = listOf("fhd", "hd", "sd")
-
-            val success = if (intercepted.isNotEmpty() && intercepted.contains("lightspeedst.net")) {
-                // 2. Encontrar o padrão base do link
-                val baseLinkPattern = """(https://lightspeedst\.net/s\d+/mp4/[^/]+)/[^/]+/(\d+)\.mp4""".toRegex()
-                val matchResult = baseLinkPattern.find(intercepted)
-
-                if (matchResult != null) {
-                    val basePath = matchResult.groupValues[1]
-                    val episodeNumber = matchResult.groupValues[2]
-                    
-                    println("✅ AnimeFireExtractor: Padrão base encontrado: $basePath")
-                    println("🎬 Episódio: $episodeNumber")
-
-                    // 3. ADICIONAR TODAS AS 3 QUALIDADES DIRETAMENTE (SEM VERIFICAR)
-                    // Fazer assim: fhd (1080p) → hd (720p) → sd (480p)
-                    var foundAny = false
-                    
-                    // Para CADA qualidade na lista
-                    for (quality in qualities) {
-                        val qualityUrl = "$basePath/$quality/$episodeNumber.mp4"
-                        val qualityNum = when (quality) {
-                            "fhd" -> 1080
-                            "hd" -> 720
-                            else -> 480 // sd
-                        }
-                        
-                        val displayName = when (quality) {
-                            "fhd" -> "1080p"
-                            "hd" -> "720p"
-                            else -> "480p"
-                        }
-
-                        println("🔄 AnimeFireExtractor: Adicionando qualidade $displayName: $qualityUrl")
-
-                        callback.invoke(
-                            newExtractorLink(
-                                source = name,
-                                name = "$name ($displayName)",
-                                url = qualityUrl,
-                                type = ExtractorLinkType.VIDEO
-                            ) {
-                                this.referer = "$mainUrl/"
-                                this.quality = qualityNum
-                                this.headers = mapOf(
-                                    "Referer" to url,
-                                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-                                )
-                            }
-                        )
-                        foundAny = true
-                        println("✅ AnimeFireExtractor: Qualidade $displayName adicionada")
-                    }
-
-                    foundAny
-                } else {
-                    // Fallback: se não encontrou o padrão, usa o link interceptado como está
-                    println("⚠️ AnimeFireExtractor: Padrão não encontrado, usando link direto")
-                    
-                    // Tentar adivinhar qualidades mesmo sem padrão
-                    val basePattern2 = """(https://lightspeedst\.net/s\d+/mp4/.+?)/(\d+)\.mp4""".toRegex()
-                    val match2 = basePattern2.find(intercepted)
-                    
-                    if (match2 != null) {
-                        val basePath = match2.groupValues[1]
-                        val episodeNum = match2.groupValues[2]
-                        
-                        println("🔍 Padrão alternativo encontrado, gerando qualidades...")
-                        
-                        // Gerar as 3 qualidades
-                        for (quality in qualities) {
-                            val qualityUrl = "$basePath/$quality/$episodeNum.mp4"
-                            val qualityNum = when (quality) {
-                                "fhd" -> 1080
-                                "hd" -> 720
-                                else -> 480
-                            }
-                            
-                            val displayName = when (quality) {
-                                "fhd" -> "1080p"
-                                "hd" -> "720p"
-                                else -> "480p"
-                            }
-                            
-                            callback.invoke(
-                                newExtractorLink(
-                                    source = name,
-                                    name = "$name ($displayName)",
-                                    url = qualityUrl,
-                                    type = ExtractorLinkType.VIDEO
-                                ) {
-                                    this.referer = "$mainUrl/"
-                                    this.quality = qualityNum
-                                    this.headers = mapOf(
-                                        "Referer" to url,
-                                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-                                    )
-                                }
-                            )
-                        }
-                        true
-                    } else {
-                        // Último fallback: link único
-                        val quality = if (intercepted.contains("1080") || intercepted.contains("fhd")) {
-                            1080
-                        } else if (intercepted.contains("720") || intercepted.contains("hd")) {
-                            720
-                        } else {
-                            480
-                        }
-                        
-                        val displayName = when (quality) {
-                            1080 -> "1080p"
-                            720 -> "720p"
-                            else -> "480p"
-                        }
-
-                        callback.invoke(
-                            newExtractorLink(
-                                source = name,
-                                name = "$name ($displayName)",
-                                url = intercepted,
-                                type = ExtractorLinkType.VIDEO
-                            ) {
-                                this.referer = "$mainUrl/"
-                                this.quality = quality
-                                this.headers = mapOf(
-                                    "Referer" to url,
-                                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-                                )
-                            }
-                        )
-                        true
-                    }
-                }
-            } else {
-                println("❌ AnimeFireExtractor: Nenhum link lightspeedst.net encontrado")
-                false
-            }
-
-            // 5. Se ainda não encontrou nada, tentar um método alternativo
-            if (!success) {
-                println("🔄 AnimeFireExtractor: Tentando método alternativo...")
-                // Tentar buscar no HTML da página
-                val doc = app.get(url).document
-                val scripts = doc.select("script").map { it.html() }
+            if (intercepted.isNotEmpty() && intercepted.contains("lightspeedst.net") && intercepted.contains(".mp4")) {
+                println("✅ Link válido interceptado")
                 
-                var foundInScripts = false
-
-                for (script in scripts) {
-                    // Procurar por padrões de URL do lightspeedst.net
-                    val pattern = """(https://lightspeedst\.net/s\d+/mp4/[^/]+/[^/]+/(\d+)\.mp4)""".toRegex()
-                    val matches = pattern.findAll(script)
-
-                    matches.forEach { match ->
-                        val foundUrl = match.value
-                        println("✅ AnimeFireExtractor: Link encontrado no HTML: $foundUrl")
-                        
-                        // Tentar extrair base para gerar qualidades
-                        val basePattern = """(https://lightspeedst\.net/s\d+/mp4/[^/]+)/[^/]+/(\d+)\.mp4""".toRegex()
-                        val baseMatch = basePattern.find(foundUrl)
-                        
-                        if (baseMatch != null) {
-                            val basePath = baseMatch.groupValues[1]
-                            val episodeNum = baseMatch.groupValues[2]
-                            
-                            // GERAR AS 3 QUALIDADES
-                            for (quality in qualities) {
-                                val qualityUrl = "$basePath/$quality/$episodeNum.mp4"
-                                val qualityNum = when (quality) {
-                                    "fhd" -> 1080
-                                    "hd" -> 720
-                                    else -> 480
-                                }
-                                
-                                val displayName = when (quality) {
-                                    "fhd" -> "1080p"
-                                    "hd" -> "720p"
-                                    else -> "480p"
-                                }
-                                
-                                callback.invoke(
-                                    newExtractorLink(
-                                        source = name,
-                                        name = "$name ($displayName)",
-                                        url = qualityUrl,
-                                        type = ExtractorLinkType.VIDEO
-                                    ) {
-                                        this.referer = "$mainUrl/"
-                                        this.quality = qualityNum
-                                        this.headers = mapOf(
-                                            "Referer" to url,
-                                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-                                        )
-                                    }
-                                )
-                            }
-                            foundInScripts = true
-                            println("✅ AnimeFireExtractor: 3 qualidades geradas do HTML")
-                        } else {
-                            // Fallback: link único
-                            val quality = when {
-                                foundUrl.contains("/fhd/") -> 1080
-                                foundUrl.contains("/hd/") -> 720
-                                else -> 480
-                            }
-                            
-                            val displayName = when (quality) {
-                                1080 -> "1080p"
-                                720 -> "720p"
-                                else -> "480p"
-                            }
-
-                            callback.invoke(
-                                newExtractorLink(
-                                    source = name,
-                                    name = "$name ($displayName)",
-                                    url = foundUrl,
-                                    type = ExtractorLinkType.VIDEO
-                                ) {
-                                    this.referer = "$mainUrl/"
-                                    this.quality = quality
-                                    this.headers = mapOf(
-                                        "Referer" to url,
-                                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-                                    )
-                                }
-                            )
-                            foundInScripts = true
-                        }
-                    }
+                // 2. EXTRAIR INFORMAÇÕES CORRETAMENTE
+                // Padrão: https://lightspeedst.net/s4/mp4/haikyuu-dublado/sd/1.mp4
+                // Queremos: base = https://lightspeedst.net/s4/mp4/haikyuu-dublado
+                //           episódio = 1
+                
+                // SOLUÇÃO SIMPLES: Usar replace para obter a base
+                val basePath = if (intercepted.contains("/sd/")) {
+                    intercepted.replace("/sd/", "/")
+                } else if (intercepted.contains("/hd/")) {
+                    intercepted.replace("/hd/", "/")
+                } else if (intercepted.contains("/fhd/")) {
+                    intercepted.replace("/fhd/", "/")
+                } else {
+                    // Tentar extrair com regex
+                    val pattern = """(https://lightspeedst\.net/s\d+/mp4/[^/]+)/[^/]+""".toRegex()
+                    val match = pattern.find(intercepted)
+                    match?.groupValues?.get(1) ?: intercepted.substringBeforeLast("/")
                 }
-
-                foundInScripts
-            } else {
-                success
+                
+                // Extrair número do episódio
+                val episodeNum = intercepted.substringAfterLast("/").replace(".mp4", "")
+                
+                println("📁 Base extraída: $basePath")
+                println("🎬 Episódio: $episodeNum")
+                
+                // 3. GERAR AS 3 QUALIDADES DIRETAMENTE
+                val qualities = listOf(
+                    "fhd" to 1080,
+                    "hd" to 720,
+                    "sd" to 480
+                )
+                
+                var addedCount = 0
+                
+                for ((qualityCode, qualityValue) in qualities) {
+                    // Construir URL para esta qualidade
+                    val videoUrl = "$basePath/$qualityCode/$episodeNum.mp4"
+                    val displayName = when (qualityCode) {
+                        "fhd" -> "1080p"
+                        "hd" -> "720p"
+                        else -> "480p"
+                    }
+                    
+                    println("➕ Adicionando: $displayName - $videoUrl")
+                    
+                    // Usar newExtractorLink com lambda configuration
+                    callback.invoke(
+                        newExtractorLink(
+                            source = name,
+                            name = "$name ($displayName)",
+                            url = videoUrl,
+                            type = ExtractorLinkType.VIDEO
+                        ) {
+                            this.referer = "$mainUrl/"
+                            this.quality = qualityValue
+                            this.headers = mapOf(
+                                "Referer" to url,
+                                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                            )
+                        }
+                    )
+                    
+                    addedCount++
+                }
+                
+                println("🎉 $addedCount qualidades adicionadas!")
+                return addedCount > 0
             }
-
+            
+            // Fallback: buscar no HTML
+            println("🔄 Fallback: buscando no HTML...")
+            
+            val doc = app.get(url).document
+            val html = doc.html()
+            
+            // Procurar link no HTML
+            val pattern = Regex("""https://lightspeedst\.net/s\d+/mp4/[^"'\s]+\.mp4""")
+            val match = pattern.find(html)
+            
+            if (match != null) {
+                val foundUrl = match.value
+                println("✅ Link encontrado no HTML: $foundUrl")
+                
+                // Tentar gerar qualidades do link do HTML também
+                val htmlBase = if (foundUrl.contains("/sd/")) {
+                    foundUrl.replace("/sd/", "/")
+                } else if (foundUrl.contains("/hd/")) {
+                    foundUrl.replace("/hd/", "/")
+                } else if (foundUrl.contains("/fhd/")) {
+                    foundUrl.replace("/fhd/", "/")
+                } else {
+                    foundUrl.substringBeforeLast("/")
+                }
+                
+                val htmlEpisode = foundUrl.substringAfterLast("/").replace(".mp4", "")
+                
+                val htmlQualities = listOf(
+                    "fhd" to 1080,
+                    "hd" to 720,
+                    "sd" to 480
+                )
+                
+                for ((qualityCode, qualityValue) in htmlQualities) {
+                    val videoUrl = "$htmlBase/$qualityCode/$htmlEpisode.mp4"
+                    val displayName = when (qualityCode) {
+                        "fhd" -> "1080p"
+                        "hd" -> "720p"
+                        else -> "480p"
+                    }
+                    
+                    println("➕ HTML: Adicionando $displayName")
+                    
+                    callback.invoke(
+                        newExtractorLink(
+                            source = name,
+                            name = "$name ($displayName)",
+                            url = videoUrl,
+                            type = ExtractorLinkType.VIDEO
+                        ) {
+                            this.referer = "$mainUrl/"
+                            this.quality = qualityValue
+                        }
+                    )
+                }
+                
+                return true
+            }
+            
+            println("❌ Nenhum link encontrado")
+            false
+            
         } catch (e: Exception) {
-            println("💥 AnimeFireExtractor: Erro - ${e.message}")
+            println("💥 Erro: ${e.message}")
             false
         }
     }
