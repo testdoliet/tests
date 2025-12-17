@@ -27,12 +27,16 @@ class AnimeFire : MainAPI() {
         private const val SEARCH_PATH = "/pesquisar"
         private const val MAX_TRIES = 3
         private const val RETRY_DELAY = 1000L
-        private const val TMDB_PROXY_URL = "https://lawliet.euluan1912.workers.dev"
         private const val tmdbImageUrl = "https://image.tmdb.org/t/p"
         private const val TRANSLATION_ENABLED = true
-        private const val WORKERS_URL = "https://animefire.euluan1912.workers.dev"
+        private const val WORKERS_URL = "https://animefire.euluan1912.workers.dev" // Proxy APENAS para tradução
         private const val MAX_CACHE_SIZE = 500
-    }    
+    }
+
+    // ============ TMDB COM BuildConfig ============
+    private val tmdbApiKey = BuildConfig.TMDB_API_KEY
+    private val tmdbAccessToken = BuildConfig.TMDB_ACCESS_TOKEN
+    private val tmdbBaseUrl = "https://api.themoviedb.org/3"
 
     override val mainPage = mainPageOf(
         "$mainUrl" to "Lançamentos",
@@ -87,6 +91,7 @@ class AnimeFire : MainAPI() {
         if (isProbablyPortuguese(text)) return text
         
         return try {
+            // USAR PROXY APENAS PARA TRADUÇÃO
             val workersTranslated = translateWithWorkers(text)
             if (workersTranslated != text) return workersTranslated
             
@@ -372,6 +377,7 @@ class AnimeFire : MainAPI() {
             println("✅ AniZip carregado: ${aniZipData?.episodes?.size ?: 0} episódios")
         }
 
+        // AGORA USANDO BUILDCONFIG PARA TMDB
         val tmdbInfo = searchOnTMDB(cleanTitle, year, !isMovie)
 
         val siteMetadata = extractSiteMetadata(document)
@@ -668,21 +674,40 @@ class AnimeFire : MainAPI() {
     }
 
     private suspend fun searchOnTMDB(query: String, year: Int?, isTv: Boolean): TMDBInfo? {
+        // Verificar se as chaves estão configuradas
+        if (tmdbApiKey == "dummy_api_key" || tmdbAccessToken == "dummy_access_token") {
+            println("⚠️ [TMDB] Chaves BuildConfig não configuradas - usando fallback")
+            return searchOnTMDBFallback(query, year, isTv)
+        }
+
         return try {
             val type = if (isTv) "tv" else "movie"
             val encodedQuery = URLEncoder.encode(query, "UTF-8")
-            val yearParam = year?.let { "&year=$it" } ?: ""
+            
+            // URL de busca DIRETA com API Key
+            var searchUrl = "$tmdbBaseUrl/search/$type?query=$encodedQuery&api_key=$tmdbApiKey&language=pt-BR"
+            if (year != null) searchUrl += "&year=$year"
+            
+            println("🔗 [TMDB] Buscando direto: ${searchUrl.take(100)}...")
 
-            val searchUrl = "$TMDB_PROXY_URL/search?query=$encodedQuery&type=$type$yearParam"
             val response = app.get(searchUrl, timeout = 10_000)
+            println("📡 [TMDB] Status direto: ${response.code}")
 
-            if (response.code != 200) return null
+            if (response.code != 200) {
+                println("❌ [TMDB] Erro na busca direta")
+                return searchOnTMDBFallback(query, year, isTv)
+            }
 
             val searchResult = response.parsedSafe<TMDBSearchResponse>() ?: return null
+            println("✅ [TMDB] Parsing OK! Resultados: ${searchResult.results.size}")
+
             val result = searchResult.results.firstOrNull() ?: return null
 
-            val details = getTMDBDetails(result.id, isTv)
-            val youtubeTrailer = getHighQualityTrailer(details?.videos?.results)
+            // Buscar detalhes completos com Access Token
+            val details = getTMDBDetailsDirect(result.id, isTv) ?: return null
+
+            // Buscar trailer
+            val youtubeTrailer = getHighQualityTrailer(details.videos?.results)
 
             TMDBInfo(
                 id = result.id,
@@ -693,27 +718,114 @@ class AnimeFire : MainAPI() {
                     result.release_date?.substring(0, 4)?.toIntOrNull()
                 },
                 posterUrl = result.poster_path?.let { "$tmdbImageUrl/w500$it" },
-                backdropUrl = details?.backdrop_path?.let { "$tmdbImageUrl/w1280$it" },
-                overview = details?.overview,
-                genres = details?.genres?.map { it.name },
+                backdropUrl = details.backdrop_path?.let { "$tmdbImageUrl/original$it" },
+                overview = details.overview,
+                genres = details.genres?.map { it.name },
                 youtubeTrailer = youtubeTrailer,
-                duration = details?.runtime
+                duration = details.runtime
             )
         } catch (e: Exception) {
+            println("❌ [TMDB] ERRO na busca direta TMDB: ${e.message}")
+            searchOnTMDBFallback(query, year, isTv)
+        }
+    }
+
+    // Função de fallback (usando o proxy antigo se BuildConfig falhar)
+    private suspend fun searchOnTMDBFallback(query: String, year: Int?, isTv: Boolean): TMDBInfo? {
+        val TMDB_FALLBACK_PROXY = "https://lawliet.euluan1912.workers.dev"
+        
+        return try {
+            val type = if (isTv) "tv" else "movie"
+            val encodedQuery = URLEncoder.encode(query, "UTF-8")
+            val yearParam = year?.let { "&year=$it" } ?: ""
+
+            val searchUrl = "$TMDB_FALLBACK_PROXY/search?query=$encodedQuery&type=$type$yearParam"
+            println("🔗 [TMDB FALLBACK] Usando proxy: $searchUrl")
+
+            val response = app.get(searchUrl, timeout = 10_000)
+            println("📡 [TMDB FALLBACK] Status proxy: ${response.code}")
+
+            if (response.code != 200) return null
+
+            val searchResult = response.parsedSafe<TMDBSearchResponse>() ?: return null
+            println("✅ [TMDB FALLBACK] Parsing proxy OK!")
+
+            val result = searchResult.results.firstOrNull() ?: return null
+
+            // Buscar detalhes completos via proxy
+            val details = getTMDBDetailsViaProxy(result.id, isTv) ?: return null
+
+            // Buscar trailer
+            val youtubeTrailer = getHighQualityTrailer(details.videos?.results)
+
+            TMDBInfo(
+                id = result.id,
+                title = if (isTv) result.name else result.title,
+                year = if (isTv) {
+                    result.first_air_date?.substring(0, 4)?.toIntOrNull()
+                } else {
+                    result.release_date?.substring(0, 4)?.toIntOrNull()
+                },
+                posterUrl = result.poster_path?.let { "$tmdbImageUrl/w500$it" },
+                backdropUrl = details.backdrop_path?.let { "$tmdbImageUrl/original$it" },
+                overview = details.overview,
+                genres = details.genres?.map { it.name },
+                youtubeTrailer = youtubeTrailer,
+                duration = details.runtime
+            )
+        } catch (e: Exception) {
+            println("❌ [TMDB FALLBACK] ERRO no proxy: ${e.message}")
             null
         }
     }
 
-    private suspend fun getTMDBDetails(id: Int, isTv: Boolean): TMDBDetailsResponse? {
+    private suspend fun getTMDBDetailsDirect(id: Int, isTv: Boolean): TMDBDetailsResponse? {
+        println("🔍 [TMDB] Buscando detalhes DIRETOS para ID $id")
+        
         return try {
             val type = if (isTv) "tv" else "movie"
-            val url = "$TMDB_PROXY_URL/$type/$id?append_to_response=videos"
+            // Usar Access Token para detalhes
+            val url = "$tmdbBaseUrl/$type/$id?append_to_response=videos&language=pt-BR"
+            
+            val headers = mapOf(
+                "Authorization" to "Bearer $tmdbAccessToken",
+                "accept" to "application/json"
+            )
+            
+            println("🔗 [TMDB] URL detalhes diretos: $url")
+            
+            val response = app.get(url, headers = headers, timeout = 10_000)
+            println("📡 [TMDB] Status detalhes diretos: ${response.code}")
+
+            if (response.code != 200) {
+                println("❌ [TMDB] Erro detalhes diretos: ${response.code}")
+                return null
+            }
+
+            response.parsedSafe<TMDBDetailsResponse>()
+        } catch (e: Exception) {
+            println("❌ [TMDB] ERRO detalhes diretos: ${e.message}")
+            null
+        }
+    }
+
+    private suspend fun getTMDBDetailsViaProxy(id: Int, isTv: Boolean): TMDBDetailsResponse? {
+        val TMDB_FALLBACK_PROXY = "https://lawliet.euluan1912.workers.dev"
+        
+        println("🔍 [TMDB] Buscando detalhes via proxy para ID $id")
+
+        return try {
+            val type = if (isTv) "tv" else "movie"
+            val url = "$TMDB_FALLBACK_PROXY/$type/$id?append_to_response=videos"
 
             val response = app.get(url, timeout = 10_000)
+            println("📡 [TMDB] Status proxy: ${response.code}")
+
             if (response.code != 200) return null
 
             response.parsedSafe<TMDBDetailsResponse>()
         } catch (e: Exception) {
+            println("❌ [TMDB] ERRO detalhes proxy: ${e.message}")
             null
         }
     }
