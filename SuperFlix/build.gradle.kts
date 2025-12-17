@@ -4,9 +4,11 @@ plugins {
 }
 
 android {
+    buildFeatures {
+    buildConfig = true
     namespace = "com.SuperFlix"
     compileSdk = 33
-
+}
     defaultConfig {
         minSdk = 24
         targetSdk = 33
