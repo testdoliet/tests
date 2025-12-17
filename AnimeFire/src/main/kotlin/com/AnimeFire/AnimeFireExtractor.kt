@@ -3,6 +3,7 @@ package com.AnimeFire
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.network.WebViewResolver
+import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 
@@ -41,10 +42,10 @@ object AnimeFireExtractor {
                     else -> 0
                 }
                 
-                // Usando invoke()
+                // Corrigindo o newExtractorLink
                 callback.invoke(
                     newExtractorLink(
-                        sourceName = name,
+                        source = name,  // ← source, não sourceName
                         name = name,
                         url = intercepted,
                         type = ExtractorLinkType.VIDEO
