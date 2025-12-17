@@ -1,25 +1,43 @@
-@file:Suppress("UnstableApiUsage")
-
-version = 1
+plugins {
+    kotlin("android")
+    id("com.android.library")
+}
 
 android {
-    compileSdk = 34
     namespace = "com.SuperFlix"
-    
+    compileSdk = 33
+
     defaultConfig {
-        minSdk = 21
-        targetSdk = 34
+        minSdk = 24
+        targetSdk = 33
+
+        // VARIÁVEIS DE BUILD PARA TMDB
+        // API KEY: Usada em queries (?api_key=xxx)
+        buildConfigField("String", "TMDB_API_KEY", 
+            "\"${System.getenv("TMDB_API_KEY") ?: "dummy_api_key"}\"")
+        
+        // ACCESS TOKEN: Usada em headers (Authorization: Bearer xxx)
+        buildConfigField("String", "TMDB_ACCESS_TOKEN", 
+            "\"${System.getenv("TMDB_ACCESS_TOKEN") ?: "dummy_access_token"}\"")
     }
-    
+
+    buildTypes {
+        getByName("release") {
+            isMinifyEnabled = false
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
+        }
+    }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_1_8
         targetCompatibility = JavaVersion.VERSION_1_8
     }
-    
     kotlinOptions {
         jvmTarget = "1.8"
-        freeCompilerArgs = freeCompilerArgs + "-Xopt-in=kotlin.RequiresOptIn"
     }
+}
+
+dependencies {
+    implementation(project(":common"))
 }
 
 cloudstream {
@@ -36,7 +54,4 @@ cloudstream {
 dependencies {
     val cloudstream by configurations
     cloudstream("com.lagradost:cloudstream3:pre-release")
-    
-    // Adiciona dependência de coroutines se necessário
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
-}
+
