@@ -989,12 +989,13 @@ class AnimeFire : MainAPI() {
     }
 
     override suspend fun loadLinks(
-        data: String,
-        isCasting: Boolean,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        return false
+    data: String,
+    isCasting: Boolean,
+    subtitleCallback: (SubtitleFile) -> Unit,
+    callback: (ExtractorLink) -> Unit
+): Boolean {
+    // Usar o extractor registrado
+    return loadExtractor(data, "$mainUrl/", subtitleCallback, callback)
     }
 
     // ============ CLASSES DE DADOS ADICIONAIS ============
