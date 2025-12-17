@@ -858,14 +858,20 @@ class AnimeFire : MainAPI() {
             }
     }
 
-        override suspend fun loadLinks(
-        data: String,
-        isCasting: Boolean,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        return AnimeFireExtractor.extractVideoLinks(data, mainUrl, name, callback)
-    }
+// No AnimeFire.kt, na função loadLinks:
+
+     override suspend fun loadLinks(
+     data: String,
+     isCasting: Boolean,
+     subtitleCallback: (SubtitleFile) -> Unit,
+     callback: (ExtractorLink) -> Unit
+ ): Boolean {
+     println("🚀 AnimeFire.loadLinks chamado para URL: $data")
+     val result = AnimeFireExtractor.extractVideoLinks(data, mainUrl, name, callback)
+     println("📊 Resultado loadLinks: $result")
+     return result
+ }
+    
 
     // ============ CLASSES DE DADOS ============
     @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
