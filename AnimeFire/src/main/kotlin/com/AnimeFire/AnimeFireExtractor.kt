@@ -3,8 +3,8 @@ package com.AnimeFire
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.network.WebViewResolver
-import com.lagradost.cloudstream3.utils.ExtractorLink
-import com.lagradost.cloudstream3.utils.Qualities
+import com.lagradost.cloudstream3.utils.newExtractorLink
+import com.lagradost.cloudstream3.utils.newExtractorLinkType
 
 object AnimeFireExtractor {
 
@@ -31,30 +31,31 @@ object AnimeFireExtractor {
             if (intercepted.isNotEmpty() && intercepted.contains(".mp4")) {
                 println("✅ AnimeFireExtractor: MP4 encontrado: $intercepted")
                 
-                // Determinar qualidade usando Qualities
+                // Determinar qualidade
                 val quality = when {
-                    intercepted.contains("1080") -> Qualities.FullHd.value
-                    intercepted.contains("720") -> Qualities.HD.value
-                    intercepted.contains("480") -> Qualities.SD.value
-                    intercepted.contains("360") -> Qualities.P360.value
-                    intercepted.contains("240") -> Qualities.P240.value
-                    else -> Qualities.Unknown.value
+                    intercepted.contains("1080") -> 1080
+                    intercepted.contains("720") -> 720
+                    intercepted.contains("480") -> 480
+                    intercepted.contains("360") -> 360
+                    intercepted.contains("240") -> 240
+                    else -> 0
                 }
                 
-                // Usa o mesmo construtor que o SuperFlixExtractor
-                callback(
-                    ExtractorLink(
-                        name,            // source
-                        name,            // name  
-                        intercepted,     // url
-                        "$mainUrl/",     // referer
-                        quality,         // quality
-                        false,           // isM3u8 (MP4 é false!)
-                        headers = mapOf(
+                // Usando invoke()
+                callback.invoke(
+                    newExtractorLink(
+                        sourceName = name,
+                        name = name,
+                        url = intercepted,
+                        type = ExtractorLinkType.VIDEO
+                    ) {
+                        this.referer = "$mainUrl/"
+                        this.quality = quality
+                        this.headers = mapOf(
                             "Referer" to url,
                             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
                         )
-                    )
+                    }
                 )
                 true
             } else {
