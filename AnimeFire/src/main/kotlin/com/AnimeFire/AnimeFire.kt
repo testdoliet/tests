@@ -20,16 +20,17 @@ class AnimeFire : MainAPI() {
         "trending" to "Em Alta",
         "season" to "Populares Nessa Temporada", 
         "popular" to "Sempre Populares",
-        "top" to "Top 100"
-        "upcoming" to "Na Próxima Temporada"
+        "top" to "Top 100",
+        "upcoming" to "Na Próxima Temporada"  // CORRIGI: adicionei a vírgula que faltava
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         return when (request.name) {
-            "AniList: Em Alta" -> getAniListTrending(page)
-            "AniList: Esta Temporada" -> getAniListSeason(page)
-            "AniList: Populares" -> getAniListPopular(page)
-            "AniList: Top 100" -> getAniListTop(page)
+            "Em Alta" -> getAniListTrending(page)
+            "Populares Nessa Temporada" -> getAniListSeason(page)
+            "Sempre Populares" -> getAniListPopular(page)
+            "Top 100" -> getAniListTop(page)
+            "Na Próxima Temporada" -> getAniListUpcoming(page)  // NOVA FUNÇÃO
             else -> newHomePageResponse(request.name, emptyList(), false)
         }
     }
@@ -62,7 +63,7 @@ class AnimeFire : MainAPI() {
             }
         """.trimIndent()
         
-        return executeAniListQuery(query, "AniList: Em Alta", page)
+        return executeAniListQuery(query, "Em Alta", page)
     }
 
     private suspend fun getAniListSeason(page: Int): HomePageResponse {
@@ -92,7 +93,7 @@ class AnimeFire : MainAPI() {
             }
         """.trimIndent()
         
-        return executeAniListQuery(query, "AniList: Esta Temporada", page)
+        return executeAniListQuery(query, "Populares Nessa Temporada", page)
     }
 
     private suspend fun getAniListPopular(page: Int): HomePageResponse {
@@ -123,7 +124,7 @@ class AnimeFire : MainAPI() {
             }
         """.trimIndent()
         
-        return executeAniListQuery(query, "AniList: Populares", page)
+        return executeAniListQuery(query, "Sempre Populares", page)
     }
 
     private suspend fun getAniListTop(page: Int): HomePageResponse {
@@ -154,7 +155,38 @@ class AnimeFire : MainAPI() {
             }
         """.trimIndent()
         
-        return executeAniListQuery(query, "AniList: Top 100", page, showRank = true)
+        return executeAniListQuery(query, "Top 100", page, showRank = true)
+    }
+
+    private suspend fun getAniListUpcoming(page: Int): HomePageResponse {
+        println("🌐 [ANILIST] Buscando Próxima Temporada...")
+        
+        // Para a próxima temporada (Spring 2025)
+        val query = """
+            query {
+                Page(page: $page, perPage: 20) {
+                    media(season: SPRING, seasonYear: 2025, type: ANIME, sort: POPULARITY_DESC) {
+                        id
+                        title {
+                            romaji
+                            english
+                            native
+                            userPreferred
+                        }
+                        coverImage {
+                            large
+                            extraLarge
+                        }
+                        format
+                        status
+                        episodes
+                        averageScore
+                    }
+                }
+            }
+        """.trimIndent()
+        
+        return executeAniListQuery(query, "Na Próxima Temporada", page)
     }
 
     private suspend fun executeAniListQuery(
@@ -319,16 +351,9 @@ class AnimeFire : MainAPI() {
                         this.backgroundPosterUrl = media.bannerImage
                         this.year = media.startDate?.year
                         this.tags = media.genres
-                        
-                        // Adicionar trailer através do método direto
-                        // Nota: addTrailer não está disponível diretamente aqui
-                        // Vamos adicionar como uma informação extra se possível
                     }.apply {
-                        // Tentar adicionar trailer se disponível
-                        // (algumas versões do Cloudstream podem ter métodos diferentes)
                         if (trailerUrl != null) {
                             println("🎬 Trailer disponível: $trailerUrl")
-                            // Podemos tentar adicionar de outra forma se necessário
                         }
                     }
                 }
