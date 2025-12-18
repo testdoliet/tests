@@ -41,6 +41,20 @@ class AnimeFire : MainAPI() {
     // URLs do AniList
     private val aniListUrl = "https://anilist.co"
     
+    // Headers para simular navegador
+    private val browserHeaders = mapOf(
+        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+        "Accept-Language" to "en-US,en;q=0.9,pt-BR;q=0.8,pt;q=0.7",
+        "Accept-Encoding" to "gzip, deflate, br",
+        "Connection" to "keep-alive",
+        "Upgrade-Insecure-Requests" to "1",
+        "Sec-Fetch-Dest" to "document",
+        "Sec-Fetch-Mode" to "navigate",
+        "Sec-Fetch-Site" to "none",
+        "Cache-Control" to "max-age=0"
+    )
+    
     // MainPage com abas do AnimeFire E AniList
     override val mainPage = mainPageOf(
         // Abas ORIGINAIS do AnimeFire (mantidas)
@@ -331,31 +345,51 @@ class AnimeFire : MainAPI() {
         val showRank = pageName == "AniList: Top 100"
         
         try {
-            val aniListDoc = app.get("$aniListUrl/$endpoint", referer = aniListUrl).document
+            // Usar headers de navegador para simular acesso real
+            val aniListDoc = app.get(
+                "$aniListUrl/$endpoint", 
+                headers = browserHeaders,
+                timeout = 15000
+            ).document
             
             // DEBUG: Verificar o HTML recebido
-            println("📄 [ANILIST] HTML recebido: ${aniListDoc.text().take(200)}...")
+            val htmlText = aniListDoc.text()
+            println("📄 [ANILIST] Primeiros 500 chars do HTML: ${htmlText.take(500)}")
             
-            // Procurar por diferentes tipos de containers
-            val landingSection = aniListDoc.select(".landing-section")
-            println("🔍 [ANILIST] Sections encontradas: ${landingSection.size}")
-            
-            // Primeiro tentar encontrar na seção específica
-            val targetSection = when (pageName) {
-                "AniList: Em Alta" -> landingSection.find { it.select("h3").text().contains("Trending", ignoreCase = true) }
-                "AniList: Esta Temporada" -> landingSection.find { it.select("h3").text().contains("Popular this season", ignoreCase = true) }
-                "AniList: Populares" -> landingSection.find { it.select("h3").text().contains("All time popular", ignoreCase = true) }
-                "AniList: Top 100" -> landingSection.find { it.select("h3").text().contains("Top 100", ignoreCase = true) }
-                else -> null
-            }
-            
-            if (targetSection != null) {
-                println("✅ [ANILIST] Seção específica encontrada: ${targetSection.select("h3").text()}")
-                items.addAll(parseAniListMediaCards(targetSection, showRank))
+            // Verificar se estamos sendo bloqueados
+            if (htmlText.contains("requires Javascript") || htmlText.contains("noscript")) {
+                println("❌ [ANILIST] AniList está bloqueando o acesso (requer JavaScript)")
+                
+                // Tentar uma abordagem alternativa: usar a API GraphQL do AniList
+                val alternativeItems = fetchFromAniListAPI(pageName)
+                if (alternativeItems.isNotEmpty()) {
+                    println("✅ [ANILIST] Usando API GraphQL como fallback")
+                    items.addAll(alternativeItems)
+                } else {
+                    println("⚠️ [ANILIST] API GraphQL também falhou")
+                }
             } else {
-                // Fallback: procurar em todos os media-cards
-                println("⚠️ [ANILIST] Seção específica não encontrada, usando fallback")
-                items.addAll(parseAllAniListMediaCards(aniListDoc, showRank))
+                // Procurar por diferentes tipos de containers
+                val landingSection = aniListDoc.select(".landing-section")
+                println("🔍 [ANILIST] Sections encontradas: ${landingSection.size}")
+                
+                // Primeiro tentar encontrar na seção específica
+                val targetSection = when (pageName) {
+                    "AniList: Em Alta" -> landingSection.find { it.select("h3").text().contains("Trending", ignoreCase = true) }
+                    "AniList: Esta Temporada" -> landingSection.find { it.select("h3").text().contains("Popular this season", ignoreCase = true) }
+                    "AniList: Populares" -> landingSection.find { it.select("h3").text().contains("All time popular", ignoreCase = true) }
+                    "AniList: Top 100" -> landingSection.find { it.select("h3").text().contains("Top 100", ignoreCase = true) }
+                    else -> null
+                }
+                
+                if (targetSection != null) {
+                    println("✅ [ANILIST] Seção específica encontrada: ${targetSection.select("h3").text()}")
+                    items.addAll(parseAniListMediaCards(targetSection, showRank))
+                } else {
+                    // Fallback: procurar em todos os media-cards
+                    println("⚠️ [ANILIST] Seção específica não encontrada, usando fallback")
+                    items.addAll(parseAllAniListMediaCards(aniListDoc, showRank))
+                }
             }
             
             println("✅ [ANILIST] ${items.size} itens encontrados para $pageName")
@@ -363,6 +397,13 @@ class AnimeFire : MainAPI() {
         } catch (e: Exception) {
             println("❌ [ANILIST] Erro ao carregar $pageName: ${e.message}")
             e.printStackTrace()
+            
+            // Tentar usar a API como fallback
+            val apiItems = fetchFromAniListAPI(pageName)
+            if (apiItems.isNotEmpty()) {
+                println("✅ [ANILIST] Usando API GraphQL após erro")
+                items.addAll(apiItems)
+            }
         }
         
         // Armazenar em cache
@@ -374,6 +415,125 @@ class AnimeFire : MainAPI() {
         }
         
         return newHomePageResponse(pageName, items, false)
+    }
+
+    private suspend fun fetchFromAniListAPI(pageName: String): List<AnimeSearchResponse> {
+        println("🔍 [ANILIST API] Buscando dados via GraphQL para: $pageName")
+        
+        // Definir a query GraphQL baseada no tipo de página
+        val queryType = when (pageName) {
+            "AniList: Em Alta" -> "TRENDING_DESC"
+            "AniList: Esta Temporada" -> "POPULARITY_DESC"  // Para temporada atual
+            "AniList: Populares" -> "POPULARITY_DESC"
+            "AniList: Top 100" -> "SCORE_DESC"
+            else -> "POPULARITY_DESC"
+        }
+        
+        val season = when (pageName) {
+            "AniList: Esta Temporada" -> """
+                season: ${getCurrentSeason()}
+                seasonYear: ${getCurrentYear()}
+            """.trimIndent()
+            else -> ""
+        }
+        
+        val query = """
+            query {
+                Page(page: 1, perPage: 20) {
+                    media(type: ANIME, sort: $queryType, $season) {
+                        id
+                        title {
+                            romaji
+                            english
+                            native
+                            userPreferred
+                        }
+                        coverImage {
+                            large
+                            extraLarge
+                        }
+                        format
+                        episodes
+                        averageScore
+                        siteUrl
+                    }
+                }
+            }
+        """.trimIndent()
+        
+        return try {
+            val response = app.post(
+                "https://graphql.anilist.co",
+                data = mapOf("query" to query),
+                headers = mapOf(
+                    "Content-Type" to "application/json",
+                    "Accept" to "application/json"
+                ),
+                timeout = 10_000
+            )
+            
+            if (response.code == 200) {
+                val json = JsonParser.parseString(response.text)
+                val data = json.asJsonObject?.getAsJsonObject("data")
+                val page = data?.getAsJsonObject("Page")
+                val mediaList = page?.getAsJsonArray("media")
+                
+                if (mediaList != null) {
+                    return mediaList.mapNotNull { media ->
+                        try {
+                            val mediaObj = media.asJsonObject
+                            val id = mediaObj.get("id")?.asInt ?: return@mapNotNull null
+                            val title = mediaObj.getAsJsonObject("title")
+                            val titleText = title?.get("userPreferred")?.asString ?: 
+                                          title?.get("romaji")?.asString ?: 
+                                          title?.get("english")?.asString ?: 
+                                          "Sem Título"
+                            
+                            val coverImage = mediaObj.getAsJsonObject("coverImage")
+                            val poster = coverImage?.get("extraLarge")?.asString ?: 
+                                        coverImage?.get("large")?.asString ?: ""
+                            
+                            val siteUrl = mediaObj.get("siteUrl")?.asString ?: "$aniListUrl/anime/$id"
+                            val averageScore = mediaObj.get("averageScore")?.asInt
+                            
+                            val displayTitle = if (pageName == "AniList: Top 100" && averageScore != null) {
+                                "#${averageScore/10} $titleText"
+                            } else {
+                                titleText
+                            }
+                            
+                            val specialUrl = "anilist:$id:$siteUrl"
+                            
+                            newAnimeSearchResponse(displayTitle, specialUrl) {
+                                this.posterUrl = poster
+                                this.type = TvType.Anime
+                            }
+                        } catch (e: Exception) {
+                            println("❌ [ANILIST API] Erro ao parse media: ${e.message}")
+                            null
+                        }
+                    }
+                }
+            }
+            emptyList()
+        } catch (e: Exception) {
+            println("❌ [ANILIST API] Erro: ${e.message}")
+            emptyList()
+        }
+    }
+
+    private fun getCurrentSeason(): String {
+        val month = java.util.Calendar.getInstance().get(java.util.Calendar.MONTH) + 1
+        return when (month) {
+            in 1..3 -> "WINTER"
+            in 4..6 -> "SPRING"
+            in 7..9 -> "SUMMER"
+            else -> "FALL"
+        }
+    }
+
+    private fun getCurrentYear(): Int {
+        return java.util.Calendar.getInstance().get(java.util.Calendar.YEAR)
     }
 
     private fun parseAniListMediaCards(
@@ -583,68 +743,115 @@ class AnimeFire : MainAPI() {
         println("🔍 [ANILIST SEARCH] Buscando: '$query'")
         
         return try {
-            val encodedQuery = URLEncoder.encode(query, "UTF-8")
-            val searchUrl = "$aniListUrl/search/anime?search=$encodedQuery"
-            
-            println("🌐 [ANILIST SEARCH] URL: $searchUrl")
-            
-            val document = app.get(searchUrl, referer = aniListUrl).document
-            
-            // DEBUG: Verificar o que foi encontrado
-            val mediaCards = document.select("div.media-card")
-            println("📊 [ANILIST SEARCH] Media-cards encontrados: ${mediaCards.size}")
-            
-            if (mediaCards.isEmpty()) {
-                println("⚠️ [ANILIST SEARCH] Nenhum media-card encontrado, tentando fallback")
-                // Fallback: procurar por qualquer link de anime
-                val animeLinks = document.select("a[href*='/anime/']")
-                println("🔄 [ANILIST SEARCH] Links de anime encontrados: ${animeLinks.size}")
-            }
-            
-            val results = mediaCards.take(10).mapNotNull { card ->
-                try {
-                    val titleElement = card.selectFirst("a.title") ?: 
-                                      card.selectFirst("a[href*='/anime/']")
-                    
-                    val title = titleElement?.text()?.trim() ?: return@mapNotNull null
-                    val href = card.selectFirst("a[href*='/anime/']")?.attr("href") ?: ""
-                    
-                    if (!href.contains("/anime/")) return@mapNotNull null
-                    
-                    val poster = card.selectFirst("img.image")?.attr("src") ?: ""
-                    
-                    val pathParts = href.split("/")
-                    val aniListId = pathParts.getOrNull(2)?.toIntOrNull()
-                    
-                    val specialUrl = if (aniListId != null) {
-                        "anilist:$aniListId:${fixUrl("$aniListUrl$href")}"
-                    } else {
-                        "anilist:${System.currentTimeMillis()}:${fixUrl("$aniListUrl$href")}"
+            // Usar API GraphQL do AniList para busca
+            val searchQuery = """
+                query {
+                    Page(page: 1, perPage: 10) {
+                        media(search: "$query", type: ANIME) {
+                            id
+                            title {
+                                romaji
+                                english
+                                native
+                                userPreferred
+                            }
+                            coverImage {
+                                large
+                                extraLarge
+                            }
+                            siteUrl
+                        }
                     }
-                    
-                    println("✅ [ANILIST SEARCH] Encontrado: $title (ID: $aniListId)")
-                    
-                    newAnimeSearchResponse(title, specialUrl) {
-                        this.posterUrl = poster
-                        this.type = TvType.Anime
-                    }
-                } catch (e: Exception) {
-                    println("❌ [ANILIST SEARCH] Erro ao processar card: ${e.message}")
-                    null
                 }
-            }
+            """.trimIndent()
             
-            println("✅ [ANILIST SEARCH] ${results.size} resultados encontrados")
-            results
+            val response = app.post(
+                "https://graphql.anilist.co",
+                data = mapOf("query" to searchQuery),
+                headers = mapOf(
+                    "Content-Type" to "application/json",
+                    "Accept" to "application/json"
+                ),
+                timeout = 10_000
+            )
+            
+            if (response.code == 200) {
+                val json = JsonParser.parseString(response.text)
+                val data = json.asJsonObject?.getAsJsonObject("data")
+                val page = data?.getAsJsonObject("Page")
+                val mediaList = page?.getAsJsonArray("media")
+                
+                if (mediaList != null) {
+                    val results = mediaList.mapNotNull { media ->
+                        try {
+                            val mediaObj = media.asJsonObject
+                            val id = mediaObj.get("id")?.asInt ?: return@mapNotNull null
+                            val title = mediaObj.getAsJsonObject("title")
+                            val titleText = title?.get("userPreferred")?.asString ?: 
+                                          title?.get("romaji")?.asString ?: 
+                                          title?.get("english")?.asString ?: 
+                                          "Sem Título"
+                            
+                            val coverImage = mediaObj.getAsJsonObject("coverImage")
+                            val poster = coverImage?.get("extraLarge")?.asString ?: 
+                                        coverImage?.get("large")?.asString ?: ""
+                            
+                            val siteUrl = mediaObj.get("siteUrl")?.asString ?: "$aniListUrl/anime/$id"
+                            val specialUrl = "anilist:$id:$siteUrl"
+                            
+                            println("✅ [ANILIST SEARCH] Encontrado: $titleText (ID: $id)")
+                            
+                            newAnimeSearchResponse(titleText, specialUrl) {
+                                this.posterUrl = poster
+                                this.type = TvType.Anime
+                            }
+                        } catch (e: Exception) {
+                            println("❌ [ANILIST SEARCH] Erro ao processar: ${e.message}")
+                            null
+                        }
+                    }
+                    
+                    println("✅ [ANILIST SEARCH] ${results.size} resultados encontrados")
+                    results
+                } else {
+                    emptyList()
+                }
+            } else {
+                emptyList()
+            }
         } catch (e: Exception) {
             println("❌ [ANILIST SEARCH] Erro na busca: ${e.message}")
             emptyList()
         }
     }
 
-    // ============ LOAD PRINCIPAL COM SUPORTE PARA ANILIST ============
-    
-    override suspend fun load(url: String): LoadResponse {
+    // ============ RESTANTE DO CÓDIGO (MANTIDO IGUAL) ============
+    // [As funções restantes são as mesmas do código anterior]
+    // Incluindo: load(), loadFromAnimeFire(), loadFromAniList(), 
+    // fetchAniListDetails(), createAniListLoadResponse(),
+    // searchAndGetEpisodesFromAnimeFire(), loadAniListViaScraping(),
+    // extractEpisodesFromSite(), parseAnimeData(), 
+    // createLoadResponseWithTranslation(), searchMALIdByName(),
+    // extractSiteMetadata(), searchOnTMDB(), getTMDBDetailsDirect(),
+    // getHighQualityTrailer(), extractRecommendations(), loadLinks()
+
+    // ============ RESUMO DAS PRINCIPAIS ALTERAÇÕES ============
+
+    /*
+    1. Adicionei headers de navegador (browserHeaders) para simular acesso real
+    2. Adicionei fallback para usar a API GraphQL do AniList quando o scraping falha
+    3. A função getAniListMainPage() agora verifica se está sendo bloqueado
+    4. A função fetchFromAniListAPI() busca dados diretamente da API GraphQL
+    5. A função searchAniList() também usa a API GraphQL
+    6. Adicionei funções auxiliares getCurrentSeason() e getCurrentYear()
+    */
+
+    // [TODO: Copiar aqui todas as funções restantes do código anterior]
+    // Elas são as mesmas e não precisam ser modificadas
+    // load(), loadFromAnimeFire(), loadFromAniList(), etc.
+
+}
+override suspend fun load(url: String): LoadResponse {
         println("\n🚀 AnimeFire.load() para URL: $url")
         
         // Verificar se é uma URL do AniList (começa com "anilist:")
@@ -1589,3 +1796,4 @@ class AnimeFire : MainAPI() {
         val trailerThumbnail: String?
     )
 }
+
