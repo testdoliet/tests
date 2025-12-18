@@ -61,7 +61,7 @@ class AnimeFire : MainAPI() {
             }
         """.trimIndent()
         
-        return executeAniListQuery(query, "AniList: Em Alta")
+        return executeAniListQuery(query, "AniList: Em Alta", page)
     }
 
     private suspend fun getAniListSeason(page: Int): HomePageResponse {
@@ -91,7 +91,7 @@ class AnimeFire : MainAPI() {
             }
         """.trimIndent()
         
-        return executeAniListQuery(query, "AniList: Esta Temporada")
+        return executeAniListQuery(query, "AniList: Esta Temporada", page)
     }
 
     private suspend fun getAniListPopular(page: Int): HomePageResponse {
@@ -122,7 +122,7 @@ class AnimeFire : MainAPI() {
             }
         """.trimIndent()
         
-        return executeAniListQuery(query, "AniList: Populares")
+        return executeAniListQuery(query, "AniList: Populares", page)
     }
 
     private suspend fun getAniListTop(page: Int): HomePageResponse {
@@ -153,16 +153,17 @@ class AnimeFire : MainAPI() {
             }
         """.trimIndent()
         
-        return executeAniListQuery(query, "AniList: Top 100", showRank = true)
+        return executeAniListQuery(query, "AniList: Top 100", page, showRank = true)
     }
 
     private suspend fun executeAniListQuery(
         query: String, 
         pageName: String,
+        page: Int,
         showRank: Boolean = false
     ): HomePageResponse {
         return try {
-            println("📡 [ANILIST] Enviando query GraphQL...")
+            println("📡 [ANILIST] Enviando query GraphQL para página $page...")
             
             val response = app.post(
                 aniListApiUrl,
@@ -186,8 +187,10 @@ class AnimeFire : MainAPI() {
                                media.title?.english ?: 
                                "Sem Título"
                     
+                    // Calcular ranking baseado na página
+                    val rank = index + 1 + ((page - 1) * 20)
                     val finalTitle = if (showRank) {
-                        "#${index + 1 + ((currentPage - 1) * 20)} $title"
+                        "#$rank $title"
                     } else {
                         title
                     }
@@ -201,7 +204,7 @@ class AnimeFire : MainAPI() {
                 }
                 
                 println("✅ [ANILIST] ${items.size} itens encontrados para $pageName")
-                newHomePageResponse(pageName, items, false)
+                newHomePageResponse(pageName, items, hasNext = mediaList.isNotEmpty())
             } else {
                 println("❌ [ANILIST] Erro na API: ${response.code}")
                 newHomePageResponse(pageName, emptyList(), false)
@@ -308,8 +311,10 @@ class AnimeFire : MainAPI() {
                         this.tags = media.genres
                         
                         // Adicionar trailer se disponível
-                        if (media.trailer?.site == "youtube" && media.trailer?.id != null) {
-                            addTrailer("https://www.youtube.com/watch?v=${media.trailer.id}")
+                        val trailerId = media.trailer?.id
+                        val trailerSite = media.trailer?.site
+                        if (trailerSite == "youtube" && trailerId != null) {
+                            this.addTrailer("https://www.youtube.com/watch?v=$trailerId")
                         }
                     }
                 }
