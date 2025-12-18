@@ -15,7 +15,7 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.google.gson.JsonParser
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 
-class AnimeFire : MainAPI() {
+class AnimeFireExtractor : MainAPI() {
     override var mainUrl = "https://animefire.io"
     override var name = "AnimeFire"
     override val hasMainPage = true
