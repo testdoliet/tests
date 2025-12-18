@@ -5,252 +5,161 @@ import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
-import com.lagradost.cloudstream3.utils.loadExtractor
 import org.json.JSONObject
 import org.jsoup.Jsoup
-import kotlin.random.Random
 
 object AnimeFireExtractor {
+    // Mapa de itag para qualidade
+    private val itagQualityMap = mapOf(
+        5 to 240,    // 240p FLV
+        17 to 144,   // 144p 3GP
+        18 to 360,   // 360p MP4
+        22 to 720,   // 720p MP4
+        34 to 360,   // 360p FLV
+        35 to 480,   // 480p FLV
+        36 to 240,   // 240p 3GP
+        37 to 1080,  // 1080p MP4
+        38 to 3072,  // 3072p MP4
+        43 to 360,   // 360p WebM
+        44 to 480,   // 480p WebM
+        45 to 720,   // 720p WebM
+        46 to 1080,  // 1080p WebM
+        59 to 480,   // 480p MP4
+        78 to 480,   // 480p WebM
+        82 to 360,   // 360p 3D
+        83 to 480,   // 480p 3D
+        84 to 720,   // 720p 3D
+        85 to 1080,  // 1080p 3D
+        100 to 360,  // 360p 3D WebM
+        101 to 480,  // 480p 3D WebM
+        102 to 720,  // 720p 3D WebM
+    )
+    
     suspend fun extractVideoLinks(
         url: String,
         mainUrl: String,
         name: String,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        return try {
-            println("🔗 AnimeFireExtractor: Extraindo de $url")
-            
-            // 1. Método principal: Extrair do iframe do Blogger
-            val bloggerResult = extractFromBloggerIframe(url, mainUrl, name, callback)
-            if (bloggerResult) return true
-            
-            // 2. Fallback: Tentar XHR padrão
-            println("⚠️ AnimeFireExtractor: Método Blogger falhou, tentando XHR...")
-            return tryStandardXHRMethod(url, mainUrl, name, callback)
-            
-        } catch (e: Exception) {
-            println("💥 AnimeFireExtractor: Erro - ${e.message}")
-            e.printStackTrace()
-            false
+        println("🔗 AnimeFireExtractor: Processando $url")
+        
+        // Tentar em ordem:
+        // 1. Novo sistema (Blogger/Google)
+        // 2. Sistema antigo (XHR/Lightspeed)
+        
+        val methods = listOf(
+            ::tryBloggerSystem,
+            ::tryXHRSystem
+        )
+        
+        for (method in methods) {
+            try {
+                println("🔄 AnimeFireExtractor: Tentando método ${method.name}")
+                val result = method(url, mainUrl, name, callback)
+                if (result) {
+                    println("✅ AnimeFireExtractor: Sucesso com ${method.name}")
+                    return true
+                }
+            } catch (e: Exception) {
+                println("⚠️ AnimeFireExtractor: Método ${method.name} falhou: ${e.message}")
+            }
         }
+        
+        println("❌ AnimeFireExtractor: Todos os métodos falharam")
+        return false
     }
     
-    private suspend fun extractFromBloggerIframe(
+    private suspend fun tryBloggerSystem(
         url: String,
         mainUrl: String,
         name: String,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         return try {
-            println("🌐 AnimeFireExtractor: Procurando iframe do Blogger...")
+            println("🌐 AnimeFireExtractor: Buscando iframe do Blogger...")
             
-            val pageResponse = app.get(url)
-            val document = Jsoup.parse(pageResponse.text)
+            val page = app.get(url)
+            val doc = Jsoup.parse(page.text)
             
-            // Procurar iframe do Blogger
-            val iframe = document.select("iframe[src*='blogger.com/video.g']").first()
-            if (iframe == null) {
-                println("⚠️ AnimeFireExtractor: Iframe do Blogger não encontrado")
-                return false
-            }
+            val iframe = doc.selectFirst("iframe[src*='blogger.com/video.g']")
+                ?: return false.also { println("⚠️ Nenhum iframe do Blogger encontrado") }
             
-            val iframeSrc = iframe.attr("src")
-            println("🔗 AnimeFireExtractor: Iframe encontrado: $iframeSrc")
+            val iframeUrl = iframe.attr("src")
+            println("🔗 Iframe encontrado: ${iframeUrl.take(80)}...")
             
-            // Acessar o iframe para obter o VIDEO_CONFIG
-            val iframeResponse = app.get(iframeSrc, headers = mapOf(
+            // Acessar iframe
+            val iframeContent = app.get(iframeUrl, headers = mapOf(
                 "Referer" to url,
-                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
-            ))
+                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            )).text
             
-            val iframeHtml = iframeResponse.text
-            println("📄 AnimeFireExtractor: HTML do iframe (${iframeHtml.length} chars)")
-            
-            // Extrair o VIDEO_CONFIG do JavaScript
-            return extractVideoConfigFromHtml(iframeHtml, iframeSrc, url, mainUrl, name, callback)
+            // Extrair VIDEO_CONFIG
+            extractVideoConfig(iframeContent, iframeUrl, name, callback)
             
         } catch (e: Exception) {
-            println("⚠️ AnimeFireExtractor: Erro no método Blogger: ${e.message}")
+            println("💥 Erro no sistema Blogger: ${e.message}")
             false
         }
     }
     
-    private fun extractVideoConfigFromHtml(
+    private suspend fun extractVideoConfig(
         html: String,
-        iframeUrl: String,
-        originalUrl: String,
-        mainUrl: String,
+        referer: String,
         name: String,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // Procurar por VIDEO_CONFIG no HTML
-        val configPattern = """var\s+VIDEO_CONFIG\s*=\s*(\{.*?\});""".toRegex(RegexOption.DOT_MATCHES_ALL)
-        val match = configPattern.find(html)
+        val configRegex = """var\s+VIDEO_CONFIG\s*=\s*(\{.*?\})\s*;""".toRegex(RegexOption.DOT_MATCHES_ALL)
+        val match = configRegex.find(html) ?: return false
         
-        if (match == null) {
-            println("⚠️ AnimeFireExtractor: VIDEO_CONFIG não encontrado")
+        return try {
+            val config = JSONObject(match.groupValues[1])
+            val streams = config.getJSONArray("streams")
             
-            // Tentar encontrar de outra forma
-            return tryAlternativeConfigExtraction(html, iframeUrl, originalUrl, mainUrl, name, callback)
-        }
-        
-        try {
-            val configJson = match.groupValues[1]
-            println("🔧 AnimeFireExtractor: VIDEO_CONFIG encontrado")
-            
-            val config = JSONObject(configJson)
-            
-            // Verificar se tem streams
-            if (!config.has("streams")) {
-                println("⚠️ AnimeFireExtractor: Nenhum stream encontrado no config")
-                return false
-            }
-            
-            val streamsArray = config.getJSONArray("streams")
-            var foundAny = false
-            
-            // Processar cada stream
-            for (i in 0 until streamsArray.length()) {
-                val stream = streamsArray.getJSONObject(i)
+            var found = false
+            for (i in 0 until streams.length()) {
+                val stream = streams.getJSONObject(i)
+                val videoUrl = stream.getString("play_url")
+                val itag = stream.getInt("format_id")
+                val quality = itagQualityMap[itag] ?: 360
                 
-                if (stream.has("play_url")) {
-                    val playUrl = stream.getString("play_url")
-                    val formatId = stream.getInt("format_id")
-                    
-                    println("🔗 AnimeFireExtractor: Stream encontrado - itag $formatId: ${playUrl.take(80)}...")
-                    
-                    // Mapear itag para qualidade
-                    val quality = when (formatId) {
-                        18 -> 360  // 360p
-                        22 -> 720  // 720p
-                        37 -> 1080 // 1080p
-                        59 -> 480  // 480p
-                        43 -> 360  // 360p webm
-                        else -> {
-                            // Tentar extrair qualidade do URL
-                            when {
-                                formatId > 100 -> 1080
-                                formatId > 80 -> 720
-                                formatId > 60 -> 480
-                                formatId > 40 -> 360
-                                else -> 240
-                            }
-                        }
-                    }
-                    
-                    val qualityName = when (quality) {
-                        1080 -> "1080p"
-                        720 -> "720p"
-                        480 -> "480p"
-                        360 -> "360p"
-                        240 -> "240p"
-                        else -> "SD"
-                    }
-                    
-                    // Adicionar o link
-                    callback.invoke(
-                        newExtractorLink(
-                            source = name,
-                            name = "$name ($qualityName)",
-                            url = playUrl,
-                            type = ExtractorLinkType.VIDEO
-                        ) {
-                            this.referer = iframeUrl
-                            this.quality = quality
-                            this.headers = mapOf(
-                                "Referer" to iframeUrl,
-                                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                                "Accept" to "*/*",
-                                "Accept-Language" to "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
-                                "Origin" to "https://www.blogger.com",
-                                "Sec-Fetch-Dest" to "video",
-                                "Sec-Fetch-Mode" to "no-cors",
-                                "Sec-Fetch-Site" to "cross-site"
-                            )
-                        }
-                    )
-                    
-                    foundAny = true
-                    println("✅ AnimeFireExtractor: Adicionado $qualityName (itag $formatId)")
+                val qualityName = when (quality) {
+                    in 1080..Int.MAX_VALUE -> "1080p"
+                    720 -> "720p"
+                    480 -> "480p"
+                    360 -> "360p"
+                    240 -> "240p"
+                    else -> "SD"
                 }
-            }
-            
-            return foundAny
-            
-        } catch (e: Exception) {
-            println("⚠️ AnimeFireExtractor: Erro ao processar VIDEO_CONFIG: ${e.message}")
-            return false
-        }
-    }
-    
-    private fun tryAlternativeConfigExtraction(
-        html: String,
-        iframeUrl: String,
-        originalUrl: String,
-        mainUrl: String,
-        name: String,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        // Método alternativo: procurar por URLs de videoplayback diretamente
-        println("🔄 AnimeFireExtractor: Tentando extração alternativa...")
-        
-        val videoPattern = """https?://[^"'\s<>]+googlevideo\.com/videoplayback[^"'\s<>]+""".toRegex()
-        val matches = videoPattern.findAll(html)
-        
-        var foundAny = false
-        
-        for (match in matches) {
-            val videoUrl = match.value
-            println("🔗 AnimeFireExtractor: URL de video encontrada: ${videoUrl.take(80)}...")
-            
-            // Extrair itag da URL
-            val itagPattern = """[?&]itag=(\d+)""".toRegex()
-            val itagMatch = itagPattern.find(videoUrl)
-            val itag = itagMatch?.groupValues?.get(1)?.toIntOrNull() ?: 18
-            
-            val quality = when (itag) {
-                18 -> 360
-                22 -> 720
-                37 -> 1080
-                59 -> 480
-                43 -> 360
-                else -> 360
-            }
-            
-            val qualityName = when (quality) {
-                1080 -> "1080p"
-                720 -> "720p"
-                480 -> "480p"
-                360 -> "360p"
-                else -> "SD"
-            }
-            
-            callback.invoke(
-                newExtractorLink(
-                    source = name,
+                
+                // Criar o ExtractorLink (agora é suspend)
+                val extractorLink = newExtractorLink(
+                    source = "AnimeFire",
                     name = "$name ($qualityName)",
                     url = videoUrl,
                     type = ExtractorLinkType.VIDEO
                 ) {
-                    this.referer = iframeUrl
+                    this.referer = referer
                     this.quality = quality
                     this.headers = mapOf(
-                        "Referer" to iframeUrl,
+                        "Referer" to referer,
                         "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                        "Accept" to "*/*"
+                        "Origin" to "https://www.blogger.com"
                     )
                 }
-            )
+                
+                callback(extractorLink)
+                println("✅ Stream $qualityName (itag $itag) adicionado")
+                found = true
+            }
             
-            foundAny = true
-            println("✅ AnimeFireExtractor: Adicionado alternativa $qualityName")
+            found
+        } catch (e: Exception) {
+            println("💥 Erro ao parsear VIDEO_CONFIG: ${e.message}")
+            false
         }
-        
-        return foundAny
     }
     
-    private suspend fun tryStandardXHRMethod(
+    private suspend fun tryXHRSystem(
         url: String,
         mainUrl: String,
         name: String,
@@ -260,88 +169,67 @@ object AnimeFireExtractor {
             val pathParts = url.removePrefix("https://animefire.io/animes/").split("/")
             if (pathParts.size < 2) return false
             
-            val animeSlug = pathParts[0]
-            val episodeNum = pathParts[1].toIntOrNull() ?: 1
+            val slug = pathParts[0]
+            val ep = pathParts[1].toIntOrNull() ?: 1
             
-            val timestamp = System.currentTimeMillis() / 1000
-            val xhrUrl = "https://animefire.io/video/$animeSlug/$episodeNum?tempsubs=0&$timestamp"
+            val xhrUrl = "https://animefire.io/video/$slug/$ep?tempsubs=0&${System.currentTimeMillis()/1000}"
+            println("🌐 XHR URL: $xhrUrl")
             
-            println("🌐 AnimeFireExtractor: Tentando XHR: $xhrUrl")
+            val response = app.get(xhrUrl, headers = mapOf(
+                "Referer" to url,
+                "X-Requested-With" to "XMLHttpRequest"
+            ))
             
-            val xhrResponse = app.get(
-                xhrUrl,
-                headers = mapOf(
-                    "Referer" to url,
-                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                    "Accept" to "*/*",
-                    "X-Requested-With" to "XMLHttpRequest"
-                )
-            )
+            val json = JSONObject(response.text)
+            val data = json.getJSONArray("data")
             
-            val xhrText = xhrResponse.text
-            if (xhrText.length < 10) return false
-            
-            val json = JSONObject(xhrText)
-            val dataArray = json.getJSONArray("data")
-            
-            var foundAny = false
-            
-            for (i in 0 until dataArray.length()) {
-                val item = dataArray.getJSONObject(i)
-                val videoUrl = item.optString("src", "")
+            var found = false
+            for (i in 0 until data.length()) {
+                val item = data.getJSONObject(i)
+                val videoUrl = item.getString("src")
+                val label = item.optString("label", "")
                 
-                if (videoUrl.isNotEmpty()) {
-                    val qualityLabel = item.optString("label", "")
-                    val quality = extractQuality(qualityLabel, videoUrl)
-                    val qualityName = getQualityName(quality, qualityLabel)
-                    
-                    callback.invoke(
-                        newExtractorLink(
-                            source = name,
-                            name = "$name ($qualityName)",
-                            url = videoUrl,
-                            type = ExtractorLinkType.VIDEO
-                        ) {
-                            this.referer = "$mainUrl/"
-                            this.quality = quality
-                            this.headers = mapOf(
-                                "Referer" to url,
-                                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-                            )
-                        }
-                    )
-                    foundAny = true
-                    println("✅ AnimeFireExtractor: XHR encontrou $qualityName")
+                val quality = when {
+                    label.contains("1080") -> 1080
+                    label.contains("720") -> 720
+                    label.contains("480") -> 480
+                    label.contains("360") -> 360
+                    videoUrl.contains("lightspeedst") -> 720 // Lightspeed geralmente é 720p
+                    else -> 480
                 }
+                
+                val qualityName = when (quality) {
+                    1080 -> "1080p"
+                    720 -> "720p"
+                    480 -> "480p"
+                    360 -> "360p"
+                    else -> "SD"
+                }
+                
+                // Criar o ExtractorLink (agora é suspend)
+                val extractorLink = newExtractorLink(
+                    source = "AnimeFire",
+                    name = "$name ($qualityName)",
+                    url = videoUrl,
+                    type = ExtractorLinkType.VIDEO
+                ) {
+                    this.referer = "$mainUrl/"
+                    this.quality = quality
+                    this.headers = mapOf(
+                        "Referer" to url,
+                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                    )
+                }
+                
+                callback(extractorLink)
+                println("✅ XHR: $qualityName adicionado")
+                found = true
             }
             
-            foundAny
-            
+            found
         } catch (e: Exception) {
-            println("⚠️ AnimeFireExtractor: XHR falhou: ${e.message}")
+            println("💥 Erro no sistema XHR: ${e.message}")
             false
-        }
-    }
-    
-    private fun extractQuality(label: String, url: String): Int {
-        return when {
-            label.contains("1080") || url.contains("1080") -> 1080
-            label.contains("720") || url.contains("720") -> 720
-            label.contains("480") || url.contains("480") -> 480
-            label.contains("360") || url.contains("360") -> 360
-            label.contains("240") || url.contains("240") -> 240
-            else -> 480
-        }
-    }
-    
-    private fun getQualityName(quality: Int, label: String): String {
-        return when (quality) {
-            1080 -> "1080p"
-            720 -> "720p"
-            480 -> "480p"
-            360 -> "360p"
-            240 -> "240p"
-            else -> if (label.isNotEmpty()) label else "SD"
         }
     }
 }
