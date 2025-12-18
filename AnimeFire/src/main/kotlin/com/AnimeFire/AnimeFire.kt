@@ -6,7 +6,7 @@ import com.lagradost.cloudstream3.utils.*
 
 class AnimeFire : MainAPI() {
     override var mainUrl = "https://animefire.plus"
-    override var name = "AnimeFire (com AniList API)"
+    override var name = "ANIMEFIRE"
     override val hasMainPage = true
     override var lang = "pt-br"
     override val hasDownloadSupport = true
@@ -17,10 +17,11 @@ class AnimeFire : MainAPI() {
     private val aniListApiUrl = "https://graphql.anilist.co"
     
     override val mainPage = mainPageOf(
-        "trending" to "AniList: Em Alta",
-        "season" to "AniList: Esta Temporada", 
-        "popular" to "AniList: Populares",
-        "top" to "AniList: Top 100"
+        "trending" to "Em Alta",
+        "season" to "Populares Nessa Temporada", 
+        "popular" to "Sempre Populares",
+        "top" to "Top 100"
+        "upcoming" to "Na Próxima Temporada"
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
