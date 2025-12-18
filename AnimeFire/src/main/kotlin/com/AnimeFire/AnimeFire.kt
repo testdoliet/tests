@@ -402,8 +402,9 @@ class AnimeFire : MainAPI() {
 
         val siteMetadata = extractSiteMetadata(document)
         
+        // VOLTANDO AO ORIGINAL: episódios apenas com AniZip
         val episodes = if (!isMovie) {
-            extractEpisodesFromSite(document, cleanTitle, aniZipData, tmdbInfo)
+            extractEpisodesFromSite(document, cleanTitle, aniZipData)
         } else {
             emptyList()
         }
@@ -451,15 +452,11 @@ class AnimeFire : MainAPI() {
         genres: List<String>?
     ): LoadResponse {
         
-        // PRIORIDADE SINOPSE: TMDB > AniZip > Site
+        // PRIORIDADE SINOPSE: TMDB > AniZip > Site (CONSERTO)
         val finalPlot = if (TRANSLATION_ENABLED) {
-            val synopsisToTranslate = when {
-                tmdbInfo?.overview != null -> tmdbInfo.overview
-                aniZipData?.episodes?.values?.firstOrNull()?.overview != null -> 
-                    aniZipData.episodes.values.firstOrNull()?.overview
-                else -> siteMetadata.plot
-            }
-            
+            val synopsisToTranslate = tmdbInfo?.overview ?: 
+                                    siteMetadata.plot ?:
+                                    aniZipData?.episodes?.values?.firstOrNull()?.overview
             synopsisToTranslate?.let { 
                 if (!isProbablyPortuguese(it)) {
                     translateWithCache(it)
@@ -469,33 +466,33 @@ class AnimeFire : MainAPI() {
             }
         } else {
             tmdbInfo?.overview ?: 
-            aniZipData?.episodes?.values?.firstOrNull()?.overview ?: 
-            siteMetadata.plot
+            siteMetadata.plot ?:
+            aniZipData?.episodes?.values?.firstOrNull()?.overview
         }
         
-        // PRIORIDADE POSTER: AniZip > TMDB > Site
-        val finalPoster = aniZipData?.images?.find { it.coverType.equals("Poster", ignoreCase = true) }?.url?.let { fixUrl(it) } ?:
-                         tmdbInfo?.posterUrl ?:
+        // POSTER: TMDB > AniZip > Site
+        val finalPoster = tmdbInfo?.posterUrl ?:
+                         aniZipData?.images?.find { it.coverType.equals("Poster", ignoreCase = true) }?.url?.let { fixUrl(it) } ?:
                          siteMetadata.poster
         
-        // PRIORIDADE BACKDROP: TMDB > AniZip > Site
+        // BACKDROP: TMDB > AniZip > Site
         val finalBackdrop = tmdbInfo?.backdropUrl ?:
                            aniZipData?.images?.find { it.coverType.equals("Fanart", ignoreCase = true) }?.url?.let { fixUrl(it) } ?:
                            siteMetadata.poster?.let { fixUrl(it) }
         
-        // PRIORIDADE ANO: TMDB > Site > AniZip
+        // ANO: TMDB > Site > AniZip
         val finalYear = tmdbInfo?.year ?: 
                        year ?: 
                        siteMetadata.year ?:
                        aniZipData?.episodes?.values?.firstOrNull()?.airDateUtc?.substring(0, 4)?.toIntOrNull()
 
-        // Juntar tags
+        // Juntar tags (mantém do AniZip + Site + TMDB)
         val finalTags = (tmdbInfo?.genres ?: emptyList()) + 
                        (genres ?: emptyList()) + 
                        (siteMetadata.tags ?: emptyList())
 
-        // Usar título do TMDB se disponível, senão usar do site
-        val finalTitle = tmdbInfo?.title ?: cleanTitle
+        // Título: Site (mantém original)
+        val finalTitle = cleanTitle
 
         return if (isMovie) {
             newMovieLoadResponse(finalTitle, url, type, url) {
@@ -530,11 +527,11 @@ class AnimeFire : MainAPI() {
         }
     }
 
+    // VOLTANDO AO ORIGINAL: episódios apenas com AniZip
     private suspend fun extractEpisodesFromSite(
         document: org.jsoup.nodes.Document,
         animeTitle: String,
-        aniZipData: AniZipData?,
-        tmdbInfo: TMDBInfo?
+        aniZipData: AniZipData?
     ): List<Episode> {
         val episodes = mutableListOf<Episode>()
         
@@ -551,7 +548,7 @@ class AnimeFire : MainAPI() {
                 val episodeNumber = extractEpisodeNumber(text) ?: (index + 1)
                 val seasonNumber = 1
                 
-                // PRIORIDADE DETALHES EPISÓDIO: TMDB > AniZip > Site
+                // APENAS ANIZIP (voltando ao original)
                 val aniZipEpisode = aniZipData?.episodes?.get(episodeNumber.toString())
                 
                 val episodeName = element.selectFirst(".ep-name, .title")?.text()?.trim()
@@ -565,29 +562,19 @@ class AnimeFire : MainAPI() {
                     episodeName
                 }
                 
-                // Descrição com prioridade TMDB > AniZip
-                val episodeDescription = when {
-                    tmdbInfo?.overview != null && episodeNumber == 1 -> {
-                        // Para primeiro episódio, usar sinopse geral do TMDB
-                        if (TRANSLATION_ENABLED && !isProbablyPortuguese(tmdbInfo.overview)) {
-                            translateWithCache(tmdbInfo.overview)
-                        } else {
-                            tmdbInfo.overview
-                        }
+                // Descrição apenas do AniZip (voltando ao original)
+                val episodeDescription = if (aniZipEpisode?.overview != null) {
+                    if (TRANSLATION_ENABLED && !isProbablyPortuguese(aniZipEpisode.overview)) {
+                        translateWithCache(aniZipEpisode.overview)
+                    } else {
+                        aniZipEpisode.overview
                     }
-                    aniZipEpisode?.overview != null -> {
-                        if (TRANSLATION_ENABLED && !isProbablyPortuguese(aniZipEpisode.overview)) {
-                            translateWithCache(aniZipEpisode.overview)
-                        } else {
-                            aniZipEpisode.overview
-                        }
-                    }
-                    else -> "Nenhuma descrição disponível"
+                } else {
+                    "Nenhuma descrição disponível"
                 }
 
-                // Poster do episódio com prioridade AniZip
-                val episodePoster = aniZipEpisode?.image ?: 
-                                   aniZipData?.images?.firstOrNull()?.url
+                // Poster do episódio apenas do AniZip (voltando ao original)
+                val episodePoster = aniZipEpisode?.image
 
                 episodes.add(
                     newEpisode(fixUrl(href)) {
@@ -597,7 +584,7 @@ class AnimeFire : MainAPI() {
                         this.description = episodeDescription
                         this.posterUrl = episodePoster
                         this.score = Score.from10(aniZipEpisode?.rating)
-                        this.runTime = aniZipEpisode?.runtime ?: tmdbInfo?.duration
+                        this.runTime = aniZipEpisode?.runtime
                         
                         aniZipEpisode?.airDateUtc?.let { dateStr ->
                             try {
@@ -857,50 +844,4 @@ class AnimeFire : MainAPI() {
 
     @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
     private data class TMDBResult(
-        @JsonProperty("id") val id: Int,
-        @JsonProperty("title") val title: String? = null,
-        @JsonProperty("name") val name: String? = null,
-        @JsonProperty("release_date") val release_date: String? = null,
-        @JsonProperty("first_air_date") val first_air_date: String? = null,
-        @JsonProperty("poster_path") val poster_path: String?
-    )
-
-    @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
-    private data class TMDBDetailsResponse(
-        @JsonProperty("overview") val overview: String?,
-        @JsonProperty("backdrop_path") val backdrop_path: String?,
-        @JsonProperty("runtime") val runtime: Int?,
-        @JsonProperty("genres") val genres: List<TMDBGenre>?,
-        @JsonProperty("videos") val videos: TMDBVideos?
-    )
-
-    @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
-    private data class TMDBGenre(
-        @JsonProperty("name") val name: String
-    )
-
-    @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
-    private data class TMDBVideos(
-        @JsonProperty("results") val results: List<TMDBVideo>
-    )
-
-    @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
-    private data class TMDBVideo(
-        @JsonProperty("key") val key: String,
-        @JsonProperty("site") val site: String,
-        @JsonProperty("type") val type: String,
-        @JsonProperty("official") val official: Boolean? = false
-    )
-
-    private data class TMDBInfo(
-        val id: Int,
-        val title: String?,
-        val year: Int?,
-        val posterUrl: String?,
-        val backdropUrl: String?,
-        val overview: String?,
-        val genres: List<String>?,
-        val youtubeTrailer: String?,
-        val duration: Int?
-    )
-}
+        @JsonProperty("id") val id: Int
