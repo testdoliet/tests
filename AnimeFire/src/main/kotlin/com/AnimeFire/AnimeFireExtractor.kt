@@ -7,6 +7,7 @@ import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.loadExtractor
+import kotlinx.coroutines.delay
 
 object AnimeFireExtractor {
     suspend fun extractVideoLinks(
@@ -32,7 +33,6 @@ object AnimeFireExtractor {
 
             val success = if (intercepted.isNotEmpty() && intercepted.contains("lightspeedst.net")) {
                 // 2. Encontrar o padrão base do link CORRETO
-                // Padrão: https://lightspeedst.net/s5/mp4_temp/VIDEO_ID/EPISODIO/QUALIDADE.mp4
                 val baseLinkPattern = """(https://lightspeedst\.net/s\d+/mp4_temp/[^/]+)/(\d+)/([^/]+)\.mp4""".toRegex()
                 val matchResult = baseLinkPattern.find(intercepted)
 
@@ -41,13 +41,13 @@ object AnimeFireExtractor {
                     val episodeNumber = matchResult.groupValues[2]
                     val foundQuality = matchResult.groupValues[3]
                     
-                    println("✅ AnimeFireExtractor: Padrão base encontrado: $basePath")
+                    println("✅ AnimeFireExtractor: Padrão base encontrado")
                     println("✅ AnimeFireExtractor: Episódio: $episodeNumber")
                     println("✅ AnimeFireExtractor: Qualidade encontrada: $foundQuality")
 
                     var foundAny = false
 
-                    // 3. Adicionar a qualidade interceptada
+                    // 3. Adicionar a qualidade interceptada (sempre funciona)
                     val qualityNum = when {
                         foundQuality.contains("1080") -> 1080
                         foundQuality.contains("720") -> 720
@@ -57,7 +57,7 @@ object AnimeFireExtractor {
                     callback.invoke(
                         newExtractorLink(
                             source = name,
-                            name = name, // Sem duplicação de qualidade no nome
+                            name = name,
                             url = intercepted,
                             type = ExtractorLinkType.VIDEO
                         ) {
@@ -72,10 +72,10 @@ object AnimeFireExtractor {
                     foundAny = true
                     println("✅ AnimeFireExtractor: Qualidade $foundQuality adicionada")
 
-                    // 4. Gerar e adicionar outras qualidades (1080p e 720p apenas)
-                    val qualitiesToAdd = listOf("1080p", "720p").filter { it != foundQuality }
+                    // 4. Gerar e TESTAR outras qualidades
+                    val qualitiesToTest = listOf("1080p", "720p").filter { it != foundQuality }
                     
-                    for (quality in qualitiesToAdd) {
+                    for (quality in qualitiesToTest) {
                         val qualityUrl = "$basePath/$episodeNumber/$quality.mp4"
                         val testQualityNum = when {
                             quality.contains("1080") -> 1080
@@ -83,25 +83,41 @@ object AnimeFireExtractor {
                             else -> 480
                         }
 
-                        println("➕ AnimeFireExtractor: Adicionando qualidade $quality")
+                        println("🔍 AnimeFireExtractor: Testando qualidade $quality...")
                         
-                        callback.invoke(
-                            newExtractorLink(
-                                source = name,
-                                name = name, // Sem duplicação de qualidade no nome
-                                url = qualityUrl,
-                                type = ExtractorLinkType.VIDEO
-                            ) {
-                                this.referer = "$mainUrl/"
-                                this.quality = testQualityNum
-                                this.headers = mapOf(
-                                    "Referer" to url,
-                                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-                                )
-                            }
-                        )
-                        foundAny = true
-                        println("✅ AnimeFireExtractor: Qualidade $quality adicionada")
+                        // VERIFICAÇÃO SIMPLES: tentar fazer uma requisição HEAD
+                        val works = try {
+                            // Timeout baixo para não demorar
+                            val testResponse = app.head(qualityUrl, timeout = 3000L)
+                            testResponse.code == 200
+                        } catch (e: Exception) {
+                            false
+                        }
+                        
+                        if (works) {
+                            println("✅ AnimeFireExtractor: Qualidade $quality funciona, adicionando...")
+                            callback.invoke(
+                                newExtractorLink(
+                                    source = name,
+                                    name = name,
+                                    url = qualityUrl,
+                                    type = ExtractorLinkType.VIDEO
+                                ) {
+                                    this.referer = "$mainUrl/"
+                                    this.quality = testQualityNum
+                                    this.headers = mapOf(
+                                        "Referer" to url,
+                                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                                    )
+                                }
+                            )
+                            foundAny = true
+                        } else {
+                            println("❌ AnimeFireExtractor: Qualidade $quality não disponível")
+                        }
+                        
+                        // Pequena pausa entre testes
+                        delay(500)
                     }
 
                     foundAny
