@@ -26,16 +26,16 @@ class AnimeFire : MainAPI() {
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         return when (request.name) {
-            "AniList: Em Alta" -> getAniListPage("search/anime", page)
-            "AniList: Esta Temporada" -> getAniListPage("search/anime/this-season", page)
-            "AniList: Populares" -> getAniListPage("search/anime/popular", page)
-            "AniList: Top 100" -> getAniListPage("search/anime/top-100", page)
-            else -> HomePageResponse(listOf(), false)
+            "AniList: Em Alta" -> getAniListPage("search/anime", page, request.name)
+            "AniList: Esta Temporada" -> getAniListPage("search/anime/this-season", page, request.name)
+            "AniList: Populares" -> getAniListPage("search/anime/popular", page, request.name)
+            "AniList: Top 100" -> getAniListPage("search/anime/top-100", page, request.name)
+            else -> newHomePageResponse(request.name, emptyList(), false)
         }
     }
 
-    private suspend fun getAniListPage(endpoint: String, page: Int): HomePageResponse {
-        println("🌐 [ANILIST] Carregando: $endpoint")
+    private suspend fun getAniListPage(endpoint: String, page: Int, pageName: String): HomePageResponse {
+        println("🌐 [ANILIST] Carregando: $pageName")
         
         return try {
             val url = "$aniListUrl/$endpoint"
@@ -55,12 +55,12 @@ class AnimeFire : MainAPI() {
                 parseFallbackAnimeElements(document)
             }
             
-            println("✅ [ANILIST] ${items.size} itens encontrados")
-            newHomePageResponse(endpoint, items, false)
+            println("✅ [ANILIST] ${items.size} itens encontrados para $pageName")
+            newHomePageResponse(pageName, items, false)
             
         } catch (e: Exception) {
-            println("❌ [ANILIST] Erro: ${e.message}")
-            newHomePageResponse(endpoint, emptyList(), false)
+            println("❌ [ANILIST] Erro ao carregar $pageName: ${e.message}")
+            newHomePageResponse(pageName, emptyList(), false)
         }
     }
 
