@@ -61,6 +61,8 @@ class AnimeFire : MainAPI() {
     private val cacheHits = mutableMapOf<String, Int>()
     private val aniListCache = mutableMapOf<String, List<AnimeSearchResponse>>()
 
+    // ============ FUNÇÕES DE TRADUÇÃO (MANTIDAS) ============
+    
     private suspend fun translateWithCache(text: String): String {
         if (!TRANSLATION_ENABLED || text.isBlank() || text.length < 3) return text
         if (isProbablyPortuguese(text)) return text
@@ -68,13 +70,9 @@ class AnimeFire : MainAPI() {
         val cached = translationCache[text]
         if (cached != null) {
             cacheHits[text] = (cacheHits[text] ?: 0) + 1
-            if (cacheHits[text] == 1) {
-                println("⚡ [CACHE] Tradução em cache: \"${text.take(50)}...\"")
-            }
             return cached
         }
         
-        println("🌐 [CACHE] Traduzindo: \"${text.take(50)}...\"")
         val translated = translateText(text)
         
         if (translated != text && translated.isNotBlank()) {
@@ -88,10 +86,6 @@ class AnimeFire : MainAPI() {
             
             translationCache[text] = translated
             cacheHits[text] = 0
-            
-            if (translationCache.size % 50 == 0) {
-                println("📦 [CACHE] Armazenadas ${translationCache.size} traduções")
-            }
         }
         
         return translated
@@ -99,7 +93,6 @@ class AnimeFire : MainAPI() {
     
     private suspend fun translateText(text: String): String {
         if (!TRANSLATION_ENABLED || text.isBlank() || text.length < 3) return text
-        
         if (isProbablyPortuguese(text)) return text
         
         return try {
@@ -240,16 +233,16 @@ class AnimeFire : MainAPI() {
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val currentData = request.data
+        val currentName = request.name
         
-        // Verificar se é uma aba do AniList
+        // Verificar se é uma aba do AniList pelo nome
         return when {
-            currentData.startsWith("anilist-") -> {
-                getAniListMainPage(currentData, page)
+            currentName.contains("AniList") -> {
+                getAniListMainPage(currentName, page)
             }
             else -> {
                 // Abas normais do AnimeFire
-                getAnimeFireMainPage(request.name, page)
+                getAnimeFireMainPage(currentName, page)
             }
         }
     }
@@ -311,44 +304,34 @@ class AnimeFire : MainAPI() {
     }
 
     private suspend fun getAniListMainPage(
-        data: String,
+        pageName: String,
         page: Int
     ): HomePageResponse {
         // Verificar cache primeiro
-        val cacheKey = "$data-$page"
+        val cacheKey = "$pageName-$page"
         val cached = aniListCache[cacheKey]
         if (cached != null) {
-            println("⚡ [CACHE] Usando dados do AniList em cache: $cacheKey")
-            return newHomePageResponse(
-                getAniListPageName(data),
-                cached,
-                false
-            )
+            return newHomePageResponse(pageName, cached, false)
         }
 
         val items = mutableListOf<AnimeSearchResponse>()
         
-        when (data) {
-            "anilist-trending" -> {
-                // Buscar animes em alta do AniList
-                val aniListDoc = app.get("$aniListUrl/search/anime", referer = aniListUrl).document
-                items.addAll(parseAniListMediaCards(aniListDoc))
-            }
-            "anilist-season" -> {
-                // Buscar destaques da temporada
-                val aniListDoc = app.get("$aniListUrl/search/anime/this-season", referer = aniListUrl).document
-                items.addAll(parseAniListMediaCards(aniListDoc))
-            }
-            "anilist-popular" -> {
-                // Buscar populares
-                val aniListDoc = app.get("$aniListUrl/search/anime/popular", referer = aniListUrl).document
-                items.addAll(parseAniListMediaCards(aniListDoc))
-            }
-            "anilist-top" -> {
-                // Buscar top 100
-                val aniListDoc = app.get("$aniListUrl/search/anime/top-100", referer = aniListUrl).document
-                items.addAll(parseAniListMediaCards(aniListDoc, true))
-            }
+        // Determinar qual endpoint do AniList usar baseado no nome da página
+        val endpoint = when (pageName) {
+            "AniList: Em Alta" -> "search/anime"
+            "AniList: Esta Temporada" -> "search/anime/this-season"
+            "AniList: Populares" -> "search/anime/popular"
+            "AniList: Top 100" -> "search/anime/top-100"
+            else -> "search/anime"
+        }
+        
+        val showRank = pageName == "AniList: Top 100"
+        
+        try {
+            val aniListDoc = app.get("$aniListUrl/$endpoint", referer = aniListUrl).document
+            items.addAll(parseAniListMediaCards(aniListDoc, showRank))
+        } catch (e: Exception) {
+            println("❌ Erro ao carregar $pageName do AniList: ${e.message}")
         }
         
         // Armazenar em cache
@@ -359,21 +342,7 @@ class AnimeFire : MainAPI() {
             }
         }
         
-        return newHomePageResponse(
-            getAniListPageName(data),
-            items,
-            false
-        )
-    }
-
-    private fun getAniListPageName(data: String): String {
-        return when (data) {
-            "anilist-trending" -> "AniList: Em Alta"
-            "anilist-season" -> "AniList: Esta Temporada"
-            "anilist-popular" -> "AniList: Populares"
-            "anilist-top" -> "AniList: Top 100"
-            else -> "AniList"
-        }
+        return newHomePageResponse(pageName, items, false)
     }
 
     private fun parseAniListMediaCards(
@@ -413,17 +382,15 @@ class AnimeFire : MainAPI() {
                 
                 newAnimeSearchResponse(finalTitle, specialUrl) {
                     this.posterUrl = poster
-                    this.data = href // Armazena a URL original do AniList
                     this.type = TvType.Anime
                 }
             } catch (e: Exception) {
-                println("❌ Erro ao parse card AniList: ${e.message}")
                 null
             }
         }
     }
 
-    // ============ FUNÇÃO SEARCH CORRIGIDA ============
+    // ============ FUNÇÃO SEARCH ============
     
     override suspend fun search(query: String): List<SearchResponse> {
         // Primeiro buscar no AnimeFire
@@ -439,19 +406,15 @@ class AnimeFire : MainAPI() {
         // Combinar resultados (AnimeFire primeiro, depois AniList)
         val combinedResults = (animeFireResults + aniListResults).distinctBy { it.url }
         
-        println("🔍 [SEARCH] Resultados combinados: ${combinedResults.size} (AnimeFire: ${animeFireResults.size}, AniList: ${aniListResults.size})")
-        
         return combinedResults
     }
 
     private suspend fun searchAnimeFire(query: String): List<SearchResponse> {
         val searchUrl = "$mainUrl$SEARCH_PATH/${URLEncoder.encode(query, "UTF-8")}"
-        println("🔍 [ANIMEFIRE SEARCH] Buscando: '$query' | URL: $searchUrl")
         
         val document = app.get(searchUrl).document
 
         val elements = document.select("div.divCardUltimosEps article.card a")
-        println("🔍 [ANIMEFIRE SEARCH] Elementos encontrados: ${elements.size}")
         
         return elements.mapNotNull { element ->
             runCatching {
@@ -490,15 +453,12 @@ class AnimeFire : MainAPI() {
                     }
                 }
             }.getOrElse { e ->
-                println("❌ [ANIMEFIRE SEARCH] Erro ao processar elemento: ${e.message}")
                 null
             }
         }.take(20)
     }
 
     private suspend fun searchAniList(query: String): List<SearchResponse> {
-        println("🔍 [ANILIST SEARCH] Buscando: '$query'")
-        
         return try {
             val encodedQuery = URLEncoder.encode(query, "UTF-8")
             val searchUrl = "$aniListUrl/search/anime?search=$encodedQuery"
@@ -526,19 +486,15 @@ class AnimeFire : MainAPI() {
                     
                     newAnimeSearchResponse(title, specialUrl) {
                         this.posterUrl = poster
-                        this.data = href
                         this.type = TvType.Anime
                     }
                 } catch (e: Exception) {
-                    println("❌ [ANILIST SEARCH] Erro ao processar card: ${e.message}")
                     null
                 }
             }
             
-            println("✅ [ANILIST SEARCH] Encontrados ${results.size} resultados")
             results
         } catch (e: Exception) {
-            println("❌ [ANILIST SEARCH] Erro na busca: ${e.message}")
             emptyList()
         }
     }
@@ -546,8 +502,6 @@ class AnimeFire : MainAPI() {
     // ============ LOAD PRINCIPAL COM SUPORTE PARA ANILIST ============
     
     override suspend fun load(url: String): LoadResponse {
-        println("\n🚀 AnimeFire.load() para URL: $url")
-        
         // Verificar se é uma URL do AniList (começa com "anilist:")
         if (url.startsWith("anilist:")) {
             return loadFromAniList(url)
@@ -558,8 +512,6 @@ class AnimeFire : MainAPI() {
     }
 
     private suspend fun loadFromAniList(url: String): LoadResponse {
-        println("📚 Carregando do AniList: $url")
-        
         // Extrair ID e URL do AniList
         val parts = url.split(":")
         if (parts.size < 3) {
@@ -569,8 +521,6 @@ class AnimeFire : MainAPI() {
         val aniListId = parts[1]
         val originalUrl = parts.drop(2).joinToString(":")
         
-        println("🔍 AniList ID: $aniListId, URL: $originalUrl")
-        
         try {
             // Buscar detalhes do AniList via API GraphQL
             val aniListData = fetchAniListDetails(aniListId)
@@ -579,7 +529,6 @@ class AnimeFire : MainAPI() {
                 return createAniListLoadResponse(aniListData, originalUrl)
             }
         } catch (e: Exception) {
-            println("❌ Erro ao buscar dados do AniList: ${e.message}")
         }
         
         // Fallback: buscar via web scraping
@@ -587,8 +536,6 @@ class AnimeFire : MainAPI() {
     }
 
     private suspend fun fetchAniListDetails(aniListId: String): AniListMediaData? {
-        println("🔍 Buscando detalhes do AniList API para ID: $aniListId")
-        
         val query = """
             query {
                 Media(id: $aniListId, type: ANIME) {
@@ -673,7 +620,6 @@ class AnimeFire : MainAPI() {
                 }
             }
         } catch (e: Exception) {
-            println("❌ Erro na API do AniList: ${e.message}")
         }
         
         return null
@@ -769,8 +715,6 @@ class AnimeFire : MainAPI() {
     }
 
     private suspend fun searchAndGetEpisodesFromAnimeFire(title: String): List<Episode> {
-        println("🔍 Buscando episódios no AnimeFire para: $title")
-        
         val searchResults = searchAnimeFire(title)
         if (searchResults.isEmpty()) return emptyList()
         
@@ -782,14 +726,11 @@ class AnimeFire : MainAPI() {
             val document = app.get(url).document
             return extractEpisodesFromSite(document, title, null)
         } catch (e: Exception) {
-            println("❌ Erro ao buscar episódios: ${e.message}")
             return emptyList()
         }
     }
 
     private suspend fun loadAniListViaScraping(url: String): LoadResponse {
-        println("🌐 Carregando AniList via scraping: $url")
-        
         val document = app.get(url, referer = aniListUrl).document
         
         val titleElement = document.selectFirst("h1.title")
@@ -850,17 +791,12 @@ class AnimeFire : MainAPI() {
         val isMovie = url.contains("/filmes/") || rawTitle.contains("Movie", ignoreCase = true)
         val type = if (isMovie) TvType.Movie else TvType.Anime
 
-        println("📌 Título: $cleanTitle, Ano: $year, Tipo: $type")
-
         val malId = searchMALIdByName(cleanTitle)
-        println("🔍 MAL ID: $malId")
 
         var aniZipData: AniZipData? = null
         if (malId != null) {
-            println("🔍 Buscando AniZip...")
             val syncMetaData = app.get("https://api.ani.zip/mappings?mal_id=$malId").text
             aniZipData = parseAnimeData(syncMetaData)
-            println("✅ AniZip carregado: ${aniZipData?.episodes?.size ?: 0} episódios")
         }
 
         val tmdbInfo = searchOnTMDB(cleanTitle, year, !isMovie)
@@ -1305,13 +1241,15 @@ class AnimeFire : MainAPI() {
             val parts = data.split(":")
             if (parts.size >= 3) {
                 val originalUrl = parts.drop(2).joinToString(":")
-                val title = parts.getOrNull(3) ?: "Anime"
                 
-                // Buscar no AnimeFire e usar o primeiro resultado
-                val searchResults = searchAnimeFire(title)
+                // Extrair título da URL do AniList
+                val titleFromUrl = originalUrl.split("/").lastOrNull() ?: "Anime"
+                
+                // Buscar no AnimeFire
+                val searchResults = searchAnimeFire(titleFromUrl)
                 if (searchResults.isNotEmpty()) {
                     val animeFireUrl = searchResults.first().url
-                    return AnimeFireVideoExtractor.extractVideoLinks(animeFireUrl, mainUrl, title, callback)
+                    return AnimeFireVideoExtractor.extractVideoLinks(animeFireUrl, mainUrl, titleFromUrl, callback)
                 }
             }
             return false
@@ -1320,7 +1258,7 @@ class AnimeFire : MainAPI() {
         return AnimeFireVideoExtractor.extractVideoLinks(data, mainUrl, name, callback)
     }
 
-    // ============ NOVAS CLASSES DE DADOS PARA ANILIST ============
+    // ============ CLASSES DE DADOS ============
     
     @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
     private data class AniListResponse(
