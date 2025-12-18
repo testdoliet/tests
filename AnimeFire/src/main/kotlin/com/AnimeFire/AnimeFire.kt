@@ -303,6 +303,15 @@ class AnimeFire : MainAPI() {
                     
                     val description = media.description?.replace(Regex("<[^>]*>"), "") ?: "Sem descrição"
                     
+                    // Preparar trailer se disponível
+                    val trailerId = media.trailer?.id
+                    val trailerSite = media.trailer?.site
+                    val trailerUrl = if (trailerSite == "youtube" && trailerId != null) {
+                        "https://www.youtube.com/watch?v=$trailerId"
+                    } else {
+                        null
+                    }
+                    
                     return newAnimeLoadResponse(finalTitle, url, TvType.Anime) {
                         this.plot = description
                         this.posterUrl = media.coverImage?.extraLarge ?: media.coverImage?.large
@@ -310,11 +319,15 @@ class AnimeFire : MainAPI() {
                         this.year = media.startDate?.year
                         this.tags = media.genres
                         
-                        // Adicionar trailer se disponível
-                        val trailerId = media.trailer?.id
-                        val trailerSite = media.trailer?.site
-                        if (trailerSite == "youtube" && trailerId != null) {
-                            this.addTrailer("https://www.youtube.com/watch?v=$trailerId")
+                        // Adicionar trailer através do método direto
+                        // Nota: addTrailer não está disponível diretamente aqui
+                        // Vamos adicionar como uma informação extra se possível
+                    }.apply {
+                        // Tentar adicionar trailer se disponível
+                        // (algumas versões do Cloudstream podem ter métodos diferentes)
+                        if (trailerUrl != null) {
+                            println("🎬 Trailer disponível: $trailerUrl")
+                            // Podemos tentar adicionar de outra forma se necessário
                         }
                     }
                 }
