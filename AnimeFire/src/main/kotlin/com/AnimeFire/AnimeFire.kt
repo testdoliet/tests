@@ -864,7 +864,7 @@ class AnimeFire : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        return AnimeFireExtractor.extractVideoLinks(data, mainUrl, name, callback)
+        return AnimeFireVideoExtractor.extractVideoLinks(data, mainUrl, name, callback)
     }
 
     // ============ CLASSES DE DADOS ============
