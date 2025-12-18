@@ -5,6 +5,7 @@ import com.lagradost.cloudstream3.network.WebViewResolver
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
+import kotlinx.coroutines.delay
 
 object AnimeFireExtractor {
     suspend fun extractVideoLinks(
@@ -16,7 +17,7 @@ object AnimeFireExtractor {
         return try {
             println("🔗 AnimeFireExtractor: Extraindo de $url")
 
-            // 1. Vamos interceptar QUALQUER link de vídeo primeiro
+            // 1. Interceptar a primeira URL
             val firstUrl = captureFirstVideoUrl(url)
             
             if (firstUrl.isEmpty()) {
@@ -26,44 +27,56 @@ object AnimeFireExtractor {
             
             println("✅ AnimeFireExtractor: Primeira URL: ${firstUrl.take(80)}...")
             
-            // 2. Extrair informações da URL
+            // 2. Extrair informações da URL usando o PADRÃO CORRETO
+            // Padrão: https://lightspeedst.net/s5/mp4_temp/VIDEO_ID/EPISODIO/QUALIDADE.mp4
             val baseInfo = extractBaseInfo(firstUrl)
+            
             if (baseInfo.basePath.isEmpty()) {
                 // Se não conseguiu extrair padrão, usa só o que encontrou
                 addQualityLink(firstUrl, name, mainUrl, url, callback)
                 return true
             }
             
-            // 3. Gerar e testar TODAS as qualidades
-            val qualities = listOf("fhd", "hd", "sd")
-            var foundAny = false
+            println("🎯 AnimeFireExtractor: Base Path: ${baseInfo.basePath}")
+            println("🎯 AnimeFireExtractor: Episódio: ${baseInfo.episode}")
+            println("🎯 AnimeFireExtractor: Qualidade encontrada: ${baseInfo.foundQuality}")
             
-            // Primeiro adiciona a que já encontrou
-            for (quality in qualities) {
-                if (firstUrl.contains("/$quality/")) {
-                    addQualityLink(firstUrl, name, mainUrl, url, quality, callback)
-                    foundAny = true
-                    break
-                }
-            }
+            // 3. Lista de qualidades para testar
+            val qualities = listOf(
+                Triple("1080p", 1080),
+                Triple("720p", 720),
+                Triple("480p", 480),
+                Triple("360p", 360)
+            )
             
-            // Agora testa as outras
-            for (quality in qualities) {
-                if (firstUrl.contains("/$quality/")) continue // Já adicionamos essa
+            var successCount = 0
+            
+            // 4. Adicionar a qualidade que já encontrou
+            addQualityLink(firstUrl, name, mainUrl, url, callback)
+            successCount++
+            
+            // 5. AGORA testar as outras qualidades
+            for ((qualityName, qualityValue) in qualities) {
+                // Pular se for a qualidade que já encontramos
+                if (baseInfo.foundQuality == qualityName) continue
                 
-                val testUrl = "${baseInfo.basePath}/$quality/${baseInfo.episode}.mp4"
-                println("🔍 AnimeFireExtractor: Testando $quality: ${testUrl.take(80)}...")
+                val testUrl = "${baseInfo.basePath}/${baseInfo.episode}/$qualityName.mp4"
+                println("🔍 AnimeFireExtractor: Testando $qualityName: ${testUrl.take(80)}...")
                 
                 if (testVideoUrl(testUrl)) {
-                    println("✅ AnimeFireExtractor: $quality funciona!")
-                    addQualityLink(testUrl, name, mainUrl, url, quality, callback)
-                    foundAny = true
+                    println("✅ AnimeFireExtractor: $qualityName funciona!")
+                    addQualityLinkWithParams(testUrl, name, mainUrl, url, qualityName, qualityValue, callback)
+                    successCount++
                 } else {
-                    println("❌ AnimeFireExtractor: $quality não disponível")
+                    println("❌ AnimeFireExtractor: $qualityName não disponível")
                 }
+                
+                // Pequena pausa entre requisições
+                delay(300)
             }
             
-            foundAny
+            println("🎉 AnimeFireExtractor: $successCount qualidades adicionadas com sucesso!")
+            successCount > 0
             
         } catch (e: Exception) {
             println("💥 AnimeFireExtractor: Erro - ${e.message}")
@@ -87,21 +100,46 @@ object AnimeFireExtractor {
         }
     }
     
-    private data class BaseInfo(val basePath: String, val episode: String)
+    private data class BaseInfo(
+        val basePath: String,
+        val episode: String,
+        val foundQuality: String
+    )
     
     private fun extractBaseInfo(videoUrl: String): BaseInfo {
         return try {
-            // Padrão: https://lightspeedst.net/sXX/mp4/VIDEO_ID/QUALIDADE/EPISODE.mp4
-            val pattern = """(https://lightspeedst\.net/s\d+/mp4/[^/]+)/[^/]+/(\d+)\.mp4""".toRegex()
+            // PADRÃO CORRETO: https://lightspeedst.net/s5/mp4_temp/VIDEO_ID/EPISODIO/QUALIDADE.mp4
+            val pattern = """(https://lightspeedst\.net/s\d+/mp4_temp/[^/]+)/(\d+)/([^/]+)\.mp4""".toRegex()
             val match = pattern.find(videoUrl)
             
             if (match != null) {
-                BaseInfo(match.groupValues[1], match.groupValues[2])
+                BaseInfo(
+                    basePath = match.groupValues[1],
+                    episode = match.groupValues[2],
+                    foundQuality = match.groupValues[3]
+                )
             } else {
-                BaseInfo("", "1")
+                // Fallback: tentar outro padrão
+                println("⚠️ AnimeFireExtractor: Padrão principal não encontrado, tentando alternativo...")
+                
+                // Padrão alternativo: https://lightspeedst.net/sXX/mp4/VIDEO_ID/QUALIDADE/EPISODIO.mp4
+                val altPattern = """(https://lightspeedst\.net/s\d+/mp4/[^/]+)/([^/]+)/(\d+)\.mp4""".toRegex()
+                val altMatch = altPattern.find(videoUrl)
+                
+                if (altMatch != null) {
+                    BaseInfo(
+                        basePath = altMatch.groupValues[1],
+                        episode = altMatch.groupValues[3],
+                        foundQuality = altMatch.groupValues[2]
+                    )
+                } else {
+                    println("❌ AnimeFireExtractor: Nenhum padrão reconhecido")
+                    BaseInfo("", "1", "480p")
+                }
             }
         } catch (e: Exception) {
-            BaseInfo("", "1")
+            println("⚠️ AnimeFireExtractor: Erro ao extrair padrão: ${e.message}")
+            BaseInfo("", "1", "480p")
         }
     }
     
@@ -119,13 +157,15 @@ object AnimeFireExtractor {
         name: String,
         mainUrl: String,
         referer: String,
-        quality: String,
         callback: (ExtractorLink) -> Unit
     ) {
         try {
-            val (qualityNum, qualityName) = when (quality) {
-                "fhd" -> Pair(1080, "1080p")
-                "hd" -> Pair(720, "720p")
+            // Determinar qualidade baseada na URL
+            val (qualityValue, qualityName) = when {
+                videoUrl.contains("1080") || videoUrl.contains("1080p") -> Pair(1080, "1080p")
+                videoUrl.contains("720") || videoUrl.contains("720p") -> Pair(720, "720p")
+                videoUrl.contains("480") || videoUrl.contains("480p") -> Pair(480, "480p")
+                videoUrl.contains("360") || videoUrl.contains("360p") -> Pair(360, "360p")
                 else -> Pair(480, "480p")
             }
             
@@ -137,7 +177,7 @@ object AnimeFireExtractor {
                     type = ExtractorLinkType.VIDEO
                 ) {
                     this.referer = "$mainUrl/"
-                    this.quality = qualityNum
+                    this.quality = qualityValue
                     this.headers = mapOf(
                         "Referer" to referer,
                         "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
@@ -147,33 +187,29 @@ object AnimeFireExtractor {
             
             println("✅ AnimeFireExtractor: Adicionado $qualityName")
         } catch (e: Exception) {
-            println("⚠️ AnimeFireExtractor: Erro ao adicionar $quality: ${e.message}")
+            println("⚠️ AnimeFireExtractor: Erro ao adicionar qualidade: ${e.message}")
         }
     }
     
-    private suspend fun addQualityLink(
+    private suspend fun addQualityLinkWithParams(
         videoUrl: String,
         name: String,
         mainUrl: String,
         referer: String,
+        qualityName: String,
+        qualityValue: Int,
         callback: (ExtractorLink) -> Unit
     ) {
         try {
-            val quality = when {
-                videoUrl.contains("/fhd/") -> Pair(1080, "1080p")
-                videoUrl.contains("/hd/") -> Pair(720, "720p")
-                else -> Pair(480, "480p")
-            }
-            
             callback.invoke(
                 newExtractorLink(
                     source = name,
-                    name = "$name (${quality.second})",
+                    name = "$name ($qualityName)",
                     url = videoUrl,
                     type = ExtractorLinkType.VIDEO
                 ) {
                     this.referer = "$mainUrl/"
-                    this.quality = quality.first
+                    this.quality = qualityValue
                     this.headers = mapOf(
                         "Referer" to referer,
                         "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
@@ -181,9 +217,9 @@ object AnimeFireExtractor {
                 }
             )
             
-            println("✅ AnimeFireExtractor: Adicionado ${quality.second}")
+            println("✅ AnimeFireExtractor: Adicionado $qualityName")
         } catch (e: Exception) {
-            println("⚠️ AnimeFireExtractor: Erro ao adicionar qualidade: ${e.message}")
+            println("⚠️ AnimeFireExtractor: Erro ao adicionar $qualityName: ${e.message}")
         }
     }
 }
