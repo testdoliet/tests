@@ -24,6 +24,7 @@ class AnimeFire : MainAPI() {
         private val tmdbAccessToken = BuildConfig.TMDB_ACCESS_TOKEN
         private const val tmdbBaseUrl = "https://api.themoviedb.org/3"
         private const val tmdbImageUrl = "https://image.tmdb.org/t/p"
+        private const val SEARCH_PATH = "/pesquisar"
     }
     
     override val mainPage = mainPageOf(
@@ -306,6 +307,114 @@ class AnimeFire : MainAPI() {
         }
     }
 
+    // ============ FUNÇÃO SEARCH FUNCIONAL ============
+    
+    override suspend fun search(query: String): List<SearchResponse> {
+        println("🚀 [SEARCH] Iniciando busca por: '$query'")
+        
+        val searchUrl = "$mainUrl$SEARCH_PATH/${URLEncoder.encode(query, "UTF-8")}"
+        println("🔗 [SEARCH] URL completa: $searchUrl")
+        
+        try {
+            val response = app.get(searchUrl, timeout = 10_000)
+            println("📡 [SEARCH] Status HTTP: ${response.code}")
+            println("📏 [SEARCH] Tamanho da resposta: ${response.text.length} chars")
+            
+            // DEBUG: Salvar parte do HTML para análise
+            if (response.text.length < 10000) {
+                println("📄 [SEARCH] Primeiros 500 chars do HTML:")
+                println(response.text.take(500))
+            }
+            
+            val document = response.document
+            
+            // Testar diferentes seletores
+            val testSelectors = listOf(
+                "div.divCardUltimosEps article.card a",
+                ".divCardUltimosEps a",
+                "article.card a",
+                ".item a",
+                "a[href*='/animes/']",
+                "a[href*='/filmes/']",
+                ".owl-carousel-anime .divArticleLancamentos a.item"
+            )
+            
+            testSelectors.forEach { selector ->
+                val elements = document.select(selector)
+                println("🔍 [SEARCH TEST] Seletor '$selector': ${elements.size} elementos")
+                
+                if (elements.isNotEmpty() && elements.size < 5) {
+                    elements.forEachIndexed { index, element ->
+                        println("   $index: ${element.attr("href")} - ${element.text().take(50)}")
+                    }
+                }
+            }
+            
+            // Usar seletor mais confiável
+            val elements = document.select("div.divCardUltimosEps article.card a")
+            if (elements.isEmpty()) {
+                // Fallback para outros seletores
+                val fallbackElements = document.select(".item a, a[href*='/animes/'], a[href*='/filmes/']")
+                return parseSearchElements(fallbackElements)
+            }
+            
+            println("✅ [SEARCH] Elementos encontrados com seletor principal: ${elements.size}")
+            return parseSearchElements(elements)
+            
+        } catch (e: Exception) {
+            println("❌ [SEARCH] Erro na busca: ${e.message}")
+            return emptyList()
+        }
+    }
+    
+    private fun parseSearchElements(elements: org.jsoup.select.Elements): List<SearchResponse> {
+        return elements.mapNotNull { element ->
+            try {
+                val href = element.attr("href")
+                if (href.isBlank()) {
+                    println("⚠️ [SEARCH] Link vazio encontrado")
+                    return@mapNotNull null
+                }
+
+                val titleElement = element.selectFirst("h3.animeTitle, .text-block h3, .animeTitle, h3, h4, .card-title")
+                val rawTitle = titleElement?.text()?.trim() ?: "Sem Título"
+                
+                val cleanTitle = rawTitle
+                    .replace(Regex("\\s*-\\s*Todos os Episódios$"), "")
+                    .replace(Regex("\\(Dublado\\)"), "")
+                    .replace(Regex("\\(Legendado\\)"), "")
+                    .replace(Regex("\\(\\d{4}\\)"), "")
+                    .trim()
+
+                val imgElement = element.selectFirst("img.imgAnimes, img.card-img-top, img.transitioning_src, img[src*='animes']")
+                val posterUrl = when {
+                    imgElement?.hasAttr("data-src") == true -> imgElement.attr("data-src")
+                    imgElement?.hasAttr("src") == true -> imgElement.attr("src")
+                    else -> null
+                }
+
+                val isMovie = href.contains("/filmes/") || 
+                             cleanTitle.contains("filme", ignoreCase = true) ||
+                             rawTitle.contains("filme", ignoreCase = true) ||
+                             rawTitle.contains("movie", ignoreCase = true)
+
+                println("✅ [SEARCH] Processado: '$cleanTitle' | URL: ${href.take(50)}... | Tipo: ${if (isMovie) "Filme" else "Anime"}")
+
+                newAnimeSearchResponse(cleanTitle, fixUrl(href)) {
+                    this.posterUrl = posterUrl?.let { fixUrl(it) }
+                    this.type = if (isMovie) {
+                        TvType.Movie
+                    } else {
+                        TvType.Anime
+                    }
+                }
+            } catch (e: Exception) {
+                println("❌ [SEARCH] Erro ao processar elemento: ${e.message}")
+                null
+            }
+        }.take(30)
+    }
+
     // ============ FUNÇÕES AUXILIARES ============
     
     private fun normalizeTitle(title: String): String {
@@ -346,15 +455,15 @@ class AnimeFire : MainAPI() {
                 return false
             }
             
-            // Buscar no AnimeFire
-            val searchResults = searchAnimeFire(searchQuery)
+            // Usar a função search que agora é funcional
+            val searchResults = search(searchQuery)
             
             if (searchResults.isEmpty()) {
                 // Tentar busca mais genérica (remover números, temporadas, etc)
                 val simpleQuery = simplifyTitleForSearch(title)
                 if (simpleQuery != searchQuery) {
                     println("🔍 [ANIMEFIRE] Tentando busca simples: $simpleQuery")
-                    val simpleResults = searchAnimeFire(simpleQuery)
+                    val simpleResults = search(simpleQuery)
                     return checkResultsForMatch(simpleResults, title)
                 }
                 return false
@@ -602,110 +711,6 @@ class AnimeFire : MainAPI() {
         ?.sortedByDescending { it.second }
         ?.firstOrNull()
         ?.let { (key, _, _) -> "https://www.youtube.com/watch?v=$key" }
-    }
-
-    // ============ FUNÇÃO SEARCH DO ANIMEFIRE ============
-    
-    override suspend fun search(query: String): List<SearchResponse> {
-        println("🔍 [SEARCH] Buscando: $query")
-        return try {
-            val results = searchAnimeFire(query)
-            println("✅ [SEARCH] ${results.size} resultados encontrados")
-            results
-        } catch (e: Exception) {
-            println("❌ [SEARCH] Erro: ${e.message}")
-            emptyList()
-        }
-    }
-
-    private suspend fun searchAnimeFire(query: String): List<SearchResponse> {
-        println("🔍 [ANIMEFIRE SEARCH] Buscando: $query")
-        
-        val encodedQuery = URLEncoder.encode(query, "UTF-8")
-        // O AnimeFire usa esta URL para busca
-        val searchUrl = "$mainUrl/pesquisar/$encodedQuery"
-        
-        println("🔗 [ANIMEFIRE SEARCH] URL: $searchUrl")
-        
-        return try {
-            val document = app.get(searchUrl, timeout = 10_000).document
-            
-            // Primeiro tentar seletores específicos do AnimeFire
-            val animeItems = document.select(".owl-carousel-anime .divArticleLancamentos, .item, .anime-item")
-            
-            if (animeItems.isNotEmpty()) {
-                return parseAnimeItems(animeItems)
-            }
-            
-            // Se não encontrar, tentar seletores mais genéricos
-            val fallbackItems = document.select("[href*='/animes/'], [href*='/filmes/']")
-            if (fallbackItems.isNotEmpty()) {
-                return parseFallbackItems(fallbackItems)
-            }
-            
-            println("⚠️ [ANIMEFIRE SEARCH] Nenhum resultado encontrado")
-            emptyList()
-            
-        } catch (e: Exception) {
-            println("❌ [ANIMEFIRE SEARCH] Erro HTTP: ${e.message}")
-            emptyList()
-        }
-    }
-
-    private fun parseAnimeItems(elements: org.jsoup.select.Elements): List<SearchResponse> {
-        return elements.mapNotNull { element ->
-            try {
-                val linkElement = element.selectFirst("a")
-                val href = linkElement?.attr("href") ?: return@mapNotNull null
-                if (href.isBlank()) return@mapNotNull null
-                
-                val fullUrl = fixUrl(href)
-                
-                // Extrair título
-                val titleElement = element.selectFirst(".spanAnimeInfo.spanAnimeName, .animeTitle, .title, h3, h4")
-                val title = titleElement?.text()?.trim() ?: "Sem Título"
-                
-                // Extrair poster
-                val poster = element.selectFirst("img")?.let { img ->
-                    img.attr("src").takeIf { it.isNotBlank() } ?: 
-                    img.attr("data-src").takeIf { it.isNotBlank() }
-                }?.let { fixUrl(it) }
-                
-                newAnimeSearchResponse(title, fullUrl) {
-                    this.posterUrl = poster
-                    this.type = TvType.Anime
-                }
-            } catch (e: Exception) {
-                println("❌ [ANIMEFIRE SEARCH] Erro parse anime item: ${e.message}")
-                null
-            }
-        }.distinctBy { it.url }
-    }
-
-    private fun parseFallbackItems(elements: org.jsoup.select.Elements): List<SearchResponse> {
-        return elements.mapNotNull { element ->
-            try {
-                val href = element.attr("href")
-                if (href.isBlank() || !href.contains("/animes/") || !href.contains("/filmes/")) {
-                    return@mapNotNull null
-                }
-                
-                val fullUrl = fixUrl(href)
-                val title = element.text().trim().takeIf { it.isNotBlank() } ?: 
-                          element.selectFirst("img")?.attr("alt")?.trim() ?: 
-                          "Sem Título"
-                
-                val poster = element.selectFirst("img")?.attr("src")?.let { fixUrl(it) }
-                
-                newAnimeSearchResponse(title, fullUrl) {
-                    this.posterUrl = poster
-                    this.type = if (href.contains("/filmes/")) TvType.Movie else TvType.Anime
-                }
-            } catch (e: Exception) {
-                println("❌ [ANIMEFIRE SEARCH] Erro parse fallback: ${e.message}")
-                null
-            }
-        }.distinctBy { it.url }
     }
 
     // ============ LOAD FUNCTIONS ============
