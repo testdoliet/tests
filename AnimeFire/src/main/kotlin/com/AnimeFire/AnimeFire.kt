@@ -17,6 +17,9 @@ class AnimeFire : MainAPI() {
     // API GraphQL do AniList
     private val aniListApiUrl = "https://graphql.anilist.co"
     
+    // Cache para mapear títulos AniList → URLs AnimeFire
+    private val titleToUrlCache = mutableMapOf<String, String>()
+    
     override val mainPage = mainPageOf(
         "trending" to "Em Alta",
         "season" to "Populares Nessa Temporada", 
@@ -183,9 +186,9 @@ class AnimeFire : MainAPI() {
                 val filteredItems = mutableListOf<SearchResponse>()
                 val seenIds = mutableSetOf<Int>()
                 
-                mediaList.forEach { media ->
-                    // Evitar duplicados
-                    if (media.id in seenIds) return@forEach
+                // Processar em batch para melhor performance
+                for (media in mediaList) {
+                    if (media.id in seenIds) continue
                     seenIds.add(media.id)
                     
                     val aniListTitle = media.title?.userPreferred ?: 
@@ -196,30 +199,114 @@ class AnimeFire : MainAPI() {
                     // Limpar título
                     val cleanTitle = cleanAnimeTitle(aniListTitle)
                     
-                    val specialUrl = "anilist:${media.id}:$cleanTitle"
+                    // Verificar cache primeiro
+                    val cachedUrl = titleToUrlCache[cleanTitle.lowercase()]
+                    val finalUrl: String
+                    
+                    if (cachedUrl != null) {
+                        // Usar URL do cache
+                        finalUrl = if (cachedUrl.startsWith("http")) cachedUrl else "anilist:${media.id}:$cleanTitle"
+                        println("♻️ [CACHE] Usando URL em cache para: $cleanTitle")
+                    } else {
+                        // Buscar no site
+                        val animeFireUrl = findAnimeFireUrl(cleanTitle)
+                        finalUrl = animeFireUrl
+                        
+                        // Armazenar no cache (mesmo se não encontrado)
+                        titleToUrlCache[cleanTitle.lowercase()] = if (animeFireUrl.startsWith("http")) animeFireUrl else "not_found"
+                    }
+                    
                     val finalPoster = media.coverImage?.extraLarge ?: media.coverImage?.large
                     
                     // Adicionar resultado
-                    filteredItems.add(newAnimeSearchResponse(cleanTitle, specialUrl) {
+                    filteredItems.add(newAnimeSearchResponse(cleanTitle, finalUrl) {
                         this.posterUrl = finalPoster
                         this.type = TvType.Anime
                     })
                     
-                    println("✅ [ANILIST] Adicionado: $cleanTitle")
+                    println("✅ [ANILIST] Adicionado: $cleanTitle → ${if (finalUrl.startsWith("http")) "SITE" else "ANILIST"}")
+                    
+                    // Pequena pausa para não sobrecarregar o site
+                    kotlinx.coroutines.delay(50)
                 }
                 
                 println("✅ [ANILIST] ${filteredItems.size} itens adicionados para $pageName")
                 newHomePageResponse(pageName, filteredItems, hasNext = filteredItems.isNotEmpty())
             } else {
                 println("❌ [ANILIST] Erro na API: ${response.code}")
-                println("❌ [ANILIST] Response body: ${response.text}")
                 newHomePageResponse(pageName, emptyList(), false)
             }
         } catch (e: Exception) {
             println("❌ [ANILIST] Exception: ${e.message}")
-            e.printStackTrace()
             newHomePageResponse(pageName, emptyList(), false)
         }
+    }
+
+    private suspend fun findAnimeFireUrl(title: String): String {
+        return try {
+            val searchResults = search(title)
+            
+            if (searchResults.isNotEmpty()) {
+                // Tenta encontrar o melhor match
+                val bestMatch = findBestMatch(title, searchResults)
+                if (bestMatch != null) {
+                    println("🔍 [SEARCH-CACHE] Encontrado: $title → ${bestMatch.url}")
+                    return bestMatch.url
+                }
+            }
+            
+            // Fallback para URL do AniList
+            "anilist:0:$title"
+        } catch (e: Exception) {
+            println("❌ [SEARCH-CACHE] Erro ao buscar: $title - ${e.message}")
+            "anilist:0:$title"
+        }
+    }
+
+    private fun findBestMatch(searchTitle: String, results: List<SearchResponse>): SearchResponse? {
+        if (results.isEmpty()) return null
+        
+        val cleanSearch = cleanForMatching(searchTitle)
+        
+        // Tenta encontrar match exato primeiro
+        for (result in results) {
+            val cleanResult = cleanForMatching(result.title)
+            if (cleanResult == cleanSearch) {
+                return result
+            }
+        }
+        
+        // Tenta match parcial
+        for (result in results) {
+            val cleanResult = cleanForMatching(result.title)
+            if (cleanResult.contains(cleanSearch) || cleanSearch.contains(cleanResult)) {
+                return result
+            }
+        }
+        
+        // Tenta por similaridade de palavras-chave
+        val searchWords = cleanSearch.split(" ").filter { it.length > 2 }
+        
+        var bestMatch: SearchResponse? = null
+        var bestScore = 0
+        
+        for (result in results) {
+            val cleanResult = cleanForMatching(result.title)
+            var score = 0
+            
+            for (word in searchWords) {
+                if (cleanResult.contains(word)) {
+                    score++
+                }
+            }
+            
+            if (score > bestScore) {
+                bestScore = score
+                bestMatch = result
+            }
+        }
+        
+        return bestMatch ?: results.first()
     }
 
     private fun cleanAnimeTitle(title: String): String {
@@ -230,8 +317,25 @@ class AnimeFire : MainAPI() {
             .trim()
     }
 
+    private fun cleanForMatching(title: String): String {
+        return title.lowercase()
+            .replace(Regex("[^a-z0-9\\sáéíóúâêîôûãõç]"), "")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+    }
+
     override suspend fun search(query: String): List<SearchResponse> {
         println("🔍 [SEARCH] Buscando: $query")
+        
+        // Verificar cache primeiro
+        val cacheKey = query.lowercase().trim()
+        if (titleToUrlCache[cacheKey]?.startsWith("http") == true) {
+            println("♻️ [SEARCH-CACHE] Cache hit para: $query")
+            val cachedUrl = titleToUrlCache[cacheKey]!!
+            return listOf(newAnimeSearchResponse(query, cachedUrl) {
+                this.type = TvType.Anime
+            })
+        }
         
         return try {
             val encodedQuery = URLEncoder.encode(query, "UTF-8")
@@ -258,6 +362,9 @@ class AnimeFire : MainAPI() {
                             val cleanTitle = cleanSearchTitle(rawTitle)
                             
                             if (cleanTitle.isBlank()) return@mapNotNull null
+                            
+                            // Adicionar ao cache
+                            titleToUrlCache[cleanTitle.lowercase()] = fullUrl
                             
                             val posterElement = element.selectFirst("img")
                             val poster = posterElement?.let { img ->
@@ -289,7 +396,6 @@ class AnimeFire : MainAPI() {
             }
         } catch (e: Exception) {
             println("❌ [SEARCH] Exception: ${e.message}")
-            e.printStackTrace()
             emptyList()
         }
     }
@@ -299,6 +405,7 @@ class AnimeFire : MainAPI() {
             .replace(Regex("\\s*-\\s*Todos os Episódios$"), "")
             .replace(Regex("\\(Dublado\\)|\\(Legendado\\)"), "")
             .replace(Regex("\\(\\d{4}\\)"), "")
+            .replace(Regex("\\s+"), " ")
             .trim()
     }
 
@@ -306,10 +413,41 @@ class AnimeFire : MainAPI() {
         println("\n🚀 AnimeFire.load() para URL: $url")
         
         if (url.startsWith("anilist:")) {
-            return loadAniListContent(url)
+            return loadAniListWithSearch(url)
         }
         
         return loadFromAnimeFire(url)
+    }
+
+    private suspend fun loadAniListWithSearch(url: String): LoadResponse {
+        val parts = url.split(":")
+        val titleFromUrl = parts.getOrNull(2) ?: "Anime do AniList"
+        
+        // Primeiro tenta encontrar no site usando cache
+        val cacheKey = titleFromUrl.lowercase()
+        val cachedUrl = titleToUrlCache[cacheKey]
+        
+        if (cachedUrl != null && cachedUrl.startsWith("http")) {
+            println("♻️ [LOAD-CACHE] Usando URL em cache para: $titleFromUrl")
+            return loadFromAnimeFire(cachedUrl)
+        }
+        
+        // Se não tem cache, tenta buscar
+        val searchResults = search(titleFromUrl)
+        val bestMatch = findBestMatch(titleFromUrl, searchResults)
+        
+        return if (bestMatch != null) {
+            // Armazenar no cache para uso futuro
+            titleToUrlCache[cacheKey] = bestMatch.url
+            println("✅ [LOAD] Encontrado no site: ${bestMatch.title}")
+            loadFromAnimeFire(bestMatch.url)
+        } else {
+            // Fallback: mostra apenas que não foi encontrado
+            println("⚠️ [LOAD] Não encontrado no site: $titleFromUrl")
+            newAnimeLoadResponse(titleFromUrl, url, TvType.Anime) {
+                this.plot = "📡 Este anime está na lista mas não foi encontrado no AnimeFire.\n\nTente buscar manualmente ou verifique se o nome está correto."
+            }
+        }
     }
 
     private suspend fun loadFromAnimeFire(url: String): LoadResponse {
@@ -326,9 +464,13 @@ class AnimeFire : MainAPI() {
             val poster = posterElement?.attr("src")?.let { fixUrl(it) } ?:
                        posterElement?.attr("data-src")?.let { fixUrl(it) }
             
+            // Adicionar ao cache
+            titleToUrlCache[title.lowercase()] = url
+            
             newAnimeLoadResponse(title, url, TvType.Anime) {
                 this.plot = plot
                 this.posterUrl = poster
+                this.type = TvType.Anime
             }
         } catch (e: Exception) {
             println("❌ Erro ao carregar do AnimeFire: ${e.message}")
@@ -338,104 +480,17 @@ class AnimeFire : MainAPI() {
         }
     }
 
-    private suspend fun loadAniListContent(url: String): LoadResponse {
-        println("🌐 Carregando conteúdo do AniList: $url")
-        
-        val parts = url.split(":")
-        val aniListId = parts.getOrNull(1)?.toIntOrNull()
-        val titleFromUrl = parts.getOrNull(2) ?: "Anime do AniList"
-        
-        if (aniListId == null) {
-            return newAnimeLoadResponse(titleFromUrl, url, TvType.Anime) {
-                this.plot = "ID do AniList não encontrado na URL"
-            }
-        }
-        
-        val query = """
-            query {
-                Media(id: $aniListId, type: ANIME) {
-                    title {
-                        romaji
-                        english
-                        native
-                        userPreferred
-                    }
-                    description
-                    episodes
-                    duration
-                    coverImage {
-                        extraLarge
-                        large
-                    }
-                    bannerImage
-                    genres
-                    status
-                    startDate {
-                        year
-                        month
-                        day
-                    }
-                }
-            }
-        """.trimIndent()
-        
-        try {
-            println("📡 [ANILIST LOAD] Enviando query para id: $aniListId")
-            
-            val response = app.post(
-                aniListApiUrl,
-                data = mapOf("query" to query),
-                headers = mapOf(
-                    "Content-Type" to "application/json",
-                    "Accept" to "application/json"
-                ),
-                timeout = 10_000
-            )
-            
-            if (response.code == 200) {
-                val aniListResponse = response.parsedSafe<AniListMediaResponse>()
-                val media = aniListResponse?.data?.Media
-                
-                if (media != null) {
-                    val title = media.title?.userPreferred ?: 
-                               media.title?.romaji ?: 
-                               media.title?.english ?: 
-                               titleFromUrl
-                    
-                    val description = media.description?.replace(Regex("<[^>]*>"), "") ?: "Sem descrição"
-                    
-                    return newAnimeLoadResponse(title, url, TvType.Anime) {
-                        this.plot = description
-                        this.posterUrl = media.coverImage?.extraLarge ?: media.coverImage?.large
-                        this.backgroundPosterUrl = media.bannerImage
-                        this.year = media.startDate?.year
-                        this.tags = media.genres
-                    }
-                } else {
-                    println("❌ [ANILIST LOAD] Media não encontrada para id: $aniListId")
-                }
-            } else {
-                println("❌ [ANILIST LOAD] Erro HTTP: ${response.code}")
-            }
-        } catch (e: Exception) {
-            println("❌ Erro ao carregar do AniList: ${e.message}")
-        }
-        
-        return newAnimeLoadResponse(titleFromUrl, url, TvType.Anime) {
-            this.plot = "Não foi possível carregar detalhes deste anime."
-        }
-    }
-
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        println("⚠️ Extração de links para AniList não implementada ainda")
+        println("⚠️ Extração de links não implementada ainda")
         return false
     }
 
+    // Classes de dados para o AniList
     @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
     private data class AniListApiResponse(
         @JsonProperty("data") val data: AniListData? = null
