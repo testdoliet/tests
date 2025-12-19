@@ -3,11 +3,11 @@ package com.AnimeFire
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
-import org.jsoup.nodes.Element
 import java.net.URLEncoder
+import kotlin.math.abs
 
 class AnimeFire : MainAPI() {
-    override var mainUrl = "https://animefire.io"
+    override var mainUrl = "https://animefire.plus"
     override var name = "ANIMEFIRE"
     override val hasMainPage = true
     override var lang = "pt-br"
@@ -15,7 +15,16 @@ class AnimeFire : MainAPI() {
     override val supportedTypes = setOf(TvType.Anime, TvType.Movie, TvType.OVA)
     override val usesWebView = false
 
+    // API GraphQL do AniList
     private val aniListApiUrl = "https://graphql.anilist.co"
+    
+    // Configurações do TMDB
+    companion object {
+        private val tmdbApiKey = BuildConfig.TMDB_API_KEY
+        private val tmdbAccessToken = BuildConfig.TMDB_ACCESS_TOKEN
+        private const val tmdbBaseUrl = "https://api.themoviedb.org/3"
+        private const val tmdbImageUrl = "https://image.tmdb.org/t/p"
+    }
     
     override val mainPage = mainPageOf(
         "trending" to "Em Alta",
@@ -37,6 +46,8 @@ class AnimeFire : MainAPI() {
     }
 
     private suspend fun getAniListTrending(page: Int): HomePageResponse {
+        println("🌐 [ANILIST] Buscando Trending...")
+        
         val query = """
             query {
                 Page(page: $page, perPage: 20) {
@@ -67,6 +78,8 @@ class AnimeFire : MainAPI() {
     }
 
     private suspend fun getAniListSeason(page: Int): HomePageResponse {
+        println("🌐 [ANILIST] Buscando Esta Temporada...")
+        
         val query = """
             query {
                 Page(page: $page, perPage: 20) {
@@ -96,6 +109,8 @@ class AnimeFire : MainAPI() {
     }
 
     private suspend fun getAniListPopular(page: Int): HomePageResponse {
+        println("🌐 [ANILIST] Buscando Populares...")
+        
         val query = """
             query {
                 Page(page: $page, perPage: 20) {
@@ -126,6 +141,8 @@ class AnimeFire : MainAPI() {
     }
 
     private suspend fun getAniListTop(page: Int): HomePageResponse {
+        println("🌐 [ANILIST] Buscando Top 100...")
+        
         val query = """
             query {
                 Page(page: $page, perPage: 20) {
@@ -152,10 +169,12 @@ class AnimeFire : MainAPI() {
             }
         """.trimIndent()
         
-        return executeAniListQuery(query, "Top 100", page, showRank = true)
+        return executeAniListQuery(query, "Top 100", page, isTop = true)
     }
 
     private suspend fun getAniListUpcoming(page: Int): HomePageResponse {
+        println("🌐 [ANILIST] Buscando Próxima Temporada...")
+        
         val query = """
             query {
                 Page(page: $page, perPage: 20) {
@@ -181,17 +200,18 @@ class AnimeFire : MainAPI() {
             }
         """.trimIndent()
         
-        return executeAniListQuery(query, "Na Próxima Temporada", page)
+        return executeAniListQuery(query, "Na Próxima Temporada", page, isUpcoming = true)
     }
 
     private suspend fun executeAniListQuery(
         query: String, 
         pageName: String,
         page: Int,
-        showRank: Boolean = false
+        isTop: Boolean = false,
+        isUpcoming: Boolean = false
     ): HomePageResponse {
         return try {
-            println("📡 [ANILIST] Buscando: $pageName")
+            println("📡 [ANILIST] Enviando query GraphQL para página $page...")
             
             val response = app.post(
                 aniListApiUrl,
@@ -203,33 +223,82 @@ class AnimeFire : MainAPI() {
                 timeout = 10_000
             )
             
+            println("✅ [ANILIST] Resposta recebida: ${response.code}")
+            
             if (response.code == 200) {
                 val aniListResponse = response.parsedSafe<AniListApiResponse>()
                 val mediaList = aniListResponse?.data?.Page?.media ?: emptyList()
                 
-                println("📊 [ANILIST] ${mediaList.size} resultados encontrados para $pageName")
+                println("📊 [ANILIST] ${mediaList.size} resultados brutos")
                 
+                // Processar e filtrar duplicados inteligentemente
                 val filteredItems = mutableListOf<SearchResponse>()
+                val processedTitles = mutableSetOf<String>()
                 
-                mediaList.forEachIndexed { index, media ->
+                // Processar em paralelo para melhor performance
+                val results = mediaList.mapNotNull { media ->
                     val aniListTitle = media.title?.userPreferred ?: 
                                       media.title?.romaji ?: 
                                       media.title?.english ?: 
                                       "Sem Título"
                     
-                    val finalTitle = if (showRank) "#${index + 1} $aniListTitle" else aniListTitle
-                    val finalPoster = media.coverImage?.extraLarge ?: media.coverImage?.large
+                    // Verificar se já processamos um título similar
+                    val normalizedTitle = normalizeTitle(aniListTitle)
+                    if (processedTitles.any { isSimilarTitle(normalizedTitle, it) }) {
+                        println("🔁 [FILTRO] Título duplicado/similar: $aniListTitle")
+                        return@mapNotNull null
+                    }
+                    processedTitles.add(normalizedTitle)
+                    
+                    // Para "Na Próxima Temporada", não verificar existência
+                    if (!isUpcoming) {
+                        // Verificar se existe no AnimeFire
+                        val existsInAnimeFire = checkIfExistsInAnimeFire(aniListTitle)
+                        if (!existsInAnimeFire) {
+                            println("⚠️ [FILTRO] Não encontrado no AnimeFire: $aniListTitle")
+                            return@mapNotNull null
+                        }
+                    }
+                    
+                    // Buscar dados do TMDB com filtros melhores
+                    val tmdbData = if (!isUpcoming) {
+                        getTMDBInfoForAnime(aniListTitle, media.seasonYear, media.synonyms)
+                    } else {
+                        null
+                    }
+                    
+                    // Usar título do TMDB se disponível, caso contrário usar do AniList
+                    // CORRIGIDO: Removido a numeração do Top 100
+                    val finalTitle = if (tmdbData?.title != null) {
+                        tmdbData.title // Sem numeração
+                    } else {
+                        aniListTitle // Sem numeração
+                    }
+                    
+                    // Usar poster do TMDB se disponível, caso contrário usar do AniList
+                    val finalPoster = tmdbData?.posterUrl ?: 
+                                     (media.coverImage?.extraLarge ?: media.coverImage?.large)
+                    
                     val specialUrl = "anilist:${media.id}:$aniListTitle"
                     
-                    // CORRIGIDO: Removido SearchQuality.HIGH que não existe
-                    filteredItems.add(newAnimeSearchResponse(finalTitle, specialUrl) {
-                        this.posterUrl = finalPoster
-                        this.type = TvType.Anime
-                    })
-                    
-                    println("✅ [ANILIST] Adicionado: $aniListTitle")
+                    Pair(
+                        aniListTitle,
+                        newAnimeSearchResponse(finalTitle, specialUrl) {
+                            this.posterUrl = finalPoster
+                            this.type = TvType.Anime
+                        }
+                    )
                 }
                 
+                // Adicionar apenas se ainda não tiver um similar
+                results.forEach { (originalTitle, searchResponse) ->
+                    if (filteredItems.size < 20) { // Limitar a 20 itens por página
+                        filteredItems.add(searchResponse)
+                        println("✅ [ANILIST] Adicionado: $originalTitle")
+                    }
+                }
+                
+                println("✅ [ANILIST] ${filteredItems.size} itens filtrados para $pageName")
                 newHomePageResponse(pageName, filteredItems, hasNext = filteredItems.isNotEmpty())
             } else {
                 println("❌ [ANILIST] Erro na API: ${response.code}")
@@ -237,76 +306,298 @@ class AnimeFire : MainAPI() {
             }
         } catch (e: Exception) {
             println("❌ [ANILIST] Exception: ${e.message}")
+            e.printStackTrace()
             newHomePageResponse(pageName, emptyList(), false)
         }
     }
 
-    override suspend fun search(query: String): List<SearchResponse> {
-        println("🚀 [SEARCH] Iniciando busca por: '$query'")
+    // ============ FUNÇÕES AUXILIARES ============
+    
+    private fun normalizeTitle(title: String): String {
+        return title.lowercase()
+            .replace(Regex("[^a-z0-9\\s]"), "") // Remove pontuação
+            .replace(Regex("\\s+"), " ") // Normaliza espaços
+            .trim()
+    }
+
+    private fun isSimilarTitle(title1: String, title2: String): Boolean {
+        // Verifica se são idênticos
+        if (title1 == title2) return true
         
+        // Verifica se um contém o outro (para casos como "One Piece" vs "One Piece Fan Letter")
+        if (title1.contains(title2) || title2.contains(title1)) {
+            // Calcula a diferença de tamanho
+            val lengthDiff = abs(title1.length - title2.length).toDouble()
+            val minLength = minOf(title1.length, title2.length).toDouble()
+            
+            // Se a diferença for pequena (menos de 30%), é provavelmente o mesmo
+            if (lengthDiff / minLength < 0.3) {
+                return true
+            }
+        }
+        
+        return false
+    }
+
+    private suspend fun checkIfExistsInAnimeFire(title: String): Boolean {
         return try {
-            val encodedQuery = URLEncoder.encode(query, "UTF-8")
-            val searchUrl = "$mainUrl/pesquisar/$encodedQuery"
-            println("🔗 [SEARCH] URL: $searchUrl")
+            println("🔍 [ANIMEFIRE] Verificando: $title")
             
-            val response = app.get(searchUrl, timeout = 10_000)
-            println("📡 [SEARCH] Status: ${response.code}")
+            // Limpar o título para busca
+            val searchQuery = title
+                .replace(Regex("[^a-zA-Z0-9\\s]"), " ") // Remove caracteres especiais
+                .replace(Regex("\\s+"), " ") // Normaliza espaços
+                .trim()
             
-            if (response.code != 200) {
-                println("⚠️ [SEARCH] Página de busca não encontrada (${response.code}), tentando método alternativo...")
-                return emptyList()
+            if (searchQuery.length < 3) {
+                println("❌ [ANIMEFIRE] Título muito curto: $searchQuery")
+                return false
             }
             
-            val document = response.document
+            // Usar a função searchAnimeFire que você já tem
+            val searchResults = searchAnimeFire(searchQuery)
             
-            val elements = document.select("article.card, .item, a[href*='/animes/'], a[href*='/filmes/']")
-            println("🔍 [SEARCH] Elementos encontrados: ${elements.size}")
+            // Verificar se algum resultado corresponde bem ao título
+            val found = searchResults.any { result ->
+                val resultTitle = result.name.lowercase()
+                val queryTitle = searchQuery.lowercase()
+                
+                // Verificar correspondência
+                val similarity = calculateTitleSimilarity(resultTitle, queryTitle)
+                val isGoodMatch = similarity > 0.6 // Reduzido para 0.6 para ser mais permissivo
+                
+                if (isGoodMatch) {
+                    println("✅ [ANIMEFIRE] Encontrado: ${result.name} (similaridade: $similarity)")
+                }
+                
+                isGoodMatch
+            }
             
-            return elements.mapNotNull { element ->
-                try {
-                    val href = element.attr("href")
-                    if (href.isBlank()) return@mapNotNull null
+            if (!found) {
+                println("⚠️ [ANIMEFIRE] Não encontrado: $title")
+            }
+            
+            found
+        } catch (e: Exception) {
+            println("❌ [ANIMEFIRE] Erro na verificação: ${e.message}")
+            false
+        }
+    }
 
-                    val titleElement = element.selectFirst("h3, h4, .title, .anime-title, .card-title")
-                    val rawTitle = titleElement?.text()?.trim() ?: element.ownText().trim()
-                    
-                    val cleanTitle = rawTitle
-                        .replace(Regex("\\s*-\\s*Todos os Episódios$"), "")
-                        .replace(Regex("\\(Dublado\\)|\\(Legendado\\)"), "")
-                        .replace(Regex("\\(\\d{4}\\)"), "")
-                        .trim()
+    private fun calculateTitleSimilarity(str1: String, str2: String): Double {
+        val words1 = str1.split(Regex("\\s+")).filter { it.length > 2 }.toSet()
+        val words2 = str2.split(Regex("\\s+")).filter { it.length > 2 }.toSet()
+        
+        if (words1.isEmpty() || words2.isEmpty()) return 0.0
+        
+        val intersection = words1.intersect(words2).size
+        val union = words1.size + words2.size - intersection
+        
+        return if (union == 0) 0.0 else intersection.toDouble() / union.toDouble()
+    }
 
-                    val imgElement = element.selectFirst("img")
-                    val posterUrl = when {
-                        imgElement?.hasAttr("data-src") == true -> imgElement.attr("data-src")
-                        imgElement?.hasAttr("src") == true -> imgElement.attr("src")
-                        else -> null
-                    }
+    // ============ FUNÇÕES DO TMDB MELHORADAS ============
+    
+    private suspend fun getTMDBInfoForAnime(
+        query: String, 
+        year: Int?,
+        synonyms: List<String>? = null
+    ): TMDBInfo? {
+        // Verificar se as chaves estão configuradas
+        if (tmdbApiKey == "dummy_api_key" || tmdbAccessToken == "dummy_access_token") {
+            println("⚠️ [TMDB] Chaves BuildConfig não configuradas")
+            return null
+        }
 
-                    val isMovie = href.contains("/filmes/") || 
-                                 cleanTitle.contains("filme", ignoreCase = true) ||
-                                 cleanTitle.contains("movie", ignoreCase = true)
+        return try {
+            val encodedQuery = URLEncoder.encode(query, "UTF-8")
+            
+            // URL de busca com filtro para ANIME e em português
+            var searchUrl = "$tmdbBaseUrl/search/tv?query=$encodedQuery&api_key=$tmdbApiKey&language=pt-BR&include_adult=false"
+            if (year != null) searchUrl += "&first_air_date_year=$year"
+            
+            println("🔗 [TMDB] Buscando: \"$query\" em português...")
 
-                    if (cleanTitle.isNotBlank()) {
-                        newAnimeSearchResponse(cleanTitle, fixUrl(href)) {
-                            this.posterUrl = posterUrl?.let { fixUrl(it) }
+            val response = app.get(searchUrl, timeout = 10_000)
+            println("📡 [TMDB] Status: ${response.code}")
+
+            if (response.code != 200) {
+                println("❌ [TMDB] Erro na busca")
+                return null
+            }
+
+            val searchResult = response.parsedSafe<TMDBSearchResponse>() ?: return null
+            println("✅ [TMDB] ${searchResult.results.size} resultados encontrados")
+
+            // Filtrar para pegar apenas conteúdo relevante de anime
+            val filteredResults = filterAnimeResults(searchResult.results, query, synonyms)
+            
+            val result = filteredResults.firstOrNull()
+            if (result == null) {
+                println("⚠️ [TMDB] Nenhum resultado relevante para: $query")
+                return null
+            }
+
+            // Buscar detalhes completos em português
+            val details = getTMDBDetailsDirect(result.id, true) ?: return null
+
+            // Verificar se é anime
+            val isAnime = details.genres?.any { 
+                it.name.equals("Animação", ignoreCase = true) || 
+                it.name.equals("Anime", ignoreCase = true) ||
+                it.name.equals("Animation", ignoreCase = true)
+            } ?: false
+
+            if (!isAnime) {
+                println("⚠️ [TMDB] Resultado não é anime: $query")
+                return null
+            }
+
+            TMDBInfo(
+                id = result.id,
+                title = result.name,
+                year = result.first_air_date?.substring(0, 4)?.toIntOrNull(),
+                posterUrl = result.poster_path?.let { "$tmdbImageUrl/w500$it" },
+                backdropUrl = details.backdrop_path?.let { "$tmdbImageUrl/original$it" },
+                overview = details.overview,
+                genres = details.genres?.map { it.name }
+            )
+        } catch (e: Exception) {
+            println("❌ [TMDB] ERRO: ${e.message}")
+            null
+        }
+    }
+
+    private fun filterAnimeResults(
+        results: List<TMDBResult>, 
+        query: String,
+        synonyms: List<String>? = null
+    ): List<TMDBResult> {
+        val normalizedQuery = normalizeTitle(query)
+        val allSearchTerms = mutableListOf(normalizedQuery)
+        synonyms?.forEach { allSearchTerms.add(normalizeTitle(it)) }
+        
+        return results.filter { result ->
+            val title = result.name ?: ""
+            val normalizedResultTitle = normalizeTitle(title)
+            
+            // Verificar se contém termos comuns de anime indesejados
+            val hasUndesiredTerms = normalizedResultTitle.contains("fan letter") ||
+                                   (normalizedResultTitle.contains("special") && !normalizedQuery.contains("special")) ||
+                                   (normalizedResultTitle.contains("ova") && !normalizedQuery.contains("ova")) ||
+                                   (normalizedResultTitle.contains("movie") && !normalizedQuery.contains("movie"))
+            
+            if (hasUndesiredTerms) {
+                println("❌ [TMDB FILTER] Termo indesejado: $title")
+                return@filter false
+            }
+            
+            // Verificar similaridade com os termos de busca
+            val isGoodMatch = allSearchTerms.any { searchTerm ->
+                calculateTitleSimilarity(normalizedResultTitle, searchTerm) > 0.6
+            }
+            
+            if (!isGoodMatch) {
+                println("❌ [TMDB FILTER] Baixa similaridade: '$title' vs '$query'")
+            }
+            
+            isGoodMatch
+        }
+    }
+
+    private suspend fun getTMDBDetailsDirect(id: Int, isTv: Boolean): TMDBDetailsResponse? {
+        return try {
+            val type = if (isTv) "tv" else "movie"
+            val url = "$tmdbBaseUrl/$type/$id?append_to_response=videos&language=pt-BR"
+            
+            val headers = mapOf(
+                "Authorization" to "Bearer $tmdbAccessToken",
+                "accept" to "application/json"
+            )
+            
+            val response = app.get(url, headers = headers, timeout = 10_000)
+
+            if (response.code != 200) {
+                println("❌ [TMDB] Erro detalhes: ${response.code}")
+                return null
+            }
+
+            response.parsedSafe<TMDBDetailsResponse>()
+        } catch (e: Exception) {
+            println("❌ [TMDB] ERRO detalhes: ${e.message}")
+            null
+        }
+    }
+
+    // ============ FUNÇÃO SEARCH DO ANIMEFIRE ============
+    
+    override suspend fun search(query: String): List<SearchResponse> {
+        println("🔍 [SEARCH] Buscando: $query")
+        return searchAnimeFire(query)
+    }
+
+    private suspend fun searchAnimeFire(query: String): List<SearchResponse> {
+        println("🔍 [ANIMEFIRE SEARCH] Buscando: $query")
+        
+        val encodedQuery = URLEncoder.encode(query, "UTF-8")
+        val searchUrl = "$mainUrl/pesquisar/$encodedQuery"
+        
+        println("🔗 [ANIMEFIRE SEARCH] URL: $searchUrl")
+        
+        return try {
+            val document = app.get(searchUrl, timeout = 10_000).document
+            
+            val results = document.select("a.item, article.card, .anime-item, a[href*='/animes/'], a[href*='/filmes/']")
+                .mapNotNull { element ->
+                    try {
+                        val href = element.attr("href")
+                        if (href.isBlank()) return@mapNotNull null
+                        
+                        val fullUrl = fixUrl(href)
+                        
+                        val titleElement = element.selectFirst("h3, h4, .title, .anime-title, .card-title")
+                        val rawTitle = titleElement?.text()?.trim() ?: element.ownText().trim()
+                        
+                        // Limpar título
+                        val cleanTitle = rawTitle
+                            .replace(Regex("\\s*-\\s*Todos os Episódios$"), "")
+                            .replace(Regex("\\(Dublado\\)|\\(Legendado\\)"), "")
+                            .replace(Regex("\\(\\d{4}\\)"), "")
+                            .trim()
+                        
+                        if (cleanTitle.isBlank()) return@mapNotNull null
+                        
+                        val posterElement = element.selectFirst("img")
+                        val poster = posterElement?.let { img ->
+                            img.attr("src").takeIf { it.isNotBlank() } ?: 
+                            img.attr("data-src").takeIf { it.isNotBlank() }
+                        }?.let { fixUrl(it) }
+                        
+                        val isMovie = href.contains("/filmes/") || 
+                                     cleanTitle.contains("filme", ignoreCase = true) ||
+                                     cleanTitle.contains("movie", ignoreCase = true)
+                        
+                        newAnimeSearchResponse(cleanTitle, fullUrl) {
+                            this.posterUrl = poster
                             this.type = if (isMovie) TvType.Movie else TvType.Anime
                         }
-                    } else {
+                    } catch (e: Exception) {
+                        println("❌ [ANIMEFIRE SEARCH] Erro parse: ${e.message}")
                         null
                     }
-                } catch (e: Exception) {
-                    println("❌ [SEARCH] Erro ao processar elemento: ${e.message}")
-                    null
                 }
-            }.distinctBy { it.url }.take(20)
+                .distinctBy { it.url }
             
+            println("✅ [ANIMEFIRE SEARCH] ${results.size} resultados encontrados")
+            results.take(20) // Limitar a 20 resultados
         } catch (e: Exception) {
-            println("❌ [SEARCH] Erro na busca: ${e.message}")
+            println("❌ [ANIMEFIRE SEARCH] Erro geral: ${e.message}")
             emptyList()
         }
     }
 
+    // ============ LOAD FUNCTION ============
+    
     override suspend fun load(url: String): LoadResponse {
         println("\n🚀 AnimeFire.load() para URL: $url")
         
@@ -314,6 +605,10 @@ class AnimeFire : MainAPI() {
             return loadAniListContent(url)
         }
         
+        return loadFromAnimeFire(url)
+    }
+
+    private suspend fun loadFromAnimeFire(url: String): LoadResponse {
         return try {
             val document = app.get(url).document
             
@@ -332,7 +627,7 @@ class AnimeFire : MainAPI() {
                 this.posterUrl = poster
             }
         } catch (e: Exception) {
-            println("❌ Erro ao carregar: ${e.message}")
+            println("❌ Erro ao carregar do AnimeFire: ${e.message}")
             newAnimeLoadResponse("Erro", url, TvType.Anime) {
                 this.plot = "Não foi possível carregar este anime."
             }
@@ -431,11 +726,13 @@ class AnimeFire : MainAPI() {
         return false
     }
 
+    // ============ CLASSES DE DADOS ============
+    
     @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
     private data class AniListApiResponse(
         @JsonProperty("data") val data: AniListData? = null
     )
-
+    
     @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
     private data class AniListMediaResponse(
         @JsonProperty("data") val data: AniListMediaData? = null
@@ -486,7 +783,8 @@ class AnimeFire : MainAPI() {
     @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
     private data class AniListCoverImage(
         @JsonProperty("large") val large: String? = null,
-        @JsonProperty("extraLarge") val extraLarge: String? = null
+        @JsonProperty("extraLarge") val extraLarge: String? = null,
+        @JsonProperty("color") val color: String? = null
     )
 
     @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
@@ -494,5 +792,58 @@ class AnimeFire : MainAPI() {
         @JsonProperty("year") val year: Int? = null,
         @JsonProperty("month") val month: Int? = null,
         @JsonProperty("day") val day: Int? = null
+    )
+
+    // Classes TMDB
+    @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
+    private data class TMDBSearchResponse(
+        @JsonProperty("results") val results: List<TMDBResult>
+    )
+
+    @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
+    private data class TMDBResult(
+        @JsonProperty("id") val id: Int,
+        @JsonProperty("title") val title: String? = null,
+        @JsonProperty("name") val name: String? = null,
+        @JsonProperty("release_date") val release_date: String? = null,
+        @JsonProperty("first_air_date") val first_air_date: String? = null,
+        @JsonProperty("poster_path") val poster_path: String?
+    )
+
+    @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
+    private data class TMDBDetailsResponse(
+        @JsonProperty("overview") val overview: String?,
+        @JsonProperty("backdrop_path") val backdrop_path: String?,
+        @JsonProperty("runtime") val runtime: Int?,
+        @JsonProperty("genres") val genres: List<TMDBGenre>?,
+        @JsonProperty("videos") val videos: TMDBVideos?
+    )
+
+    @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
+    private data class TMDBGenre(
+        @JsonProperty("name") val name: String
+    )
+
+    @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
+    private data class TMDBVideos(
+        @JsonProperty("results") val results: List<TMDBVideo>
+    )
+
+    @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
+    private data class TMDBVideo(
+        @JsonProperty("key") val key: String,
+        @JsonProperty("site") val site: String,
+        @JsonProperty("type") val type: String,
+        @JsonProperty("official") val official: Boolean? = false
+    )
+
+    private data class TMDBInfo(
+        val id: Int,
+        val title: String?,
+        val year: Int?,
+        val posterUrl: String?,
+        val backdropUrl: String?,
+        val overview: String?,
+        val genres: List<String>?
     )
 }
