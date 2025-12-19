@@ -413,42 +413,27 @@ class AnimeFire : MainAPI() {
     override suspend fun load(url: String): LoadResponse {
         println("\n🚀 AnimeFire.load() para URL: $url")
         
+        // Se for URL do AniList, tenta buscar no site primeiro
         if (url.startsWith("anilist:")) {
-            return loadAniListWithSearch(url)
+            val parts = url.split(":")
+            val titleFromUrl = parts.getOrNull(2) ?: "Anime do AniList"
+            
+            // Tenta encontrar no site
+            val searchResults = search(titleFromUrl)
+            val bestMatch = findBestMatch(titleFromUrl, searchResults)
+            
+            if (bestMatch != null) {
+                println("✅ [LOAD] Encontrado no site: ${bestMatch.title}")
+                return loadFromAnimeFire(bestMatch.url)
+            } else {
+                println("⚠️ [LOAD] Não encontrado no site: $titleFromUrl")
+                return newAnimeLoadResponse(titleFromUrl, url, TvType.Anime) {
+                    this.plot = "📡 Este anime está na lista mas não foi encontrado no AnimeFire.\n\nTente buscar manualmente ou verifique se o nome está correto."
+                }
+            }
         }
         
         return loadFromAnimeFire(url)
-    }
-
-    private suspend fun loadAniListWithSearch(url: String): LoadResponse {
-        val parts = url.split(":")
-        val titleFromUrl = parts.getOrNull(2) ?: "Anime do AniList"
-        
-        // Primeiro tenta encontrar no site usando cache
-        val cacheKey = titleFromUrl.lowercase()
-        val cachedUrl = titleToUrlCache[cacheKey]
-        
-        if (cachedUrl != null && cachedUrl.startsWith("http")) {
-            println("♻️ [LOAD-CACHE] Usando URL em cache para: $titleFromUrl")
-            return loadFromAnimeFire(cachedUrl)
-        }
-        
-        // Se não tem cache, tenta buscar
-        val searchResults = search(titleFromUrl)
-        val bestMatch = findBestMatch(titleFromUrl, searchResults)
-        
-        return if (bestMatch != null) {
-            // Armazenar no cache para uso futuro
-            titleToUrlCache[cacheKey] = bestMatch.url
-            println("✅ [LOAD] Encontrado no site: ${bestMatch.title}")
-            loadFromAnimeFire(bestMatch.url)
-        } else {
-            // Fallback: mostra apenas que não foi encontrado
-            println("⚠️ [LOAD] Não encontrado no site: $titleFromUrl")
-            newAnimeLoadResponse(titleFromUrl, url, TvType.Anime) {
-                this.plot = "📡 Este anime está na lista mas não foi encontrado no AnimeFire.\n\nTente buscar manualmente ou verifique se o nome está correto."
-            }
-        }
     }
 
     private suspend fun loadFromAnimeFire(url: String): LoadResponse {
