@@ -6,7 +6,7 @@ import com.lagradost.cloudstream3.utils.*
 import java.net.URLEncoder
 
 class AnimeFire : MainAPI() {
-    override var mainUrl = "https://animefire.io"
+    override var mainUrl = "https://animefire.plus"  // MUDOU PARA .plus
     override var name = "ANIMEFIRE"
     override val hasMainPage = true
     override var lang = "pt-br"
@@ -186,49 +186,46 @@ class AnimeFire : MainAPI() {
                 val filteredItems = mutableListOf<SearchResponse>()
                 val seenIds = mutableSetOf<Int>()
                 
-                // Processar em batch para melhor performance
                 for (media in mediaList) {
                     if (media.id in seenIds) continue
                     seenIds.add(media.id)
                     
-                    // ⭐⭐ Prioridade para inglês, depois romaji
+                    // Prioridade para inglês
                     val aniListTitle = media.title?.english ?:      // PRIMEIRO inglês
                                      media.title?.romaji ?:          // Depois romaji  
                                      media.title?.userPreferred ?: 
                                      "Sem Título"
                     
-                    // Limpar título
+                    // Limpar título AGORA COM VERSÕES SIMPLES
                     val cleanTitle = cleanAnimeTitle(aniListTitle)
                     
-                    // Verificar cache primeiro
-                    val cachedUrl = titleToUrlCache[cleanTitle.lowercase()]
-                    val finalUrl: String
+                    // Criar variações para buscar
+                    val searchVariations = getSearchVariations(cleanTitle)
                     
-                    if (cachedUrl != null) {
-                        // Usar URL do cache
-                        finalUrl = if (cachedUrl.startsWith("http")) cachedUrl else "anilist:${media.id}:$cleanTitle"
-                        println("♻️ [CACHE] Usando URL em cache para: $cleanTitle")
-                    } else {
-                        // Buscar no site
-                        val animeFireUrl = findAnimeFireUrl(cleanTitle)
-                        finalUrl = animeFireUrl
-                        
-                        // Armazenar no cache (mesmo se não encontrado)
-                        titleToUrlCache[cleanTitle.lowercase()] = if (animeFireUrl.startsWith("http")) animeFireUrl else "not_found"
+                    // Tenta cada variação até encontrar
+                    var animeFireUrl = "anilist:${media.id}:$cleanTitle"
+                    
+                    for (variation in searchVariations) {
+                        val searchResults = search(variation)
+                        if (searchResults.isNotEmpty()) {
+                            val bestMatch = findBestMatch(variation, searchResults)
+                            if (bestMatch != null) {
+                                animeFireUrl = bestMatch.url
+                                println("✅ [ENCONTRADO] $cleanTitle → via '$variation'")
+                                break
+                            }
+                        }
+                        kotlinx.coroutines.delay(100) // Pausa entre buscas
                     }
                     
                     val finalPoster = media.coverImage?.extraLarge ?: media.coverImage?.large
                     
-                    // Adicionar resultado
-                    filteredItems.add(newAnimeSearchResponse(cleanTitle, finalUrl) {
+                    filteredItems.add(newAnimeSearchResponse(cleanTitle, animeFireUrl) {
                         this.posterUrl = finalPoster
                         this.type = TvType.Anime
                     })
                     
-                    println("✅ [ANILIST] Adicionado: $cleanTitle → ${if (finalUrl.startsWith("http")) "SITE" else "ANILIST"}")
-                    
-                    // Pequena pausa para não sobrecarregar o site
-                    kotlinx.coroutines.delay(50)
+                    println("➕ [ANILIST] Adicionado: $cleanTitle")
                 }
                 
                 println("✅ [ANILIST] ${filteredItems.size} itens adicionados para $pageName")
@@ -243,25 +240,57 @@ class AnimeFire : MainAPI() {
         }
     }
 
-    private suspend fun findAnimeFireUrl(title: String): String {
-        return try {
-            val searchResults = search(title)
-            
-            if (searchResults.isNotEmpty()) {
-                // Tenta encontrar o melhor match
-                val bestMatch = findBestMatch(title, searchResults)
-                if (bestMatch != null) {
-                    println("🔍 [SEARCH-CACHE] Encontrado: $title → ${bestMatch.url}")
-                    return bestMatch.url
-                }
-            }
-            
-            // Fallback para URL do AniList
-            "anilist:0:$title"
-        } catch (e: Exception) {
-            println("❌ [SEARCH-CACHE] Erro ao buscar: $title - ${e.message}")
-            "anilist:0:$title"
+    private fun getSearchVariations(title: String): List<String> {
+        val variations = mutableListOf<String>()
+        
+        // 1. Título original
+        variations.add(title)
+        
+        // 2. Remover temporadas/seasons
+        val noSeason = title
+            .replace(Regex("(?i)\\s*(?:Season\\s*\\d+|S\\d+|Part\\s*\\d+|Final\\s*Season|Movie|Film|OVA|Special)"), "")
+            .trim()
+        if (noSeason != title) variations.add(noSeason)
+        
+        // 3. Apenas palavras principais (primeiras 2-3 palavras)
+        val words = title.split(" ")
+        if (words.size > 3) {
+            variations.add(words.take(3).joinToString(" "))
+            variations.add(words.take(2).joinToString(" "))
         }
+        
+        // 4. Remover pontuação
+        variations.add(title.replace(Regex("[:!]"), ""))
+        
+        // 5. Para animes conhecidos, adicionar título japonês
+        val japaneseTitles = mapOf(
+            "Attack on Titan" to listOf("Shingeki no Kyojin"),
+            "Demon Slayer" to listOf("Kimetsu no Yaiba"),
+            "My Hero Academia" to listOf("Boku no Hero Academia"),
+            "Jujutsu Kaisen" to listOf("Jujutsu Kaisen"),
+            "One Piece" to listOf("One Piece"),
+            "Naruto" to listOf("Naruto"),
+            "Haikyuu" to listOf("Haikyuu", "Haikyu"),
+            "Death Note" to listOf("Death Note"),
+            "Fullmetal Alchemist" to listOf("Fullmetal Alchemist"),
+            "Hunter x Hunter" to listOf("Hunter x Hunter")
+        )
+        
+        japaneseTitles.forEach { (key, japTitles) ->
+            if (title.contains(key, ignoreCase = true)) {
+                japTitles.forEach { variations.add(it) }
+            }
+        }
+        
+        return variations.distinct()
+    }
+
+    private fun cleanAnimeTitle(title: String): String {
+        return title
+            .replace(Regex("\\s*\\([^)]+\\)$"), "")
+            .replace(Regex("\\s*-\\s*[^-]+$"), "")
+            .replace(Regex("\\s+"), " ")
+            .trim()
     }
 
     private fun findBestMatch(searchTitle: String, results: List<SearchResponse>): SearchResponse? {
@@ -269,9 +298,8 @@ class AnimeFire : MainAPI() {
         
         val cleanSearch = cleanForMatching(searchTitle)
         
-        // Tenta encontrar match exato primeiro
+        // Tenta match exato
         for (result in results) {
-            // CORREÇÃO: usar result.name (não result.title)
             val cleanResult = cleanForMatching(result.name)
             if (cleanResult == cleanSearch) {
                 return result
@@ -280,21 +308,19 @@ class AnimeFire : MainAPI() {
         
         // Tenta match parcial
         for (result in results) {
-            // CORREÇÃO: usar result.name (não result.title)
             val cleanResult = cleanForMatching(result.name)
             if (cleanResult.contains(cleanSearch) || cleanSearch.contains(cleanResult)) {
                 return result
             }
         }
         
-        // Tenta por similaridade de palavras-chave
+        // Similaridade por palavras-chave
         val searchWords = cleanSearch.split(" ").filter { it.length > 2 }
         
         var bestMatch: SearchResponse? = null
         var bestScore = 0
         
         for (result in results) {
-            // CORREÇÃO: usar result.name (não result.title)
             val cleanResult = cleanForMatching(result.name)
             var score = 0
             
@@ -313,14 +339,6 @@ class AnimeFire : MainAPI() {
         return bestMatch ?: results.first()
     }
 
-    private fun cleanAnimeTitle(title: String): String {
-        return title
-            .replace(Regex("\\s*\\([^)]+\\)$"), "")
-            .replace(Regex("\\s*-\\s*[^-]+$"), "")
-            .replace(Regex("\\s+"), " ")
-            .trim()
-    }
-
     private fun cleanForMatching(title: String): String {
         return title.lowercase()
             .replace(Regex("[^a-z0-9\\sáéíóúâêîôûãõç]"), "")
@@ -329,12 +347,12 @@ class AnimeFire : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        println("🔍 [SEARCH] Buscando: $query")
+        println("🔍 [SEARCH] Buscando: '$query'")
         
-        // Verificar cache primeiro
+        // Cache check
         val cacheKey = query.lowercase().trim()
         if (titleToUrlCache[cacheKey]?.startsWith("http") == true) {
-            println("♻️ [SEARCH-CACHE] Cache hit para: $query")
+            println("♻️ [CACHE] Cache hit para: '$query'")
             val cachedUrl = titleToUrlCache[cacheKey]!!
             return listOf(newAnimeSearchResponse(query, cachedUrl) {
                 this.type = TvType.Anime
@@ -362,9 +380,7 @@ class AnimeFire : MainAPI() {
                             val titleElement = element.selectFirst("h3, h4, .title, .anime-title, .card-title")
                             val rawTitle = titleElement?.text()?.trim() ?: element.ownText().trim()
                             
-                            // Limpar título
                             val cleanTitle = cleanSearchTitle(rawTitle)
-                            
                             if (cleanTitle.isBlank()) return@mapNotNull null
                             
                             // Adicionar ao cache
@@ -392,7 +408,7 @@ class AnimeFire : MainAPI() {
                     .distinctBy { it.url }
                     .take(20)
                 
-                println("✅ [SEARCH] ${results.size} resultados encontrados")
+                println("✅ [SEARCH] ${results.size} resultados encontrados para '$query'")
                 results
             } else {
                 println("❌ [SEARCH] Erro HTTP: ${response.code}")
@@ -425,12 +441,12 @@ class AnimeFire : MainAPI() {
             val bestMatch = findBestMatch(titleFromUrl, searchResults)
             
             if (bestMatch != null) {
-                println("✅ [LOAD] Encontrado no site: ${bestMatch.name}") // CORREÇÃO: bestMatch.name
+                println("✅ [LOAD] Encontrado no site: ${bestMatch.name}")
                 return loadFromAnimeFire(bestMatch.url)
             } else {
                 println("⚠️ [LOAD] Não encontrado no site: $titleFromUrl")
                 return newAnimeLoadResponse(titleFromUrl, url, TvType.Anime) {
-                    this.plot = "📡 Este anime está na lista mas não foi encontrado no AnimeFire.\n\nTente buscar manualmente ou verifique se o nome está correto."
+                    this.plot = "📡 Este anime está na lista mas não foi encontrado no AnimeFire.\n\nTente buscar manualmente."
                 }
             }
         }
@@ -452,7 +468,7 @@ class AnimeFire : MainAPI() {
             val poster = posterElement?.attr("src")?.let { fixUrl(it) } ?:
                        posterElement?.attr("data-src")?.let { fixUrl(it) }
             
-            // Adicionar ao cache
+            // Cache
             titleToUrlCache[title.lowercase()] = url
             
             newAnimeLoadResponse(title, url, TvType.Anime) {
