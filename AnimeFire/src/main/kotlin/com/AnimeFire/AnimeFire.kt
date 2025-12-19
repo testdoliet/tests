@@ -344,7 +344,7 @@ class AnimeFire : MainAPI() {
         val fallbackUrl = "anilist:${media.id}:$title"
         val posterUrl = media.coverImage?.extraLarge ?: media.coverImage?.large
         
-        val searchResponse = newAnimeSearchResponse(title, fallbackUrl) {
+        var searchResponse = newAnimeSearchResponse(title, fallbackUrl) {
             this.posterUrl = posterUrl
             this.type = TvType.Anime
         }
