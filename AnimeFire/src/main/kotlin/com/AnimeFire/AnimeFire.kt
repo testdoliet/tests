@@ -464,15 +464,14 @@ class AnimeFire : MainAPI() {
                                 ?: text.substringAfterLast("-").trim()
                                 ?: "Episódio $epNumber"
                             
-                            Episode(
-                                fixUrl(href),
-                                episodeName,
-                                season = 1,
-                                episode = epNumber,
-                                posterUrl = null,
-                                description = null,
-                                date = null
-                            )
+                            newEpisode(fixUrl(href)) {
+                                this.name = episodeName
+                                this.season = 1
+                                this.episode = epNumber
+                                this.posterUrl = null
+                                this.description = null
+                                this.date = null
+                            }
                         } catch (e: Exception) {
                             null
                         }
