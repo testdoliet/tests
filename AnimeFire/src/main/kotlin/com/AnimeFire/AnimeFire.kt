@@ -233,18 +233,9 @@ class AnimeFire : MainAPI() {
                         finalUrl = cachedUrl
                         println("♻️ [CACHE] Usando URL em cache para: $cleanTitle")
                     } else {
-                        // Buscar no site (agora usando a função search do código funcional)
-                        val searchResults = search(cleanTitle)
-                        val bestMatch = findBestMatch(cleanTitle, searchResults)
-                        
-                        finalUrl = if (bestMatch != null) {
-                            // Armazenar no cache
-                            titleToUrlCache[cleanTitle.lowercase()] = bestMatch.url
-                            bestMatch.url
-                        } else {
-                            // Fallback para URL do AniList
-                            "anilist:${media.id}:$cleanTitle"
-                        }
+                        // URL especial para AniList (NÃO uma URL real do AnimeFire)
+                        finalUrl = "anilist:${media.id}:$cleanTitle"
+                        println("🔗 [ANILIST] Criando URL especial: $finalUrl")
                     }
                     
                     val finalPoster = media.coverImage?.extraLarge ?: media.coverImage?.large
@@ -343,6 +334,17 @@ class AnimeFire : MainAPI() {
             return listOf(newAnimeSearchResponse(query, cachedUrl) {
                 this.type = TvType.Anime
             })
+        }
+        
+        // Se a query já é uma URL do AniList, retorna ela mesma
+        if (query.startsWith("anilist:")) {
+            val parts = query.split(":")
+            if (parts.size >= 3) {
+                val title = parts.subList(2, parts.size).joinToString(":")
+                return listOf(newAnimeSearchResponse(title, query) {
+                    this.type = TvType.Anime
+                })
+            }
         }
         
         val searchUrl = "$mainUrl$SEARCH_PATH/${URLEncoder.encode(query, "UTF-8")}"
@@ -492,31 +494,147 @@ class AnimeFire : MainAPI() {
         }.distinctBy { it.url }.take(30)
     }
 
-    // ============ LOAD (do código funcional, simplificado) ============
+    // ============ LOAD CORRIGIDA ============
     override suspend fun load(url: String): LoadResponse {
         println("\n🚀 AnimeFire.load() para URL: $url")
         
         // Se for URL do AniList, tenta buscar no site
         if (url.startsWith("anilist:")) {
+            println("🎯 [LOAD] Detectada URL do AniList")
             val parts = url.split(":")
-            val titleFromUrl = parts.getOrNull(2) ?: "Anime do AniList"
+            val titleFromUrl = if (parts.size >= 3) {
+                parts.subList(2, parts.size).joinToString(":")
+            } else {
+                "Anime do AniList"
+            }
+            
+            println("🔍 [LOAD] Buscando no site: '$titleFromUrl'")
             
             // Tenta encontrar no site
-            val searchResults = search(titleFromUrl)
+            val searchResults = searchInSite(titleFromUrl)
             val bestMatch = findBestMatch(titleFromUrl, searchResults)
             
-            if (bestMatch != null) {
+            if (bestMatch != null && bestMatch.url.startsWith("http")) {
                 println("✅ [LOAD] Encontrado no site: ${bestMatch.name}")
+                // Armazena no cache para próxima vez
+                titleToUrlCache[titleFromUrl.lowercase()] = bestMatch.url
                 return loadFromAnimeFire(bestMatch.url)
             } else {
                 println("⚠️ [LOAD] Não encontrado no site: $titleFromUrl")
-                return newAnimeLoadResponse(titleFromUrl, url, TvType.Anime) {
-                    this.plot = "📡 Este anime está na lista mas não foi encontrado no AnimeFire.\n\nTente buscar manualmente."
-                }
+                // Busca mais informações do AniList para mostrar algo útil
+                return loadFromAniList(url, titleFromUrl)
             }
         }
         
+        // URL normal do AnimeFire
         return loadFromAnimeFire(url)
+    }
+    
+    private suspend fun searchInSite(query: String): List<SearchResponse> {
+        println("🔍 [SITE-SEARCH] Buscando: '$query'")
+        
+        // Primeiro tenta cache
+        val cacheKey = query.lowercase().trim()
+        if (titleToUrlCache[cacheKey]?.startsWith("http") == true) {
+            println("♻️ [CACHE] Cache hit para: '$query'")
+            val cachedUrl = titleToUrlCache[cacheKey]!!
+            return listOf(newAnimeSearchResponse(query, cachedUrl) {
+                this.type = TvType.Anime
+            })
+        }
+        
+        // Se não estiver em cache, faz busca normal
+        return search(query)
+    }
+    
+    private suspend fun loadFromAniList(aniListUrl: String, title: String): LoadResponse {
+        println("📡 [ANILIST-LOAD] Carregando informações do AniList: $title")
+        
+        try {
+            // Extrair ID do AniList da URL
+            val parts = aniListUrl.split(":")
+            val aniListId = parts.getOrNull(1)?.toIntOrNull()
+            
+            if (aniListId != null) {
+                // Buscar informações detalhadas do AniList
+                val query = """
+                    query {
+                        Media(id: $aniListId) {
+                            id
+                            title {
+                                romaji
+                                english
+                                native
+                                userPreferred
+                            }
+                            description
+                            format
+                            status
+                            episodes
+                            duration
+                            coverImage {
+                                large
+                                extraLarge
+                            }
+                            bannerImage
+                            genres
+                            siteUrl
+                            startDate {
+                                year
+                                month
+                                day
+                            }
+                            synonyms
+                        }
+                    }
+                """.trimIndent()
+                
+                val response = app.post(
+                    aniListApiUrl,
+                    data = mapOf("query" to query),
+                    headers = mapOf(
+                        "Content-Type" to "application/json",
+                        "Accept" to "application/json"
+                    ),
+                    timeout = 10_000
+                )
+                
+                if (response.code == 200) {
+                    val aniListResponse = response.parsedSafe<AniListMediaResponse>()
+                    val media = aniListResponse?.data?.Media
+                    
+                    if (media != null) {
+                        val cleanTitle = media.title?.english ?: media.title?.romaji ?: title
+                        val description = media.description?.replace(Regex("<.*?>"), "") ?: "Sem descrição disponível"
+                        val year = media.startDate?.year
+                        val poster = media.coverImage?.extraLarge ?: media.coverImage?.large
+                        val genres = media.genres?.joinToString(", ") ?: ""
+                        
+                        println("✅ [ANILIST-LOAD] Informações carregadas: $cleanTitle")
+                        
+                        return newAnimeLoadResponse(cleanTitle, aniListUrl, TvType.Anime) {
+                            this.year = year
+                            this.plot = "📡 Este anime está no AniList mas ainda não foi encontrado no AnimeFire.\n\n" +
+                                      "Título: $cleanTitle\n" +
+                                      "Gêneros: $genres\n" +
+                                      "Episódios: ${media.episodes ?: "?"}\n" +
+                                      "Status: ${media.status ?: "?"}\n\n" +
+                                      "Descrição:\n$description\n\n" +
+                                      "🔍 Tente buscar manualmente no AnimeFire."
+                            this.posterUrl = poster
+                            this.type = TvType.Anime
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            println("❌ [ANILIST-LOAD] Erro: ${e.message}")
+        }
+        
+        // Fallback básico se tudo falhar
+        return newAnimeLoadResponse(title, aniListUrl, TvType.Anime) {
+            this.plot = "📡 Este anime está no AniList mas ainda não foi encontrado no AnimeFire.\n\nTente buscar manualmente."
+        }
     }
 
     private suspend fun loadFromAnimeFire(url: String): LoadResponse {
