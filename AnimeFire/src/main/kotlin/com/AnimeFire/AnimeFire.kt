@@ -70,8 +70,8 @@ class AnimeFire : MainAPI() {
                     media(season: WINTER, seasonYear: 2025, type: ANIME, sort: POPULARITY_DESC) {
                         id
                         title {
-                            english
                             romaji
+                            english
                             native
                             userPreferred
                         }
@@ -94,8 +94,8 @@ class AnimeFire : MainAPI() {
                     media(sort: POPULARITY_DESC, type: ANIME) {
                         id
                         title {
-                            english
                             romaji
+                            english
                             native
                             userPreferred
                         }
@@ -118,8 +118,8 @@ class AnimeFire : MainAPI() {
                     media(sort: SCORE_DESC, type: ANIME) {
                         id
                         title {
-                            english
                             romaji
+                            english
                             native
                             userPreferred
                         }
@@ -142,8 +142,8 @@ class AnimeFire : MainAPI() {
                     media(season: SPRING, seasonYear: 2025, type: ANIME, sort: POPULARITY_DESC) {
                         id
                         title {
-                            english
                             romaji
+                            english
                             native
                             userPreferred
                         }
@@ -191,10 +191,11 @@ class AnimeFire : MainAPI() {
                     if (media.id in seenIds) continue
                     seenIds.add(media.id)
                     
-                    val aniListTitle = media.title?.english ?: 
-                                       media.title?.userPreferred ?: 
-                                       media.title?.romaji ?: 
-                                       "Sem Título"
+                    // ⭐ ALTERAÇÃO: Prioridade para inglês
+                    val aniListTitle = media.title?.english ?:  // PRIMEIRO inglês
+                                     media.title?.userPreferred ?: 
+                                     media.title?.romaji ?: 
+                                     "Sem Título"
                     
                     // Limpar título
                     val cleanTitle = cleanAnimeTitle(aniListTitle)
