@@ -7,7 +7,8 @@ import org.jsoup.nodes.Element
 import java.net.URLEncoder
 
 class AnimeFire : MainAPI() {
-    override var mainUrl = "https://animefire.plus"
+    // ATUALIZADO: Mudado para animefire.io
+    override var mainUrl = "https://animefire.io"
     override var name = "ANIMEFIRE"
     override val hasMainPage = true
     override var lang = "pt-br"
@@ -251,7 +252,7 @@ class AnimeFire : MainAPI() {
         println("🚀 [SEARCH] Iniciando busca por: '$query'")
         
         return try {
-            // URL de busca no AnimeFire
+            // ATUALIZADO: Usa a nova mainUrl (animefire.io)
             val encodedQuery = URLEncoder.encode(query, "UTF-8")
             val searchUrl = "$mainUrl/pesquisar/$encodedQuery"
             println("🔗 [SEARCH] URL: $searchUrl")
@@ -260,7 +261,7 @@ class AnimeFire : MainAPI() {
             println("📡 [SEARCH] Status: ${response.code}")
             
             if (response.code != 200) {
-                println("⚠️ [SEARCH] Página de busca não encontrada (404), tentando método alternativo...")
+                println("⚠️ [SEARCH] Página de busca não encontrada (${response.code}), tentando método alternativo...")
                 // Se não encontrar página de busca, retorna resultados vazios
                 return emptyList()
             }
@@ -326,6 +327,7 @@ class AnimeFire : MainAPI() {
         }
         
         return try {
+            // ATUALIZADO: Usa a nova mainUrl para carregar conteúdo
             val document = app.get(url).document
             
             val titleElement = document.selectFirst("h1, .title-anime, .anime-title")
