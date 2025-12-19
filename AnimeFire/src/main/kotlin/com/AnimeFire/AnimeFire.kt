@@ -7,7 +7,6 @@ import org.jsoup.nodes.Element
 import java.net.URLEncoder
 
 class AnimeFire : MainAPI() {
-    // ATUALIZADO: Mudado para animefire.io
     override var mainUrl = "https://animefire.io"
     override var name = "ANIMEFIRE"
     override val hasMainPage = true
@@ -16,7 +15,6 @@ class AnimeFire : MainAPI() {
     override val supportedTypes = setOf(TvType.Anime, TvType.Movie, TvType.OVA)
     override val usesWebView = false
 
-    // API GraphQL do AniList
     private val aniListApiUrl = "https://graphql.anilist.co"
     
     override val mainPage = mainPageOf(
@@ -38,8 +36,6 @@ class AnimeFire : MainAPI() {
         }
     }
 
-    // ============ FUNÇÕES ANILIST SIMPLIFICADAS ============
-    
     private suspend fun getAniListTrending(page: Int): HomePageResponse {
         val query = """
             query {
@@ -213,7 +209,6 @@ class AnimeFire : MainAPI() {
                 
                 println("📊 [ANILIST] ${mediaList.size} resultados encontrados para $pageName")
                 
-                // Criar lista de resultados sem filtragem
                 val filteredItems = mutableListOf<SearchResponse>()
                 
                 mediaList.forEachIndexed { index, media ->
@@ -226,10 +221,10 @@ class AnimeFire : MainAPI() {
                     val finalPoster = media.coverImage?.extraLarge ?: media.coverImage?.large
                     val specialUrl = "anilist:${media.id}:$aniListTitle"
                     
+                    // CORRIGIDO: Removido SearchQuality.HIGH que não existe
                     filteredItems.add(newAnimeSearchResponse(finalTitle, specialUrl) {
                         this.posterUrl = finalPoster
                         this.type = TvType.Anime
-                        this.quality = SearchQuality.HIGH
                     })
                     
                     println("✅ [ANILIST] Adicionado: $aniListTitle")
@@ -246,13 +241,10 @@ class AnimeFire : MainAPI() {
         }
     }
 
-    // ============ FUNÇÃO SEARCH FIXA ============
-    
     override suspend fun search(query: String): List<SearchResponse> {
         println("🚀 [SEARCH] Iniciando busca por: '$query'")
         
         return try {
-            // ATUALIZADO: Usa a nova mainUrl (animefire.io)
             val encodedQuery = URLEncoder.encode(query, "UTF-8")
             val searchUrl = "$mainUrl/pesquisar/$encodedQuery"
             println("🔗 [SEARCH] URL: $searchUrl")
@@ -262,13 +254,11 @@ class AnimeFire : MainAPI() {
             
             if (response.code != 200) {
                 println("⚠️ [SEARCH] Página de busca não encontrada (${response.code}), tentando método alternativo...")
-                // Se não encontrar página de busca, retorna resultados vazios
                 return emptyList()
             }
             
             val document = response.document
             
-            // Seletores comuns do AnimeFire
             val elements = document.select("article.card, .item, a[href*='/animes/'], a[href*='/filmes/']")
             println("🔍 [SEARCH] Elementos encontrados: ${elements.size}")
             
@@ -317,8 +307,6 @@ class AnimeFire : MainAPI() {
         }
     }
 
-    // ============ LOAD FUNCTIONS ============
-    
     override suspend fun load(url: String): LoadResponse {
         println("\n🚀 AnimeFire.load() para URL: $url")
         
@@ -327,7 +315,6 @@ class AnimeFire : MainAPI() {
         }
         
         return try {
-            // ATUALIZADO: Usa a nova mainUrl para carregar conteúdo
             val document = app.get(url).document
             
             val titleElement = document.selectFirst("h1, .title-anime, .anime-title")
@@ -444,8 +431,6 @@ class AnimeFire : MainAPI() {
         return false
     }
 
-    // ============ CLASSES DE DADOS ============
-    
     @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
     private data class AniListApiResponse(
         @JsonProperty("data") val data: AniListData? = null
