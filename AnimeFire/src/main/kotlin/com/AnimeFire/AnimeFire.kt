@@ -191,10 +191,10 @@ class AnimeFire : MainAPI() {
                     if (media.id in seenIds) continue
                     seenIds.add(media.id)
                     
-                    // ⭐ ALTERAÇÃO: Prioridade para inglês
-                    val aniListTitle = media.title?.english ?:  // PRIMEIRO inglês
+                    // ⭐⭐ ALTERAÇÃO AQUI: Prioridade para inglês, depois romaji
+                    val aniListTitle = media.title?.english ?:      // PRIMEIRO inglês
+                                     media.title?.romaji ?:          // Depois romaji  
                                      media.title?.userPreferred ?: 
-                                     media.title?.romaji ?: 
                                      "Sem Título"
                     
                     // Limpar título
@@ -413,7 +413,6 @@ class AnimeFire : MainAPI() {
     override suspend fun load(url: String): LoadResponse {
         println("\n🚀 AnimeFire.load() para URL: $url")
         
-        // Se for URL do AniList, tenta buscar no site primeiro
         if (url.startsWith("anilist:")) {
             val parts = url.split(":")
             val titleFromUrl = parts.getOrNull(2) ?: "Anime do AniList"
