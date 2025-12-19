@@ -62,7 +62,7 @@ class AnimeFire : MainAPI() {
                 .mapNotNull { element -> 
                     runCatching { element.toSearchResponse() }.getOrNull()
                 }
-                .take(20) // Limitar a 20 itens
+                .take(20)
             
             newHomePageResponse("🔥 AnimeFire - Lançamentos", homeItems, false)
             
@@ -220,14 +220,12 @@ class AnimeFire : MainAPI() {
                 
                 val searchResponses = mutableListOf<SearchResponse>()
                 
-                for (media in mediaList.take(20)) { // Limitar a 20
-                    // Escolher o melhor título
+                for (media in mediaList.take(20)) {
                     val title = media.title?.english ?: 
                                media.title?.romaji ?: 
                                media.title?.userPreferred ?: 
                                "Sem título"
                     
-                    // Criar um ID especial para o AniList
                     val aniListUrl = "anilist:${media.id}:$title"
                     val poster = media.coverImage?.extraLarge ?: media.coverImage?.large
                     
@@ -357,7 +355,6 @@ class AnimeFire : MainAPI() {
     override suspend fun load(url: String): LoadResponse {
         println("\n$DEBUG_PREFIX load() para URL: $url")
         
-        // Se for URL do AniList, buscar no AnimeFire
         if (url.startsWith("anilist:")) {
             println("$DEBUG_PREFIX URL do AniList detectada, buscando no AnimeFire...")
             val parts = url.split(":")
@@ -365,7 +362,6 @@ class AnimeFire : MainAPI() {
                 val title = parts.subList(2, parts.size).joinToString(":")
                 println("$DEBUG_PREFIX Buscando anime: '$title' no AnimeFire")
                 
-                // Buscar no AnimeFire
                 val searchResults = search(title)
                 if (searchResults.isNotEmpty()) {
                     val bestMatch = searchResults.firstOrNull()
@@ -375,13 +371,11 @@ class AnimeFire : MainAPI() {
                     }
                 }
                 
-                // Se não encontrar, mostrar mensagem
                 println("$DEBUG_PREFIX ❌ Anime não encontrado no AnimeFire")
                 return createAnimeNotFoundResponse(title, url)
             }
         }
         
-        // URL normal do AnimeFire
         return loadFromAnimeFire(url)
     }
 
@@ -402,16 +396,20 @@ class AnimeFire : MainAPI() {
 
         println("📌 Título: $cleanTitle, Ano: $year, Tipo: $type")
 
-        // Seu código original continua aqui...
+        // CORREÇÃO: Buscar MAL ID usando a função searchMALIdByName
         val malId = searchMALIdByName(cleanTitle)
         println("🔍 MAL ID: $malId")
 
         var aniZipData: AniZipData? = null
         if (malId != null) {
             println("🔍 Buscando AniZip...")
-            val syncMetaData = app.get("https://api.ani.zip/mappings?mal_id=$malId").text
-            aniZipData = parseAnimeData(syncMetaData)
-            println("✅ AniZip carregado: ${aniZipData?.episodes?.size ?: 0} episódios")
+            try {
+                val syncMetaData = app.get("https://api.ani.zip/mappings?mal_id=$malId", timeout = 10000).text
+                aniZipData = parseAnimeData(syncMetaData)
+                println("✅ AniZip carregado: ${aniZipData?.episodes?.size ?: 0} episódios")
+            } catch (e: Exception) {
+                println("❌ Erro ao buscar AniZip: ${e.message}")
+            }
         }
 
         val siteMetadata = extractSiteMetadata(document)
@@ -427,9 +425,8 @@ class AnimeFire : MainAPI() {
         val data = document.selectFirst("div#media-info, div.anime-info")
         val genres = data?.select("div:contains(Genre:), div:contains(Gênero:) > span > a")?.map { it.text() }
 
-        // Criar resposta (sem TMDB para simplificar)
-        return if (isMovie) {
-            newMovieLoadResponse(cleanTitle, url, type, url) {
+        if (isMovie) {
+            return newMovieLoadResponse(cleanTitle, url, type, url) {
                 this.year = year ?: siteMetadata.year
                 this.plot = siteMetadata.plot
                 this.tags = (genres ?: emptyList()) + (siteMetadata.tags ?: emptyList())
@@ -437,7 +434,7 @@ class AnimeFire : MainAPI() {
                 this.recommendations = recommendations.takeIf { it.isNotEmpty() }
             }
         } else {
-            newAnimeLoadResponse(cleanTitle, url, type) {
+            return newAnimeLoadResponse(cleanTitle, url, type) {
                 addEpisodes(DubStatus.Subbed, episodes)
                 
                 this.year = year ?: siteMetadata.year
@@ -466,17 +463,7 @@ class AnimeFire : MainAPI() {
         }
     }
 
-    // ============ FUNÇÕES AUXILIARES (do seu código original) ============
-    private fun parseAnimeData(jsonString: String): AniZipData? {
-        return try {
-            val objectMapper = ObjectMapper()
-            objectMapper.readValue(jsonString, AniZipData::class.java)
-        } catch (e: Exception) {
-            println("❌ [ANIZIP] Erro parse: ${e.message}")
-            null
-        }
-    }
-
+    // ============ BUSCAR MAL ID (CORRIGIDA) ============
     private suspend fun searchMALIdByName(animeName: String): Int? {
         return try {
             val cleanName = animeName
@@ -485,11 +472,11 @@ class AnimeFire : MainAPI() {
                 .replace(Regex("(?i)\\s*\\(Legendado\\)"), "")
                 .trim()
             
+            // Query GraphQL do AniList
             val query = """
                 query {
                     Page(page: 1, perPage: 5) {
                         media(search: "$cleanName", type: ANIME) {
-                            title { romaji english native }
                             idMal
                         }
                     }
@@ -504,10 +491,28 @@ class AnimeFire : MainAPI() {
             )
             
             if (response.code == 200) {
-                val data = response.parsedSafe<AniListResponse>()
-                data?.data?.Page?.media?.firstOrNull()?.idMal
-            } else null
+                val json = JsonParser.parseString(response.text).asJsonObject
+                val data = json.getAsJsonObject("data")
+                val page = data?.getAsJsonObject("Page")
+                val mediaArray = page?.getAsJsonArray("media")
+                
+                mediaArray?.firstOrNull()?.asJsonObject?.get("idMal")?.asInt
+            } else {
+                null
+            }
         } catch (e: Exception) {
+            println("❌ Erro ao buscar MAL ID: ${e.message}")
+            null
+        }
+    }
+
+    // ============ FUNÇÕES AUXILIARES ============
+    private fun parseAnimeData(jsonString: String): AniZipData? {
+        return try {
+            val objectMapper = ObjectMapper()
+            objectMapper.readValue(jsonString, AniZipData::class.java)
+        } catch (e: Exception) {
+            println("❌ [ANIZIP] Erro parse: ${e.message}")
             null
         }
     }
@@ -576,7 +581,6 @@ class AnimeFire : MainAPI() {
                         this.episode = episodeNumber
                         this.description = episodeDescription
                         this.posterUrl = aniZipEpisode?.image ?: aniZipData?.images?.firstOrNull()?.url
-                        this.score = aniZipEpisode?.rating?.toDoubleOrNull()?.let { Score.from10(it) }
                         this.runTime = aniZipEpisode?.runtime
                         
                         aniZipEpisode?.airDateUtc?.let { dateStr ->
@@ -634,7 +638,6 @@ class AnimeFire : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // Sua implementação existente
         return false
     }
 
@@ -706,10 +709,5 @@ class AnimeFire : MainAPI() {
         @JsonProperty("titles") val titles: Map<String, String>? = null,
         @JsonProperty("images") val images: List<AniZipImage>? = null,
         @JsonProperty("episodes") val episodes: Map<String, AniZipEpisode>? = null
-    )
-
-    @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
-    private data class AniListResponse(
-        @JsonProperty("data") val data: AniListData? = null
     )
 }
