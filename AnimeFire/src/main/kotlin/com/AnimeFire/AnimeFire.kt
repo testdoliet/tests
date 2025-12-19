@@ -7,7 +7,7 @@ import java.net.URLEncoder
 import kotlin.math.abs
 
 class AnimeFire : MainAPI() {
-    override var mainUrl = "https://animefire.plus"
+    override var mainUrl = "https://animefire.io"
     override var name = "ANIMEFIRE"
     override val hasMainPage = true
     override var lang = "pt-br"
