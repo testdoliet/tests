@@ -16,11 +16,13 @@ class AnimeFire : MainAPI() {
     // API GraphQL do AniList
     private val aniListApiUrl = "https://graphql.anilist.co"
     
-    // Configurações do TMDB
-    private val tmdbApiKey = BuildConfig.TMDB_API_KEY
-    private val tmdbAccessToken = BuildConfig.TMDB_ACCESS_TOKEN
-    private val tmdbBaseUrl = "https://api.themoviedb.org/3"
-    private const val tmdbImageUrl = "https://image.tmdb.org/t/p"
+    // Configurações do TMDB - dentro do companion object
+    companion object {
+        private val tmdbApiKey = BuildConfig.TMDB_API_KEY
+        private val tmdbAccessToken = BuildConfig.TMDB_ACCESS_TOKEN
+        private const val tmdbBaseUrl = "https://api.themoviedb.org/3"
+        private const val tmdbImageUrl = "https://image.tmdb.org/t/p"
+    }
     
     override val mainPage = mainPageOf(
         "trending" to "Em Alta",
