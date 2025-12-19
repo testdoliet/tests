@@ -191,6 +191,7 @@ class AnimeFire : MainAPI() {
     ): HomePageResponse {
         return try {
             println("📡 [ANILIST] Buscando: $pageName")
+            println("📝 [ANILIST] Query: ${query.take(200)}...")
             
             val response = app.post(
                 aniListApiUrl,
@@ -201,6 +202,8 @@ class AnimeFire : MainAPI() {
                 ),
                 timeout = 10_000
             )
+            
+            println("✅ [ANILIST] Resposta recebida: ${response.code}")
             
             if (response.code == 200) {
                 val aniListResponse = response.parsedSafe<AniListApiResponse>()
@@ -221,21 +224,25 @@ class AnimeFire : MainAPI() {
                                       media.title?.english ?: 
                                       "Sem Título"
                     
-                    val specialUrl = "anilist:${media.id}:$aniListTitle"
+                    // Limpar título para remover termos indesejados
+                    val cleanTitle = cleanAnimeTitle(aniListTitle)
+                    
+                    val specialUrl = "anilist:${media.id}:$cleanTitle"
                     val finalPoster = media.coverImage?.extraLarge ?: media.coverImage?.large
                     
                     // Adicionar todos os resultados diretamente
-                    filteredItems.add(newAnimeSearchResponse(aniListTitle, specialUrl) {
+                    filteredItems.add(newAnimeSearchResponse(cleanTitle, specialUrl) {
                         this.posterUrl = finalPoster
                         this.type = TvType.Anime
                     })
-                    println("✅ [ANILIST] Adicionado: $aniListTitle")
+                    println("✅ [ANILIST] Adicionado: $cleanTitle")
                 }
                 
                 println("✅ [ANILIST] ${filteredItems.size} itens adicionados para $pageName")
                 newHomePageResponse(pageName, filteredItems, hasNext = filteredItems.isNotEmpty())
             } else {
                 println("❌ [ANILIST] Erro na API: ${response.code}")
+                println("❌ [ANILIST] Response body: ${response.text}")
                 newHomePageResponse(pageName, emptyList(), false)
             }
         } catch (e: Exception) {
@@ -243,6 +250,14 @@ class AnimeFire : MainAPI() {
             e.printStackTrace()
             newHomePageResponse(pageName, emptyList(), false)
         }
+    }
+
+    private fun cleanAnimeTitle(title: String): String {
+        return title
+            .replace(Regex("\\s*\\([^)]+\\)$"), "") // Remove parênteses no final
+            .replace(Regex("\\s*-\\s*[^-]+$"), "") // Remove hífen e texto após
+            .replace(Regex("\\s+"), " ") // Normaliza espaços
+            .trim()
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
@@ -270,11 +285,7 @@ class AnimeFire : MainAPI() {
                             val rawTitle = titleElement?.text()?.trim() ?: element.ownText().trim()
                             
                             // Limpar título
-                            val cleanTitle = rawTitle
-                                .replace(Regex("\\s*-\\s*Todos os Episódios$"), "")
-                                .replace(Regex("\\(Dublado\\)|\\(Legendado\\)"), "")
-                                .replace(Regex("\\(\\d{4}\\)"), "")
-                                .trim()
+                            val cleanTitle = cleanSearchTitle(rawTitle)
                             
                             if (cleanTitle.isBlank()) return@mapNotNull null
                             
@@ -311,6 +322,14 @@ class AnimeFire : MainAPI() {
             e.printStackTrace()
             emptyList()
         }
+    }
+
+    private fun cleanSearchTitle(title: String): String {
+        return title
+            .replace(Regex("\\s*-\\s*Todos os Episódios$"), "")
+            .replace(Regex("\\(Dublado\\)|\\(Legendado\\)"), "")
+            .replace(Regex("\\(\\d{4}\\)"), "")
+            .trim()
     }
 
     override suspend fun load(url: String): LoadResponse {
@@ -391,6 +410,8 @@ class AnimeFire : MainAPI() {
         """.trimIndent()
         
         try {
+            println("📡 [ANILIST LOAD] Enviando query para id: $aniListId")
+            
             val response = app.post(
                 aniListApiUrl,
                 data = mapOf("query" to query),
@@ -420,7 +441,11 @@ class AnimeFire : MainAPI() {
                         this.year = media.startDate?.year
                         this.tags = media.genres
                     }
+                } else {
+                    println("❌ [ANILIST LOAD] Media não encontrada para id: $aniListId")
                 }
+            } else {
+                println("❌ [ANILIST LOAD] Erro HTTP: ${response.code}")
             }
         } catch (e: Exception) {
             println("❌ Erro ao carregar do AniList: ${e.message}")
