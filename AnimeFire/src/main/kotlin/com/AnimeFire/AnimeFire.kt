@@ -344,13 +344,16 @@ class AnimeFire : MainAPI() {
         val fallbackUrl = "anilist:${media.id}:$title"
         val posterUrl = media.coverImage?.extraLarge ?: media.coverImage?.large
         
-        searchResponses.add(newAnimeSearchResponse(title, fallbackUrl) {
+        val searchResponse = newAnimeSearchResponse(title, fallbackUrl) {
             this.posterUrl = posterUrl
             this.type = TvType.Anime
-            // Adicionar tag para indicar que precisa de busca manual
-            this.description = "🔍 Clique para buscar no AnimeFire"
-        })
+        }
         
+        // Adicionar informação extra (não temos campo description em SearchResponse)
+        // Podemos adicionar ao nome para indicar que precisa de busca
+        searchResponse.name = "$title 🔍"
+        
+        searchResponses.add(searchResponse)
         println("$DEBUG_PREFIX ⚠️ Usando fallback: $fallbackUrl")
     }
 
@@ -711,12 +714,10 @@ class AnimeFire : MainAPI() {
         }
         
         // Fallback genérico
-        return newAnimeLoadResponse("Anime não encontrado", url, TvType.Anime) {
-            this.plot = "Este anime está no AniList mas não foi encontrado no AnimeFire.\n\nTente buscar manualmente."
-        }
+        return createGenericNotFoundResponse(url)
     }
 
-    private fun createNotFoundResponse(title: String, aniListId: String, url: String): LoadResponse {
+    private suspend fun createNotFoundResponse(title: String, aniListId: String, url: String): LoadResponse {
         return newAnimeLoadResponse(title, url, TvType.Anime) {
             this.plot = """
                 ❌ Este anime está no AniList mas não foi encontrado no AnimeFire.
@@ -731,6 +732,12 @@ class AnimeFire : MainAPI() {
                 
                 💡 Dica: Tente buscar por nomes alternativos em português
             """.trimIndent()
+        }
+    }
+
+    private suspend fun createGenericNotFoundResponse(url: String): LoadResponse {
+        return newAnimeLoadResponse("Anime não encontrado", url, TvType.Anime) {
+            this.plot = "Este anime está no AniList mas não foi encontrado no AnimeFire.\n\nTente buscar manualmente."
         }
     }
 
