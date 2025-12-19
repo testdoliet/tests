@@ -16,22 +16,24 @@ android {
         minSdk = 24
         targetSdk = 33
 
-        // Ler do local.properties ou usar fallback
-        val localProperties = java.util.Properties()
-        val localPropertiesFile = rootProject.file("local.properties")
+        // Ler de múltiplas fontes, na ordem de prioridade:
+        // 1. Parâmetros do Gradle (-P)
+        // 2. Variáveis de ambiente
+        // 3. local.properties
+        // 4. Valor dummy como fallback
         
-        var tmdbApiKey = "dummy_api_key"
-        var tmdbAccessToken = "dummy_access_token"
+        val tmdbApiKey = project.findProperty("TMDB_API_KEY") as? String
+            ?: System.getenv("TMDB_API_KEY")
+            ?: getLocalProperty("TMDB_API_KEY")
+            ?: "dummy_api_key"
         
-        if (localPropertiesFile.exists()) {
-            localProperties.load(localPropertiesFile.inputStream())
-            tmdbApiKey = localProperties.getProperty("TMDB_API_KEY", "dummy_api_key")
-            tmdbAccessToken = localProperties.getProperty("TMDB_ACCESS_TOKEN", "dummy_access_token")
-        } else {
-            // Tentar pegar das variáveis de ambiente (GitHub Actions)
-            tmdbApiKey = System.getenv("TMDB_API_KEY") ?: "dummy_api_key"
-            tmdbAccessToken = System.getenv("TMDB_ACCESS_TOKEN") ?: "dummy_access_token"
-        }
+        val tmdbAccessToken = project.findProperty("TMDB_ACCESS_TOKEN") as? String
+            ?: System.getenv("TMDB_ACCESS_TOKEN")
+            ?: getLocalProperty("TMDB_ACCESS_TOKEN")
+            ?: "dummy_access_token"
+        
+        println("🔑 [BUILD] TMDB_API_KEY configurada: ${if (tmdbApiKey == "dummy_api_key") "USANDO DUMMY" else "✅ CONFIGURADA"}")
+        println("🔑 [BUILD] TMDB_ACCESS_TOKEN configurada: ${if (tmdbAccessToken == "dummy_access_token") "USANDO DUMMY" else "✅ CONFIGURADA"}")
         
         buildConfigField("String", "TMDB_API_KEY", "\"$tmdbApiKey\"")
         buildConfigField("String", "TMDB_ACCESS_TOKEN", "\"$tmdbAccessToken\"")
@@ -51,6 +53,18 @@ android {
     
     kotlinOptions {
         jvmTarget = "1.8"
+    }
+}
+
+fun getLocalProperty(key: String): String? {
+    val localProperties = java.util.Properties()
+    val localPropertiesFile = project.rootProject.file("local.properties")
+    
+    return if (localPropertiesFile.exists()) {
+        localProperties.load(localPropertiesFile.inputStream())
+        localProperties.getProperty(key)
+    } else {
+        null
     }
 }
 
