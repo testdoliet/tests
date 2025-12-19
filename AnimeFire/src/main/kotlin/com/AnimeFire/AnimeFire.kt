@@ -191,7 +191,7 @@ class AnimeFire : MainAPI() {
                     if (media.id in seenIds) continue
                     seenIds.add(media.id)
                     
-                    // ⭐⭐ ALTERAÇÃO AQUI: Prioridade para inglês, depois romaji
+                    // ⭐⭐ Prioridade para inglês, depois romaji
                     val aniListTitle = media.title?.english ?:      // PRIMEIRO inglês
                                      media.title?.romaji ?:          // Depois romaji  
                                      media.title?.userPreferred ?: 
@@ -271,7 +271,8 @@ class AnimeFire : MainAPI() {
         
         // Tenta encontrar match exato primeiro
         for (result in results) {
-            val cleanResult = cleanForMatching(result.title)
+            // CORREÇÃO: usar result.name (não result.title)
+            val cleanResult = cleanForMatching(result.name)
             if (cleanResult == cleanSearch) {
                 return result
             }
@@ -279,7 +280,8 @@ class AnimeFire : MainAPI() {
         
         // Tenta match parcial
         for (result in results) {
-            val cleanResult = cleanForMatching(result.title)
+            // CORREÇÃO: usar result.name (não result.title)
+            val cleanResult = cleanForMatching(result.name)
             if (cleanResult.contains(cleanSearch) || cleanSearch.contains(cleanResult)) {
                 return result
             }
@@ -292,7 +294,8 @@ class AnimeFire : MainAPI() {
         var bestScore = 0
         
         for (result in results) {
-            val cleanResult = cleanForMatching(result.title)
+            // CORREÇÃO: usar result.name (não result.title)
+            val cleanResult = cleanForMatching(result.name)
             var score = 0
             
             for (word in searchWords) {
@@ -422,7 +425,7 @@ class AnimeFire : MainAPI() {
             val bestMatch = findBestMatch(titleFromUrl, searchResults)
             
             if (bestMatch != null) {
-                println("✅ [LOAD] Encontrado no site: ${bestMatch.title}")
+                println("✅ [LOAD] Encontrado no site: ${bestMatch.name}") // CORREÇÃO: bestMatch.name
                 return loadFromAnimeFire(bestMatch.url)
             } else {
                 println("⚠️ [LOAD] Não encontrado no site: $titleFromUrl")
