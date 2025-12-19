@@ -59,7 +59,7 @@ class AnimeFire : MainAPI() {
             }
         """.trimIndent()
         
-        return executeAniListQuery(query, "Em Alta", page)
+        return executeAniListQuery(query, "Em Alta", page, showScore = false)
     }
 
     private suspend fun getAniListSeason(page: Int): HomePageResponse {
@@ -84,7 +84,7 @@ class AnimeFire : MainAPI() {
             }
         """.trimIndent()
         
-        return executeAniListQuery(query, "Populares Nessa Temporada", page)
+        return executeAniListQuery(query, "Populares Nessa Temporada", page, showScore = false)
     }
 
     private suspend fun getAniListPopular(page: Int): HomePageResponse {
@@ -110,7 +110,7 @@ class AnimeFire : MainAPI() {
             }
         """.trimIndent()
         
-        return executeAniListQuery(query, "Sempre Populares", page)
+        return executeAniListQuery(query, "Sempre Populares", page, showScore = false)
     }
 
     private suspend fun getAniListTop(page: Int): HomePageResponse {
@@ -136,7 +136,7 @@ class AnimeFire : MainAPI() {
             }
         """.trimIndent()
         
-        return executeAniListQuery(query, "Top 100", page)
+        return executeAniListQuery(query, "Top 100", page, showScore = true)
     }
 
     private suspend fun getAniListUpcoming(page: Int): HomePageResponse {
@@ -161,13 +161,14 @@ class AnimeFire : MainAPI() {
             }
         """.trimIndent()
         
-        return executeAniListQuery(query, "Na Próxima Temporada", page)
+        return executeAniListQuery(query, "Na Próxima Temporada", page, showScore = false)
     }
 
     private suspend fun executeAniListQuery(
         query: String, 
         pageName: String,
-        page: Int
+        page: Int,
+        showScore: Boolean = false
     ): HomePageResponse {
         return try {
             println("📡 [ANILIST] Buscando: $pageName")
@@ -209,20 +210,19 @@ class AnimeFire : MainAPI() {
                     val specialUrl = "anilist:${media.id}:$cleanTitle"
                     val finalPoster = media.coverImage?.extraLarge ?: media.coverImage?.large
                     
-                    // Adicionar score ao título se estiver disponível para o Top 100
-                    val finalTitle = if (pageName == "Top 100" && media.averageScore != null) {
-                        val score = media.averageScore / 10.0
-                        String.format("%.1f ⭐ $cleanTitle", score)
-                    } else {
-                        cleanTitle
-                    }
-                    
-                    // Adicionar todos os resultados diretamente
-                    filteredItems.add(newAnimeSearchResponse(finalTitle, specialUrl) {
+                    // Criar o SearchResponse com a pontuação se showScore for true
+                    val searchResponse = newAnimeSearchResponse(cleanTitle, specialUrl) {
                         this.posterUrl = finalPoster
                         this.type = TvType.Anime
-                    })
-                    println("✅ [ANILIST] Adicionado: $finalTitle")
+                        
+                        // CORREÇÃO: Adicionar a pontuação usando Score.from100
+                        if (showScore && media.averageScore != null) {
+                            this.score = Score.from100(media.averageScore)
+                        }
+                    }
+                    
+                    filteredItems.add(searchResponse)
+                    println("✅ [ANILIST] Adicionado: $cleanTitle${if (media.averageScore != null && showScore) " (${media.averageScore}%)" else ""}")
                 }
                 
                 println("✅ [ANILIST] ${filteredItems.size} itens adicionados para $pageName")
@@ -392,6 +392,7 @@ class AnimeFire : MainAPI() {
                         month
                         day
                     }
+                    averageScore
                 }
             }
         """.trimIndent()
@@ -427,6 +428,10 @@ class AnimeFire : MainAPI() {
                         this.backgroundPosterUrl = media.bannerImage
                         this.year = media.startDate?.year
                         this.tags = media.genres
+                        // Adicionar a pontuação também na página de detalhes
+                        if (media.averageScore != null) {
+                            this.rating = media.averageScore / 10.0
+                        }
                     }
                 } else {
                     println("❌ [ANILIST LOAD] Media não encontrada para id: $aniListId")
