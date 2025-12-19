@@ -1,3 +1,5 @@
+import java.util.Properties
+
 version = 1
 
 plugins {
@@ -57,7 +59,7 @@ android {
 }
 
 fun getLocalProperty(key: String): String? {
-    val localProperties = java.util.Properties()
+    val localProperties = Properties()
     val localPropertiesFile = project.rootProject.file("local.properties")
     
     return if (localPropertiesFile.exists()) {
