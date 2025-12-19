@@ -40,7 +40,7 @@ class AnimeFire : MainAPI() {
         val query = """
             query {
                 Page(page: $page, perPage: 20) {
-                    media(sort: TRENDING_DESC, type: ANIME, format_in: [TV, TV_SHORT, OVA, MOVIE, SPECIAL, ONA]) {
+                    media(sort: TRENDING_DESC, type: ANIME) {
                         id
                         title {
                             romaji
@@ -52,12 +52,8 @@ class AnimeFire : MainAPI() {
                             large
                             extraLarge
                         }
-                        format
-                        status
-                        episodes
                         averageScore
                         seasonYear
-                        synonyms
                     }
                 }
             }
@@ -70,7 +66,7 @@ class AnimeFire : MainAPI() {
         val query = """
             query {
                 Page(page: $page, perPage: 20) {
-                    media(season: WINTER, seasonYear: 2025, type: ANIME, sort: POPULARITY_DESC, format_in: [TV, TV_SHORT, OVA, MOVIE, SPECIAL, ONA]) {
+                    media(season: WINTER, seasonYear: 2025, type: ANIME, sort: POPULARITY_DESC) {
                         id
                         title {
                             romaji
@@ -82,11 +78,7 @@ class AnimeFire : MainAPI() {
                             large
                             extraLarge
                         }
-                        format
-                        status
-                        episodes
                         averageScore
-                        synonyms
                     }
                 }
             }
@@ -99,7 +91,7 @@ class AnimeFire : MainAPI() {
         val query = """
             query {
                 Page(page: $page, perPage: 20) {
-                    media(sort: POPULARITY_DESC, type: ANIME, format_in: [TV, TV_SHORT, OVA, MOVIE, SPECIAL, ONA]) {
+                    media(sort: POPULARITY_DESC, type: ANIME) {
                         id
                         title {
                             romaji
@@ -111,12 +103,8 @@ class AnimeFire : MainAPI() {
                             large
                             extraLarge
                         }
-                        format
-                        status
-                        episodes
                         averageScore
                         seasonYear
-                        synonyms
                     }
                 }
             }
@@ -129,7 +117,7 @@ class AnimeFire : MainAPI() {
         val query = """
             query {
                 Page(page: $page, perPage: 20) {
-                    media(sort: SCORE_DESC, type: ANIME, format_in: [TV, TV_SHORT, OVA, MOVIE, SPECIAL, ONA], minScore: 70) {
+                    media(sort: SCORE_DESC, type: ANIME) {
                         id
                         title {
                             romaji
@@ -141,12 +129,8 @@ class AnimeFire : MainAPI() {
                             large
                             extraLarge
                         }
-                        format
-                        status
-                        episodes
                         averageScore
                         seasonYear
-                        synonyms
                     }
                 }
             }
@@ -159,7 +143,7 @@ class AnimeFire : MainAPI() {
         val query = """
             query {
                 Page(page: $page, perPage: 20) {
-                    media(season: SPRING, seasonYear: 2025, type: ANIME, sort: POPULARITY_DESC, format_in: [TV, TV_SHORT, OVA, MOVIE, SPECIAL, ONA]) {
+                    media(season: SPRING, seasonYear: 2025, type: ANIME, sort: POPULARITY_DESC) {
                         id
                         title {
                             romaji
@@ -171,11 +155,7 @@ class AnimeFire : MainAPI() {
                             large
                             extraLarge
                         }
-                        format
-                        status
-                        episodes
                         averageScore
-                        synonyms
                     }
                 }
             }
@@ -191,7 +171,6 @@ class AnimeFire : MainAPI() {
     ): HomePageResponse {
         return try {
             println("📡 [ANILIST] Buscando: $pageName")
-            println("📝 [ANILIST] Query: ${query.take(200)}...")
             
             val response = app.post(
                 aniListApiUrl,
@@ -230,12 +209,20 @@ class AnimeFire : MainAPI() {
                     val specialUrl = "anilist:${media.id}:$cleanTitle"
                     val finalPoster = media.coverImage?.extraLarge ?: media.coverImage?.large
                     
+                    // Adicionar score ao título se estiver disponível para o Top 100
+                    val finalTitle = if (pageName == "Top 100" && media.averageScore != null) {
+                        val score = media.averageScore / 10.0
+                        String.format("%.1f ⭐ $cleanTitle", score)
+                    } else {
+                        cleanTitle
+                    }
+                    
                     // Adicionar todos os resultados diretamente
-                    filteredItems.add(newAnimeSearchResponse(cleanTitle, specialUrl) {
+                    filteredItems.add(newAnimeSearchResponse(finalTitle, specialUrl) {
                         this.posterUrl = finalPoster
                         this.type = TvType.Anime
                     })
-                    println("✅ [ANILIST] Adicionado: $cleanTitle")
+                    println("✅ [ANILIST] Adicionado: $finalTitle")
                 }
                 
                 println("✅ [ANILIST] ${filteredItems.size} itens adicionados para $pageName")
