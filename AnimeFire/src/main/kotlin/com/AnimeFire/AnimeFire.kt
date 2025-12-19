@@ -344,16 +344,14 @@ class AnimeFire : MainAPI() {
         val fallbackUrl = "anilist:${media.id}:$title"
         val posterUrl = media.coverImage?.extraLarge ?: media.coverImage?.large
         
-        var searchResponse = newAnimeSearchResponse(title, fallbackUrl) {
+        // Criar o SearchResponse com um nome que indique que precisa de busca
+        val displayTitle = "$title 🔍"
+        
+        searchResponses.add(newAnimeSearchResponse(displayTitle, fallbackUrl) {
             this.posterUrl = posterUrl
             this.type = TvType.Anime
-        }
+        })
         
-        // Adicionar informação extra (não temos campo description em SearchResponse)
-        // Podemos adicionar ao nome para indicar que precisa de busca
-        searchResponse.name = "$title 🔍"
-        
-        searchResponses.add(searchResponse)
         println("$DEBUG_PREFIX ⚠️ Usando fallback: $fallbackUrl")
     }
 
