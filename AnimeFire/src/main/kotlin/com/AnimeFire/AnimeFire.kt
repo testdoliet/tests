@@ -52,14 +52,12 @@ class AnimeFire : MainAPI() {
                             large
                             extraLarge
                         }
-                        averageScore
-                        seasonYear
                     }
                 }
             }
         """.trimIndent()
         
-        return executeAniListQuery(query, "Em Alta", page, showScoreAsTag = false)
+        return executeAniListQuery(query, "Em Alta", page)
     }
 
     private suspend fun getAniListSeason(page: Int): HomePageResponse {
@@ -78,13 +76,12 @@ class AnimeFire : MainAPI() {
                             large
                             extraLarge
                         }
-                        averageScore
                     }
                 }
             }
         """.trimIndent()
         
-        return executeAniListQuery(query, "Populares Nessa Temporada", page, showScoreAsTag = false)
+        return executeAniListQuery(query, "Populares Nessa Temporada", page)
     }
 
     private suspend fun getAniListPopular(page: Int): HomePageResponse {
@@ -103,14 +100,12 @@ class AnimeFire : MainAPI() {
                             large
                             extraLarge
                         }
-                        averageScore
-                        seasonYear
                     }
                 }
             }
         """.trimIndent()
         
-        return executeAniListQuery(query, "Sempre Populares", page, showScoreAsTag = false)
+        return executeAniListQuery(query, "Sempre Populares", page)
     }
 
     private suspend fun getAniListTop(page: Int): HomePageResponse {
@@ -129,14 +124,12 @@ class AnimeFire : MainAPI() {
                             large
                             extraLarge
                         }
-                        averageScore
-                        seasonYear
                     }
                 }
             }
         """.trimIndent()
         
-        return executeAniListQuery(query, "Top 100", page, showScoreAsTag = true)
+        return executeAniListQuery(query, "Top 100", page)
     }
 
     private suspend fun getAniListUpcoming(page: Int): HomePageResponse {
@@ -155,20 +148,18 @@ class AnimeFire : MainAPI() {
                             large
                             extraLarge
                         }
-                        averageScore
                     }
                 }
             }
         """.trimIndent()
         
-        return executeAniListQuery(query, "Na Próxima Temporada", page, showScoreAsTag = false)
+        return executeAniListQuery(query, "Na Próxima Temporada", page)
     }
 
     private suspend fun executeAniListQuery(
         query: String, 
         pageName: String,
-        page: Int,
-        showScoreAsTag: Boolean = false
+        page: Int
     ): HomePageResponse {
         return try {
             println("📡 [ANILIST] Buscando: $pageName")
@@ -182,8 +173,6 @@ class AnimeFire : MainAPI() {
                 ),
                 timeout = 10_000
             )
-            
-            println("✅ [ANILIST] Resposta recebida: ${response.code}")
             
             if (response.code == 200) {
                 val aniListResponse = response.parsedSafe<AniListApiResponse>()
@@ -204,32 +193,19 @@ class AnimeFire : MainAPI() {
                                       media.title?.english ?: 
                                       "Sem Título"
                     
-                    // Limpar título para remover termos indesejados
+                    // Limpar título
                     val cleanTitle = cleanAnimeTitle(aniListTitle)
                     
                     val specialUrl = "anilist:${media.id}:$cleanTitle"
                     val finalPoster = media.coverImage?.extraLarge ?: media.coverImage?.large
                     
-                    // Criar a tag de pontuação se showScoreAsTag for true
-                    val scoreTag = if (showScoreAsTag && media.averageScore != null) {
-                        val score = media.averageScore / 10.0
-                        String.format("%.1f", score)
-                    } else {
-                        null
-                    }
-                    
-                    // Criar o SearchResponse
+                    // Adicionar resultado
                     filteredItems.add(newAnimeSearchResponse(cleanTitle, specialUrl) {
                         this.posterUrl = finalPoster
                         this.type = TvType.Anime
-                        
-                        // Adicionar a pontuação como tag se disponível
-                        if (scoreTag != null) {
-                            this.tags = listOf("⭐ $scoreTag")
-                        }
                     })
                     
-                    println("✅ [ANILIST] Adicionado: $cleanTitle${if (scoreTag != null) " ⭐ $scoreTag" else ""}")
+                    println("✅ [ANILIST] Adicionado: $cleanTitle")
                 }
                 
                 println("✅ [ANILIST] ${filteredItems.size} itens adicionados para $pageName")
@@ -248,9 +224,9 @@ class AnimeFire : MainAPI() {
 
     private fun cleanAnimeTitle(title: String): String {
         return title
-            .replace(Regex("\\s*\\([^)]+\\)$"), "") // Remove parênteses no final
-            .replace(Regex("\\s*-\\s*[^-]+$"), "") // Remove hífen e texto após
-            .replace(Regex("\\s+"), " ") // Normaliza espaços
+            .replace(Regex("\\s*\\([^)]+\\)$"), "")
+            .replace(Regex("\\s*-\\s*[^-]+$"), "")
+            .replace(Regex("\\s+"), " ")
             .trim()
     }
 
@@ -399,7 +375,6 @@ class AnimeFire : MainAPI() {
                         month
                         day
                     }
-                    averageScore
                 }
             }
         """.trimIndent()
@@ -495,8 +470,6 @@ class AnimeFire : MainAPI() {
         @JsonProperty("status") val status: String? = null,
         @JsonProperty("episodes") val episodes: Int? = null,
         @JsonProperty("duration") val duration: Int? = null,
-        @JsonProperty("averageScore") val averageScore: Int? = null,
-        @JsonProperty("seasonYear") val seasonYear: Int? = null,
         @JsonProperty("coverImage") val coverImage: AniListCoverImage? = null,
         @JsonProperty("bannerImage") val bannerImage: String? = null,
         @JsonProperty("genres") val genres: List<String>? = null,
