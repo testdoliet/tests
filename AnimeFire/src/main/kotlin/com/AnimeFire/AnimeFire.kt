@@ -256,7 +256,7 @@ class AnimeFire : MainAPI() {
     }
 
     // ============ FUNÇÃO AUXILIAR DE BUSCA ============
-    private suspend fun Element.toSearchResponse(): AnimeSearchResponse? {
+    private fun Element.toSearchResponse(): AnimeSearchResponse? {
         val href = attr("href") ?: return null
         if (href.isBlank()) return null
         
@@ -291,7 +291,7 @@ class AnimeFire : MainAPI() {
         }
     }
 
-    // ============ SEARCH (MANTIDA) ============
+    // ============ SEARCH CORRIGIDA ============
     override suspend fun search(query: String): List<SearchResponse> {
         val searchUrl = "$mainUrl$SEARCH_PATH/${URLEncoder.encode(query, "UTF-8")}"
         println("$DEBUG_PREFIX Buscando: '$query' | URL: $searchUrl")
@@ -303,14 +303,15 @@ class AnimeFire : MainAPI() {
         
         if (elements.isEmpty()) {
             println("⚠️ Nenhum elemento encontrado com o seletor atual")
+            return emptyList()
         }
 
         return elements.mapNotNull { element ->
-            runCatching {
+            try {
                 val href = element.attr("href")
                 if (href.isBlank()) {
                     println("⚠️ Link vazio encontrado")
-                    return@runCatching null
+                    return@mapNotNull null
                 }
 
                 val titleElement = element.selectFirst("h3.animeTitle, .text-block h3, .animeTitle")
@@ -344,7 +345,7 @@ class AnimeFire : MainAPI() {
                         TvType.Anime
                     }
                 }
-            }.getOrElse { e ->
+            } catch (e: Exception) {
                 println("❌ Erro ao processar elemento: ${e.message}")
                 null
             }
@@ -492,7 +493,7 @@ class AnimeFire : MainAPI() {
         }
     }
 
-    private suspend fun createAnimeNotFoundResponse(title: String, url: String): LoadResponse {
+    private fun createAnimeNotFoundResponse(title: String, url: String): LoadResponse {
         return newAnimeLoadResponse(title, url, TvType.Anime) {
             this.plot = """
                 ❌ Este anime está no AniList mas não foi encontrado no AnimeFire.
@@ -670,7 +671,7 @@ class AnimeFire : MainAPI() {
         return null
     }
 
-    private suspend fun extractRecommendations(document: org.jsoup.nodes.Document): List<SearchResponse> {
+    private fun extractRecommendations(document: org.jsoup.nodes.Document): List<SearchResponse> {
         return document.select(".owl-carousel-anime .divArticleLancamentos a.item")
             .mapNotNull { element -> 
                 runCatching { element.toSearchResponse() }.getOrNull()
@@ -694,22 +695,22 @@ class AnimeFire : MainAPI() {
         val year: Int? = null
     )
 
-    @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
+    @JsonIgnoreProperties(ignoreUnknown = true)
     private data class AniListApiResponse(
         @JsonProperty("data") val data: AniListData? = null
     )
 
-    @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
+    @JsonIgnoreProperties(ignoreUnknown = true)
     private data class AniListData(
         @JsonProperty("Page") val Page: AniListPage? = null
     )
 
-    @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
+    @JsonIgnoreProperties(ignoreUnknown = true)
     private data class AniListPage(
         @JsonProperty("media") val media: List<AniListMedia>? = null
     )
 
-    @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
+    @JsonIgnoreProperties(ignoreUnknown = true)
     private data class AniListMedia(
         @JsonProperty("id") val id: Int,
         @JsonProperty("title") val title: AniListTitle? = null,
@@ -717,7 +718,7 @@ class AnimeFire : MainAPI() {
         @JsonProperty("status") val status: String? = null
     )
 
-    @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
+    @JsonIgnoreProperties(ignoreUnknown = true)
     private data class AniListTitle(
         @JsonProperty("romaji") val romaji: String? = null,
         @JsonProperty("english") val english: String? = null,
@@ -725,7 +726,7 @@ class AnimeFire : MainAPI() {
         @JsonProperty("userPreferred") val userPreferred: String? = null
     )
 
-    @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
+    @JsonIgnoreProperties(ignoreUnknown = true)
     private data class AniListCoverImage(
         @JsonProperty("large") val large: String? = null,
         @JsonProperty("extraLarge") val extraLarge: String? = null
