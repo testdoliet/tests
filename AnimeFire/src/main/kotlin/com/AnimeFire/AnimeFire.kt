@@ -291,65 +291,77 @@ class AnimeFire : MainAPI() {
         }
     }
 
-    // ============ SEARCH CORRIGIDA ============
+    // ============ SEARCH COMPLETAMENTE CORRIGIDA ============
     override suspend fun search(query: String): List<SearchResponse> {
         val searchUrl = "$mainUrl$SEARCH_PATH/${URLEncoder.encode(query, "UTF-8")}"
         println("$DEBUG_PREFIX Buscando: '$query' | URL: $searchUrl")
         
-        val document = app.get(searchUrl).document
+        try {
+            val document = app.get(searchUrl).document
 
-        val elements = document.select("div.divCardUltimosEps article.card a")
-        println("$DEBUG_PREFIX Elementos encontrados: ${elements.size}")
-        
-        if (elements.isEmpty()) {
-            println("⚠️ Nenhum elemento encontrado com o seletor atual")
+            val elements = document.select("div.divCardUltimosEps article.card a")
+            println("$DEBUG_PREFIX Elementos encontrados: ${elements.size}")
+            
+            if (elements.isEmpty()) {
+                println("⚠️ Nenhum elemento encontrado com o seletor atual")
+                return emptyList()
+            }
+
+            val results = mutableListOf<SearchResponse>()
+            
+            for (element in elements.take(30)) {
+                try {
+                    val href = element.attr("href")
+                    if (href.isBlank()) {
+                        println("⚠️ Link vazio encontrado")
+                        continue
+                    }
+
+                    val titleElement = element.selectFirst("h3.animeTitle, .text-block h3, .animeTitle")
+                    val rawTitle = titleElement?.text()?.trim() ?: "Sem Título"
+                    
+                    val cleanTitle = rawTitle
+                        .replace(Regex("\\s*-\\s*Todos os Episódios$"), "")
+                        .replace(Regex("\\(Dublado\\)"), "")
+                        .replace(Regex("\\(Legendado\\)"), "")
+                        .trim()
+
+                    val imgElement = element.selectFirst("img.imgAnimes, img.card-img-top, img.transitioning_src")
+                    val posterUrl = when {
+                        imgElement?.hasAttr("data-src") == true -> imgElement.attr("data-src")
+                        imgElement?.hasAttr("src") == true -> imgElement.attr("src")
+                        else -> null
+                    }
+
+                    val isMovie = href.contains("/filmes/") || 
+                                 cleanTitle.contains("filme", ignoreCase = true) ||
+                                 rawTitle.contains("filme", ignoreCase = true) ||
+                                 rawTitle.contains("movie", ignoreCase = true)
+
+                    println("✅ Processado: '$cleanTitle' | URL: ${href.take(50)}... | Tipo: ${if (isMovie) "Filme" else "Anime'}")
+
+                    val searchResponse = newAnimeSearchResponse(cleanTitle, fixUrl(href)) {
+                        this.posterUrl = posterUrl?.let { fixUrl(it) }
+                        this.type = if (isMovie) {
+                            TvType.Movie
+                        } else {
+                            TvType.Anime
+                        }
+                    }
+                    
+                    results.add(searchResponse)
+                    
+                } catch (e: Exception) {
+                    println("❌ Erro ao processar elemento: ${e.message}")
+                }
+            }
+            
+            return results
+            
+        } catch (e: Exception) {
+            println("❌ Erro na busca: ${e.message}")
             return emptyList()
         }
-
-        return elements.mapNotNull { element ->
-            try {
-                val href = element.attr("href")
-                if (href.isBlank()) {
-                    println("⚠️ Link vazio encontrado")
-                    return@mapNotNull null
-                }
-
-                val titleElement = element.selectFirst("h3.animeTitle, .text-block h3, .animeTitle")
-                val rawTitle = titleElement?.text()?.trim() ?: "Sem Título"
-                
-                val cleanTitle = rawTitle
-                    .replace(Regex("\\s*-\\s*Todos os Episódios$"), "")
-                    .replace(Regex("\\(Dublado\\)"), "")
-                    .replace(Regex("\\(Legendado\\)"), "")
-                    .trim()
-
-                val imgElement = element.selectFirst("img.imgAnimes, img.card-img-top, img.transitioning_src")
-                val posterUrl = when {
-                    imgElement?.hasAttr("data-src") == true -> imgElement.attr("data-src")
-                    imgElement?.hasAttr("src") == true -> imgElement.attr("src")
-                    else -> null
-                }
-
-                val isMovie = href.contains("/filmes/") || 
-                             cleanTitle.contains("filme", ignoreCase = true) ||
-                             rawTitle.contains("filme", ignoreCase = true) ||
-                             rawTitle.contains("movie", ignoreCase = true)
-
-                println("✅ Processado: '$cleanTitle' | URL: ${href.take(50)}... | Tipo: ${if (isMovie) "Filme" else "Anime'}")
-
-                newAnimeSearchResponse(cleanTitle, fixUrl(href)) {
-                    this.posterUrl = posterUrl?.let { fixUrl(it) }
-                    this.type = if (isMovie) {
-                        TvType.Movie
-                    } else {
-                        TvType.Anime
-                    }
-                }
-            } catch (e: Exception) {
-                println("❌ Erro ao processar elemento: ${e.message}")
-                null
-            }
-        }.take(30)
     }
 
     // ============ LOAD CORRIGIDA ============
@@ -398,7 +410,7 @@ class AnimeFire : MainAPI() {
                         document.select("a[href]").forEach { link ->
                             val href = link.attr("href")
                             if (href.contains("/animes/") || href.contains("/filmes/")) {
-                                println("  - ${link.text().take(30)} → $href")
+                                println("  - ${link.text().take(30)} -> $href")
                             }
                         }
                         
@@ -493,7 +505,7 @@ class AnimeFire : MainAPI() {
         }
     }
 
-    private fun createAnimeNotFoundResponse(title: String, url: String): LoadResponse {
+    private suspend fun createAnimeNotFoundResponse(title: String, url: String): LoadResponse {
         return newAnimeLoadResponse(title, url, TvType.Anime) {
             this.plot = """
                 ❌ Este anime está no AniList mas não foi encontrado no AnimeFire.
