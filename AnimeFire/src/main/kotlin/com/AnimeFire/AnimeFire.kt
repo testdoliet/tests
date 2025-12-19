@@ -6,7 +6,7 @@ import com.lagradost.cloudstream3.utils.*
 
 class AnimeFire : MainAPI() {
     override var mainUrl = "https://animefire.plus"
-    override var name = "ANIMEFIRE"
+    override var name = "𝙰𝙽𝙸𝙼𝙴𝙵𝙸𝚁𝙴"
     override val hasMainPage = true
     override var lang = "pt-br"
     override val hasDownloadSupport = true
