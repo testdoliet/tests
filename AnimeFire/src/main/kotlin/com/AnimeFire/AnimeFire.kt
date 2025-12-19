@@ -334,7 +334,7 @@ class AnimeFire : MainAPI() {
                              rawTitle.contains("filme", ignoreCase = true) ||
                              rawTitle.contains("movie", ignoreCase = true)
 
-                println("✅ Processado: '$cleanTitle' | URL: ${href.take(50)}... | Tipo: ${if (isMovie) "Filme" else "Anime"}")
+                println("✅ Processado: '$cleanTitle' | URL: ${href.take(50)}... | Tipo: ${if (isMovie) "Filme" else "Anime'}")
 
                 newAnimeSearchResponse(cleanTitle, fixUrl(href)) {
                     this.posterUrl = posterUrl?.let { fixUrl(it) }
@@ -351,31 +351,77 @@ class AnimeFire : MainAPI() {
         }.take(30)
     }
 
-    // ============ LOAD ATUALIZADA ============
+    // ============ LOAD CORRIGIDA ============
     override suspend fun load(url: String): LoadResponse {
         println("\n$DEBUG_PREFIX load() para URL: $url")
         
+        // SE FOR URL DO ANILIST
         if (url.startsWith("anilist:")) {
-            println("$DEBUG_PREFIX URL do AniList detectada, buscando no AnimeFire...")
+            println("$DEBUG_PREFIX URL do AniList detectada")
             val parts = url.split(":")
             if (parts.size >= 3) {
-                val title = parts.subList(2, parts.size).joinToString(":")
-                println("$DEBUG_PREFIX Buscando anime: '$title' no AnimeFire")
+                val titleFromAniList = parts.subList(2, parts.size).joinToString(":")
+                println("$DEBUG_PREFIX 🎯 Título do AniList: '$titleFromAniList'")
                 
-                val searchResults = search(title)
-                if (searchResults.isNotEmpty()) {
-                    val bestMatch = searchResults.firstOrNull()
-                    if (bestMatch != null && bestMatch.url.startsWith("http")) {
-                        println("$DEBUG_PREFIX ✅ Encontrado! Redirecionando para: ${bestMatch.url}")
-                        return loadFromAnimeFire(bestMatch.url)
+                // CONVERTER PARA FORMATO ANIMEFIRE (com hífens)
+                val searchSlug = titleFromAniList
+                    .lowercase()
+                    .replace(Regex("[^a-z0-9\\s]"), " ")  // Remove caracteres especiais
+                    .replace(Regex("\\s+"), "-")          // Espaços → hífens
+                    .trim('-')
+                
+                val searchUrl = "$mainUrl/pesquisar/$searchSlug"
+                println("$DEBUG_PREFIX 🔗 URL de busca (com hífens): $searchUrl")
+                
+                try {
+                    // FAZER A BUSCA (igual ao que o usuário faria manualmente)
+                    val document = app.get(searchUrl).document
+                    
+                    // PEGAR O PRIMEIRO RESULTADO
+                    // Mesmo seletor usado na função search()
+                    val firstResult = document.select("div.divCardUltimosEps article.card a").firstOrNull()
+                    
+                    if (firstResult != null) {
+                        val animeFireUrl = fixUrl(firstResult.attr("href"))
+                        println("$DEBUG_PREFIX ✅ Primeiro resultado encontrado! URL: $animeFireUrl")
+                        
+                        // VERIFICAR SE É LINK JAPONÊS
+                        val isJapaneseLink = animeFireUrl.contains(Regex("[\\u3040-\\u30ff\\u3400-\\u4dbf\\u4e00-\\u9fff]"))
+                        println("$DEBUG_PREFIX 🌐 Link japonês? $isJapaneseLink")
+                        
+                        // CARREGAR PÁGINA DE DETALHES (mesmo se for japonês)
+                        return loadFromAnimeFire(animeFireUrl)
+                    } else {
+                        // DEBUG: Ver todos os links da página
+                        println("$DEBUG_PREFIX 🔍 Nenhum resultado com seletor padrão. Todos os links:")
+                        document.select("a[href]").forEach { link ->
+                            val href = link.attr("href")
+                            if (href.contains("/animes/") || href.contains("/filmes/")) {
+                                println("  - ${link.text().take(30)} → $href")
+                            }
+                        }
+                        
+                        // Tentar com seletores alternativos
+                        val altResult = document.select("a[href*='/animes/']").firstOrNull()
+                            ?: document.select("a[href*='/filmes/']").firstOrNull()
+                        
+                        if (altResult != null) {
+                            val animeFireUrl = fixUrl(altResult.attr("href"))
+                            println("$DEBUG_PREFIX ✅ Encontrado com seletor alternativo! URL: $animeFireUrl")
+                            return loadFromAnimeFire(animeFireUrl)
+                        }
                     }
+                } catch (e: Exception) {
+                    println("$DEBUG_PREFIX ❌ Erro na busca: ${e.message}")
                 }
                 
+                // Se não encontrou, mostrar mensagem
                 println("$DEBUG_PREFIX ❌ Anime não encontrado no AnimeFire")
-                return createAnimeNotFoundResponse(title, url)
+                return createAnimeNotFoundResponse(titleFromAniList, url)
             }
         }
         
+        // URL normal do AnimeFire
         return loadFromAnimeFire(url)
     }
 
@@ -396,7 +442,7 @@ class AnimeFire : MainAPI() {
 
         println("📌 Título: $cleanTitle, Ano: $year, Tipo: $type")
 
-        // CORREÇÃO: Buscar MAL ID usando a função searchMALIdByName
+        // Buscar MAL ID
         val malId = searchMALIdByName(cleanTitle)
         println("🔍 MAL ID: $malId")
 
@@ -463,7 +509,7 @@ class AnimeFire : MainAPI() {
         }
     }
 
-    // ============ BUSCAR MAL ID (CORRIGIDA) ============
+    // ============ BUSCAR MAL ID ============
     private suspend fun searchMALIdByName(animeName: String): Int? {
         return try {
             val cleanName = animeName
@@ -472,7 +518,6 @@ class AnimeFire : MainAPI() {
                 .replace(Regex("(?i)\\s*\\(Legendado\\)"), "")
                 .trim()
             
-            // Query GraphQL do AniList
             val query = """
                 query {
                     Page(page: 1, perPage: 5) {
