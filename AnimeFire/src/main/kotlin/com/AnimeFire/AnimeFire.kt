@@ -775,7 +775,6 @@ class AnimeFire : MainAPI() {
                     description
                     episodes
                     duration
-                    averageScore
                     coverImage {
                         extraLarge
                         large
@@ -821,7 +820,6 @@ class AnimeFire : MainAPI() {
                         this.backgroundPosterUrl = media.bannerImage
                         this.year = media.startDate?.year
                         this.tags = media.genres
-                        this.rating = media.averageScore?.div(10.0)
                     }
                 }
             }
