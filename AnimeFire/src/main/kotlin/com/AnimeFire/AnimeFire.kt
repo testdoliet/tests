@@ -16,12 +16,18 @@ class AnimeFire : MainAPI() {
     // API GraphQL do AniList
     private val aniListApiUrl = "https://graphql.anilist.co"
     
+    // Configurações do TMDB
+    private val tmdbApiKey = BuildConfig.TMDB_API_KEY
+    private val tmdbAccessToken = BuildConfig.TMDB_ACCESS_TOKEN
+    private val tmdbBaseUrl = "https://api.themoviedb.org/3"
+    private const val tmdbImageUrl = "https://image.tmdb.org/t/p"
+    
     override val mainPage = mainPageOf(
         "trending" to "Em Alta",
         "season" to "Populares Nessa Temporada", 
         "popular" to "Sempre Populares",
         "top" to "Top 100",
-        "upcoming" to "Na Próxima Temporada"  // CORRIGI: adicionei a vírgula que faltava
+        "upcoming" to "Na Próxima Temporada"
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
@@ -30,7 +36,7 @@ class AnimeFire : MainAPI() {
             "Populares Nessa Temporada" -> getAniListSeason(page)
             "Sempre Populares" -> getAniListPopular(page)
             "Top 100" -> getAniListTop(page)
-            "Na Próxima Temporada" -> getAniListUpcoming(page)  // NOVA FUNÇÃO
+            "Na Próxima Temporada" -> getAniListUpcoming(page)
             else -> newHomePageResponse(request.name, emptyList(), false)
         }
     }
@@ -161,7 +167,6 @@ class AnimeFire : MainAPI() {
     private suspend fun getAniListUpcoming(page: Int): HomePageResponse {
         println("🌐 [ANILIST] Buscando Próxima Temporada...")
         
-        // Para a próxima temporada (Spring 2025)
         val query = """
             query {
                 Page(page: $page, perPage: 20) {
@@ -214,24 +219,34 @@ class AnimeFire : MainAPI() {
                 val aniListResponse = response.parsedSafe<AniListApiResponse>()
                 val mediaList = aniListResponse?.data?.Page?.media ?: emptyList()
                 
+                // Processar em paralelo para buscar dados do TMDB
                 val items = mediaList.mapIndexed { index, media ->
-                    val title = media.title?.userPreferred ?: 
-                               media.title?.romaji ?: 
-                               media.title?.english ?: 
-                               "Sem Título"
+                    val aniListTitle = media.title?.userPreferred ?: 
+                                      media.title?.romaji ?: 
+                                      media.title?.english ?: 
+                                      "Sem Título"
                     
                     // Calcular ranking baseado na página
                     val rank = index + 1 + ((page - 1) * 20)
-                    val finalTitle = if (showRank) {
-                        "#$rank $title"
+                    
+                    // Buscar dados do TMDB em português para este anime
+                    val tmdbData = getTMDBInfoForAnime(aniListTitle, media.seasonYear, true)
+                    
+                    // Usar título do TMDB se disponível, caso contrário usar do AniList
+                    val finalTitle = if (tmdbData?.title != null) {
+                        if (showRank) "#$rank ${tmdbData.title}" else tmdbData.title
                     } else {
-                        title
+                        if (showRank) "#$rank $aniListTitle" else aniListTitle
                     }
                     
-                    val specialUrl = "anilist:${media.id}:$title"
+                    // Usar poster do TMDB se disponível, caso contrário usar do AniList
+                    val finalPoster = tmdbData?.posterUrl ?: 
+                                     (media.coverImage?.extraLarge ?: media.coverImage?.large)
+                    
+                    val specialUrl = "anilist:${media.id}:$aniListTitle"
                     
                     newAnimeSearchResponse(finalTitle, specialUrl) {
-                        this.posterUrl = media.coverImage?.extraLarge ?: media.coverImage?.large
+                        this.posterUrl = finalPoster
                         this.type = TvType.Anime
                     }
                 }
@@ -247,6 +262,131 @@ class AnimeFire : MainAPI() {
             e.printStackTrace()
             newHomePageResponse(pageName, emptyList(), false)
         }
+    }
+
+    // ============ FUNÇÕES DO TMDB ============
+    
+    private suspend fun getTMDBInfoForAnime(
+        query: String, 
+        year: Int?, 
+        isTv: Boolean
+    ): TMDBInfo? {
+        // Verificar se as chaves estão configuradas
+        if (tmdbApiKey == "dummy_api_key" || tmdbAccessToken == "dummy_access_token") {
+            println("⚠️ [TMDB] Chaves BuildConfig não configuradas")
+            return null
+        }
+
+        return try {
+            val type = if (isTv) "tv" else "movie"
+            val encodedQuery = java.net.URLEncoder.encode(query, "UTF-8")
+            
+            // URL de busca com filtro para ANIME e em português
+            var searchUrl = "$tmdbBaseUrl/search/$type?query=$encodedQuery&api_key=$tmdbApiKey&language=pt-BR&include_adult=false"
+            if (year != null) searchUrl += "&year=$year"
+            
+            println("🔗 [TMDB] Buscando: \"$query\" em português...")
+
+            val response = app.get(searchUrl, timeout = 10_000)
+            println("📡 [TMDB] Status: ${response.code}")
+
+            if (response.code != 200) {
+                println("❌ [TMDB] Erro na busca")
+                return null
+            }
+
+            val searchResult = response.parsedSafe<TMDBSearchResponse>() ?: return null
+            println("✅ [TMDB] ${searchResult.results.size} resultados encontrados")
+
+            // Filtrar para pegar apenas conteúdo relevante (anime)
+            val result = searchResult.results.firstOrNull()
+            if (result == null) {
+                println("⚠️ [TMDB] Nenhum resultado encontrado para: $query")
+                return null
+            }
+
+            // Buscar detalhes completos em português
+            val details = getTMDBDetailsDirect(result.id, isTv) ?: return null
+
+            // Verificar se é anime (geralmente tem gênero de animação ou é da categoria anime)
+            val isAnime = details.genres?.any { 
+                it.name.equals("Animação", ignoreCase = true) || 
+                it.name.equals("Anime", ignoreCase = true) ||
+                it.name.equals("Animation", ignoreCase = true)
+            } ?: false
+
+            if (!isAnime && isTv) {
+                println("⚠️ [TMDB] Resultado não é anime, ignorando: $query")
+                return null
+            }
+
+            // Buscar trailer
+            val youtubeTrailer = getHighQualityTrailer(details.videos?.results)
+
+            TMDBInfo(
+                id = result.id,
+                title = if (isTv) result.name else result.title,
+                year = if (isTv) {
+                    result.first_air_date?.substring(0, 4)?.toIntOrNull()
+                } else {
+                    result.release_date?.substring(0, 4)?.toIntOrNull()
+                },
+                posterUrl = result.poster_path?.let { "$tmdbImageUrl/w500$it" },
+                backdropUrl = details.backdrop_path?.let { "$tmdbImageUrl/original$it" },
+                overview = details.overview,
+                genres = details.genres?.map { it.name },
+                youtubeTrailer = youtubeTrailer,
+                duration = details.runtime
+            )
+        } catch (e: Exception) {
+            println("❌ [TMDB] ERRO: ${e.message}")
+            null
+        }
+    }
+
+    private suspend fun getTMDBDetailsDirect(id: Int, isTv: Boolean): TMDBDetailsResponse? {
+        return try {
+            val type = if (isTv) "tv" else "movie"
+            val url = "$tmdbBaseUrl/$type/$id?append_to_response=videos&language=pt-BR"
+            
+            val headers = mapOf(
+                "Authorization" to "Bearer $tmdbAccessToken",
+                "accept" to "application/json"
+            )
+            
+            val response = app.get(url, headers = headers, timeout = 10_000)
+
+            if (response.code != 200) {
+                println("❌ [TMDB] Erro detalhes: ${response.code}")
+                return null
+            }
+
+            response.parsedSafe<TMDBDetailsResponse>()
+        } catch (e: Exception) {
+            println("❌ [TMDB] ERRO detalhes: ${e.message}")
+            null
+        }
+    }
+
+    private fun getHighQualityTrailer(videos: List<TMDBVideo>?): String? {
+        if (videos.isNullOrEmpty()) return null
+
+        return videos.mapNotNull { video ->
+            when {
+                video.site == "YouTube" && video.type == "Trailer" && video.official == true ->
+                    Triple(video.key, 10, "YouTube Trailer Oficial")
+                video.site == "YouTube" && video.type == "Trailer" ->
+                    Triple(video.key, 9, "YouTube Trailer")
+                video.site == "YouTube" && video.type == "Teaser" && video.official == true ->
+                    Triple(video.key, 8, "YouTube Teaser Oficial")
+                video.site == "YouTube" && video.type == "Teaser" ->
+                    Triple(video.key, 7, "YouTube Teaser")
+                else -> null
+            }
+        }
+        ?.sortedByDescending { it.second }
+        ?.firstOrNull()
+        ?.let { (key, _, _) -> "https://www.youtube.com/watch?v=$key" }
     }
 
     override suspend fun load(url: String): LoadResponse {
@@ -267,10 +407,10 @@ class AnimeFire : MainAPI() {
         // Extrair ID do AniList da URL
         val parts = url.split(":")
         val aniListId = parts.getOrNull(1)?.toIntOrNull()
-        val title = parts.getOrNull(2) ?: "Anime do AniList"
+        val titleFromUrl = parts.getOrNull(2) ?: "Anime do AniList"
         
         if (aniListId == null) {
-            return newAnimeLoadResponse(title, url, TvType.Anime) {
+            return newAnimeLoadResponse(titleFromUrl, url, TvType.Anime) {
                 this.plot = "ID do AniList não encontrado na URL"
             }
         }
@@ -329,29 +469,43 @@ class AnimeFire : MainAPI() {
                 val media = aniListResponse?.data?.Media
                 
                 if (media != null) {
-                    val finalTitle = media.title?.userPreferred ?: 
-                                    media.title?.romaji ?: 
-                                    media.title?.english ?: 
-                                    title
+                    val aniListTitle = media.title?.userPreferred ?: 
+                                      media.title?.romaji ?: 
+                                      media.title?.english ?: 
+                                      titleFromUrl
+                    
+                    // Buscar dados do TMDB em português
+                    val tmdbData = getTMDBInfoForAnime(aniListTitle, media.startDate?.year, true)
+                    
+                    // Usar título do TMDB se disponível, caso contrário usar do AniList
+                    val finalTitle = tmdbData?.title ?: aniListTitle
                     
                     val description = media.description?.replace(Regex("<[^>]*>"), "") ?: "Sem descrição"
                     
-                    // Preparar trailer se disponível
-                    val trailerId = media.trailer?.id
-                    val trailerSite = media.trailer?.site
-                    val trailerUrl = if (trailerSite == "youtube" && trailerId != null) {
-                        "https://www.youtube.com/watch?v=$trailerId"
-                    } else {
-                        null
-                    }
+                    // Usar poster do TMDB se disponível, caso contrário usar do AniList
+                    val finalPoster = tmdbData?.posterUrl ?: 
+                                     (media.coverImage?.extraLarge ?: media.coverImage?.large)
+                    val finalBackdrop = tmdbData?.backdropUrl ?: media.bannerImage
+                    
+                    // Usar sinopse do TMDB se disponível (geralmente em português)
+                    val finalDescription = tmdbData?.overview ?: description
+                    
+                    // Usar ano do TMDB se disponível
+                    val finalYear = tmdbData?.year ?: media.startDate?.year
+                    
+                    // Usar gêneros do TMDB se disponível
+                    val finalTags = tmdbData?.genres ?: media.genres
+                    
+                    // Usar trailer do TMDB se disponível
+                    val trailerUrl = tmdbData?.youtubeTrailer
                     
                     return newAnimeLoadResponse(finalTitle, url, TvType.Anime) {
-                        this.plot = description
-                        this.posterUrl = media.coverImage?.extraLarge ?: media.coverImage?.large
-                        this.backgroundPosterUrl = media.bannerImage
-                        this.year = media.startDate?.year
-                        this.tags = media.genres
-                    }.apply {
+                        this.plot = finalDescription
+                        this.posterUrl = finalPoster
+                        this.backgroundPosterUrl = finalBackdrop
+                        this.year = finalYear
+                        this.tags = finalTags
+                        
                         if (trailerUrl != null) {
                             println("🎬 Trailer disponível: $trailerUrl")
                         }
@@ -362,7 +516,7 @@ class AnimeFire : MainAPI() {
             println("❌ Erro ao carregar do AniList: ${e.message}")
         }
         
-        return newAnimeLoadResponse(title, url, TvType.Anime) {
+        return newAnimeLoadResponse(titleFromUrl, url, TvType.Anime) {
             this.plot = "Não foi possível carregar detalhes deste anime."
         }
     }
@@ -455,5 +609,60 @@ class AnimeFire : MainAPI() {
         @JsonProperty("id") val id: String? = null,
         @JsonProperty("site") val site: String? = null,
         @JsonProperty("thumbnail") val thumbnail: String? = null
+    )
+
+    // Classes TMDB
+    @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
+    private data class TMDBSearchResponse(
+        @JsonProperty("results") val results: List<TMDBResult>
+    )
+
+    @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
+    private data class TMDBResult(
+        @JsonProperty("id") val id: Int,
+        @JsonProperty("title") val title: String? = null,
+        @JsonProperty("name") val name: String? = null,
+        @JsonProperty("release_date") val release_date: String? = null,
+        @JsonProperty("first_air_date") val first_air_date: String? = null,
+        @JsonProperty("poster_path") val poster_path: String?
+    )
+
+    @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
+    private data class TMDBDetailsResponse(
+        @JsonProperty("overview") val overview: String?,
+        @JsonProperty("backdrop_path") val backdrop_path: String?,
+        @JsonProperty("runtime") val runtime: Int?,
+        @JsonProperty("genres") val genres: List<TMDBGenre>?,
+        @JsonProperty("videos") val videos: TMDBVideos?
+    )
+
+    @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
+    private data class TMDBGenre(
+        @JsonProperty("name") val name: String
+    )
+
+    @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
+    private data class TMDBVideos(
+        @JsonProperty("results") val results: List<TMDBVideo>
+    )
+
+    @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
+    private data class TMDBVideo(
+        @JsonProperty("key") val key: String,
+        @JsonProperty("site") val site: String,
+        @JsonProperty("type") val type: String,
+        @JsonProperty("official") val official: Boolean? = false
+    )
+
+    private data class TMDBInfo(
+        val id: Int,
+        val title: String?,
+        val year: Int?,
+        val posterUrl: String?,
+        val backdropUrl: String?,
+        val overview: String?,
+        val genres: List<String>?,
+        val youtubeTrailer: String?,
+        val duration: Int?
     )
 }
