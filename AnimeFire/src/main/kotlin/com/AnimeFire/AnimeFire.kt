@@ -31,11 +31,11 @@ class AnimeFire : MainAPI() {
         "Connection" to "keep-alive"
     )
 
-    // ============ ABAS DA PÁGINA INICIAL ============
+    // ============ ABAS DA PÁGINA INICIAL (5 abas) ============
     override val mainPage = mainPageOf(
         "$mainUrl" to "Lançamentos",
         "$mainUrl" to "Destaques da Semana",
-        "$mainUrl" to "Últimos Animes Adicionados", 
+        "$mainUrl" to "Últimos Animes Adicionados",
         "$mainUrl" to "Últimos Episódios Adicionados",
         "anilist_upcoming" to "Próxima Temporada (AniList)"
     )
@@ -47,7 +47,7 @@ class AnimeFire : MainAPI() {
         }
     }
 
-    // ============ PÁGINA INICIAL DO ANIMEFIRE ============
+    // ============ PÁGINA INICIAL DO ANIMEFIRE (4 abas) ============
     private suspend fun getAnimeFireHomePage(pageName: String): HomePageResponse {
         return try {
             println("🏠 [HOMEPAGE] Carregando aba: $pageName")
@@ -86,7 +86,7 @@ class AnimeFire : MainAPI() {
                             val link = card.selectFirst("a") ?: return@runCatching null
                             val href = link.attr("href").takeIf { it.isNotEmpty() } ?: return@runCatching null
                             
-                            val titleElement = card.selectFirst("h3.animeTitle, .title, h3") ?: return@runCasting null
+                            val titleElement = card.selectFirst("h3.animeTitle, .title, h3") ?: return@runCatching null
                             val rawTitle = titleElement.text().trim()
                             
                             // Extrair número do episódio
@@ -453,7 +453,7 @@ class AnimeFire : MainAPI() {
             .trim('-')
     }
 
-    // ============ LOAD (MANTIDO COMPLETO) ============
+    // ============ LOAD (MANTIDO SIMPLES) ============
     override suspend fun load(url: String): LoadResponse {
         println("\n🚀 AnimeFire.load() para URL: $url")
         return loadFromAnimeFire(url)
@@ -478,7 +478,6 @@ class AnimeFire : MainAPI() {
             
             val document = response.document
 
-            // 1. TÍTULO E INFORMAÇÕES BÁSICAS
             val titleElement = document.selectFirst("h1.quicksand400, .main_div_anime_info h1, h1") ?: 
                 throw ErrorLoadingException("Título não encontrado")
             val rawTitle = titleElement.text().trim()
@@ -491,11 +490,9 @@ class AnimeFire : MainAPI() {
 
             println("📌 Título: $cleanTitle, Ano: $year, Tipo: $type")
 
-            // 2. SINOPSE
             val plotElement = document.selectFirst("div.divSinopse, .sinopse, .description")
             val plot = plotElement?.text()?.trim()
 
-            // 3. POSTER
             val posterImg = document.selectFirst(".sub_animepage_img img, .poster img, img[src*='/img/animes/']")
             val poster = when {
                 posterImg?.hasAttr("src") == true -> fixUrl(posterImg.attr("src"))
@@ -503,32 +500,8 @@ class AnimeFire : MainAPI() {
                 else -> null
             }
 
-            // 4. AVALIAÇÃO
-            val ratingElement = document.selectFirst(".rating, .score, [class*='rating'], [class*='score']")
-            val ratingText = ratingElement?.text()?.trim()
-            val rating = ratingText?.let {
-                Regex("([0-9.]+)").find(it)?.groupValues?.get(1)?.toFloatOrNull()
-            }
-
-            // 5. ELENCO E INFORMAÇÕES ADICIONAIS
-            val infoElements = document.select(".anime-info, .info, .details, .anime-details")
-            val additionalInfo = mutableListOf<String>()
-            
-            infoElements.forEach { info ->
-                val text = info.text().trim()
-                if (text.isNotEmpty() && text.length < 200) { // Limitar tamanho
-                    additionalInfo.add(text)
-                }
-            }
-            
-            // 6. GÊNEROS
-            val genres = document.select(".genre, .genres a, .tag, [class*='genre']")
-                .mapNotNull { it.text().trim().takeIf { t -> t.isNotEmpty() } }
-                .distinct()
-
-            // 7. EPISÓDIOS (se não for filme)
             val episodes = if (!isMovie) {
-                document.select("a.lEp, .episode-item, [href*='/video/'], .divListaEps a")
+                document.select("a.lEp, .episode-item, [href*='/video/']")
                     .mapIndexedNotNull { index, element ->
                         try {
                             val href = element.attr("href")
@@ -537,22 +510,10 @@ class AnimeFire : MainAPI() {
                             val text = element.text().trim()
                             val epNumber = extractEpisodeNumber(text) ?: (index + 1)
                             
-                            // Título do episódio
-                            val epName = element.selectFirst(".ep-name, .title, .name")?.text()?.trim()
-                                ?: text.substringAfterLast("-").trim()
-                                ?: "Episódio $epNumber"
-                            
-                            // Data do episódio (se disponível)
-                            val dateElement = element.selectFirst(".date, .time, .added")
-                            val date = dateElement?.text()?.trim()
-                            
                             newEpisode(fixUrl(href)) {
-                                this.name = epName
+                                this.name = "Episódio $epNumber"
                                 this.season = 1
                                 this.episode = epNumber
-                                this.posterUrl = null
-                                this.description = null
-                                this.date = date
                             }
                         } catch (e: Exception) {
                             null
@@ -563,32 +524,12 @@ class AnimeFire : MainAPI() {
                 emptyList()
             }
 
-            // 8. RECOMENDAÇÕES
-            val recommendations = document.select(".owl-carousel-anime .divArticleLancamentos a.item, .recommendations a, .similar a")
-                .mapNotNull { element -> 
-                    runCatching { 
-                        val href = element.attr("href")
-                        val titleEl = element.selectFirst("h3.animeTitle, .text-block h3, .title")
-                        val title = titleEl?.text()?.trim() ?: "Sem Título"
-                        
-                        newAnimeSearchResponse(title, fixUrl(href)) {
-                            val img = element.selectFirst("img.imgAnimes, img.card-img-top, img")
-                            this.posterUrl = img?.attr("src")?.let { fixUrl(it) }
-                            this.type = TvType.Anime
-                        }
-                    }.getOrNull()
-                }
-
-            // 9. CRIAR RESPOSTA COMPLETA
             if (isMovie) {
                 newMovieLoadResponse(cleanTitle, url, type, url) {
                     this.year = year
                     this.plot = plot
                     this.posterUrl = poster
                     this.type = type
-                    this.rating = rating
-                    this.tags = genres
-                    this.recommendations = recommendations.takeIf { it.isNotEmpty() }
                 }
             } else {
                 newAnimeLoadResponse(cleanTitle, url, type) {
@@ -597,15 +538,12 @@ class AnimeFire : MainAPI() {
                     this.plot = plot
                     this.posterUrl = poster
                     this.type = type
-                    this.rating = rating
-                    this.tags = genres
-                    this.recommendations = recommendations.takeIf { it.isNotEmpty() }
                 }
             }
         } catch (e: Exception) {
             println("❌ Erro ao carregar: ${e.message}")
             newAnimeLoadResponse("Erro", url, TvType.Anime) {
-                this.plot = "Não foi possível carregar este anime."
+                this.plot = "Não foi possível carregar."
             }
         }
     }
