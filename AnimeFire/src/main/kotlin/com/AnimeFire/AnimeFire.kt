@@ -256,6 +256,7 @@ class AnimeFire : MainAPI() {
         }
     }
     
+    // FUNÇÃO CORRIGIDA - com safe calls
     private fun findFirstSearchResult(document: org.jsoup.nodes.Document): Element? {
         val selectors = listOf(
             "div.divCardUltimosEps article.card a",
@@ -269,8 +270,8 @@ class AnimeFire : MainAPI() {
             try {
                 val elements = document.select(selector)
                 if (elements.isNotEmpty()) {
-                    val first = elements.first()
-                    if (first.hasAttr("href")) {
+                    val first = elements.firstOrNull() // Usar firstOrNull em vez de first
+                    if (first != null && first.hasAttr("href")) { // Verificar se não é nulo
                         val href = first.attr("href")
                         if (href.contains("/animes/") || href.contains("/filmes/")) {
                             println("🎯 [SELECTOR] Encontrado com: $selector")
@@ -339,7 +340,6 @@ class AnimeFire : MainAPI() {
                element.attr("alt").takeIf { it.isNotEmpty() }
     }
     
-    // FUNÇÃO CORRIGIDA - Sem erros de nullable
     private fun extractImageFromElement(element: Element): String? {
         val imgSelectors = listOf(
             "img.imgAnimes",
@@ -352,7 +352,6 @@ class AnimeFire : MainAPI() {
         for (selector in imgSelectors) {
             val img = element.selectFirst(selector)
             if (img != null) {
-                // Verificar atributos de forma segura
                 if (img.hasAttr("data-src")) {
                     val src = img.attr("data-src")
                     if (src.isNotEmpty()) {
@@ -425,7 +424,6 @@ class AnimeFire : MainAPI() {
             val plotElement = document.selectFirst("div.divSinopse, .sinopse, .description")
             val plot = plotElement?.text()?.trim()
 
-            // CORRIGIDO: usando safe calls
             val posterImg = document.selectFirst(".sub_animepage_img img, .poster img, img[src*='/img/animes/']")
             val poster = when {
                 posterImg?.hasAttr("src") == true -> fixUrl(posterImg.attr("src"))
