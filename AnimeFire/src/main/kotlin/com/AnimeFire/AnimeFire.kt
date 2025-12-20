@@ -352,33 +352,88 @@ class AnimeFire : MainAPI() {
     }
 
     // ============ LOAD ATUALIZADA ============
-    override suspend fun load(url: String): LoadResponse {
-        println("\n$DEBUG_PREFIX load() para URL: $url")
-        
-        if (url.startsWith("anilist:")) {
-            println("$DEBUG_PREFIX URL do AniList detectada, buscando no AnimeFire...")
-            val parts = url.split(":")
-            if (parts.size >= 3) {
-                val title = parts.subList(2, parts.size).joinToString(":")
-                println("$DEBUG_PREFIX Buscando anime: '$title' no AnimeFire")
-                
-                val searchResults = search(title)
-                if (searchResults.isNotEmpty()) {
-                    val bestMatch = searchResults.firstOrNull()
-                    if (bestMatch != null && bestMatch.url.startsWith("http")) {
-                        println("$DEBUG_PREFIX ✅ Encontrado! Redirecionando para: ${bestMatch.url}")
-                        return loadFromAnimeFire(bestMatch.url)
-                    }
-                }
-                
-                println("$DEBUG_PREFIX ❌ Anime não encontrado no AnimeFire")
-                return createAnimeNotFoundResponse(title, url)
-            }
-        }
-        
-        return loadFromAnimeFire(url)
-    }
 
+override suspend fun load(url: String): LoadResponse {
+    println("\n$DEBUG_PREFIX load() para URL: $url")
+    
+    // 1. Se for um link do AniList, pesquisar no AnimeFire
+    if (url.startsWith("anilist:")) {
+        return handleAniListUrl(url)
+    }
+    
+    // 2. Se já for um link direto do AnimeFire, carregar normalmente
+    return loadFromAnimeFire(url)
+}
+
+private suspend fun handleAniListUrl(aniListUrl: String): LoadResponse {
+    println("$DEBUG_PREFIX Processando URL do AniList: $aniListUrl")
+    
+    // Extrair o nome do anime do formato "anilist:ID:NomeDoAnime"
+    val parts = aniListUrl.split(":")
+    if (parts.size < 3) {
+        return createAnimeNotFoundResponse("Formato de URL inválido", aniListUrl)
+    }
+    
+    val animeTitle = parts.subList(2, parts.size).joinToString(":")
+    println("$DEBUG_PREFIX 🎯 Buscando anime: '$animeTitle' no AnimeFire")
+    
+    // FAZER A PESQUISA NO ANIMEFIRE
+    val searchResults = searchOnAnimeFire(animeTitle)
+    
+    if (searchResults.isNotEmpty()) {
+        // Pegar o MELHOR resultado (primeiro da lista)
+        val bestMatch = searchResults.first()
+        println("$DEBUG_PREFIX ✅ Encontrado! Redirecionando para: ${bestMatch.url}")
+        
+        // Carregar a página REAL do AnimeFire
+        return loadFromAnimeFire(bestMatch.url)
+    }
+    
+    // Se não encontrou nenhum resultado
+    println("$DEBUG_PREFIX ❌ Nenhum resultado encontrado no AnimeFire")
+    return createAnimeNotFoundResponse(animeTitle, aniListUrl)
+}
+
+private suspend fun searchOnAnimeFire(query: String): List<SearchResponse> {
+    println("$DEBUG_PREFIX 🔍 Pesquisando no AnimeFire: '$query'")
+    
+    val searchUrl = "$mainUrl$SEARCH_PATH/${URLEncoder.encode(query, "UTF-8")}"
+    val document = app.get(searchUrl, timeout = 15000).document
+    
+    val results = document.select("div.divCardUltimosEps article.card a")
+        .mapNotNull { element ->
+            runCatching {
+                val href = element.attr("href")
+                if (href.isBlank()) return@runCatching null
+                
+                val titleElement = element.selectFirst("h3.animeTitle, .text-block h3, .animeTitle")
+                val rawTitle = titleElement?.text()?.trim() ?: "Sem Título"
+                
+                // Limpar o título (remover "Todos os Episódios", etc.)
+                val cleanTitle = rawTitle
+                    .replace(Regex("\\s*-\\s*Todos os Episódios$"), "")
+                    .replace(Regex("\\(Dublado\\)"), "")
+                    .replace(Regex("\\(Legendado\\)"), "")
+                    .trim()
+                
+                println("$DEBUG_PREFIX 📦 Resultado da busca: '$cleanTitle' -> $href")
+                
+                newAnimeSearchResponse(cleanTitle, fixUrl(href)) {
+                    val img = element.selectFirst("img.imgAnimes, img.card-img-top")
+                    this.posterUrl = when {
+                        img?.hasAttr("data-src") == true -> fixUrl(img.attr("data-src"))
+                        img?.hasAttr("src") == true -> fixUrl(img.attr("src"))
+                        else -> null
+                    }
+                    this.type = TvType.Anime
+                }
+            }.getOrNull()
+        }
+        .distinctBy { it.url } // Remover duplicados
+    
+    println("$DEBUG_PREFIX 📊 Total de resultados encontrados: ${results.size}")
+    return results
+}
     private suspend fun loadFromAnimeFire(url: String): LoadResponse {
         println("$DEBUG_PREFIX Carregando do AnimeFire: $url")
         
