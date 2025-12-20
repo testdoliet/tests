@@ -36,9 +36,9 @@ class AnimeFire : MainAPI() {
 
     // ============ PÁGINA PRINCIPAL COM 3 ABAS DO ANIMEFIRE ============
     override val mainPage = mainPageOf(
-        "$mainUrl" to "Lançamentos",
-        "$mainUrl" to "Destaques da Semana",
-        "$mainUrl" to "Últimos Episódios"
+        "$mainUrl" to "🔥 Lançamentos",
+        "$mainUrl" to "🔥 Destaques da Semana",
+        "$mainUrl" to "🔥 Últimos Episódios"
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
@@ -47,19 +47,19 @@ class AnimeFire : MainAPI() {
         val document = app.get(mainUrl).document
         
         val homeItems = when (request.name) {
-            "Lançamentos" -> 
+            "🔥 Lançamentos" -> 
                 document.select(".owl-carousel-home .divArticleLancamentos a.item")
                     .mapNotNull { element -> 
                         runCatching { element.toSearchResponse() }.getOrNull()
                     }
             
-            "Destaques da Semana" -> 
+            "🔥 Destaques da Semana" -> 
                 document.select(".owl-carousel-semana .divArticleLancamentos a.item")
                     .mapNotNull { element -> 
                         runCatching { element.toSearchResponse() }.getOrNull()
                     }
             
-            "Últimos Episódios" -> 
+            "🔥 Últimos Episódios" -> 
                 document.select(".divCardUltimosEpsHome").mapNotNull { card ->
                     runCatching {
                         val link = card.selectFirst("article.card a") ?: return@runCatching null
@@ -304,9 +304,10 @@ class AnimeFire : MainAPI() {
                     addTrailer(trailerUrl)
                 }
                 
-                // Atores do AniZip (se disponível)
+                // Atores do AniZip (se disponível) - SEM ROLE PARAMETER
                 aniZipData?.images?.filter { it.coverType == "Actor" }?.take(5)?.forEach { actor ->
-                    addActors(listOf(Actor(name = actor.url?.substringAfterLast("/") ?: "Ator", role = null)))
+                    val actorName = actor.url?.substringAfterLast("/")?.replace("-", " ")?.capitalize() ?: "Ator"
+                    addActors(listOf(Actor(actorName)))
                 }
             }
         } else {
@@ -326,9 +327,10 @@ class AnimeFire : MainAPI() {
                     addTrailer(trailerUrl)
                 }
                 
-                // Atores do AniZip (se disponível)
+                // Atores do AniZip (se disponível) - SEM ROLE PARAMETER
                 aniZipData?.images?.filter { it.coverType == "Actor" }?.take(5)?.forEach { actor ->
-                    addActors(listOf(Actor(name = actor.url?.substringAfterLast("/") ?: "Ator", role = null)))
+                    val actorName = actor.url?.substringAfterLast("/")?.replace("-", " ")?.capitalize() ?: "Ator"
+                    addActors(listOf(Actor(actorName)))
                 }
                 
                 // Informações extras do AniZip
