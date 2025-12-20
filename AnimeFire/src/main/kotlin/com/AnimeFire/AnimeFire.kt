@@ -31,7 +31,7 @@ class AnimeFire : MainAPI() {
         "Connection" to "keep-alive"
     )
 
-    // ============ ABAS DA PÁGINA INICIAL (5 abas) ============
+    // ============ ABAS DA PÁGINA INICIAL ============
     override val mainPage = mainPageOf(
         "$mainUrl" to "Lançamentos",
         "$mainUrl" to "Destaques da Semana",
@@ -47,7 +47,7 @@ class AnimeFire : MainAPI() {
         }
     }
 
-    // ============ PÁGINA INICIAL DO ANIMEFIRE (4 abas) ============
+    // ============ PÁGINA INICIAL DO ANIMEFIRE ============
     private suspend fun getAnimeFireHomePage(pageName: String): HomePageResponse {
         return try {
             println("🏠 [HOMEPAGE] Carregando aba: $pageName")
@@ -162,7 +162,7 @@ class AnimeFire : MainAPI() {
         }
     }
 
-    // ============ PRÓXIMA TEMPORADA (ANILIST) ============
+    // ============ PRÓXIMA TEMPORADA (ANILIST) - APENAS MOSTRA LISTA ============
     private suspend fun getAniListUpcoming(page: Int): HomePageResponse {
         val query = """
             query {
@@ -181,16 +181,8 @@ class AnimeFire : MainAPI() {
             }
         """.trimIndent()
         
-        return executeAniListQuery(query, "Próxima Temporada (AniList)", page)
-    }
-
-    private suspend fun executeAniListQuery(
-        query: String, 
-        pageName: String,
-        page: Int
-    ): HomePageResponse {
         return try {
-            println("📡 [ANILIST] Buscando: $pageName")
+            println("📡 [ANILIST] Buscando: Próxima Temporada")
             
             val response = app.post(
                 aniListApiUrl,
@@ -212,33 +204,26 @@ class AnimeFire : MainAPI() {
                     val cleanTitle = cleanAnimeTitle(title)
                     val posterUrl = media.coverImage?.extraLarge
                     
-                    println("🔍 [ANILIST] Processando: $cleanTitle")
+                    // Cria URL especial para o AniList
+                    val anilistUrl = "anilist:${media.id}:$cleanTitle"
                     
-                    val searchResult = searchAnimeFire(cleanTitle)
+                    filteredItems.add(newAnimeSearchResponse(cleanTitle, anilistUrl) {
+                        this.posterUrl = posterUrl
+                        this.type = TvType.Anime
+                    })
                     
-                    if (searchResult != null) {
-                        println("✅ [ANILIST] Encontrado: ${searchResult.name}")
-                        
-                        filteredItems.add(newAnimeSearchResponse(cleanTitle, searchResult.url) {
-                            this.posterUrl = posterUrl ?: searchResult.posterUrl
-                            this.type = searchResult.type
-                        })
-                        
-                        delay(REQUEST_DELAY_MS)
-                    } else {
-                        println("⚠️ [ANILIST] Não encontrado: $cleanTitle")
-                    }
+                    println("✅ [ANILIST] Adicionado: $cleanTitle (URL: $anilistUrl)")
                 }
                 
                 println("✅ [ANILIST] ${filteredItems.size} itens adicionados")
-                newHomePageResponse(pageName, filteredItems, hasNext = filteredItems.isNotEmpty())
+                newHomePageResponse("Próxima Temporada (AniList)", filteredItems, hasNext = filteredItems.isNotEmpty())
             } else {
                 println("❌ [ANILIST] Erro: ${response.code}")
-                newHomePageResponse(pageName, emptyList(), false)
+                newHomePageResponse("Próxima Temporada (AniList)", emptyList(), false)
             }
         } catch (e: Exception) {
             println("❌ [ANILIST] Exception: ${e.message}")
-            newHomePageResponse(pageName, emptyList(), false)
+            newHomePageResponse("Próxima Temporada (AniList)", emptyList(), false)
         }
     }
 
@@ -453,9 +438,32 @@ class AnimeFire : MainAPI() {
             .trim('-')
     }
 
-    // ============ LOAD (MANTIDO SIMPLES) ============
+    // ============ LOAD ============
     override suspend fun load(url: String): LoadResponse {
         println("\n🚀 AnimeFire.load() para URL: $url")
+        
+        // Se for URL do AniList, faz busca automática
+        if (url.startsWith("anilist:")) {
+            val parts = url.split(":")
+            if (parts.size >= 3) {
+                val titleFromUrl = parts[2]
+                println("🎯 [LOAD] Anime do AniList: $titleFromUrl")
+                
+                // Busca automática no AnimeFire
+                val searchResult = searchAnimeFire(titleFromUrl)
+                if (searchResult != null) {
+                    println("✅ [LOAD] Encontrado no AnimeFire: ${searchResult.name}")
+                    return loadFromAnimeFire(searchResult.url)
+                } else {
+                    println("❌ [LOAD] Não encontrado no AnimeFire")
+                    return newAnimeLoadResponse(titleFromUrl, url, TvType.Anime) {
+                        this.plot = "Este anime da lista do AniList não foi encontrado no AnimeFire.\n\nTente buscar manualmente pelo nome."
+                    }
+                }
+            }
+        }
+        
+        // Se for URL normal do AnimeFire, carrega normalmente
         return loadFromAnimeFire(url)
     }
 
