@@ -3,7 +3,6 @@ package com.AnimeFire
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
-import com.lagradost.cloudstream3.LoadResponse.Companion.addActors
 import com.lagradost.cloudstream3.LoadResponse.Companion.addTrailer
 import com.lagradost.cloudstream3.app
 import org.jsoup.nodes.Element
@@ -13,6 +12,7 @@ import kotlinx.coroutines.delay
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.google.gson.JsonParser
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties
+import java.io.File
 
 class AnimeFire : MainAPI() {
     override var mainUrl = "https://animefire.io"
@@ -29,8 +29,12 @@ class AnimeFire : MainAPI() {
         private const val RETRY_DELAY = 1000L
         private const val tmdbImageUrl = "https://image.tmdb.org/t/p"
         private const val TRANSLATION_ENABLED = true
-        private const val WORKERS_URL = "https://animefire.euluan1912.workers.dev" // Proxy APENAS para tradução
+        private const val WORKERS_URL = "https://animefire.euluan1912.workers.dev"
         private const val MAX_CACHE_SIZE = 500
+        
+        // Cache para metadados dos animes
+        private val animeMetadataCache = mutableMapOf<String, AnimeMetadata>()
+        private const val CACHE_FILE = "animefire_metadata_cache.json"
     }
 
     // ============ TMDB COM BuildConfig ============
@@ -41,7 +45,7 @@ class AnimeFire : MainAPI() {
     override val mainPage = mainPageOf(
         "$mainUrl" to "Lançamentos",
         "$mainUrl" to "Destaques da Semana",
-        "$mainUrl" to "Últimos Animes Adicionados",
+        "$mainUrl" to "Em Breve",  // Alterado de "Últimos Animes Adicionados"
         "$mainUrl" to "Últimos Episódios Adicionados"
     )
 
@@ -49,6 +53,477 @@ class AnimeFire : MainAPI() {
     private val translationCache = mutableMapOf<String, String>()
     private val cacheHits = mutableMapOf<String, Int>()
    
+    // ============ NOVAS CLASSES DE DADOS ============
+    
+    data class AnimeMetadata(
+        val malId: Int? = null,
+        val titleEnglish: String? = null,
+        val titleRomaji: String? = null,
+        val titlePortuguese: String? = null,
+        val posterUrl: String? = null,
+        val bannerUrl: String? = null,
+        val coverImage: String? = null,
+        val hasEpisodes: Boolean = true,
+        val isUpcoming: Boolean = false,
+        val cachedAt: Long = System.currentTimeMillis()
+    )
+
+    // ============ SISTEMA DE CACHE DE METADADOS ============
+    
+    private suspend fun getAnimeMetadata(animeName: String, url: String? = null): AnimeMetadata? {
+        val cacheKey = animeName.lowercase().trim()
+        
+        // Verificar cache em memória primeiro
+        animeMetadataCache[cacheKey]?.let { cached ->
+            // Cache válido por 7 dias
+            if (System.currentTimeMillis() - cached.cachedAt < 7 * 24 * 60 * 60 * 1000) {
+                return cached
+            }
+        }
+        
+        // Buscar MAL ID
+        val malId = searchMALIdByName(animeName)
+        if (malId == null) {
+            // Se não encontrar MAL ID, criar metadados básicos
+            val basicMetadata = AnimeMetadata(
+                titleEnglish = animeName,
+                hasEpisodes = checkIfHasEpisodes(url)
+            )
+            animeMetadataCache[cacheKey] = basicMetadata
+            saveMetadataCache()
+            return basicMetadata
+        }
+        
+        // Buscar metadados completos do AniList
+        val metadata = fetchAniListMetadata(malId, url)
+        animeMetadataCache[cacheKey] = metadata
+        saveMetadataCache()
+        
+        return metadata
+    }
+    
+    private suspend fun fetchAniListMetadata(malId: Int, url: String? = null): AnimeMetadata {
+        return try {
+            val query = """
+                query {
+                    Media(idMal: $malId, type: ANIME) {
+                        title {
+                            english
+                            romaji
+                            native
+                        }
+                        coverImage {
+                            extraLarge
+                            large
+                            medium
+                        }
+                        bannerImage
+                        episodes
+                        status
+                        nextAiringEpisode {
+                            episode
+                            timeUntilAiring
+                        }
+                    }
+                }
+            """.trimIndent()
+            
+            val response = app.post(
+                "https://graphql.anilist.co",
+                data = mapOf("query" to query),
+                headers = mapOf("Content-Type" to "application/json", "Accept" to "application/json"),
+                timeout = 10_000
+            )
+            
+            if (response.code == 200) {
+                val data = response.parsedSafe<AniListFullResponse>()
+                val media = data?.data?.Media
+                
+                if (media != null) {
+                    val hasEps = checkIfHasEpisodes(url) ?: (media.episodes ?: 0) > 0
+                    val isUpcoming = media.status == "NOT_YET_RELEASED" || 
+                                     media.nextAiringEpisode != null
+                    
+                    return AnimeMetadata(
+                        malId = malId,
+                        titleEnglish = media.title?.english ?: media.title?.romaji ?: "",
+                        titleRomaji = media.title?.romaji,
+                        titlePortuguese = media.title?.native,
+                        posterUrl = media.coverImage?.extraLarge ?: 
+                                   media.coverImage?.large ?: 
+                                   media.coverImage?.medium,
+                        bannerUrl = media.bannerImage,
+                        hasEpisodes = hasEps,
+                        isUpcoming = isUpcoming
+                    )
+                }
+            }
+            
+            // Fallback básico
+            AnimeMetadata(
+                malId = malId,
+                titleEnglish = "",
+                hasEpisodes = checkIfHasEpisodes(url) ?: true
+            )
+        } catch (e: Exception) {
+            println("❌ Erro ao buscar metadados AniList: ${e.message}")
+            AnimeMetadata(
+                malId = malId,
+                titleEnglish = "",
+                hasEpisodes = checkIfHasEpisodes(url) ?: true
+            )
+        }
+    }
+    
+    private suspend fun checkIfHasEpisodes(url: String?): Boolean? {
+        if (url == null) return null
+        
+        return try {
+            val document = app.get(url).document
+            val episodeElements = document.select("a.lEp.epT, a.lEp, .divListaEps a, [href*='/video/'], [href*='/episodio/']")
+            episodeElements.isNotEmpty()
+        } catch (e: Exception) {
+            null
+        }
+    }
+    
+    private suspend fun saveMetadataCache() {
+        // Implementação simplificada - em produção usar arquivo JSON
+        println("💾 Cache de metadados: ${animeMetadataCache.size} itens")
+    }
+    
+    private suspend fun loadMetadataCache() {
+        // Carregar cache do arquivo se existir
+        println("📥 Cache de metadados carregado")
+    }
+
+    // ============ FUNÇÃO AUXILIAR DE BUSCA ATUALIZADA ============
+    
+    private suspend fun Element.toSearchResponse(): AnimeSearchResponse? {
+        val href = attr("href") ?: return null
+        if (href.isBlank()) return null
+        
+        val titleElement = when {
+            selectFirst("h3.animeTitle") != null -> selectFirst("h3.animeTitle")
+            selectFirst(".text-block h3") != null -> selectFirst(".text-block h3")
+            selectFirst(".animeTitle") != null -> selectFirst(".animeTitle")
+            else -> selectFirst("h3")
+        } ?: return null
+        
+        val rawTitle = titleElement.text().trim()
+        
+        val cleanTitle = rawTitle
+            .replace(Regex("(?i)(dublado|legendado|todos os episódios|\\(\\d{4}\\)|\\s*-\\s*$|\\(movie\\))"), "")
+            .trim()
+        
+        val isMovie = href.contains("/filmes/") || 
+                      rawTitle.contains("filme", ignoreCase = true) ||
+                      rawTitle.contains("movie", ignoreCase = true)
+        
+        // Obter metadados melhorados
+        val metadata = getAnimeMetadata(cleanTitle, href)
+        
+        // Usar título em inglês se disponível, senão manter o original
+        val finalTitle = metadata?.titleEnglish?.ifBlank { cleanTitle } ?: cleanTitle
+        
+        // Usar imagem do AniZip/AniList se disponível, senão usar do site
+        val sitePoster = selectFirst("img.imgAnimes, img.card-img-top, img.transitioning_src, img.owl-lazy, img[src*='animes']")?.let { img ->
+            when {
+                img.hasAttr("data-src") -> img.attr("data-src")
+                img.hasAttr("src") -> img.attr("src")
+                else -> null
+            }?.takeIf { !it.contains("logo", ignoreCase = true) }
+        } ?: selectFirst("img:not([src*='logo']):not([src*='Logo'])")?.attr("src")
+        
+        val finalPoster = metadata?.posterUrl ?: sitePoster?.let { fixUrl(it) }
+        
+        return newAnimeSearchResponse(finalTitle, fixUrl(href)) {
+            this.posterUrl = finalPoster
+            this.type = if (isMovie) TvType.Movie else TvType.Anime
+        }
+    }
+
+    // ============ GET MAIN PAGE ATUALIZADA ============
+    
+    override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
+        val document = app.get(mainUrl).document
+        
+        val homeItems = when (request.name) {
+            "Lançamentos" -> {
+                val allItems = document.select(".owl-carousel-home .divArticleLancamentos a.item")
+                    .mapNotNull { element -> 
+                        runCatching { element.toSearchResponse() }.getOrNull()
+                    }
+                // Filtrar para remover "em breve"
+                allItems.filter { item ->
+                    val metadata = getAnimeMetadata(item.name, item.url)
+                    !(metadata?.isUpcoming == true || metadata?.hasEpisodes == false)
+                }
+            }
+            
+            "Destaques da Semana" -> {
+                val allItems = document.select(".owl-carousel-semana .divArticleLancamentos a.item")
+                    .mapNotNull { element -> 
+                        runCatching { element.toSearchResponse() }.getOrNull()
+                    }
+                // Filtrar para remover "em breve"
+                allItems.filter { item ->
+                    val metadata = getAnimeMetadata(item.name, item.url)
+                    !(metadata?.isUpcoming == true || metadata?.hasEpisodes == false)
+                }
+            }
+            
+            "Em Breve" -> {
+                // Coletar todos os animes da página
+                val allAnimes = mutableListOf<AnimeSearchResponse>()
+                
+                // Animes sem episódios do carrossel "l_dia"
+                val upcomingFromSite = document.select(".owl-carousel-l_dia .divArticleLancamentos a.item")
+                    .mapNotNull { element -> 
+                        runCatching { element.toSearchResponse() }.getOrNull()
+                    }
+                    .filter { item ->
+                        val metadata = getAnimeMetadata(item.name, item.url)
+                        metadata?.isUpcoming == true || metadata?.hasEpisodes == false
+                    }
+                
+                allAnimes.addAll(upcomingFromSite)
+                
+                // Também verificar outras seções para animes sem episódios
+                val otherSections = listOf(
+                    ".owl-carousel-home .divArticleLancamentos a.item",
+                    ".owl-carousel-semana .divArticleLancamentos a.item"
+                )
+                
+                otherSections.forEach { selector ->
+                    document.select(selector).forEach { element ->
+                        runCatching {
+                            element.toSearchResponse()?.let { item ->
+                                val metadata = getAnimeMetadata(item.name, item.url)
+                                if (metadata?.isUpcoming == true || metadata?.hasEpisodes == false) {
+                                    allAnimes.add(item)
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                allAnimes.distinctBy { it.url }
+            }
+            
+            "Últimos Episódios Adicionados" -> {
+                document.select(".divCardUltimosEpsHome").mapNotNull { card ->
+                    runCatching {
+                        val link = card.selectFirst("article.card a") ?: return@runCatching null
+                        val href = link.attr("href") ?: return@runCatching null
+                        
+                        val titleElement = card.selectFirst("h3.animeTitle") ?: return@runCatching null
+                        val rawTitle = titleElement.text().trim()
+                        
+                        val epNumber = card.selectFirst(".numEp")?.text()?.toIntOrNull() ?: 1
+                        val cleanTitle = rawTitle.replace(Regex("(?i)(dublado|legendado|todos os episódios|\\(\\d{4}\\))$"), "").trim()
+                        
+                        // Obter metadados melhorados
+                        val metadata = getAnimeMetadata(cleanTitle, href)
+                        val finalTitle = metadata?.titleEnglish?.ifBlank { cleanTitle } ?: cleanTitle
+                        
+                        val displayTitle = "$finalTitle - Episódio $epNumber"
+                        
+                        // Usar imagem do AniZip/AniList se disponível
+                        val sitePoster = card.selectFirst("img.imgAnimesUltimosEps, img[src*='animes']")?.let { img ->
+                            when {
+                                img.hasAttr("data-src") -> img.attr("data-src")
+                                img.hasAttr("src") -> img.attr("src")
+                                else -> null
+                            }?.takeIf { !it.contains("logo", ignoreCase = true) }
+                        } ?: card.selectFirst("img:not([src*='logo'])")?.attr("src")
+                        
+                        val finalPoster = metadata?.posterUrl ?: sitePoster?.let { fixUrl(it) }
+                        
+                        newAnimeSearchResponse(displayTitle, fixUrl(href)) {
+                            this.posterUrl = finalPoster
+                            this.type = TvType.Anime
+                        }
+                    }.getOrNull()
+                }.filter { item ->
+                    // Filtrar para remover "em breve"
+                    val cleanName = item.name.replace(Regex(" - Episódio \\d+$"), "")
+                    val metadata = getAnimeMetadata(cleanName, item.url)
+                    !(metadata?.isUpcoming == true || metadata?.hasEpisodes == false)
+                }
+            }
+            
+            else -> emptyList()
+        }
+        
+        println("🏠 ${request.name}: ${homeItems.size} itens")
+        return newHomePageResponse(request.name, homeItems.distinctBy { it.url }, false)
+    }
+
+    // ============ LOAD PRINCIPAL ATUALIZADA ============
+    
+    override suspend fun load(url: String): LoadResponse {
+        println("\n🚀 AnimeFire.load() para URL: $url")
+        
+        val document = app.get(url).document
+
+        val titleElement = document.selectFirst("h1.quicksand400, .main_div_anime_info h1, h1") ?: 
+            throw ErrorLoadingException("Não foi possível encontrar o título")
+        val rawTitle = titleElement.text().trim()
+        
+        val year = Regex("\\((\\d{4})\\)").find(rawTitle)?.groupValues?.get(1)?.toIntOrNull()
+        val cleanTitle = rawTitle.replace(Regex("\\(\\d{4}\\)"), "").trim()
+        
+        val isMovie = url.contains("/filmes/") || rawTitle.contains("Movie", ignoreCase = true)
+        val type = if (isMovie) TvType.Movie else TvType.Anime
+
+        println("📌 Título: $cleanTitle, Ano: $year, Tipo: $type")
+
+        // Obter metadados melhorados
+        val metadata = getAnimeMetadata(cleanTitle, url)
+        val finalTitle = metadata?.titleEnglish?.ifBlank { cleanTitle } ?: cleanTitle
+
+        val malId = metadata?.malId ?: searchMALIdByName(cleanTitle)
+        println("🔍 MAL ID: $malId")
+
+        var aniZipData: AniZipData? = null
+        if (malId != null) {
+            println("🔍 Buscando AniZip...")
+            try {
+                val syncMetaData = app.get("https://api.ani.zip/mappings?mal_id=$malId").text
+                aniZipData = parseAnimeData(syncMetaData)
+                println("✅ AniZip carregado: ${aniZipData?.episodes?.size ?: 0} episódios")
+            } catch (e: Exception) {
+                println("⚠️ Erro ao buscar AniZip: ${e.message}")
+            }
+        }
+
+        // TMDB
+        val tmdbInfo = searchOnTMDB(finalTitle, year, !isMovie)
+
+        val siteMetadata = extractSiteMetadata(document)
+        
+        val episodes = if (!isMovie) {
+            extractEpisodesFromSite(document, finalTitle, aniZipData)
+        } else {
+            emptyList()
+        }
+
+        val recommendations = extractRecommendations(document)
+
+        val data = document.selectFirst("div#media-info, div.anime-info")
+        val genres = data?.select("div:contains(Genre:), div:contains(Gênero:) > span > a")?.map { it.text() }
+
+        return createLoadResponseWithTranslation(
+            url = url,
+            cleanTitle = finalTitle,
+            year = year,
+            isMovie = isMovie,
+            type = type,
+            siteMetadata = siteMetadata,
+            aniZipData = aniZipData,
+            tmdbInfo = tmdbInfo,
+            episodes = episodes,
+            recommendations = recommendations,
+            genres = genres,
+            metadata = metadata
+        )
+    }
+
+    private suspend fun createLoadResponseWithTranslation(
+        url: String,
+        cleanTitle: String,
+        year: Int?,
+        isMovie: Boolean,
+        type: TvType,
+        siteMetadata: SiteMetadata,
+        aniZipData: AniZipData?,
+        tmdbInfo: TMDBInfo?,
+        episodes: List<Episode>,
+        recommendations: List<SearchResponse>,
+        genres: List<String>?,
+        metadata: AnimeMetadata? = null
+    ): LoadResponse {
+        
+        val finalPlot = if (TRANSLATION_ENABLED && siteMetadata.plot != null) {
+            val originalPlot = siteMetadata.plot!!
+            if (!isProbablyPortuguese(originalPlot)) {
+                println("🔍 Traduzindo sinopse (com cache)...")
+                val translated = translateWithCache(originalPlot)
+                if (translated != originalPlot) {
+                    println("✅ Sinopse traduzida!")
+                    translated
+                } else {
+                    originalPlot
+                }
+            } else {
+                originalPlot
+            }
+        } else {
+            siteMetadata.plot ?: tmdbInfo?.overview ?: aniZipData?.episodes?.values?.firstOrNull()?.overview
+        }
+        
+        // USAR THUMB COMO BANNER SE NÃO TIVER BANNER
+        val finalPoster = tmdbInfo?.posterUrl ?:
+                         metadata?.posterUrl ?:
+                         aniZipData?.images?.find { it.coverType.equals("Poster", ignoreCase = true) }?.url?.let { fixUrl(it) } ?:
+                         siteMetadata.poster
+        
+        // SE NÃO TIVER BANNER, USAR A THUMB COMO BANNER
+        val finalBackdrop = tmdbInfo?.backdropUrl ?:
+                           metadata?.bannerUrl ?:
+                           metadata?.posterUrl ?:  // Usar poster como fallback para banner
+                           aniZipData?.images?.find { it.coverType.equals("Fanart", ignoreCase = true) }?.url?.let { fixUrl(it) } ?:
+                           finalPoster  // Usar o poster como banner se não tiver banner específico
+        
+        val finalYear = tmdbInfo?.year ?: year ?: siteMetadata.year ?:
+                       aniZipData?.episodes?.values?.firstOrNull()?.airDateUtc?.substring(0, 4)?.toIntOrNull()
+        
+        val finalTags = (tmdbInfo?.genres ?: emptyList()) + 
+                       (genres ?: emptyList()) + 
+                       (siteMetadata.tags ?: emptyList())
+
+        println("🏗️ Criando resposta final...")
+        println("📖 Sinopse: ${finalPlot?.take(50)}...")
+        println("📅 Ano: $finalYear")
+        println("🏷️ Tags: ${finalTags.take(3).joinToString()}")
+        println("📺 Episódios: ${episodes.size}")
+        println("🖼️ Poster: ${finalPoster?.take(50)}...")
+        println("🎬 Banner: ${finalBackdrop?.take(50)}...")
+
+        return if (isMovie) {
+            newMovieLoadResponse(cleanTitle, url, type, url) {
+                this.year = finalYear
+                this.plot = finalPlot
+                this.tags = finalTags.distinct().take(10)
+                this.posterUrl = finalPoster
+                this.backgroundPosterUrl = finalBackdrop
+                this.recommendations = recommendations.takeIf { it.isNotEmpty() }
+                
+                tmdbInfo?.youtubeTrailer?.let { trailerUrl ->
+                    addTrailer(trailerUrl)
+                }
+            }
+        } else {
+            newAnimeLoadResponse(cleanTitle, url, type) {
+                addEpisodes(DubStatus.Subbed, episodes)
+                
+                this.year = finalYear
+                this.plot = finalPlot
+                this.tags = finalTags.distinct().take(10)
+                this.posterUrl = finalPoster
+                this.backgroundPosterUrl = finalBackdrop
+                this.recommendations = recommendations.takeIf { it.isNotEmpty() }
+                
+                tmdbInfo?.youtubeTrailer?.let { trailerUrl ->
+                    addTrailer(trailerUrl)
+                }
+            }
+        }
+    }
+
+    // ============ FUNÇÕES DE TRADUÇÃO (mantidas) ============
+    
     private suspend fun translateWithCache(text: String): String {
         if (!TRANSLATION_ENABLED || text.isBlank() || text.length < 3) return text
         if (isProbablyPortuguese(text)) return text
@@ -91,7 +566,6 @@ class AnimeFire : MainAPI() {
         if (isProbablyPortuguese(text)) return text
         
         return try {
-            // USAR PROXY APENAS PARA TRADUÇÃO
             val workersTranslated = translateWithWorkers(text)
             if (workersTranslated != text) return workersTranslated
             
@@ -169,124 +643,7 @@ class AnimeFire : MainAPI() {
         }
     }
 
-    // ============ CLASSES DE DADOS ============
-    
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    data class AniZipImage(
-        @JsonProperty("coverType") val coverType: String?,
-        @JsonProperty("url") val url: String?
-    )
-
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    data class AniZipEpisode(
-        @JsonProperty("episode") val episode: String?,
-        @JsonProperty("title") val title: Map<String, String>?,
-        @JsonProperty("overview") val overview: String?,
-        @JsonProperty("image") val image: String?,
-        @JsonProperty("runtime") val runtime: Int?,
-        @JsonProperty("rating") val rating: String?,
-        @JsonProperty("airDateUtc") val airDateUtc: String?,
-        @JsonProperty("finaleType") val finaleType: String?
-    )
-
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    data class AniZipData(
-        @JsonProperty("titles") val titles: Map<String, String>? = null,
-        @JsonProperty("images") val images: List<AniZipImage>? = null,
-        @JsonProperty("episodes") val episodes: Map<String, AniZipEpisode>? = null
-    )
-
-    // ============ FUNÇÃO AUXILIAR DE BUSCA ============
-    
-    private suspend fun Element.toSearchResponse(): AnimeSearchResponse? {
-        val href = attr("href") ?: return null
-        if (href.isBlank()) return null
-        
-        val titleElement = when {
-            selectFirst("h3.animeTitle") != null -> selectFirst("h3.animeTitle")
-            selectFirst(".text-block h3") != null -> selectFirst(".text-block h3")
-            selectFirst(".animeTitle") != null -> selectFirst(".animeTitle")
-            else -> selectFirst("h3")
-        } ?: return null
-        
-        val rawTitle = titleElement.text().trim()
-        
-        val cleanTitle = rawTitle
-            .replace(Regex("(?i)(dublado|legendado|todos os episódios|\\(\\d{4}\\)|\\s*-\\s*$|\\(movie\\))"), "")
-            .trim()
-        
-        val isMovie = href.contains("/filmes/") || 
-                      rawTitle.contains("filme", ignoreCase = true) ||
-                      rawTitle.contains("movie", ignoreCase = true)
-        
-        val sitePoster = selectFirst("img.imgAnimes, img.card-img-top, img.transitioning_src, img.owl-lazy, img[src*='animes']")?.let { img ->
-            when {
-                img.hasAttr("data-src") -> img.attr("data-src")
-                img.hasAttr("src") -> img.attr("src")
-                else -> null
-            }?.takeIf { !it.contains("logo", ignoreCase = true) }
-        } ?: selectFirst("img:not([src*='logo']):not([src*='Logo'])")?.attr("src")
-
-        return newAnimeSearchResponse(cleanTitle, fixUrl(href)) {
-            this.posterUrl = sitePoster?.let { fixUrl(it) }
-            this.type = if (isMovie) TvType.Movie else TvType.Anime
-        }
-    }
-
-    override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val document = app.get(mainUrl).document
-        
-        val homeItems = when (request.name) {
-            "Lançamentos" -> 
-                document.select(".owl-carousel-home .divArticleLancamentos a.item")
-                    .mapNotNull { element -> 
-                        runCatching { element.toSearchResponse() }.getOrNull()
-                    }
-            "Destaques da Semana" -> 
-                document.select(".owl-carousel-semana .divArticleLancamentos a.item")
-                    .mapNotNull { element -> 
-                        runCatching { element.toSearchResponse() }.getOrNull()
-                    }
-            "Últimos Animes Adicionados" -> 
-                document.select(".owl-carousel-l_dia .divArticleLancamentos a.item")
-                    .mapNotNull { element -> 
-                        runCatching { element.toSearchResponse() }.getOrNull()
-                    }
-            "Últimos Episódios Adicionados" -> {
-                document.select(".divCardUltimosEpsHome").mapNotNull { card ->
-                    runCatching {
-                        val link = card.selectFirst("article.card a") ?: return@runCatching null
-                        val href = link.attr("href") ?: return@runCatching null
-                        
-                        val titleElement = card.selectFirst("h3.animeTitle") ?: return@runCatching null
-                        val rawTitle = titleElement.text().trim()
-                        
-                        val epNumber = card.selectFirst(".numEp")?.text()?.toIntOrNull() ?: 1
-                        val cleanTitle = rawTitle.replace(Regex("(?i)(dublado|legendado|todos os episódios|\\(\\d{4}\\))$"), "").trim()
-                        val displayTitle = "${cleanTitle} - Episódio $epNumber"
-                        
-                        val sitePoster = card.selectFirst("img.imgAnimesUltimosEps, img[src*='animes']")?.let { img ->
-                            when {
-                                img.hasAttr("data-src") -> img.attr("data-src")
-                                img.hasAttr("src") -> img.attr("src")
-                                else -> null
-                            }?.takeIf { !it.contains("logo", ignoreCase = true) }
-                        } ?: card.selectFirst("img:not([src*='logo'])")?.attr("src")
-                        
-                        newAnimeSearchResponse(displayTitle, fixUrl(href)) {
-                            this.posterUrl = sitePoster?.let { fixUrl(it) }
-                            this.type = TvType.Anime
-                        }
-                    }.getOrNull()
-                }
-            }
-            else -> emptyList()
-        }
-        
-        return newHomePageResponse(request.name, homeItems.distinctBy { it.url }, false)
-    }
-
-    // ============ FUNÇÃO SEARCH CORRIGIDA ============
+    // ============ OUTRAS FUNÇÕES (mantidas) ============
     
     override suspend fun search(query: String): List<SearchResponse> {
         val searchUrl = "$mainUrl$SEARCH_PATH/${URLEncoder.encode(query, "UTF-8")}"
@@ -318,22 +675,28 @@ class AnimeFire : MainAPI() {
                     .replace(Regex("\\(Legendado\\)"), "")
                     .trim()
 
+                // Obter metadados melhorados
+                val metadata = getAnimeMetadata(cleanTitle, href)
+                val finalTitle = metadata?.titleEnglish?.ifBlank { cleanTitle } ?: cleanTitle
+
                 val imgElement = element.selectFirst("img.imgAnimes, img.card-img-top, img.transitioning_src")
-                val posterUrl = when {
+                val sitePoster = when {
                     imgElement?.hasAttr("data-src") == true -> imgElement.attr("data-src")
                     imgElement?.hasAttr("src") == true -> imgElement.attr("src")
                     else -> null
                 }
+
+                val finalPoster = metadata?.posterUrl ?: sitePoster?.let { fixUrl(it) }
 
                 val isMovie = href.contains("/filmes/") || 
                              cleanTitle.contains("filme", ignoreCase = true) ||
                              rawTitle.contains("filme", ignoreCase = true) ||
                              rawTitle.contains("movie", ignoreCase = true)
 
-                println("✅ [SEARCH] Processado: '$cleanTitle' | URL: ${href.take(50)}... | Tipo: ${if (isMovie) "Filme" else "Anime"}")
+                println("✅ [SEARCH] Processado: '$finalTitle' | URL: ${href.take(50)}... | Tipo: ${if (isMovie) "Filme" else "Anime"}")
 
-                newAnimeSearchResponse(cleanTitle, fixUrl(href)) {
-                    this.posterUrl = posterUrl?.let { fixUrl(it) }
+                newAnimeSearchResponse(finalTitle, fixUrl(href)) {
+                    this.posterUrl = finalPoster
                     this.type = if (isMovie) {
                         TvType.Movie
                     } else {
@@ -347,67 +710,75 @@ class AnimeFire : MainAPI() {
         }.take(30)
     }
 
-    // ============ LOAD PRINCIPAL COM TRADUÇÃO ============
+    // ============ CLASSES DE DADOS ADICIONAIS ============
     
-    override suspend fun load(url: String): LoadResponse {
-        println("\n🚀 AnimeFire.load() para URL: $url")
-        
-        val document = app.get(url).document
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    data class AniZipImage(
+        @JsonProperty("coverType") val coverType: String?,
+        @JsonProperty("url") val url: String?
+    )
 
-        val titleElement = document.selectFirst("h1.quicksand400, .main_div_anime_info h1, h1") ?: 
-            throw ErrorLoadingException("Não foi possível encontrar o título")
-        val rawTitle = titleElement.text().trim()
-        
-        val year = Regex("\\((\\d{4})\\)").find(rawTitle)?.groupValues?.get(1)?.toIntOrNull()
-        val cleanTitle = rawTitle.replace(Regex("\\(\\d{4}\\)"), "").trim()
-        
-        val isMovie = url.contains("/filmes/") || rawTitle.contains("Movie", ignoreCase = true)
-        val type = if (isMovie) TvType.Movie else TvType.Anime
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    data class AniZipEpisode(
+        @JsonProperty("episode") val episode: String?,
+        @JsonProperty("title") val title: Map<String, String>?,
+        @JsonProperty("overview") val overview: String?,
+        @JsonProperty("image") val image: String?,
+        @JsonProperty("runtime") val runtime: Int?,
+        @JsonProperty("rating") val rating: String?,
+        @JsonProperty("airDateUtc") val airDateUtc: String?,
+        @JsonProperty("finaleType") val finaleType: String?
+    )
 
-        println("📌 Título: $cleanTitle, Ano: $year, Tipo: $type")
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    data class AniZipData(
+        @JsonProperty("titles") val titles: Map<String, String>? = null,
+        @JsonProperty("images") val images: List<AniZipImage>? = null,
+        @JsonProperty("episodes") val episodes: Map<String, AniZipEpisode>? = null
+    )
 
-        val malId = searchMALIdByName(cleanTitle)
-        println("🔍 MAL ID: $malId")
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    data class AniListFullResponse(
+        @JsonProperty("data") val data: AniListFullData? = null
+    )
 
-        var aniZipData: AniZipData? = null
-        if (malId != null) {
-            println("🔍 Buscando AniZip...")
-            val syncMetaData = app.get("https://api.ani.zip/mappings?mal_id=$malId").text
-            aniZipData = parseAnimeData(syncMetaData)
-            println("✅ AniZip carregado: ${aniZipData?.episodes?.size ?: 0} episódios")
-        }
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    data class AniListFullData(
+        @JsonProperty("Media") val Media: AniListFullMedia? = null
+    )
 
-        // AGORA USANDO BUILDCONFIG PARA TMDB
-        val tmdbInfo = searchOnTMDB(cleanTitle, year, !isMovie)
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    data class AniListFullMedia(
+        @JsonProperty("title") val title: AniListTitle? = null,
+        @JsonProperty("coverImage") val coverImage: AniListCoverImage? = null,
+        @JsonProperty("bannerImage") val bannerImage: String? = null,
+        @JsonProperty("episodes") val episodes: Int? = null,
+        @JsonProperty("status") val status: String? = null,
+        @JsonProperty("nextAiringEpisode") val nextAiringEpisode: AniListAiringEpisode? = null
+    )
 
-        val siteMetadata = extractSiteMetadata(document)
-        
-        val episodes = if (!isMovie) {
-            extractEpisodesFromSite(document, cleanTitle, aniZipData)
-        } else {
-            emptyList()
-        }
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    data class AniListTitle(
+        @JsonProperty("english") val english: String? = null,
+        @JsonProperty("romaji") val romaji: String? = null,
+        @JsonProperty("native") val native: String? = null
+    )
 
-        val recommendations = extractRecommendations(document)
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    data class AniListCoverImage(
+        @JsonProperty("extraLarge") val extraLarge: String? = null,
+        @JsonProperty("large") val large: String? = null,
+        @JsonProperty("medium") val medium: String? = null
+    )
 
-        val data = document.selectFirst("div#media-info, div.anime-info")
-        val genres = data?.select("div:contains(Genre:), div:contains(Gênero:) > span > a")?.map { it.text() }
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    data class AniListAiringEpisode(
+        @JsonProperty("episode") val episode: Int? = null,
+        @JsonProperty("timeUntilAiring") val timeUntilAiring: Int? = null
+    )
 
-        return createLoadResponseWithTranslation(
-            url = url,
-            cleanTitle = cleanTitle,
-            year = year,
-            isMovie = isMovie,
-            type = type,
-            siteMetadata = siteMetadata,
-            aniZipData = aniZipData,
-            tmdbInfo = tmdbInfo,
-            episodes = episodes,
-            recommendations = recommendations,
-            genres = genres
-        )
-    }
-
+    // ============ FUNÇÕES EXISTENTES (mantidas) ============
+    
     private fun parseAnimeData(jsonString: String): AniZipData? {
         return try {
             val objectMapper = ObjectMapper()
@@ -415,95 +786,6 @@ class AnimeFire : MainAPI() {
         } catch (e: Exception) {
             println("❌ [ANIZIP] Erro parse: ${e.message}")
             null
-        }
-    }
-
-    private suspend fun createLoadResponseWithTranslation(
-        url: String,
-        cleanTitle: String,
-        year: Int?,
-        isMovie: Boolean,
-        type: TvType,
-        siteMetadata: SiteMetadata,
-        aniZipData: AniZipData?,
-        tmdbInfo: TMDBInfo?,
-        episodes: List<Episode>,
-        recommendations: List<SearchResponse>,
-        genres: List<String>?
-    ): LoadResponse {
-        
-        val finalPlot = if (TRANSLATION_ENABLED && siteMetadata.plot != null) {
-            val originalPlot = siteMetadata.plot!!
-            if (!isProbablyPortuguese(originalPlot)) {
-                println("🔍 Traduzindo sinopse (com cache)...")
-                val translated = translateWithCache(originalPlot)
-                if (translated != originalPlot) {
-                    println("✅ Sinopse traduzida!")
-                    translated
-                } else {
-                    originalPlot
-                }
-            } else {
-                originalPlot
-            }
-        } else {
-            siteMetadata.plot ?: tmdbInfo?.overview ?: aniZipData?.episodes?.values?.firstOrNull()?.overview
-        }
-        
-        val finalPoster = tmdbInfo?.posterUrl ?:
-                         aniZipData?.images?.find { it.coverType.equals("Poster", ignoreCase = true) }?.url?.let { fixUrl(it) } ?:
-                         siteMetadata.poster
-        
-        val finalBackdrop = tmdbInfo?.backdropUrl ?:
-                           aniZipData?.images?.find { it.coverType.equals("Fanart", ignoreCase = true) }?.url?.let { fixUrl(it) } ?:
-                           siteMetadata.poster?.let { fixUrl(it) }
-        
-        val finalYear = tmdbInfo?.year ?: year ?: siteMetadata.year ?:
-                       aniZipData?.episodes?.values?.firstOrNull()?.airDateUtc?.substring(0, 4)?.toIntOrNull()
-        
-        val finalTags = (tmdbInfo?.genres ?: emptyList()) + 
-                       (genres ?: emptyList()) + 
-                       (siteMetadata.tags ?: emptyList())
-
-        if (translationCache.size % 20 == 0 && translationCache.isNotEmpty()) {
-            val hits = cacheHits.values.sum()
-            println("📊 [CACHE] ${translationCache.size} traduções | ${hits} hits salvos")
-        }
-
-        println("🏗️ Criando resposta final...")
-        println("📖 Sinopse: ${finalPlot?.take(50)}...")
-        println("📅 Ano: $finalYear")
-        println("🏷️ Tags: ${finalTags.take(3).joinToString()}")
-        println("📺 Episódios: ${episodes.size}")
-
-        return if (isMovie) {
-            newMovieLoadResponse(cleanTitle, url, type, url) {
-                this.year = finalYear
-                this.plot = finalPlot
-                this.tags = finalTags.distinct().take(10)
-                this.posterUrl = finalPoster
-                this.backgroundPosterUrl = finalBackdrop
-                this.recommendations = recommendations.takeIf { it.isNotEmpty() }
-                
-                tmdbInfo?.youtubeTrailer?.let { trailerUrl ->
-                    addTrailer(trailerUrl)
-                }
-            }
-        } else {
-            newAnimeLoadResponse(cleanTitle, url, type) {
-                addEpisodes(DubStatus.Subbed, episodes)
-                
-                this.year = finalYear
-                this.plot = finalPlot
-                this.tags = finalTags.distinct().take(10)
-                this.posterUrl = finalPoster
-                this.backgroundPosterUrl = finalBackdrop
-                this.recommendations = recommendations.takeIf { it.isNotEmpty() }
-                
-                tmdbInfo?.youtubeTrailer?.let { trailerUrl ->
-                    addTrailer(trailerUrl)
-                }
-            }
         }
     }
 
@@ -674,7 +956,6 @@ class AnimeFire : MainAPI() {
     }
 
     private suspend fun searchOnTMDB(query: String, year: Int?, isTv: Boolean): TMDBInfo? {
-        // Verificar se as chaves estão configuradas
         if (tmdbApiKey == "dummy_api_key" || tmdbAccessToken == "dummy_access_token") {
             println("⚠️ [TMDB] Chaves BuildConfig não configuradas - usando fallback")
             return searchOnTMDBFallback(query, year, isTv)
@@ -684,7 +965,6 @@ class AnimeFire : MainAPI() {
             val type = if (isTv) "tv" else "movie"
             val encodedQuery = URLEncoder.encode(query, "UTF-8")
             
-            // URL de busca DIRETA com API Key
             var searchUrl = "$tmdbBaseUrl/search/$type?query=$encodedQuery&api_key=$tmdbApiKey&language=pt-BR"
             if (year != null) searchUrl += "&year=$year"
             
@@ -703,10 +983,8 @@ class AnimeFire : MainAPI() {
 
             val result = searchResult.results.firstOrNull() ?: return null
 
-            // Buscar detalhes completos com Access Token
             val details = getTMDBDetailsDirect(result.id, isTv) ?: return null
 
-            // Buscar trailer
             val youtubeTrailer = getHighQualityTrailer(details.videos?.results)
 
             TMDBInfo(
@@ -730,7 +1008,6 @@ class AnimeFire : MainAPI() {
         }
     }
 
-    // Função de fallback (usando o proxy antigo se BuildConfig falhar)
     private suspend fun searchOnTMDBFallback(query: String, year: Int?, isTv: Boolean): TMDBInfo? {
         val TMDB_FALLBACK_PROXY = "https://lawliet.euluan1912.workers.dev"
         
@@ -752,10 +1029,8 @@ class AnimeFire : MainAPI() {
 
             val result = searchResult.results.firstOrNull() ?: return null
 
-            // Buscar detalhes completos via proxy
             val details = getTMDBDetailsViaProxy(result.id, isTv) ?: return null
 
-            // Buscar trailer
             val youtubeTrailer = getHighQualityTrailer(details.videos?.results)
 
             TMDBInfo(
@@ -784,7 +1059,6 @@ class AnimeFire : MainAPI() {
         
         return try {
             val type = if (isTv) "tv" else "movie"
-            // Usar Access Token para detalhes
             val url = "$tmdbBaseUrl/$type/$id?append_to_response=videos&language=pt-BR"
             
             val headers = mapOf(
@@ -858,7 +1132,7 @@ class AnimeFire : MainAPI() {
             }
     }
 
-        override suspend fun loadLinks(
+    override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
         subtitleCallback: (SubtitleFile) -> Unit,
@@ -867,7 +1141,7 @@ class AnimeFire : MainAPI() {
         return AnimeFireVideoExtractor.extractVideoLinks(data, mainUrl, name, callback)
     }
 
-    // ============ CLASSES DE DADOS ============
+    // ============ CLASSES DE DADOS EXISTENTES ============
     @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
     private data class AniListResponse(
         @JsonProperty("data") val data: AniListData? = null
