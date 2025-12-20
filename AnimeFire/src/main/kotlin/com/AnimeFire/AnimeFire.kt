@@ -8,7 +8,6 @@ import com.lagradost.cloudstream3.LoadResponse.Companion.addTrailer
 import com.lagradost.cloudstream3.app
 import org.jsoup.nodes.Element
 import java.net.URLEncoder
-import java.text.SimpleDateFormat
 import kotlinx.coroutines.delay
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.google.gson.JsonParser
@@ -70,28 +69,28 @@ class AnimeFire : MainAPI() {
                 "Lançamentos" -> 
                     document.select(".owl-carousel-home .divArticleLancamentos a.item, .owl-carousel:first-child a.item")
                         .mapNotNull { element -> 
-                            runCatching { element.toSearchResponse() }.getOrNull()
+                            element.toSearchResponse()
                         }
                 
                 "Destaques da Semana" -> 
                     document.select(".owl-carousel-semana .divArticleLancamentos a.item, .owl-carousel:nth-child(2) a.item")
                         .mapNotNull { element -> 
-                            runCatching { element.toSearchResponse() }.getOrNull()
+                            element.toSearchResponse()
                         }
                 
                 "Últimos Animes Adicionados" -> 
                     document.select(".owl-carousel-l_dia .divArticleLancamentos a.item, .owl-carousel:nth-child(3) a.item")
                         .mapNotNull { element -> 
-                            runCatching { element.toSearchResponse() }.getOrNull()
+                            element.toSearchResponse()
                         }
                 
                 "Últimos Episódios Adicionados" -> {
                     document.select(".divCardUltimosEpsHome, .divListaEpsHome article.card").mapNotNull { card ->
-                        runCatching {
-                            val link = card.selectFirst("a") ?: return@runCatching null
-                            val href = link.attr("href").takeIf { it.isNotEmpty() } ?: return@runCatching null
+                        try {
+                            val link = card.selectFirst("a") ?: return@mapNotNull null
+                            val href = link.attr("href").takeIf { it.isNotEmpty() } ?: return@mapNotNull null
                             
-                            val titleElement = card.selectFirst("h3.animeTitle, .title, h3") ?: return@runCatching null
+                            val titleElement = card.selectFirst("h3.animeTitle, .title, h3") ?: return@mapNotNull null
                             val rawTitle = titleElement.text().trim()
                             
                             // Extrair número do episódio
@@ -123,7 +122,10 @@ class AnimeFire : MainAPI() {
                                 this.posterUrl = sitePoster?.let { fixUrl(it) }
                                 this.type = TvType.Anime
                             }
-                        }.getOrNull()
+                        } catch (e: Exception) {
+                            println("❌ [HOMEPAGE] Erro ao processar episódio: ${e.message}")
+                            null
+                        }
                     }
                 }
                 
@@ -206,30 +208,35 @@ class AnimeFire : MainAPI() {
 
     // ============ FUNÇÃO AUXILIAR DE BUSCA ============
     private fun Element.toSearchResponse(): AnimeSearchResponse? {
-        val href = attr("href").takeIf { it.isNotEmpty() } ?: return null
-        
-        val titleElement = selectFirst("h3.animeTitle, .text-block h3, .animeTitle, h3, .title, .card-title")
-        val rawTitle = titleElement?.text()?.trim() ?: return null
-        
-        val cleanTitle = rawTitle
-            .replace(Regex("(?i)(dublado|legendado|todos os episódios|\\(\\d{4}\\)|\\s*-\\s*$|\\(movie\\))"), "")
-            .trim()
-        
-        val isMovie = href.contains("/filmes/") || 
-                      rawTitle.contains("filme", ignoreCase = true) ||
-                      rawTitle.contains("movie", ignoreCase = true)
-        
-        val sitePoster = selectFirst("img.imgAnimes, img.card-img-top, img.transitioning_src, img.owl-lazy, img[src*='animes']")?.let { img ->
-            when {
-                img.hasAttr("data-src") -> img.attr("data-src")
-                img.hasAttr("src") -> img.attr("src")
-                else -> null
-            }?.takeIf { !it.contains("logo", ignoreCase = true) }
-        } ?: selectFirst("img:not([src*='logo']):not([src*='Logo'])")?.attr("src")
+        return try {
+            val href = attr("href").takeIf { it.isNotEmpty() } ?: return null
+            
+            val titleElement = selectFirst("h3.animeTitle, .text-block h3, .animeTitle, h3, .title, .card-title")
+            val rawTitle = titleElement?.text()?.trim() ?: return null
+            
+            val cleanTitle = rawTitle
+                .replace(Regex("(?i)(dublado|legendado|todos os episódios|\\(\\d{4}\\)|\\s*-\\s*$|\\(movie\\))"), "")
+                .trim()
+            
+            val isMovie = href.contains("/filmes/") || 
+                          rawTitle.contains("filme", ignoreCase = true) ||
+                          rawTitle.contains("movie", ignoreCase = true)
+            
+            val sitePoster = selectFirst("img.imgAnimes, img.card-img-top, img.transitioning_src, img.owl-lazy, img[src*='animes']")?.let { img ->
+                when {
+                    img.hasAttr("data-src") -> img.attr("data-src")
+                    img.hasAttr("src") -> img.attr("src")
+                    else -> null
+                }?.takeIf { !it.contains("logo", ignoreCase = true) }
+            } ?: selectFirst("img:not([src*='logo']):not([src*='Logo'])")?.attr("src")
 
-        return newAnimeSearchResponse(cleanTitle, fixUrl(href)) {
-            this.posterUrl = sitePoster?.let { fixUrl(it) }
-            this.type = if (isMovie) TvType.Movie else TvType.Anime
+            newAnimeSearchResponse(cleanTitle, fixUrl(href)) {
+                this.posterUrl = sitePoster?.let { fixUrl(it) }
+                this.type = if (isMovie) TvType.Movie else TvType.Anime
+            }
+        } catch (e: Exception) {
+            println("❌ [toSearchResponse] Erro: ${e.message}")
+            null
         }
     }
 
@@ -248,11 +255,11 @@ class AnimeFire : MainAPI() {
         }
 
         return elements.mapNotNull { element ->
-            runCatching {
+            try {
                 val href = element.attr("href")
                 if (href.isBlank()) {
                     println("⚠️ [SEARCH] Link vazio encontrado")
-                    return@runCatching null
+                    return@mapNotNull null
                 }
 
                 val titleElement = element.selectFirst("h3.animeTitle, .text-block h3, .animeTitle")
@@ -286,7 +293,7 @@ class AnimeFire : MainAPI() {
                         TvType.Anime
                     }
                 }
-            }.getOrElse { e ->
+            } catch (e: Exception) {
                 println("❌ [SEARCH] Erro ao processar elemento: ${e.message}")
                 null
             }
@@ -540,9 +547,12 @@ class AnimeFire : MainAPI() {
     private fun extractRecommendationsFromSite(document: org.jsoup.nodes.Document): List<SearchResponse> {
         return document.select(".owl-carousel-anime .divArticleLancamentos a.item")
             .mapNotNull { element -> 
-                runCatching { 
+                try { 
                     element.toSearchResponse() 
-                }.getOrNull()
+                } catch (e: Exception) {
+                    println("❌ [RECOMMENDATIONS] Erro: ${e.message}")
+                    null
+                }
             }
     }
 
