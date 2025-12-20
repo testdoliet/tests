@@ -14,7 +14,7 @@ class AnimeFire : MainAPI() {
     override var lang = "pt-br"
     override val hasDownloadSupport = true
     override val supportedTypes = setOf(TvType.Anime, TvType.Movie, TvType.OVA)
-    override val usesWebView = true
+    override val usesWebView = false  // Não precisamos de WebView agora
 
     // API GraphQL do AniList (para página principal)
     private val aniListApiUrl = "https://graphql.anilist.co"
@@ -22,10 +22,9 @@ class AnimeFire : MainAPI() {
     // Cache para mapear títulos AniList → URLs AnimeFire
     private val titleToUrlCache = mutableMapOf<String, String>()
 
-    // ============ CONFIGURAÇÕES DO CÓDIGO FUNCIONAL ============
+    // ============ CONFIGURAÇÕES ============
     companion object {
         private const val SEARCH_PATH = "/pesquisar"
-        private const val TRANSLATION_ENABLED = true
         private const val MAX_CACHE_SIZE = 500
     }
 
@@ -216,8 +215,8 @@ class AnimeFire : MainAPI() {
                     seenIds.add(media.id)
                     
                     // Prioridade para inglês, depois romaji
-                    val aniListTitle = media.title?.english ?:      // PRIMEIRO inglês
-                                     media.title?.romaji ?:          // Depois romaji  
+                    val aniListTitle = media.title?.english ?: 
+                                     media.title?.romaji ?: 
                                      media.title?.userPreferred ?: 
                                      "Sem Título"
                     
@@ -226,36 +225,39 @@ class AnimeFire : MainAPI() {
                     
                     // Verificar cache primeiro
                     val cachedUrl = titleToUrlCache[cleanTitle.lowercase()]
-                    val finalUrl: String
                     
                     if (cachedUrl != null && cachedUrl.startsWith("http")) {
                         // Usar URL do cache
-                        finalUrl = cachedUrl
                         println("♻️ [CACHE] Usando URL em cache para: $cleanTitle")
-                    } else {
-                        // Buscar no site (agora usando a função search do código funcional)
-                        val searchResults = search(cleanTitle)
-                        val bestMatch = findBestMatch(cleanTitle, searchResults)
+                        val finalPoster = media.coverImage?.extraLarge ?: media.coverImage?.large
                         
-                        finalUrl = if (bestMatch != null) {
+                        filteredItems.add(newAnimeSearchResponse(cleanTitle, cachedUrl) {
+                            this.posterUrl = finalPoster
+                            this.type = TvType.Anime
+                        })
+                    } else {
+                        // Buscar automaticamente pelo título
+                        val searchResults = searchFirstResult(cleanTitle)
+                        
+                        if (searchResults.isNotEmpty()) {
+                            val searchResult = searchResults.first()
+                            val finalPoster = media.coverImage?.extraLarge ?: 
+                                             media.coverImage?.large ?: 
+                                             searchResult.posterUrl
+                            
                             // Armazenar no cache
-                            titleToUrlCache[cleanTitle.lowercase()] = bestMatch.url
-                            bestMatch.url
+                            titleToUrlCache[cleanTitle.lowercase()] = searchResult.url
+                            
+                            filteredItems.add(newAnimeSearchResponse(cleanTitle, searchResult.url) {
+                                this.posterUrl = finalPoster
+                                this.type = searchResult.type
+                            })
+                            
+                            println("✅ [ANILIST] Adicionado via busca: $cleanTitle -> ${searchResult.url}")
                         } else {
-                            // Fallback para URL do AniList
-                            "anilist:${media.id}:$cleanTitle"
+                            println("⚠️ [ANILIST] Nenhum resultado encontrado para: $cleanTitle")
                         }
                     }
-                    
-                    val finalPoster = media.coverImage?.extraLarge ?: media.coverImage?.large
-                    
-                    // Adicionar resultado
-                    filteredItems.add(newAnimeSearchResponse(cleanTitle, finalUrl) {
-                        this.posterUrl = finalPoster
-                        this.type = TvType.Anime
-                    })
-                    
-                    println("✅ [ANILIST] Adicionado: $cleanTitle")
                 }
                 
                 println("✅ [ANILIST] ${filteredItems.size} itens adicionados para $pageName")
@@ -278,250 +280,174 @@ class AnimeFire : MainAPI() {
             .trim()
     }
 
-    private fun findBestMatch(searchTitle: String, results: List<SearchResponse>): SearchResponse? {
-        if (results.isEmpty()) return null
-        
-        val cleanSearch = cleanForMatching(searchTitle)
-        
-        // Tenta encontrar match exato primeiro
-        for (result in results) {
-            val cleanResult = cleanForMatching(result.name)
-            if (cleanResult == cleanSearch) {
-                return result
-            }
-        }
-        
-        // Tenta match parcial
-        for (result in results) {
-            val cleanResult = cleanForMatching(result.name)
-            if (cleanResult.contains(cleanSearch) || cleanSearch.contains(cleanResult)) {
-                return result
-            }
-        }
-        
-        // Tenta por similaridade de palavras-chave
-        val searchWords = cleanSearch.split(" ").filter { it.length > 2 }
-        
-        var bestMatch: SearchResponse? = null
-        var bestScore = 0
-        
-        for (result in results) {
-            val cleanResult = cleanForMatching(result.name)
-            var score = 0
-            
-            for (word in searchWords) {
-                if (cleanResult.contains(word)) {
-                    score++
-                }
-            }
-            
-            if (score > bestScore) {
-                bestScore = score
-                bestMatch = result
-            }
-        }
-        
-        return bestMatch ?: results.first()
-    }
-
-    private fun cleanForMatching(title: String): String {
-        return title.lowercase()
-            .replace(Regex("[^a-z0-9\\sáéíóúâêîôûãõç]"), "")
-            .replace(Regex("\\s+"), " ")
-            .trim()
-    }
-
-    // ============ SEARCH CORRIGIDA ============
+    // ============ FUNÇÃO DE BUSCA NOVA ============
+    // Esta função faz exatamente o que você pediu:
+    // 1. Pega o nome do anime
+    // 2. Converte para slug (espaços viram -)
+    // 3. Busca em /pesquisar/nome-do-anime
+    // 4. Clica no primeiro resultado
+    // 5. Retorna o link final
+    
     override suspend fun search(query: String): List<SearchResponse> {
-        println("🔍 [SEARCH] Buscando: '$query'")
+        // Usamos a nova função que pega apenas o primeiro resultado
+        return searchFirstResult(query)
+    }
+    
+    private suspend fun searchFirstResult(query: String): List<SearchResponse> {
+        println("🔍 [SEARCH-FIRST] Buscando primeiro resultado para: '$query'")
         
-        // Verificar cache primeiro
-        val cacheKey = query.lowercase().trim()
-        if (titleToUrlCache[cacheKey]?.startsWith("http") == true) {
-            println("♻️ [CACHE] Cache hit para: '$query'")
-            val cachedUrl = titleToUrlCache[cacheKey]!!
-            return listOf(newAnimeSearchResponse(query, cachedUrl) {
-                this.type = TvType.Anime
-            })
-        }
+        // 1. Converter nome para slug (espaços viram -)
+        val slug = createSearchSlug(query)
         
-        val searchUrl = "$mainUrl$SEARCH_PATH/${URLEncoder.encode(query, "UTF-8")}"
-        println("🔗 [SEARCH] URL: $searchUrl")
+        // 2. Construir URL de pesquisa
+        val searchUrl = "$mainUrl$SEARCH_PATH/$slug"
+        println("🔗 [SEARCH-FIRST] URL de busca: $searchUrl")
         
         return try {
+            // 3. Fazer requisição para a página de resultados
             val response = app.get(searchUrl, headers = headers, timeout = 15_000)
             
             if (response.code == 403) {
-                println("❌ [SEARCH] ERRO 403: Acesso negado pelo site")
-                println("⚠️ [SEARCH] Tentando alternativa com WebView...")
-                
-                // Tentar uma abordagem alternativa
-                return searchAlternative(query, searchUrl)
+                println("❌ [SEARCH-FIRST] ERRO 403: Acesso negado")
+                return emptyList()
             }
             
             if (response.code != 200) {
-                println("❌ [SEARCH] Erro HTTP: ${response.code}")
+                println("❌ [SEARCH-FIRST] Erro HTTP: ${response.code}")
                 return emptyList()
             }
             
             val document = response.document
-
-            val elements = document.select("div.divCardUltimosEps article.card a")
-            println("🔍 [SEARCH] Elementos encontrados: ${elements.size}")
             
-            if (elements.isEmpty()) {
-                println("⚠️ [SEARCH] Nenhum elemento encontrado, tentando seletores alternativos...")
-                
-                // Tentar seletores alternativos
-                val altElements = document.select("""
-                    a[href*="/animes/"],
-                    .card-anime, 
-                    .anime-card,
-                    article[class*="anime"],
-                    div[class*="anime-card"]
-                """.trimIndent())
-                
-                println("🔍 [SEARCH] Elementos alternativos: ${altElements.size}")
-                
-                return parseSearchResults(altElements, query)
+            // 4. Procurar o primeiro resultado (tentando vários seletores)
+            val firstResult = findFirstSearchResult(document)
+            
+            if (firstResult == null) {
+                println("⚠️ [SEARCH-FIRST] Nenhum resultado encontrado")
+                return emptyList()
             }
             
-            parseSearchResults(elements, query)
+            // 5. Extrair informações do primeiro resultado
+            val href = firstResult.attr("href")
+            if (href.isBlank() || (!href.contains("/animes/") && !href.contains("/filmes/"))) {
+                println("⚠️ [SEARCH-FIRST] Link inválido: $href")
+                return emptyList()
+            }
+            
+            val finalUrl = fixUrl(href)
+            
+            // Extrair título
+            val titleElement = firstResult.selectFirst("""
+                h3.animeTitle, 
+                .text-block h3, 
+                .animeTitle, 
+                h3, 
+                .title, 
+                .card-title,
+                [class*="title"],
+                [class*="name"]
+            """.trimIndent())
+            
+            var title = titleElement?.text()?.trim() ?: query
+            
+            // Limpar título
+            title = title
+                .replace(Regex("\\s*-\\s*Todos os Episódios$"), "")
+                .replace(Regex("\\(Dublado\\)"), "")
+                .replace(Regex("\\(Legendado\\)"), "")
+                .replace(Regex("\\s*\\([^)]+\\)$"), "")
+                .trim()
+            
+            // Extrair imagem
+            val imgElement = firstResult.selectFirst("""
+                img.imgAnimes, 
+                img.card-img-top, 
+                img.transitioning_src,
+                img[src*="/img/"],
+                img
+            """.trimIndent())
+            
+            val posterUrl = when {
+                imgElement?.hasAttr("data-src") == true -> fixUrl(imgElement.attr("data-src"))
+                imgElement?.hasAttr("src") == true -> fixUrl(imgElement.attr("src"))
+                else -> null
+            }
+            
+            // Determinar tipo
+            val isMovie = finalUrl.contains("/filmes/") || 
+                         title.contains("filme", ignoreCase = true) ||
+                         title.contains("movie", ignoreCase = true)
+            
+            println("✅ [SEARCH-FIRST] Primeiro resultado: '$title' -> $finalUrl")
+            
+            // 6. Armazenar no cache
+            titleToUrlCache[query.lowercase()] = finalUrl
+            titleToUrlCache[title.lowercase()] = finalUrl
+            
+            // 7. Retornar o resultado
+            listOf(newAnimeSearchResponse(title, finalUrl) {
+                this.posterUrl = posterUrl
+                this.type = if (isMovie) TvType.Movie else TvType.Anime
+            })
             
         } catch (e: Exception) {
-            println("❌ [SEARCH] Exception: ${e.message}")
+            println("❌ [SEARCH-FIRST] Exception: ${e.message}")
             emptyList()
         }
     }
     
-    private suspend fun searchAlternative(query: String, originalUrl: String): List<SearchResponse> {
-        return try {
-            // Tentar URL sem codificação primeiro
-            val simpleUrl = "$mainUrl$SEARCH_PATH/$query"
-            println("🔄 [SEARCH] Tentando URL alternativa: $simpleUrl")
-            
-            val response = app.get(simpleUrl, headers = headers, timeout = 15_000)
-            
-            if (response.code == 200) {
-                val document = response.document
-                
-                // Procurar por qualquer link de anime
-                val allLinks = document.select("a[href*='/animes/'], a[href*='/filmes/']")
-                println("🔗 [SEARCH] Links encontrados: ${allLinks.size}")
-                
-                return parseSearchResults(allLinks, query)
-            }
-            
-            // Se ainda não funcionar, retornar lista vazia
-            println("❌ [SEARCH] Alternativa também falhou: ${response.code}")
-            emptyList()
-            
-        } catch (e: Exception) {
-            println("❌ [SEARCH] Erro na alternativa: ${e.message}")
-            emptyList()
-        }
+    private fun createSearchSlug(query: String): String {
+        // Converter para slug: espaços viram -, remove caracteres especiais
+        return query.lowercase()
+            .replace(Regex("[áàâãä]"), "a")
+            .replace(Regex("[éèêë]"), "e")
+            .replace(Regex("[íìîï]"), "i")
+            .replace(Regex("[óòôõö]"), "o")
+            .replace(Regex("[úùûü]"), "u")
+            .replace(Regex("[ç]"), "c")
+            .replace(Regex("[ñ]"), "n")
+            .replace(Regex("[^a-z0-9\\s-]"), "") // Remove outros caracteres especiais
+            .replace(Regex("\\s+"), "-") // Espaços viram -
+            .replace(Regex("-+"), "-") // Remove múltiplos - seguidos
+            .trim('-') // Remove - do início e fim
     }
     
-    private fun parseSearchResults(elements: List<Element>, query: String): List<SearchResponse> {
-        return elements.mapNotNull { element ->
-            runCatching {
-                val href = element.attr("href")
-                if (href.isBlank() || !href.contains("/animes/") && !href.contains("/filmes/")) {
-                    return@runCatching null
-                }
-
-                val titleElement = element.selectFirst("""
-                    h3.animeTitle, 
-                    .text-block h3, 
-                    .animeTitle, 
-                    h3, 
-                    .title, 
-                    .card-title,
-                    [class*="title"],
-                    [class*="name"]
-                """.trimIndent())
-                
-                val rawTitle = titleElement?.text()?.trim() ?: 
-                              element.attr("title")?.trim() ?: 
-                              element.attr("alt")?.trim() ?: 
-                              "Sem Título"
-                
-                val cleanTitle = rawTitle
-                    .replace(Regex("\\s*-\\s*Todos os Episódios$"), "")
-                    .replace(Regex("\\(Dublado\\)"), "")
-                    .replace(Regex("\\(Legendado\\)"), "")
-                    .replace(Regex("\\s*\\([^)]+\\)$"), "")
-                    .trim()
-
-                val imgElement = element.selectFirst("""
-                    img.imgAnimes, 
-                    img.card-img-top, 
-                    img.transitioning_src,
-                    img[src*="/img/"],
-                    img
-                """.trimIndent())
-                
-                val posterUrl = when {
-                    imgElement?.hasAttr("data-src") == true -> imgElement.attr("data-src")
-                    imgElement?.hasAttr("src") == true -> imgElement.attr("src")
-                    else -> null
-                }
-
-                val isMovie = href.contains("/filmes/") || 
-                             cleanTitle.contains("filme", ignoreCase = true) ||
-                             rawTitle.contains("filme", ignoreCase = true) ||
-                             rawTitle.contains("movie", ignoreCase = true) ||
-                             query.contains("filme", ignoreCase = true)
-
-                println("✅ [SEARCH] Processado: '$cleanTitle' | URL: ${href.take(50)}... | Tipo: ${if (isMovie) "Filme" else "Anime"}")
-
-                val searchResponse = newAnimeSearchResponse(cleanTitle, fixUrl(href)) {
-                    this.posterUrl = posterUrl?.let { fixUrl(it) }
-                    this.type = if (isMovie) TvType.Movie else TvType.Anime
-                }
-                
-                // Adicionar ao cache
-                titleToUrlCache[cleanTitle.lowercase()] = fixUrl(href)
-                titleToUrlCache[query.lowercase()] = fixUrl(href) // Cache pela query também
-                
-                searchResponse
-            }.getOrElse { e ->
-                println("❌ [SEARCH] Erro ao processar elemento: ${e.message}")
-                null
+    private fun findFirstSearchResult(document: org.jsoup.nodes.Document): Element? {
+        // Tentar vários seletores para encontrar o primeiro resultado
+        val selectors = listOf(
+            "div.divCardUltimosEps article.card a",
+            ".divListaAnimes article.card a",
+            ".anime-card a",
+            ".card-anime a",
+            "a[href*='/animes/']:not([href*='pesquisar'])",
+            "a[href*='/filmes/']:not([href*='pesquisar'])",
+            ".search-results a",
+            ".results a"
+        )
+        
+        for (selector in selectors) {
+            val elements = document.select(selector)
+            if (elements.isNotEmpty()) {
+                println("🔍 [SEARCH-FIRST] Encontrado com seletor: $selector (${elements.size} elementos)")
+                return elements.first()
             }
-        }.distinctBy { it.url }.take(30)
+        }
+        
+        return null
     }
 
-    // ============ LOAD (do código funcional, simplificado) ============
+    // ============ LOAD (usando o URL já encontrado) ============
     override suspend fun load(url: String): LoadResponse {
         println("\n🚀 AnimeFire.load() para URL: $url")
         
-        // Se for URL do AniList, tenta buscar no site
-        if (url.startsWith("anilist:")) {
-            val parts = url.split(":")
-            val titleFromUrl = parts.getOrNull(2) ?: "Anime do AniList"
-            
-            // Tenta encontrar no site
-            val searchResults = search(titleFromUrl)
-            val bestMatch = findBestMatch(titleFromUrl, searchResults)
-            
-            if (bestMatch != null) {
-                println("✅ [LOAD] Encontrado no site: ${bestMatch.name}")
-                return loadFromAnimeFire(bestMatch.url)
-            } else {
-                println("⚠️ [LOAD] Não encontrado no site: $titleFromUrl")
-                return newAnimeLoadResponse(titleFromUrl, url, TvType.Anime) {
-                    this.plot = "📡 Este anime está na lista mas não foi encontrado no AnimeFire.\n\nTente buscar manualmente."
-                }
-            }
-        }
-        
+        // Agora a URL sempre será uma URL válida do AnimeFire
+        // (porque a busca já resolveu isso)
         return loadFromAnimeFire(url)
     }
 
     private suspend fun loadFromAnimeFire(url: String): LoadResponse {
         return try {
-            // Usar headers melhorados também no load
+            // Usar headers melhorados
             val response = app.get(url, headers = headers, timeout = 15_000)
             
             if (response.code == 403) {
