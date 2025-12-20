@@ -352,46 +352,59 @@ class AnimeFire : MainAPI() {
     }
 
     // ============ LOAD ATUALIZADA ============
-
 override suspend fun load(url: String): LoadResponse {
     println("\n$DEBUG_PREFIX load() para URL: $url")
     
-    // 1. Se for um link do AniList, pesquisar no AnimeFire
+    // 1. SE for link do AniList, pesquisar primeiro
     if (url.startsWith("anilist:")) {
-        return handleAniListUrl(url)
+        return handleAniListUrl(url)  // ← NOVA FUNÇÃO
     }
     
-    // 2. Se já for um link direto do AnimeFire, carregar normalmente
+    // 2. SE NÃO for AniList, carrega normal
     return loadFromAnimeFire(url)
 }
 
+// ADICIONE esta função NOVA:
 private suspend fun handleAniListUrl(aniListUrl: String): LoadResponse {
-    println("$DEBUG_PREFIX Processando URL do AniList: $aniListUrl")
+    println("$DEBUG_PREFIX [ANILIST] URL detectada: $aniListUrl")
     
-    // Extrair o nome do anime do formato "anilist:ID:NomeDoAnime"
     val parts = aniListUrl.split(":")
     if (parts.size < 3) {
-        return createAnimeNotFoundResponse("Formato de URL inválido", aniListUrl)
+        return createAnimeNotFoundResponse("Formato inválido", aniListUrl)
     }
     
+    // Extrair título (pode ter vários ":")
     val animeTitle = parts.subList(2, parts.size).joinToString(":")
-    println("$DEBUG_PREFIX 🎯 Buscando anime: '$animeTitle' no AnimeFire")
+    println("$DEBUG_PREFIX [ANILIST] Buscando: '$animeTitle' no AnimeFire")
     
-    // FAZER A PESQUISA NO ANIMEFIRE
-    val searchResults = searchOnAnimeFire(animeTitle)
+    // FAZER PESQUISA REAL
+    val searchUrl = "$mainUrl$SEARCH_PATH/${URLEncoder.encode(animeTitle, "UTF-8")}"
+    println("$DEBUG_PREFIX [ANILIST] URL de busca: $searchUrl")
     
-    if (searchResults.isNotEmpty()) {
-        // Pegar o MELHOR resultado (primeiro da lista)
-        val bestMatch = searchResults.first()
-        println("$DEBUG_PREFIX ✅ Encontrado! Redirecionando para: ${bestMatch.url}")
+    try {
+        val document = app.get(searchUrl, timeout = 15000).document
         
-        // Carregar a página REAL do AnimeFire
-        return loadFromAnimeFire(bestMatch.url)
+        // Pegar primeiro resultado
+        val firstResult = document.selectFirst("div.divCardUltimosEps article.card a")
+        
+        if (firstResult != null) {
+            val href = firstResult.attr("href")
+            if (href.isNotBlank()) {
+                val realUrl = fixUrl(href)
+                println("$DEBUG_PREFIX [ANILIST] ✅ Encontrado! Link real: $realUrl")
+                
+                // Agora carrega com a função loadFromAnimeFire existente
+                return loadFromAnimeFire(realUrl)
+            }
+        }
+        
+        println("$DEBUG_PREFIX [ANILIST] ❌ Nenhum resultado encontrado")
+        return createAnimeNotFoundResponse(animeTitle, aniListUrl)
+        
+    } catch (e: Exception) {
+        println("$DEBUG_PREFIX [ANILIST] ❌ Erro na pesquisa: ${e.message}")
+        return createAnimeNotFoundResponse(animeTitle, aniListUrl)
     }
-    
-    // Se não encontrou nenhum resultado
-    println("$DEBUG_PREFIX ❌ Nenhum resultado encontrado no AnimeFire")
-    return createAnimeNotFoundResponse(animeTitle, aniListUrl)
 }
 
 private suspend fun searchOnAnimeFire(query: String): List<SearchResponse> {
