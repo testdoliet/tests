@@ -319,7 +319,10 @@ class AnimeFire : MainAPI() {
                     return loadFromAnimeFire(searchResult.url)
                 } else {
                     println("❌ [LOAD] Não encontrado no AnimeFire")
-                    return createErrorResponse(titleFromUrl, url)
+                    // Criar resposta de erro simples
+                    return newAnimeLoadResponse(titleFromUrl, url, TvType.Anime) {
+                        this.plot = "Este anime da lista 'Em Breve' ainda não está disponível no AnimeFire.\n\nTente buscar manualmente pelo nome."
+                    }
                 }
             }
         }
@@ -653,12 +656,6 @@ class AnimeFire : MainAPI() {
                     addTrailer(trailerUrl)
                 }
             }
-        }
-    }
-
-    private fun createErrorResponse(title: String, url: String): LoadResponse {
-        return newAnimeLoadResponse(title, url, TvType.Anime) {
-            this.plot = "Este anime da lista 'Em Breve' ainda não está disponível no AnimeFire.\n\nTente buscar manualmente pelo nome."
         }
     }
 
