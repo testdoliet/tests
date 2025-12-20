@@ -34,14 +34,7 @@ class AnimeFire : MainAPI() {
         private const val SEARCH_PATH = "/pesquisar"
         private const val MAX_TRIES = 3
         private const val RETRY_DELAY = 1000L
-        private const val TRANSLATION_ENABLED = true
-        private const val WORKERS_URL = "https://animefire.euluan1912.workers.dev"
-        private const val MAX_CACHE_SIZE = 500
     }
-
-    // Cache para traduções
-    private val translationCache = mutableMapOf<String, String>()
-    private val cacheHits = mutableMapOf<String, Int>()
 
     // ============ ABAS DA PÁGINA INICIAL ============
     override val mainPage = mainPageOf(
@@ -127,9 +120,7 @@ class AnimeFire : MainAPI() {
                             } ?: card.selectFirst("img:not([src*='logo'])")?.attr("src")
                             
                             newAnimeSearchResponse(displayTitle, fixUrl(href)) {
-                                // PRIMEIRO TENTAMOS TMDB, DEPOIS SITE
-                                val tmdbInfo = searchOnTMDB(cleanTitle, null, true)
-                                this.posterUrl = tmdbInfo?.posterUrl ?: sitePoster?.let { fixUrl(it) }
+                                this.posterUrl = sitePoster?.let { fixUrl(it) }
                                 this.type = TvType.Anime
                             }
                         }.getOrNull()
@@ -194,7 +185,6 @@ class AnimeFire : MainAPI() {
                     val anilistUrl = "anilist:${media.id}:$cleanTitle"
                     
                     filteredItems.add(newAnimeSearchResponse(cleanTitle, anilistUrl) {
-                        // Usar imagem do AniList
                         this.posterUrl = posterUrl
                         this.type = TvType.Anime
                     })
@@ -215,7 +205,7 @@ class AnimeFire : MainAPI() {
     }
 
     // ============ FUNÇÃO AUXILIAR DE BUSCA ============
-    private suspend fun Element.toSearchResponse(): AnimeSearchResponse? {
+    private fun Element.toSearchResponse(): AnimeSearchResponse? {
         val href = attr("href").takeIf { it.isNotEmpty() } ?: return null
         
         val titleElement = selectFirst("h3.animeTitle, .text-block h3, .animeTitle, h3, .title, .card-title")
@@ -229,9 +219,6 @@ class AnimeFire : MainAPI() {
                       rawTitle.contains("filme", ignoreCase = true) ||
                       rawTitle.contains("movie", ignoreCase = true)
         
-        // Buscar no TMDB para melhor qualidade
-        val tmdbInfo = searchOnTMDB(cleanTitle, null, !isMovie)
-        
         val sitePoster = selectFirst("img.imgAnimes, img.card-img-top, img.transitioning_src, img.owl-lazy, img[src*='animes']")?.let { img ->
             when {
                 img.hasAttr("data-src") -> img.attr("data-src")
@@ -241,8 +228,7 @@ class AnimeFire : MainAPI() {
         } ?: selectFirst("img:not([src*='logo']):not([src*='Logo'])")?.attr("src")
 
         return newAnimeSearchResponse(cleanTitle, fixUrl(href)) {
-            // PRIORIDADE: TMDB > Site
-            this.posterUrl = tmdbInfo?.posterUrl ?: sitePoster?.let { fixUrl(it) }
+            this.posterUrl = sitePoster?.let { fixUrl(it) }
             this.type = if (isMovie) TvType.Movie else TvType.Anime
         }
     }
@@ -278,13 +264,10 @@ class AnimeFire : MainAPI() {
                     .replace(Regex("\\(Legendado\\)"), "")
                     .trim()
 
-                // Buscar no TMDB para melhor qualidade
                 val isMovie = href.contains("/filmes/") || 
                              cleanTitle.contains("filme", ignoreCase = true) ||
                              rawTitle.contains("filme", ignoreCase = true) ||
                              rawTitle.contains("movie", ignoreCase = true)
-                
-                val tmdbInfo = searchOnTMDB(cleanTitle, null, !isMovie)
 
                 val imgElement = element.selectFirst("img.imgAnimes, img.card-img-top, img.transitioning_src")
                 val sitePoster = when {
@@ -296,8 +279,7 @@ class AnimeFire : MainAPI() {
                 println("✅ [SEARCH] Processado: '$cleanTitle' | URL: ${href.take(50)}... | Tipo: ${if (isMovie) "Filme" else "Anime"}")
 
                 newAnimeSearchResponse(cleanTitle, fixUrl(href)) {
-                    // PRIORIDADE: TMDB > Site
-                    this.posterUrl = tmdbInfo?.posterUrl ?: sitePoster?.let { fixUrl(it) }
+                    this.posterUrl = sitePoster?.let { fixUrl(it) }
                     this.type = if (isMovie) {
                         TvType.Movie
                     } else {
@@ -323,7 +305,8 @@ class AnimeFire : MainAPI() {
                 println("🎯 [LOAD] Anime do AniList: $titleFromUrl")
                 
                 // Buscar no AnimeFire
-                val searchResult = search(titleFromUrl).firstOrNull()
+                val searchResults = search(titleFromUrl)
+                val searchResult = searchResults.firstOrNull()
                 if (searchResult != null) {
                     println("✅ [LOAD] Encontrado no AnimeFire: ${searchResult.name}")
                     return loadFromAnimeFire(searchResult.url)
@@ -513,7 +496,7 @@ class AnimeFire : MainAPI() {
         return SiteMetadata(poster, plot, tags, year)
     }
 
-    private suspend fun extractEpisodesFromSite(
+    private fun extractEpisodesFromSite(
         document: org.jsoup.nodes.Document,
         tmdbInfo: TMDBInfo?
     ): List<Episode> {
@@ -554,7 +537,7 @@ class AnimeFire : MainAPI() {
         return episodes.sortedBy { it.episode }
     }
 
-    private suspend fun extractRecommendationsFromSite(document: org.jsoup.nodes.Document): List<SearchResponse> {
+    private fun extractRecommendationsFromSite(document: org.jsoup.nodes.Document): List<SearchResponse> {
         return document.select(".owl-carousel-anime .divArticleLancamentos a.item")
             .mapNotNull { element -> 
                 runCatching { 
