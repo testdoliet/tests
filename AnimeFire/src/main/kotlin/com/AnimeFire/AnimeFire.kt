@@ -202,7 +202,7 @@ class AnimeFire : MainAPI() {
             .replace(Regex("\\s*\\([^)]+\\)$"), "")
             .replace(Regex("\\s*-\\s*[^-]+$"), "")
             .replace(Regex("\\s+"), " ")
-            .replace(Regex("[^\\p{L}\\p{N}\\s-]", "u"), "") // Remove caracteres especiais
+            .replace(Regex("[^a-zA-Z0-9\\s-]"), "") // Corrigido: regex mais simples
             .trim()
     }
 
@@ -407,10 +407,10 @@ class AnimeFire : MainAPI() {
         
         for (selector in imgSelectors) {
             val img = element.selectFirst(selector)
-            if (img != null) {
+            img?.let { // CORRIGIDO: usando safe call
                 val src = when {
-                    img.hasAttr("data-src") -> img.attr("data-src")
-                    img.hasAttr("src") -> img.attr("src")
+                    it.hasAttr("data-src") -> it.attr("data-src")
+                    it.hasAttr("src") -> it.attr("src")
                     else -> null
                 }
                 if (src != null && src.isNotEmpty()) {
@@ -442,7 +442,7 @@ class AnimeFire : MainAPI() {
             .trim('-')
     }
 
-    // ============ LOAD (mantido igual) ============
+    // ============ LOAD (CORRIGIDO) ============
     override suspend fun load(url: String): LoadResponse {
         println("\n🚀 AnimeFire.load() para URL: $url")
         return loadFromAnimeFire(url)
@@ -485,7 +485,7 @@ class AnimeFire : MainAPI() {
             val plotElement = document.selectFirst("div.divSinopse, .sinopse, .description")
             val plot = plotElement?.text()?.trim()
 
-            // Poster
+            // Poster - CORRIGIDO: usando safe calls
             val posterImg = document.selectFirst(".sub_animepage_img img, .poster img, img[src*='/img/animes/']")
             val poster = when {
                 posterImg?.hasAttr("src") == true -> fixUrl(posterImg.attr("src"))
