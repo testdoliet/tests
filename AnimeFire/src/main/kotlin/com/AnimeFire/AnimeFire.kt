@@ -17,40 +17,22 @@ class AnimeFire : MainAPI() {
     override val supportedTypes = setOf(TvType.Anime, TvType.Movie, TvType.OVA)
     override val usesWebView = false
 
-    // API GraphQL do AniList (para página principal)
     private val aniListApiUrl = "https://graphql.anilist.co"
-    
-    // Cache para mapear títulos AniList → URLs AnimeFire
     private val titleToUrlCache = mutableMapOf<String, String>()
 
-    // ============ CONFIGURAÇÕES ============
     companion object {
         private const val SEARCH_PATH = "/pesquisar"
-        private const val MAX_CACHE_SIZE = 500
-        private const val REQUEST_DELAY_MS = 1000L // Delay de 1 segundo entre requisições
+        private const val REQUEST_DELAY_MS = 1000L
     }
 
-    // Cabeçalhos melhorados para evitar bloqueio 429
     private val headers = mapOf(
         "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
         "Accept-Language" to "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
-        "Accept-Encoding" to "gzip, deflate, br",
         "Referer" to "https://animefire.io/",
-        "DNT" to "1",
-        "Connection" to "keep-alive",
-        "Upgrade-Insecure-Requests" to "1",
-        "Sec-Fetch-Dest" to "document",
-        "Sec-Fetch-Mode" to "navigate",
-        "Sec-Fetch-Site" to "same-origin",
-        "Sec-Fetch-User" to "?1",
-        "Cache-Control" to "max-age=0",
-        "sec-ch-ua" to "\"Not_A Brand\";v=\"8\", \"Chromium\";v=\"120\"",
-        "sec-ch-ua-mobile" to "?0",
-        "sec-ch-ua-platform" to "\"Windows\""
+        "Connection" to "keep-alive"
     )
 
-    // ============ PÁGINA PRINCIPAL (SIMPLIFICADA) ============
     override val mainPage = mainPageOf(
         "trending" to "Em Alta (AniList)",
         "popular" to "Populares (AniList)", 
@@ -66,7 +48,7 @@ class AnimeFire : MainAPI() {
                 else -> newHomePageResponse(request.name, emptyList(), false)
             }
         } catch (e: Exception) {
-            println("❌ Erro ao carregar página principal: ${e.message}")
+            println("❌ Erro página principal: ${e.message}")
             newHomePageResponse(request.name, emptyList(), false)
         }
     }
@@ -145,10 +127,7 @@ class AnimeFire : MainAPI() {
             val response = app.post(
                 aniListApiUrl,
                 data = mapOf("query" to query),
-                headers = mapOf(
-                    "Content-Type" to "application/json",
-                    "Accept" to "application/json"
-                ),
+                headers = mapOf("Content-Type" to "application/json", "Accept" to "application/json"),
                 timeout = 10_000
             )
             
@@ -156,7 +135,7 @@ class AnimeFire : MainAPI() {
                 val aniListResponse = response.parsedSafe<AniListApiResponse>()
                 val mediaList = aniListResponse?.data?.Page?.media ?: emptyList()
                 
-                println("📊 [ANILIST] ${mediaList.size} resultados encontrados para $pageName")
+                println("📊 [ANILIST] ${mediaList.size} resultados")
                 
                 val filteredItems = mutableListOf<SearchResponse>()
                 
@@ -167,28 +146,26 @@ class AnimeFire : MainAPI() {
                     
                     println("🔍 [ANILIST] Processando: $cleanTitle")
                     
-                    // Buscar no AnimeFire
                     val searchResult = searchAnimeFire(cleanTitle)
                     
                     if (searchResult != null) {
-                        println("✅ [ANILIST] Encontrado: ${searchResult.name} -> ${searchResult.url}")
+                        println("✅ [ANILIST] Encontrado: ${searchResult.name}")
                         
                         filteredItems.add(newAnimeSearchResponse(cleanTitle, searchResult.url) {
                             this.posterUrl = posterUrl ?: searchResult.posterUrl
                             this.type = searchResult.type
                         })
                         
-                        // Delay para evitar 429
                         delay(REQUEST_DELAY_MS)
                     } else {
-                        println("⚠️ [ANILIST] Não encontrado no AnimeFire: $cleanTitle")
+                        println("⚠️ [ANILIST] Não encontrado: $cleanTitle")
                     }
                 }
                 
-                println("✅ [ANILIST] ${filteredItems.size} itens adicionados para $pageName")
+                println("✅ [ANILIST] ${filteredItems.size} itens adicionados")
                 newHomePageResponse(pageName, filteredItems, hasNext = filteredItems.isNotEmpty())
             } else {
-                println("❌ [ANILIST] Erro na API: ${response.code}")
+                println("❌ [ANILIST] Erro: ${response.code}")
                 newHomePageResponse(pageName, emptyList(), false)
             }
         } catch (e: Exception) {
@@ -202,11 +179,10 @@ class AnimeFire : MainAPI() {
             .replace(Regex("\\s*\\([^)]+\\)$"), "")
             .replace(Regex("\\s*-\\s*[^-]+$"), "")
             .replace(Regex("\\s+"), " ")
-            .replace(Regex("[^a-zA-Z0-9\\s-]"), "") // Corrigido: regex mais simples
+            .replace(Regex("[^a-zA-Z0-9\\s-]"), "")
             .trim()
     }
 
-    // ============ BUSCA NO ANIMEFIRE (CORRIGIDA) ============
     override suspend fun search(query: String): List<SearchResponse> {
         println("🔍 [SEARCH] Buscando: '$query'")
         val result = searchAnimeFire(query)
@@ -214,52 +190,42 @@ class AnimeFire : MainAPI() {
     }
     
     private suspend fun searchAnimeFire(query: String): SearchResponse? {
-        println("🔍 [ANIMEFIRE] Buscando primeiro resultado para: '$query'")
+        println("🔍 [ANIMEFIRE] Buscando: '$query'")
         
-        // 1. Converter nome para slug
         val slug = createSearchSlug(query)
-        
-        // 2. Construir URL de pesquisa
         val searchUrl = "$mainUrl$SEARCH_PATH/$slug"
-        println("🔗 [ANIMEFIRE] URL de busca: $searchUrl")
+        println("🔗 [ANIMEFIRE] URL: $searchUrl")
         
         return try {
-            // Delay para evitar 429
             delay(REQUEST_DELAY_MS)
             
-            // 3. Fazer requisição
             val response = app.get(searchUrl, headers = headers, timeout = 15_000)
             
             when {
                 response.code == 429 -> {
-                    println("⚠️ [ANIMEFIRE] Erro 429 - Aguardando 3 segundos...")
+                    println("⚠️ [ANIMEFIRE] Erro 429 - Aguardando...")
                     delay(3000)
-                    return searchAnimeFire(query) // Tentar novamente
+                    return searchAnimeFire(query)
                 }
-                
                 response.code == 403 -> {
-                    println("❌ [ANIMEFIRE] Acesso negado (403)")
+                    println("❌ [ANIMEFIRE] Acesso negado")
                     return null
                 }
-                
                 response.code != 200 -> {
                     println("❌ [ANIMEFIRE] Erro HTTP: ${response.code}")
                     return null
                 }
-                
                 else -> {
                     val document = response.document
                     
-                    // 4. Procurar resultados - NOVOS SELETORES
+                    // Busca com seletores
                     val firstResult = findFirstSearchResult(document)
                     
                     if (firstResult == null) {
-                        println("⚠️ [ANIMEFIRE] Nenhum resultado encontrado na página")
-                        // Tentar seletor alternativo
+                        println("⚠️ [ANIMEFIRE] Nenhum resultado")
                         return tryAlternativeSelectors(document, query)
                     }
                     
-                    // 5. Extrair informações
                     val href = firstResult.attr("href")
                     if (href.isBlank() || (!href.contains("/animes/") && !href.contains("/filmes/"))) {
                         println("⚠️ [ANIMEFIRE] Link inválido: $href")
@@ -267,24 +233,17 @@ class AnimeFire : MainAPI() {
                     }
                     
                     val finalUrl = fixUrl(href)
-                    
-                    // Extrair título
                     val title = extractTitleFromElement(firstResult) ?: query
-                    
-                    // Extrair imagem
                     val posterUrl = extractImageFromElement(firstResult)
                     
-                    // Determinar tipo
                     val isMovie = finalUrl.contains("/filmes/") || 
                                  title.contains("filme", ignoreCase = true) ||
                                  title.contains("movie", ignoreCase = true)
                     
                     println("✅ [ANIMEFIRE] Encontrado: '$title' -> $finalUrl")
                     
-                    // Armazenar no cache
                     titleToUrlCache[query.lowercase()] = finalUrl
                     
-                    // Retornar resultado
                     return newAnimeSearchResponse(title, finalUrl) {
                         this.posterUrl = posterUrl
                         this.type = if (isMovie) TvType.Movie else TvType.Anime
@@ -298,23 +257,12 @@ class AnimeFire : MainAPI() {
     }
     
     private fun findFirstSearchResult(document: org.jsoup.nodes.Document): Element? {
-        // Tentar vários seletores em ordem de prioridade
         val selectors = listOf(
-            // Seletores principais do AnimeFire
             "div.divCardUltimosEps article.card a",
             "div.divListaAnimes article.card a",
             "article.card a",
-            "div.anime-card a",
-            "a.anime-card",
-            
-            // Seletores genéricos
             "a[href*='/animes/']",
-            "a[href*='/filmes/']",
-            
-            // Seletores de resultados de busca
-            ".search-result a",
-            ".result-item a",
-            ".item a"
+            "a[href*='/filmes/']"
         )
         
         for (selector in selectors) {
@@ -322,15 +270,16 @@ class AnimeFire : MainAPI() {
                 val elements = document.select(selector)
                 if (elements.isNotEmpty()) {
                     val first = elements.first()
-                    if (first.hasAttr("href") && 
-                        (first.attr("href").contains("/animes/") || 
-                         first.attr("href").contains("/filmes/"))) {
-                        println("🎯 [SELECTOR] Encontrado com: $selector")
-                        return first
+                    if (first.hasAttr("href")) {
+                        val href = first.attr("href")
+                        if (href.contains("/animes/") || href.contains("/filmes/")) {
+                            println("🎯 [SELECTOR] Encontrado com: $selector")
+                            return first
+                        }
                     }
                 }
             } catch (e: Exception) {
-                // Ignorar e tentar próximo seletor
+                // Ignorar
             }
         }
         
@@ -340,7 +289,6 @@ class AnimeFire : MainAPI() {
     private suspend fun tryAlternativeSelectors(document: org.jsoup.nodes.Document, query: String): SearchResponse? {
         println("🔄 [ANIMEFIRE] Tentando seletores alternativos...")
         
-        // Procurar qualquer link de anime
         val allLinks = document.select("a")
         for (link in allLinks) {
             val href = link.attr("href")
@@ -348,7 +296,7 @@ class AnimeFire : MainAPI() {
                 val title = extractTitleFromElement(link) ?: query
                 val finalUrl = fixUrl(href)
                 
-                println("✅ [ALTERNATIVE] Encontrado via links: '$title' -> $finalUrl")
+                println("✅ [ALTERNATIVE] Encontrado: '$title' -> $finalUrl")
                 
                 return newAnimeSearchResponse(title, finalUrl) {
                     this.posterUrl = extractImageFromElement(link)
@@ -361,16 +309,13 @@ class AnimeFire : MainAPI() {
     }
     
     private fun extractTitleFromElement(element: Element): String? {
-        // Tentar vários seletores de título
         val titleSelectors = listOf(
             "h3.animeTitle",
             ".animeTitle",
             ".title",
             "h3",
             ".card-title",
-            ".name",
-            "[class*='title']",
-            "[class*='name']"
+            ".name"
         )
         
         for (selector in titleSelectors) {
@@ -378,7 +323,6 @@ class AnimeFire : MainAPI() {
             if (titleEl != null) {
                 var text = titleEl.text().trim()
                 if (text.isNotEmpty()) {
-                    // Limpar título
                     text = text
                         .replace(Regex("\\s*-\\s*Todos os Episódios$"), "")
                         .replace(Regex("\\s*\\([^)]+\\)$"), "")
@@ -391,11 +335,11 @@ class AnimeFire : MainAPI() {
             }
         }
         
-        // Tentar atributos
         return element.attr("title").takeIf { it.isNotEmpty() } ?: 
                element.attr("alt").takeIf { it.isNotEmpty() }
     }
     
+    // FUNÇÃO CORRIGIDA - Sem erros de nullable
     private fun extractImageFromElement(element: Element): String? {
         val imgSelectors = listOf(
             "img.imgAnimes",
@@ -407,14 +351,19 @@ class AnimeFire : MainAPI() {
         
         for (selector in imgSelectors) {
             val img = element.selectFirst(selector)
-            img?.let { // CORRIGIDO: usando safe call
-                val src = when {
-                    it.hasAttr("data-src") -> it.attr("data-src")
-                    it.hasAttr("src") -> it.attr("src")
-                    else -> null
+            if (img != null) {
+                // Verificar atributos de forma segura
+                if (img.hasAttr("data-src")) {
+                    val src = img.attr("data-src")
+                    if (src.isNotEmpty()) {
+                        return fixUrl(src)
+                    }
                 }
-                if (src != null && src.isNotEmpty()) {
-                    return fixUrl(src)
+                if (img.hasAttr("src")) {
+                    val src = img.attr("src")
+                    if (src.isNotEmpty()) {
+                        return fixUrl(src)
+                    }
                 }
             }
         }
@@ -424,7 +373,6 @@ class AnimeFire : MainAPI() {
     
     private fun createSearchSlug(query: String): String {
         return query.lowercase()
-            // Converter acentos
             .replace(Regex("[áàâãä]"), "a")
             .replace(Regex("[éèêë]"), "e")
             .replace(Regex("[íìîï]"), "i")
@@ -432,17 +380,12 @@ class AnimeFire : MainAPI() {
             .replace(Regex("[úùûü]"), "u")
             .replace("ç", "c")
             .replace("ñ", "n")
-            // Remover caracteres especiais
             .replace(Regex("[^a-z0-9\\s-]"), "")
-            // Espaços viram -
             .replace(Regex("\\s+"), "-")
-            // Remover múltiplos -
             .replace(Regex("-+"), "-")
-            // Remover - do início e fim
             .trim('-')
     }
 
-    // ============ LOAD (CORRIGIDO) ============
     override suspend fun load(url: String): LoadResponse {
         println("\n🚀 AnimeFire.load() para URL: $url")
         return loadFromAnimeFire(url)
@@ -450,25 +393,23 @@ class AnimeFire : MainAPI() {
 
     private suspend fun loadFromAnimeFire(url: String): LoadResponse {
         return try {
-            // Delay para evitar 429
             delay(REQUEST_DELAY_MS)
             
             val response = app.get(url, headers = headers, timeout = 15_000)
             
             if (response.code == 429) {
-                println("⚠️ [LOAD] Erro 429 - Aguardando 3 segundos...")
+                println("⚠️ [LOAD] Erro 429 - Aguardando...")
                 delay(3000)
                 return loadFromAnimeFire(url)
             }
             
             if (response.code != 200) {
-                println("❌ [LOAD] Erro HTTP: ${response.code} para: $url")
-                throw ErrorLoadingException("Erro ao carregar a página")
+                println("❌ [LOAD] Erro HTTP: ${response.code}")
+                throw ErrorLoadingException("Erro ao carregar")
             }
             
             val document = response.document
 
-            // Extrair título
             val titleElement = document.selectFirst("h1.quicksand400, .main_div_anime_info h1, h1") ?: 
                 throw ErrorLoadingException("Título não encontrado")
             val rawTitle = titleElement.text().trim()
@@ -481,11 +422,10 @@ class AnimeFire : MainAPI() {
 
             println("📌 Título: $cleanTitle, Ano: $year, Tipo: $type")
 
-            // Sinopse
             val plotElement = document.selectFirst("div.divSinopse, .sinopse, .description")
             val plot = plotElement?.text()?.trim()
 
-            // Poster - CORRIGIDO: usando safe calls
+            // CORRIGIDO: usando safe calls
             val posterImg = document.selectFirst(".sub_animepage_img img, .poster img, img[src*='/img/animes/']")
             val poster = when {
                 posterImg?.hasAttr("src") == true -> fixUrl(posterImg.attr("src"))
@@ -493,7 +433,6 @@ class AnimeFire : MainAPI() {
                 else -> null
             }
 
-            // Episódios
             val episodes = if (!isMovie) {
                 document.select("a.lEp, .episode-item, [href*='/video/']")
                     .mapIndexedNotNull { index, element ->
@@ -518,7 +457,6 @@ class AnimeFire : MainAPI() {
                 emptyList()
             }
 
-            // Criar resposta
             if (isMovie) {
                 newMovieLoadResponse(cleanTitle, url, type, url) {
                     this.year = year
@@ -538,7 +476,7 @@ class AnimeFire : MainAPI() {
         } catch (e: Exception) {
             println("❌ Erro ao carregar: ${e.message}")
             newAnimeLoadResponse("Erro", url, TvType.Anime) {
-                this.plot = "Não foi possível carregar este anime."
+                this.plot = "Não foi possível carregar."
             }
         }
     }
@@ -556,7 +494,6 @@ class AnimeFire : MainAPI() {
         return false
     }
 
-    // ============ CLASSES DE DADOS PARA ANILIST ============
     @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
     private data class AniListApiResponse(
         @JsonProperty("data") val data: AniListData? = null
