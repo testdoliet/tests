@@ -20,12 +20,8 @@ class AnimeFire : MainAPI() {
     companion object {
         private const val SEARCH_PATH = "/pesquisar"
         
-        // ============ CONTROLE DE CARREGAMENTO ============
         private val loadingMutex = Mutex()
-        private var currentLoadingTab = ""
-        private val callCount = mutableMapOf<String, Int>()
         
-        // ============ TODAS CATEGORIAS DISPONÍVEIS ============
         private val ALL_CATEGORIES = listOf(
             "/em-lancamento" to "Lançamentos",
             "/animes-atualizados" to "Atualizados",
@@ -61,27 +57,32 @@ class AnimeFire : MainAPI() {
             "/genero/vida-escolar" to "Vida Escolar"
         )
         
-        // ============ GERA 8 ABAS ALEATÓRIAS ============
         fun getRandomTabs(count: Int = 8): List<Pair<String, String>> {
             return ALL_CATEGORIES.shuffled().take(count)
         }
     }
 
     init {
-        println("🔥 ANIMEFIRE: Plugin inicializado - 8 abas aleatórias")
+        println("🔥 ANIMEFIRE: Plugin inicializado")
     }
 
-    // ============ PÁGINA INICIAL DINÂMICA ============
     override val mainPage = mainPageOf(
         *getRandomTabs().map { (path, name) -> 
             "$mainUrl$path" to name 
         }.toTypedArray()
     )
 
-    // ============ FUNÇÃO PRINCIPAL DE PARSING ============
-    private fun Element.toSearchResponse(isUpcomingSection: Boolean = false): AnimeSearchResponse? {
+    // ============ FUNÇÃO AVANÇADA DE EXTRACTION ============
+    private fun Element.toSearchResponse(isUpcomingSection: Boolean = false, debugMode: Boolean = true): AnimeSearchResponse? {
         val href = attr("href") ?: return null
         if (href.isBlank() || (!href.contains("/animes/") && !href.contains("/filmes/"))) return null
+        
+        if (debugMode) {
+            println("\n" + "=".repeat(60))
+            println("🔍 DEBUG EXTRACTION - Elemento encontrado")
+            println("=".repeat(60))
+            println("📄 HTML (resumido): ${outerHtml().take(200)}...")
+        }
         
         // TÍTULO
         val titleElement = selectFirst("h3.animeTitle, .animeTitle, h3, .card-title") ?: return null
@@ -91,6 +92,54 @@ class AnimeFire : MainAPI() {
         val combinedTitle = if (titleAttr.isNotBlank() && titleAttr.length > 3) titleAttr else rawTitle
         
         if (combinedTitle.isBlank()) return null
+        
+        // ============ DETECÇÃO DE AVALIAÇÃO AVANÇADA ============
+        val scoreResult = extractScoreAdvanced(this, debugMode)
+        val scoreText = scoreResult.first
+        val scoreSelector = scoreResult.second
+        
+        if (debugMode) {
+            println("\n📊 RESULTADO AVALIAÇÃO:")
+            println("   • Texto encontrado: '$scoreText'")
+            println("   • Selector usado: '${scoreSelector ?: "NENHUM"}'")
+            println("   • É upcoming section? $isUpcomingSection")
+        }
+        
+        // ============ NOVA LÓGICA DE FILTRO ============
+        val shouldKeepItem = when {
+            // 1. Se é seção de lançamentos, sempre mantém
+            isUpcomingSection -> {
+                if (debugMode) println("✅ Mantido: É seção de lançamentos")
+                true
+            }
+            
+            // 2. Se encontrou avaliação e não é N/A
+            scoreText != null && scoreText != "N/A" -> {
+                if (debugMode) println("✅ Mantido: Tem avaliação válida: $scoreText")
+                true
+            }
+            
+            // 3. Se não encontrou avaliação (scoreText == null)
+            scoreText == null -> {
+                if (debugMode) println("⚠️ AVISO: Não encontrou avaliação")
+                // TESTE: Manter mesmo sem avaliação
+                true
+            }
+            
+            // 4. Se é N/A
+            else -> {
+                if (debugMode) println("❌ Filtrado: Avaliação N/A em seção normal")
+                false
+            }
+        }
+        
+        if (!shouldKeepItem) return null
+        
+        // ============ PROCESSAR SCORE FINAL ============
+        val score = when {
+            scoreText == null || scoreText == "N/A" -> null
+            else -> scoreText.toFloatOrNull()?.let { Score.from10(it) }
+        }
         
         // BADGES (DUB/LEG)
         val hasExplicitDub = combinedTitle.contains("dublado", ignoreCase = true)
@@ -121,18 +170,6 @@ class AnimeFire : MainAPI() {
         // NOME LIMPO
         val cleanName = extractAnimeName(combinedTitle, selectFirst(".numEp")?.text())
         
-        // FILTRO N/A (exceto em Lançamentos/Atualizados)
-        val scoreText = selectFirst(".horaUltimosEps, .rating, .score")?.text()?.trim()
-        
-        if ((scoreText == "N/A" || scoreText == null) && !isUpcomingSection) {
-            return null
-        }
-        
-        val score = when {
-            scoreText == null || scoreText == "N/A" -> Score.from10(0f)
-            else -> scoreText.toFloatOrNull()?.let { Score.from10(it) } ?: Score.from10(0f)
-        }
-        
         val isMovie = href.contains("/filmes/") || combinedTitle.contains("filme", ignoreCase = true)
         
         // POSTER
@@ -154,6 +191,15 @@ class AnimeFire : MainAPI() {
             null
         }?.let { fixUrl(it) }
 
+        if (debugMode) {
+            println("\n🎯 ITEM FINAL:")
+            println("   • Nome: $cleanName")
+            println("   • URL: $href")
+            println("   • Score: ${score?.value ?: "null"}")
+            println("   • Poster: ${sitePoster?.take(50) ?: "null"}...")
+            println("=".repeat(60))
+        }
+
         return newAnimeSearchResponse(cleanName, fixUrl(href)) {
             this.posterUrl = sitePoster
             this.type = if (isMovie) TvType.Movie else TvType.Anime
@@ -162,6 +208,127 @@ class AnimeFire : MainAPI() {
             if (finalHasDub || finalHasLeg) {
                 addDubStatus(dubExist = finalHasDub, subExist = finalHasLeg)
             }
+        }
+    }
+
+    // ============ FUNÇÃO AVANÇADA DE EXTRACTION DE SCORE ============
+    private fun extractScoreAdvanced(element: Element, debugMode: Boolean = true): Pair<String?, String?> {
+        val selectors = listOf(
+            // Seletores primários
+            ".horaUltimosEps" to "Seletor padrão .horaUltimosEps",
+            ".rating" to "Seletor .rating",
+            ".score" to "Seletor .score",
+            
+            // Seletores secundários
+            ".numEp + span" to "Próximo ao .numEp",
+            ".episodes + span" to "Próximo a .episodes",
+            ".card-footer span" to "No rodapé do card",
+            ".card-body span:last-child" to "Último span do corpo",
+            
+            // Seletores por conteúdo
+            "span:contains(★)" to "Span com estrela",
+            "span:contains(⭐)" to "Span com emoji estrela",
+            "span:contains(/10)" to "Span com /10",
+            "span:contains(pontos)" to "Span com 'pontos'",
+            
+            // Seletores por classe parcial
+            "[class*='rating']" to "Classe contém 'rating'",
+            "[class*='score']" to "Classe contém 'score'",
+            "[class*='rate']" to "Classe contém 'rate'",
+            
+            // Seletores genéricos
+            "small" to "Tag small",
+            "i + span" to "Span após ícone",
+            "b" to "Tag bold",
+            "strong" to "Tag strong"
+        )
+
+        // TENTATIVA 1: Buscar no próprio elemento
+        for ((selector, description) in selectors) {
+            val found = element.selectFirst(selector)?.text()?.trim()
+            if (!found.isNullOrBlank() && isScoreLike(found)) {
+                if (debugMode) println("✅ Score encontrado no elemento: '$found' (via: $description)")
+                return found to selector
+            }
+        }
+
+        // TENTATIVA 2: Buscar no elemento pai
+        element.parent()?.let { parent ->
+            for ((selector, description) in selectors) {
+                val found = parent.selectFirst(selector)?.text()?.trim()
+                if (!found.isNullOrBlank() && isScoreLike(found)) {
+                    if (debugMode) println("✅ Score encontrado no pai: '$found' (via: $description)")
+                    return found to "parent.$selector"
+                }
+            }
+        }
+
+        // TENTATIVA 3: Buscar em elementos irmãos
+        element.siblingElements().forEach { sibling ->
+            for ((selector, description) in selectors) {
+                val found = sibling.selectFirst(selector)?.text()?.trim()
+                if (!found.isNullOrBlank() && isScoreLike(found)) {
+                    if (debugMode) println("✅ Score encontrado em irmão: '$found' (via: $description)")
+                    return found to "sibling.$selector"
+                }
+            }
+        }
+
+        // TENTATIVA 4: Buscar no HTML com regex
+        val html = element.outerHtml()
+        val scoreRegexes = listOf(
+            Regex("""(\d+\.\d+|\d+)\s*(?:★|⭐|/10|pontos)"""),
+            Regex("""class="[^"]*(?:rating|score|rate)[^"]*">([^<]+)"""),
+            Regex("""<span[^>]*>(.*?\d+\.?\d*.*?)</span>"""),
+            Regex("""<small[^>]*>(.*?\d+\.?\d*.*?)</small>""")
+        )
+
+        for (regex in scoreRegexes) {
+            val match = regex.find(html)
+            if (match != null) {
+                val found = match.groupValues[1].trim()
+                if (isScoreLike(found)) {
+                    if (debugMode) println("✅ Score encontrado via regex: '$found'")
+                    return found to "regex"
+                }
+            }
+        }
+
+        // TENTATIVA 5: Verificar elementos próximos visualmente
+        val nearbyElements = element.parent()?.children() ?: emptyList()
+        for (nearby in nearbyElements) {
+            if (nearby != element) {
+                val text = nearby.text().trim()
+                if (isScoreLike(text)) {
+                    if (debugMode) println("✅ Score encontrado em elemento próximo: '$text'")
+                    return text to "nearby"
+                }
+            }
+        }
+
+        if (debugMode) println("❌ Nenhum score encontrado")
+        return null to null
+    }
+
+    // ============ FUNÇÃO PARA IDENTIFICAR SE É UM SCORE ============
+    private fun isScoreLike(text: String): Boolean {
+        return when {
+            // É "N/A"
+            text.equals("N/A", ignoreCase = true) -> true
+            
+            // É número (inteiro ou decimal)
+            text.matches(Regex("""^\d+(\.\d+)?$""")) -> true
+            
+            // É número com /10
+            text.matches(Regex("""^\d+(\.\d+)?/10$""")) -> true
+            
+            // Tem estrela
+            text.contains("★") || text.contains("⭐") -> true
+            
+            // Palavras-chave
+            text.contains("pontos", ignoreCase = true) -> true
+            
+            else -> false
         }
     }
 
@@ -188,77 +355,57 @@ class AnimeFire : MainAPI() {
         return cleanName.trim().replace(Regex("\\s+"), " ")
     }
 
-    // ============ FUNÇÃO QUE CALCULA URL DA PÁGINA CORRETA ============
-    private fun calculatePageUrl(basePath: String, page: Int): String {
-        println("📊 CALCULANDO URL PARA PAGINAÇÃO:")
-        println("   • Base Path: '$basePath'")
-        println("   • Cloudstream Page: $page")
-        
-        return when {
-            // Página inicial (Cloudstream page 0) → Sem número
-            page == 0 -> {
-                val url = "$mainUrl$basePath"
-                println("   • Caso: Página inicial (0)")
-                println("   • URL: $url (sem /2)")
-                url
-            }
-            
-            // Primeira vez que rola (Cloudstream page 1) → /2
-            page == 1 -> {
-                val url = "$mainUrl$basePath/2"
-                println("   • Caso: Primeiro scroll (1)")
-                println("   • URL: $url (+/2)")
-                url
-            }
-            
-            // Demais rolagens (Cloudstream page 2, 3, ...) → /3, /4, ...
-            else -> {
-                // page=2 → /3 (porque já carregamos /2)
-                // page=3 → /4
-                val sitePageNumber = page + 1
-                val url = "$mainUrl$basePath/$sitePageNumber"
-                println("   • Caso: Scroll adicional ($page)")
-                println("   • URL: $url (+/$sitePageNumber)")
-                url
-            }
-        }
-    }
-
-    // ============ GET MAIN PAGE CORRIGIDO COM PAGINAÇÃO ============
+    // ============ GET MAIN PAGE ============
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         return loadingMutex.withLock {
             try {
                 println("\n" + "=".repeat(80))
-                println("🔥 ANIMEFIRE: INICIANDO CARREGAMENTO")
+                println("🔥 ANIMEFIRE: Carregando página")
                 println("=".repeat(80))
-                println("📊 PARÂMETROS INICIAIS:")
+                println("📊 Detalhes:")
                 println("   • Aba: '${request.name}'")
                 println("   • Cloudstream Page: $page")
-                println("   • URL Base: ${request.data}")
+                println("   • É página 0? ${page == 0}")
                 
-                // ============ CALCULAR URL CORRETA ============
+                // ============ PAGINAÇÃO ============
                 val basePath = request.data.removePrefix(mainUrl)
-                val pageUrl = calculatePageUrl(basePath, page)
                 
-                println("\n📊 URL CALCULADA:")
-                println("   • Página do Cloudstream: $page")
-                println("   • Página do Site: ${if (page == 0) "1 (sem número)" else if (page == 1) "2 (/2)" else "${page + 1} (/${page + 1})"}")
-                println("   • URL Final: $pageUrl")
+                val pageUrl = if (page == 0) {
+                    "$mainUrl$basePath"
+                } else {
+                    "$mainUrl$basePath/${page + 1}"
+                }
+                
+                println("   • URL: $pageUrl")
                 println("-".repeat(80))
                 
-                // ============ DELAY DE ESTABILIDADE ============
-                kotlinx.coroutines.delay(500)
+                kotlinx.coroutines.delay(300)
                 
-                // ============ CARREGAR DOCUMENTO ============
-                println("🌐 Carregando página...")
                 val document = app.get(pageUrl, timeout = 30).document
-                println("✅ Página carregada com sucesso")
                 
-                // ============ DETECTAR SEÇÃO ============
                 val isUpcomingSection = basePath.contains("/em-lancamento") || 
                                        basePath.contains("/animes-atualizados")
                 
-                // ============ COLETAR ELEMENTOS ============
+                // ============ DEBUG: VER ESTRUTURA DA PÁGINA ============
+                println("\n🔍 ESTRUTURA DA PÁGINA $pageUrl:")
+                val allArticles = document.select("article, .card, .anime-item")
+                println("   • Total de elementos container: ${allArticles.size}")
+                
+                if (allArticles.size > 0) {
+                    // Analisar primeiro elemento
+                    val firstElement = allArticles[0]
+                    println("   • HTML do primeiro elemento (resumido):")
+                    println("     ${firstElement.html().take(300)}...")
+                    
+                    // Verificar onde está a avaliação
+                    val ratingElements = firstElement.select(".rating, .score, .horaUltimosEps")
+                    println("   • Elementos de rating no primeiro: ${ratingElements.size}")
+                    ratingElements.forEachIndexed { i, el ->
+                        println("     $i. ${el.text()} -> ${el.className()}")
+                    }
+                }
+                
+                // ============ PROCESSAMENTO ============
                 val elements = document.select("""
                     article a,
                     .card a,
@@ -267,46 +414,61 @@ class AnimeFire : MainAPI() {
                     a[href*='/filmes/']
                 """).take(30)
                 
-                println("📊 Elementos encontrados: ${elements.size}")
+                println("   • Links encontrados: ${elements.size}")
                 
                 val homeItems = mutableListOf<SearchResponse>()
                 
+                // Usar debugMode apenas para os primeiros 3 itens
                 elements.forEachIndexed { index, element ->
                     try {
-                        val item = element.toSearchResponse(isUpcomingSection = isUpcomingSection)
+                        val debugMode = index < 3  // Debug apenas primeiros 3
+                        val item = element.toSearchResponse(
+                            isUpcomingSection = isUpcomingSection,
+                            debugMode = debugMode
+                        )
                         if (item != null) {
                             homeItems.add(item)
-                            if (index < 3) { // Log dos primeiros 3 itens
-                                println("   • Item ${index + 1}: ${item.name}")
-                            }
                         }
                     } catch (e: Exception) {
-                        // Ignorar erro em item específico
+                        println("❌ Erro no item $index: ${e.message}")
                     }
                 }
                 
-                // ============ DETECTAR PRÓXIMA PÁGINA (MELHORADO) ============
-                val hasNextPage = detectNextPage(document, page)
-                
-                // ============ NOME DA ABA ============
-                val tabName = if (page == 0) {
-                    request.name  // Primeira página sem (P1)
+                // ============ DETECTAR PRÓXIMA PÁGINA ============
+                val hasNextPage = if (page == 0) {
+                    document.select("a[href*='/2']").isNotEmpty()
                 } else {
-                    val sitePageNum = if (page == 1) 2 else page + 1
-                    "${request.name} (P$sitePageNum)"
+                    val nextPageNum = page + 2
+                    document.select("a[href*='/$nextPageNum']").isNotEmpty()
                 }
                 
-                // ============ LOGS FINAIS ============
+                // ============ NOME DA ABA ============
+                val sitePageNumber = if (page == 0) 1 else page + 1
+                val tabName = if (page > 0) "${request.name} (P$sitePageNumber)" else request.name
+                
+                // ============ RESULTADO FINAL ============
                 println("\n" + "=".repeat(80))
-                println("📊 RESULTADO FINAL:")
+                println("📊 RESULTADO:")
                 println("   • Aba: '$tabName'")
-                println("   • Itens carregados: ${homeItems.size}")
-                println("   • Próxima página disponível? $hasNextPage")
-                println("   • URL utilizada: $pageUrl")
+                println("   • Itens processados: ${homeItems.size}")
+                println("   • Itens válidos: ${homeItems.size}")
+                println("   • Próxima página? $hasNextPage")
+                
+                if (homeItems.isNotEmpty()) {
+                    println("   • Exemplos:")
+                    homeItems.take(3).forEachIndexed { i, item ->
+                        println("     ${i + 1}. ${item.name} (score: ${item.score?.value ?: "null"})")
+                    }
+                } else {
+                    println("   ⚠️ NENHUM ITEM RETORNADO!")
+                    println("   Possíveis causas:")
+                    println("     1. Filtro N/A removendo todos")
+                    println("     2. Selector de título não funciona")
+                    println("     3. Estrutura HTML diferente")
+                }
                 println("=".repeat(80) + "\n")
                 
-                // ============ DELAY FINAL ============
-                kotlinx.coroutines.delay(300)
+                kotlinx.coroutines.delay(200)
                 
                 newHomePageResponse(
                     tabName,
@@ -315,69 +477,13 @@ class AnimeFire : MainAPI() {
                 )
                 
             } catch (e: Exception) {
-                println("\n❌ ANIMEFIRE: ERRO CRÍTICO")
-                println("   • Aba: '${request.name}'")
-                println("   • Cloudstream Page: $page")
-                println("   • Erro: ${e.message}")
-                println("=".repeat(80) + "\n")
-                
+                println("\n❌ ERRO: ${e.message}")
                 newHomePageResponse(request.name, emptyList(), false)
             }
         }
     }
 
-    // ============ FUNÇÃO PARA DETECTAR PRÓXIMA PÁGINA ============
-    private fun detectNextPage(document: org.jsoup.nodes.Document, currentPage: Int): Boolean {
-        println("\n🔍 DETECTANDO PRÓXIMA PÁGINA:")
-        println("   • Página atual do Cloudstream: $currentPage")
-        
-        // Calcular qual seria a próxima página do site
-        val nextSitePage = when {
-            currentPage == 0 -> 2  // Da página 1 (sem número) para página 2 (/2)
-            else -> currentPage + 2 // Da página /X para página /(X+1)
-        }
-        
-        println("   • Próxima página do site: $nextSitePage (/$nextSitePage)")
-        
-        // Verificar múltiplas formas de detecção
-        val detectionMethods = listOf(
-            // 1. Link numérico direto
-            { document.select("a[href*='/$nextSitePage']").isNotEmpty() } to "Link numérico /$nextSitePage",
-            
-            // 2. Botão "Próxima"
-            { document.select("a:contains(Próxima), a:contains(Próximo)").isNotEmpty() } to "Botão 'Próxima'",
-            
-            // 3. Botão ">"
-            { document.select("a:contains(>), .pagination a:contains(›)").isNotEmpty() } to "Botão '>'",
-            
-            // 4. Paginação numerada
-            { document.select(".pagination a:not(.active)").isNotEmpty() } to "Paginação numerada",
-            
-            // 5. Se tem muitos itens (indicativo de mais páginas)
-            { document.select("article, .card, .anime-item").size >= 24 } to "Muitos itens (>=24)"
-        )
-        
-        var hasNext = false
-        detectionMethods.forEachIndexed { index, (detector, description) ->
-            val detected = detector()
-            println("   • Método ${index + 1} ($description): ${if (detected) "✅" else "❌"}")
-            if (detected) hasNext = true
-        }
-        
-        // Forçar próxima página nas primeiras 3 páginas se tiver muitos itens
-        if (!hasNext && currentPage < 3) {
-            val itemCount = document.select("article, .card, .anime-item").size
-            if (itemCount >= 20) {
-                println("   • ⚠️ Forçando próxima página (muitos itens: $itemCount)")
-                hasNext = true
-            }
-        }
-        
-        println("   • Resultado final: ${if (hasNext) "✅ TEM" else "❌ NÃO TEM"} próxima página")
-        return hasNext
-    }
-
-    // ============ BUSCA ============
+    // ============ FUNÇÕES RESTANTES (MESMAS) ============
     override suspend fun search(query: String): List<SearchResponse> {
         if (query.length < 2) return emptyList()
         
@@ -387,7 +493,7 @@ class AnimeFire : MainAPI() {
             val document = app.get(searchUrl, timeout = 15).document
             
             document.select("a[href*='/animes/'], a[href*='/filmes/']")
-                .mapNotNull { it.toSearchResponse() }
+                .mapNotNull { it.toSearchResponse(debugMode = false) }
                 .distinctBy { it.url }
                 .take(30)
                 
@@ -396,7 +502,6 @@ class AnimeFire : MainAPI() {
         }
     }
 
-    // ============ LOAD (PÁGINA DO ANIME) ============
     override suspend fun load(url: String): LoadResponse {
         return try {
             val document = app.get(url, timeout = 25).document
@@ -422,13 +527,10 @@ class AnimeFire : MainAPI() {
                 this.plot = synopsis
                 this.tags = genres
                 
-                // Adicionar episódios (se disponível)
                 try {
                     val episodesField = this::class.members.find { it.name == "episodes" }
                     episodesField?.call(this, episodes)
-                } catch (e: Exception) {
-                    // Campo pode não existir em algumas versões
-                }
+                } catch (e: Exception) {}
             }
             
         } catch (e: Exception) {
@@ -438,7 +540,6 @@ class AnimeFire : MainAPI() {
         }
     }
 
-    // ============ EXTRAIR EPISÓDIOS ============
     private fun extractAllEpisodes(document: org.jsoup.nodes.Document, baseUrl: String): List<Episode> {
         val episodes = mutableListOf<Episode>()
         
@@ -461,14 +562,13 @@ class AnimeFire : MainAPI() {
                     }
                 )
             } catch (e: Exception) {
-                // Ignorar episódio com erro
+                // Ignorar
             }
         }
         
         return episodes.sortedBy { it.episode }
     }
 
-    // ============ LOAD LINKS ============
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
