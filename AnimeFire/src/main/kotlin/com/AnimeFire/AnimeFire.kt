@@ -70,57 +70,132 @@ class AnimeFire : MainAPI() {
         }
     }
 
-    // ============ GET MAIN PAGE (ABAS ORIGINAIS) ============
+    // ============ GET MAIN PAGE ATUALIZADA COM EP INFO ============
     
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val document = app.get(mainUrl).document
         
         val homeItems = when (request.name) {
-            "Lançamentos" -> 
+            "Lançamentos" -> {
                 document.select(".owl-carousel-home .divArticleLancamentos a.item")
                     .mapNotNull { element -> 
-                        element.toSearchResponse()
+                        val response = element.toSearchResponse()
+                        response?.let {
+                            // Adicionar info de episódio se disponível
+                            addEpisodeInfoToSearchResponse(it, element)
+                        }
                     }
-            "Destaques da Semana" -> 
+            }
+            "Destaques da Semana" -> {
                 document.select(".owl-carousel-semana .divArticleLancamentos a.item")
                     .mapNotNull { element -> 
-                        element.toSearchResponse()
+                        val response = element.toSearchResponse()
+                        response?.let {
+                            addEpisodeInfoToSearchResponse(it, element)
+                        }
                     }
-            "Últimos Animes Adicionados" -> 
+            }
+            "Últimos Animes Adicionados" -> {
                 document.select(".owl-carousel-l_dia .divArticleLancamentos a.item")
                     .mapNotNull { element -> 
-                        element.toSearchResponse()
+                        val response = element.toSearchResponse()
+                        response?.let {
+                            addEpisodeInfoToSearchResponse(it, element)
+                        }
                     }
+            }
             "Últimos Episódios Adicionados" -> {
                 document.select(".divCardUltimosEpsHome").mapNotNull { card ->
-                    val link = card.selectFirst("article.card a") ?: return@mapNotNull null
-                    val href = link.attr("href") ?: return@mapNotNull null
-                    
-                    val titleElement = card.selectFirst("h3.animeTitle") ?: return@mapNotNull null
-                    val rawTitle = titleElement.text().trim()
-                    
-                    val epNumber = card.selectFirst(".numEp")?.text()?.toIntOrNull() ?: 1
-                    val cleanTitle = rawTitle.replace(Regex("(?i)(dublado|legendado|todos os episódios|\\(\\d{4}\\))$"), "").trim()
-                    val displayTitle = "${cleanTitle} - Episódio $epNumber"
-                    
-                    val sitePoster = card.selectFirst("img.imgAnimesUltimosEps, img[src*='animes']")?.let { img ->
-                        when {
-                            img.hasAttr("data-src") -> img.attr("data-src")
-                            img.hasAttr("src") -> img.attr("src")
+                    runCatching {
+                        val link = card.selectFirst("article.card a") ?: return@runCatching null
+                        val href = link.attr("href") ?: return@runCatching null
+                        
+                        val titleElement = card.selectFirst("h3.animeTitle") ?: return@runCatching null
+                        val rawTitle = titleElement.text().trim()
+                        
+                        val epNumber = card.selectFirst(".numEp")?.text()?.toIntOrNull() ?: 1
+                        val cleanTitle = rawTitle.replace(Regex("(?i)(dublado|legendado|todos os episódios|\\(\\d{4}\\))$"), "").trim()
+                        val displayTitle = "${cleanTitle} - Episódio $epNumber"
+                        
+                        val sitePoster = card.selectFirst("img.imgAnimesUltimosEps, img[src*='animes']")?.let { img ->
+                            when {
+                                img.hasAttr("data-src") -> img.attr("data-src")
+                                img.hasAttr("src") -> img.attr("src")
+                                else -> null
+                            }?.takeIf { !it.contains("logo", ignoreCase = true) }
+                        } ?: card.selectFirst("img:not([src*='logo'])")?.attr("src")
+                        
+                        // Extrair tipo de áudio (dub/leg) do card
+                        val audioType = when {
+                            rawTitle.contains("dublado", ignoreCase = true) -> "Dub"
+                            rawTitle.contains("legendado", ignoreCase = true) -> "Leg"
                             else -> null
-                        }?.takeIf { !it.contains("logo", ignoreCase = true) }
-                    } ?: card.selectFirst("img:not([src*='logo'])")?.attr("src")
-                    
-                    newAnimeSearchResponse(displayTitle, fixUrl(href)) {
-                        this.posterUrl = sitePoster?.let { fixUrl(it) }
-                        this.type = TvType.Anime
-                    }
+                        }
+                        
+                        val response = newAnimeSearchResponse(displayTitle, fixUrl(href)) {
+                            this.posterUrl = sitePoster?.let { fixUrl(it) }
+                            this.type = TvType.Anime
+                        }
+                        
+                        // Adicionar info de episódio
+                        addEpisodeInfoToSearchResponse(response, card, audioType, epNumber)
+                    }.getOrNull()
                 }
             }
             else -> emptyList()
         }
         
         return newHomePageResponse(request.name, homeItems.distinctBy { it.url }, false)
+    }
+
+    // ============ FUNÇÃO PARA ADICIONAR INFO DE EPISÓDIO ============
+    
+    private suspend fun addEpisodeInfoToSearchResponse(
+        response: AnimeSearchResponse,
+        element: Element,
+        audioType: String? = null,
+        epNumber: Int? = null
+    ): AnimeSearchResponse {
+        return try {
+            // Se já temos audioType (do card), usamos
+            val finalAudioType = audioType ?: extractAudioTypeFromElement(element)
+            
+            // Buscar último episódio se não temos número
+            val finalEpNumber = epNumber ?: getLastEpisodeNumber(response.url)
+            
+            // Adicionar tag baseada no tipo de áudio
+            if (finalAudioType != null && finalEpNumber != null) {
+                val tag = "$finalAudioType Ep $finalEpNumber"
+                response.name = "${response.name} ($tag)"
+            }
+            
+            response
+        } catch (e: Exception) {
+            response // Retorna sem modificação se houver erro
+        }
+    }
+    
+    private fun extractAudioTypeFromElement(element: Element): String? {
+        val text = element.text().lowercase()
+        return when {
+            text.contains("dublado") -> "Dub"
+            text.contains("legendado") -> "Leg"
+            else -> null
+        }
+    }
+    
+    private suspend fun getLastEpisodeNumber(url: String): Int? {
+        return try {
+            val document = app.get(url).document
+            val episodeElements = document.select("a.lEp.epT, a.lEp, .divListaEps a, [href*='/video/'], [href*='/episodio/']")
+            
+            episodeElements.maxOfOrNull { element ->
+                val text = element.text().trim()
+                extractEpisodeNumber(text) ?: 0
+            }
+        } catch (e: Exception) {
+            null
+        }
     }
 
     // ============ SEARCH CORRIGIDO ============
@@ -165,7 +240,7 @@ class AnimeFire : MainAPI() {
                          rawTitle.contains("filme", ignoreCase = true) ||
                          rawTitle.contains("movie", ignoreCase = true)
 
-            newAnimeSearchResponse(cleanTitle, fixUrl(href)) {
+            val response = newAnimeSearchResponse(cleanTitle, fixUrl(href)) {
                 this.posterUrl = posterUrl?.let { fixUrl(it) }
                 this.type = if (isMovie) {
                     TvType.Movie
@@ -173,10 +248,17 @@ class AnimeFire : MainAPI() {
                     TvType.Anime
                 }
             }
+            
+            // Adicionar info de episódio para resultados de busca também
+            try {
+                addEpisodeInfoToSearchResponse(response, element)
+            } catch (e: Exception) {
+                response // Retorna sem modificação se houver erro
+            }
         }.take(30)
     }
 
-    // ============ LOAD PRINCIPAL ============
+    // ============ LOAD PRINCIPAL ATUALIZADA ============
     
     override suspend fun load(url: String): LoadResponse {
         val document = app.get(url).document
@@ -190,6 +272,22 @@ class AnimeFire : MainAPI() {
         
         val isMovie = url.contains("/filmes/") || rawTitle.contains("Movie", ignoreCase = true)
         val type = if (isMovie) TvType.Movie else TvType.Anime
+
+        // Extrair status do anime
+        val statusElement = document.selectFirst("div.animeInfo:contains(Status:) span.spanAnimeInfo")
+        val statusText = statusElement?.text()?.trim() ?: "Desconhecido"
+        val showStatus = when {
+            statusText.contains("Completo", ignoreCase = true) -> ShowStatus.Completed
+            statusText.contains("Em andamento", ignoreCase = true) -> ShowStatus.Ongoing
+            statusText.contains("Lançando", ignoreCase = true) -> ShowStatus.Ongoing
+            else -> ShowStatus.Completed
+        }
+
+        // Extrair tipo de áudio disponível
+        val audioElement = document.selectFirst("div.animeInfo:contains(Audio:) span.spanAnimeInfo")
+        val audioText = audioElement?.text()?.trim() ?: "Legendado"
+        val hasSub = audioText.contains("Legendado", ignoreCase = true)
+        val hasDub = audioText.contains("Dublado", ignoreCase = true)
 
         // Extrair metadados do site
         val posterImg = document.selectFirst(".sub_animepage_img img.transitioning_src")
@@ -218,7 +316,7 @@ class AnimeFire : MainAPI() {
         val finalYear = year ?: siteYear
         
         val episodes = if (!isMovie) {
-            extractEpisodesFromSite(document)
+            extractEpisodesFromSite(document, hasDub)
         } else {
             emptyList()
         }
@@ -236,10 +334,16 @@ class AnimeFire : MainAPI() {
                 this.posterUrl = poster
                 this.backgroundPosterUrl = poster // Usar mesma imagem para banner
                 this.recommendations = recommendations.takeIf { it.isNotEmpty() }
+                this.showStatus = showStatus
             }
         } else {
             newAnimeLoadResponse(cleanTitle, url, type) {
-                addEpisodes(DubStatus.Subbed, episodes)
+                if (hasDub) {
+                    addEpisodes(DubStatus.Dubbed, episodes.filter { it.name?.contains("(Dub)", ignoreCase = true) == true })
+                }
+                if (hasSub) {
+                    addEpisodes(DubStatus.Subbed, episodes.filter { it.name?.contains("(Dub)", ignoreCase = true) == false })
+                }
                 
                 this.year = finalYear
                 this.plot = plot
@@ -247,12 +351,14 @@ class AnimeFire : MainAPI() {
                 this.posterUrl = poster
                 this.backgroundPosterUrl = poster // Usar mesma imagem para banner
                 this.recommendations = recommendations.takeIf { it.isNotEmpty() }
+                this.showStatus = showStatus
             }
         }
     }
 
     private suspend fun extractEpisodesFromSite(
-        document: org.jsoup.nodes.Document
+        document: org.jsoup.nodes.Document,
+        hasDub: Boolean
     ): List<Episode> {
         val episodes = mutableListOf<Episode>()
         
@@ -273,9 +379,19 @@ class AnimeFire : MainAPI() {
                     ?: text.substringAfterLast("-").trim()
                     ?: "Episódio $episodeNumber"
 
+                // Determinar se é dublado ou legendado
+                val audioType = when {
+                    text.contains("dublado", ignoreCase = true) -> " (Dub)"
+                    text.contains("legendado", ignoreCase = true) -> " (Leg)"
+                    hasDub -> " (Dub)" // Assumir dublado se o anime tem dub
+                    else -> ""
+                }
+
+                val finalEpisodeName = "$episodeName$audioType"
+
                 episodes.add(
                     newEpisode(fixUrl(href)) {
-                        this.name = episodeName
+                        this.name = finalEpisodeName
                         this.season = seasonNumber
                         this.episode = episodeNumber
                         this.description = "Episódio $episodeNumber"
