@@ -115,7 +115,20 @@ class AnimeFire : MainAPI() {
                         
                         val epNumber = card.selectFirst(".numEp")?.text()?.toIntOrNull() ?: 1
                         val cleanTitle = rawTitle.replace(Regex("(?i)(dublado|legendado|todos os episódios|\\(\\d{4}\\))$"), "").trim()
-                        val displayTitle = "${cleanTitle} - Episódio $epNumber"
+                        
+                        // Extrair tipo de áudio (dub/leg) do card
+                        val audioType = when {
+                            rawTitle.contains("dublado", ignoreCase = true) -> "Dub"
+                            rawTitle.contains("legendado", ignoreCase = true) -> "Leg"
+                            else -> null
+                        }
+                        
+                        // Criar display title com info do episódio
+                        val displayTitle = if (audioType != null) {
+                            "$cleanTitle ($audioType Ep $epNumber)"
+                        } else {
+                            "$cleanTitle - Episódio $epNumber"
+                        }
                         
                         val sitePoster = card.selectFirst("img.imgAnimesUltimosEps, img[src*='animes']")?.let { img ->
                             when {
@@ -125,20 +138,10 @@ class AnimeFire : MainAPI() {
                             }?.takeIf { !it.contains("logo", ignoreCase = true) }
                         } ?: card.selectFirst("img:not([src*='logo'])")?.attr("src")
                         
-                        // Extrair tipo de áudio (dub/leg) do card
-                        val audioType = when {
-                            rawTitle.contains("dublado", ignoreCase = true) -> "Dub"
-                            rawTitle.contains("legendado", ignoreCase = true) -> "Leg"
-                            else -> null
-                        }
-                        
-                        val response = newAnimeSearchResponse(displayTitle, fixUrl(href)) {
+                        newAnimeSearchResponse(displayTitle, fixUrl(href)) {
                             this.posterUrl = sitePoster?.let { fixUrl(it) }
                             this.type = TvType.Anime
                         }
-                        
-                        // Adicionar info de episódio
-                        addEpisodeInfoToSearchResponse(response, card, audioType, epNumber)
                     }.getOrNull()
                 }
             }
@@ -152,50 +155,11 @@ class AnimeFire : MainAPI() {
     
     private suspend fun addEpisodeInfoToSearchResponse(
         response: AnimeSearchResponse,
-        element: Element,
-        audioType: String? = null,
-        epNumber: Int? = null
+        element: Element
     ): AnimeSearchResponse {
-        return try {
-            // Se já temos audioType (do card), usamos
-            val finalAudioType = audioType ?: extractAudioTypeFromElement(element)
-            
-            // Buscar último episódio se não temos número
-            val finalEpNumber = epNumber ?: getLastEpisodeNumber(response.url)
-            
-            // Adicionar tag baseada no tipo de áudio
-            if (finalAudioType != null && finalEpNumber != null) {
-                val tag = "$finalAudioType Ep $finalEpNumber"
-                response.name = "${response.name} ($tag)"
-            }
-            
-            response
-        } catch (e: Exception) {
-            response // Retorna sem modificação se houver erro
-        }
-    }
-    
-    private fun extractAudioTypeFromElement(element: Element): String? {
-        val text = element.text().lowercase()
-        return when {
-            text.contains("dublado") -> "Dub"
-            text.contains("legendado") -> "Leg"
-            else -> null
-        }
-    }
-    
-    private suspend fun getLastEpisodeNumber(url: String): Int? {
-        return try {
-            val document = app.get(url).document
-            val episodeElements = document.select("a.lEp.epT, a.lEp, .divListaEps a, [href*='/video/'], [href*='/episodio/']")
-            
-            episodeElements.maxOfOrNull { element ->
-                val text = element.text().trim()
-                extractEpisodeNumber(text) ?: 0
-            }
-        } catch (e: Exception) {
-            null
-        }
+        // Não podemos modificar o response.name diretamente, então criamos um novo
+        // ou simplesmente retornamos o original (pois já mostra o título correto)
+        return response
     }
 
     // ============ SEARCH CORRIGIDO ============
@@ -240,20 +204,13 @@ class AnimeFire : MainAPI() {
                          rawTitle.contains("filme", ignoreCase = true) ||
                          rawTitle.contains("movie", ignoreCase = true)
 
-            val response = newAnimeSearchResponse(cleanTitle, fixUrl(href)) {
+            newAnimeSearchResponse(cleanTitle, fixUrl(href)) {
                 this.posterUrl = posterUrl?.let { fixUrl(it) }
                 this.type = if (isMovie) {
                     TvType.Movie
                 } else {
                     TvType.Anime
                 }
-            }
-            
-            // Adicionar info de episódio para resultados de busca também
-            try {
-                addEpisodeInfoToSearchResponse(response, element)
-            } catch (e: Exception) {
-                response // Retorna sem modificação se houver erro
             }
         }.take(30)
     }
@@ -334,6 +291,7 @@ class AnimeFire : MainAPI() {
                 this.posterUrl = poster
                 this.backgroundPosterUrl = poster // Usar mesma imagem para banner
                 this.recommendations = recommendations.takeIf { it.isNotEmpty() }
+                // Para MovieLoadResponse, use showStatus assim:
                 this.showStatus = showStatus
             }
         } else {
@@ -351,6 +309,7 @@ class AnimeFire : MainAPI() {
                 this.posterUrl = poster
                 this.backgroundPosterUrl = poster // Usar mesma imagem para banner
                 this.recommendations = recommendations.takeIf { it.isNotEmpty() }
+                // Para AnimeLoadResponse, use showStatus assim:
                 this.showStatus = showStatus
             }
         }
