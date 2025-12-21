@@ -185,59 +185,83 @@ class AnimeFire : MainAPI() {
         return cleanName.trim().replace(Regex("\\s+"), " ")
     }
 
-    // ============ GET MAIN PAGE COM PAGINAÇÃO INFINITA FUNCIONANDO ============
-    override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        try {
-            // ✅ PAGINAÇÃO CORRETA: /pagina/2, /pagina/3, etc
-            val basePath = request.data.removePrefix(mainUrl)
-            val pageSuffix = if (page > 0) "/${page + 1}" else ""
-            val pageUrl = "$mainUrl${basePath.removeSuffix("/")}$pageSuffix"
-            
-            println("ANIMEFIRE: Carregando $pageUrl (página ${page + 1})")
-            
-            val document = app.get(pageUrl, timeout = 10).document
-            
-            val isUpcomingSection = basePath.contains("/em-lancamento") || 
-                                   basePath.contains("/animes-atualizados")
-            
-            // ✅ DETECTAR SE TEM PRÓXIMA PÁGINA
-            val hasNextPage = document.select("""
-                a[href*="${basePath}/"], 
-                a[href*="/${page + 2}"], 
-                .pagination a, 
-                .next-page, 
-                .load-more
-            """).isNotEmpty()
-            
-            val elements = document.select("a[href*='/animes/'], a[href*='/filmes/']")
-                .filter { 
-                    it.hasAttr("href") && 
-                    it.selectFirst("h3, .animeTitle, .card-title, img") != null
-                }
-                .take(20)
-            
-            val homeItems = elements.mapNotNull { element ->
-                try {
-                    element.toSearchResponse(isUpcomingSection = isUpcomingSection)
-                } catch (e: Exception) {
-                    null
-                }
+    // ============ GET MAIN PAGE COM TIMING CONTROLADO ============
+override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
+    val startTime = System.currentTimeMillis()
+    
+    try {
+        // PAGINAÇÃO
+        val basePath = request.data.removePrefix(mainUrl)
+        val pageSuffix = if (page > 0) "/${page + 1}" else ""
+        val pageUrl = "$mainUrl${basePath.removeSuffix("/")}$pageSuffix"
+        
+        println("ANIMEFIRE: Iniciando ${request.name} (${page + 1})")
+        
+        // ✅ DELAY ARTIFICIAL PARA NÃO CANCELAR (como SuperFlix)
+        kotlinx.coroutines.delay(1000) // 1 segundo de delay inicial
+        
+        val document = app.get(pageUrl, timeout = 15).document
+        
+        val isUpcomingSection = basePath.contains("/em-lancamento") || 
+                               basePath.contains("/animes-atualizados")
+        
+        // ✅ DELAY ENTRE PROCESSAMENTO DE ITENS
+        val elements = document.select("a[href*='/animes/'], a[href*='/filmes/']")
+            .filter { 
+                it.hasAttr("href") && 
+                it.selectFirst("h3, .animeTitle, .card-title, img") != null
             }
-            
-            println("ANIMEFIRE: ${request.name} - ${homeItems.size} itens, próxima página: $hasNextPage")
-            
-            return newHomePageResponse(
-                if (page > 0) "${request.name} (Página ${page + 1})" else request.name,
-                homeItems,
-                hasNext = hasNextPage && homeItems.isNotEmpty()
-            )
-            
-        } catch (e: Exception) {
-            println("ANIMEFIRE: ERRO em ${request.name} página $page: ${e.message}")
-            return newHomePageResponse(request.name, emptyList(), false)
+            .take(25)
+        
+        val homeItems = mutableListOf<SearchResponse>()
+        
+        // ✅ PROCESSAR UM POR UM COM PEQUENOS DELAYS
+        elements.forEachIndexed { index, element ->
+            try {
+                val item = element.toSearchResponse(isUpcomingSection = isUpcomingSection)
+                if (item != null) {
+                    homeItems.add(item)
+                    
+                    // Pequeno delay a cada 5 itens (simula carregamento real)
+                    if (index % 5 == 0) {
+                        kotlinx.coroutines.delay(50)
+                    }
+                }
+            } catch (e: Exception) {
+                // Ignorar erro no item
+            }
         }
+        
+        // ✅ GARANTIR NO MÍNIMO 2 SEGUNDOS DE CARREGAMENTO
+        val elapsed = System.currentTimeMillis() - startTime
+        val minLoadTime = 2000L // 2 segundos mínimo
+        
+        if (elapsed < minLoadTime) {
+            val remaining = minLoadTime - elapsed
+            kotlinx.coroutines.delay(remaining)
+            println("ANIMEFIRE: Delay extra de ${remaining}ms")
+        }
+        
+        val hasNextPage = document.select("""
+            a[href*="${basePath}/"], 
+            a[href*="/${page + 2}"], 
+            .pagination a
+        """).isNotEmpty()
+        
+        println("ANIMEFIRE: ${request.name} - ${homeItems.size} itens em ${System.currentTimeMillis() - startTime}ms")
+        
+        return newHomePageResponse(
+            if (page > 0) "${request.name} (Página ${page + 1})" else request.name,
+            homeItems,
+            hasNext = hasNextPage && homeItems.isNotEmpty()
+        )
+        
+    } catch (e: Exception) {
+        println("ANIMEFIRE: ERRO em ${request.name}: ${e.message}")
+        // ✅ RETORNAR LISTA VAZIA EM VEZ DE TRAVAR
+        return newHomePageResponse(request.name, emptyList(), false)
     }
-
+}
     // ============ BUSCA ============
     override suspend fun search(query: String): List<SearchResponse> {
         if (query.length < 2) return emptyList()
