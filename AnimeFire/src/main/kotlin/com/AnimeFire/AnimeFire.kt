@@ -131,10 +131,10 @@ class AnimeFire : MainAPI() {
                 }
             }
             
-            // DEBUG
+            // DEBUG - CORRIGIDO: usar score?.toString() em vez de score?.value
             println("ANIMEFIRE CARD - Section: ${if (isEpisodesSection) "Episodes" else "Animes"}, " +
                    "Name: '$cleanAnimeName', Ep: $episodeNumber, " +
-                   "Dub: $hasDub, Leg: $hasLeg, Score: ${score?.value}")
+                   "Dub: $hasDub, Leg: $hasLeg, Score: ${score?.toString()}")
         }
     }
 
@@ -387,10 +387,21 @@ class AnimeFire : MainAPI() {
             // Tentar seletores alternativos
             val altElements = document.select("div.episodios-list a, .lista-episodios a, .episodes-list a")
             println("ANIMEFIRE EPISODES - Elementos alternativos: ${altElements.size}")
-            episodeElements.addAll(altElements)
+            // Não podemos usar addAll em uma lista imutável, então processamos separadamente
+            return extractAllEpisodesFromElements(altElements, hasDub)
         }
         
-        episodeElements.forEachIndexed { index, element ->
+        return extractAllEpisodesFromElements(episodeElements, hasDub)
+    }
+    
+    private fun extractAllEpisodesFromElements(
+        elements: org.jsoup.select.Elements,
+        hasDub: Boolean
+    ): Pair<List<Episode>, List<Episode>> {
+        val subEpisodes = mutableListOf<Episode>()
+        val dubEpisodes = mutableListOf<Episode>()
+        
+        elements.forEachIndexed { index, element ->
             try {
                 val href = element.attr("href")
                 if (href.isBlank()) return@forEachIndexed
@@ -453,5 +464,30 @@ class AnimeFire : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         return AnimeFireVideoExtractor.extractVideoLinks(data, mainUrl, name, callback)
+    }
+}
+
+// ============ FUNÇÃO GETSTATUS SEPARADA (na mesma classe ou em arquivo separado) ============
+fun getStatus(t: String?): ShowStatus {
+    if (t == null) {
+        return ShowStatus.Completed
+    }
+    
+    val status = t.trim()
+    
+    return when {
+        status.contains("em lançamento", ignoreCase = true) ||
+        status.contains("lançando", ignoreCase = true) ||
+        status.contains("em andamento", ignoreCase = true) ||
+        status.contains("ongoing", ignoreCase = true) ||
+        status.contains("atualizando", ignoreCase = true) -> ShowStatus.Ongoing
+        
+        status.contains("concluído", ignoreCase = true) ||
+        status.contains("completo", ignoreCase = true) ||
+        status.contains("completado", ignoreCase = true) ||
+        status.contains("terminado", ignoreCase = true) ||
+        status.contains("finished", ignoreCase = true) -> ShowStatus.Completed
+        
+        else -> ShowStatus.Completed
     }
 }
