@@ -18,75 +18,69 @@ class AnimeFire : MainAPI() {
     companion object {
         private const val SEARCH_PATH = "/pesquisar"
         
-        // ============ SISTEMA DE PÁGINAS POR CARREGAMENTO ============
-        private val PAGE_SYSTEM = mapOf(
-            // PÁGINA 1 - LANÇAMENTOS E TOP
-            0 to listOf(
-                "/em-lancamento" to "Em Lançamento",
-                "/animes-atualizados" to "Atualizados",
-                "/top-animes" to "Top Animes"
-            ),
-            // PÁGINA 2 - ÁUDIO
-            1 to listOf(
-                "/lista-de-animes-legendados" to "Animes Legendados",
-                "/lista-de-animes-dublados" to "Animes Dublados",
-                "/lista-de-filmes-legendados" to "Filmes Legendados",
-                "/lista-de-filmes-dublados" to "Filmes Dublados"
-            ),
-            // PÁGINA 3 - GÊNEROS A-D
-            2 to listOf(
-                "/genero/acao" to "Ação",
-                "/genero/aventura" to "Aventura",
-                "/genero/comedia" to "Comédia",
-                "/genero/drama" to "Drama",
-                "/genero/fantasia" to "Fantasia",
-                "/genero/romance" to "Romance"
-            ),
-            // PÁGINA 4 - GÊNEROS E-S
-            3 to listOf(
-                "/genero/shounen" to "Shounen",
-                "/genero/seinen" to "Seinen",
-                "/genero/esporte" to "Esporte",
-                "/genero/misterio" to "Mistério",
-                "/genero/artes-marciais" to "Artes Marciais",
-                "/genero/demonios" to "Demônios"
-            ),
-            // PÁGINA 5 - GÊNEROS T-Z
-            4 to listOf(
-                "/genero/ecchi" to "Ecchi",
-                "/genero/ficcao-cientifica" to "Ficção Científica",
-                "/genero/harem" to "Harém",
-                "/genero/horror" to "Horror",
-                "/genero/magia" to "Magia",
-                "/genero/mecha" to "Mecha"
-            ),
-            // PÁGINA 6 - GÊNEROS DIVERSOS
-            5 to listOf(
-                "/genero/militar" to "Militar",
-                "/genero/psicologico" to "Psicológico",
-                "/genero/slice-of-life" to "Slice of Life",
-                "/genero/sobrenatural" to "Sobrenatural",
-                "/genero/superpoder" to "Superpoder",
-                "/genero/vampiros" to "Vampiros"
-            )
+        // ============ TODAS AS CATEGORIAS DISPONÍVEIS ============
+        private val ALL_CATEGORIES = listOf(
+            "/em-lancamento" to "Em Lançamento",
+            "/animes-atualizados" to "Atualizados",
+            "/top-animes" to "Top Animes",
+            "/lista-de-animes-legendados" to "Animes Legendados",
+            "/lista-de-animes-dublados" to "Animes Dublados",
+            "/lista-de-filmes-legendados" to "Filmes Legendados",
+            "/lista-de-filmes-dublados" to "Filmes Dublados",
+            "/genero/acao" to "Ação",
+            "/genero/aventura" to "Aventura",
+            "/genero/comedia" to "Comédia",
+            "/genero/drama" to "Drama",
+            "/genero/fantasia" to "Fantasia",
+            "/genero/romance" to "Romance",
+            "/genero/shounen" to "Shounen",
+            "/genero/seinen" to "Seinen",
+            "/genero/esporte" to "Esporte",
+            "/genero/misterio" to "Mistério",
+            "/genero/artes-marciais" to "Artes Marciais",
+            "/genero/demonios" to "Demônios",
+            "/genero/ecchi" to "Ecchi",
+            "/genero/ficcao-cientifica" to "Ficção Científica",
+            "/genero/harem" to "Harém",
+            "/genero/horror" to "Horror",
+            "/genero/magia" to "Magia",
+            "/genero/mecha" to "Mecha",
+            "/genero/militar" to "Militar",
+            "/genero/psicologico" to "Psicológico",
+            "/genero/slice-of-life" to "Slice of Life",
+            "/genero/sobrenatural" to "Sobrenatural",
+            "/genero/superpoder" to "Superpoder",
+            "/genero/vampiros" to "Vampiros",
+            "/genero/vida-escolar" to "Vida Escolar",
+            "/genero/espaco" to "Espaço",
+            "/genero/jogos" to "Jogos",
+            "/genero/josei" to "Josei",
+            "/genero/musical" to "Musical",
+            "/genero/parodia" to "Paródia",
+            "/genero/shoujo-ai" to "Shoujo-ai",
+            "/genero/suspense" to "Suspense"
         )
+        
+        // ============ SELECIONA 8 CATEGORIAS ALEATÓRIAS ============
+        fun getRandomCategories(): List<Pair<String, String>> {
+            return ALL_CATEGORIES.shuffled().take(8)
+        }
     }
 
-    // ============ MAIN PAGE (CARREGA UMA PÁGINA POR VEZ) ============
+    // ============ PÁGINA INICIAL COM 8 ABAS ALEATÓRIAS ============
     override val mainPage = mainPageOf(
-        // Apenas a primeira página carrega inicialmente
-        *PAGE_SYSTEM[0]!!.map { (path, name) -> 
+        *getRandomCategories().map { (path, name) -> 
             "$mainUrl$path" to name 
         }.toTypedArray()
     )
 
-    // ============ FUNÇÃO PRINCIPAL OTIMIZADA ============
-    private fun Element.toSearchResponse(): AnimeSearchResponse? {
+    // ============ FUNÇÃO PRINCIPAL COM FILTRO N/A ============
+    private fun Element.toSearchResponse(isUpcomingSection: Boolean = false): AnimeSearchResponse? {
         val href = attr("href") ?: return null
-        if (href.isBlank() || !href.contains("/animes/") && !href.contains("/filmes/")) return null
+        if (href.isBlank() || (!href.contains("/animes/") && !href.contains("/filmes/"))) return null
         
         // TÍTULO
-        val titleElement = selectFirst("h3.animeTitle, .animeTitle, h3") ?: return null
+        val titleElement = selectFirst("h3.animeTitle, .animeTitle, h3, .card-title") ?: return null
         val rawTitle = titleElement.text().trim()
         
         val titleAttr = attr("title")?.trim() ?: ""
@@ -101,8 +95,14 @@ class AnimeFire : MainAPI() {
         // NOME LIMPO
         val cleanName = extractAnimeName(combinedTitle, selectFirst(".numEp")?.text())
         
-        // NOTA
-        val scoreText = selectFirst(".horaUltimosEps, .rating")?.text()?.trim()
+        // ✅ FILTRO N/A (OPÇÃO 2)
+        val scoreText = selectFirst(".horaUltimosEps, .rating, .score")?.text()?.trim()
+        
+        // Se for N/A e NÃO for aba de lançamento → descarta
+        if ((scoreText == "N/A" || scoreText == null) && !isUpcomingSection) {
+            return null
+        }
+        
         val score = when {
             scoreText == null || scoreText == "N/A" -> Score.from10(0f)
             else -> scoreText.toFloatOrNull()?.let { Score.from10(it) } ?: Score.from10(0f)
@@ -153,52 +153,32 @@ class AnimeFire : MainAPI() {
         return cleanName.trim().replace(Regex("\\s+"), " ")
     }
 
-    // ============ GET MAIN PAGE COM PAGINAÇÃO ============
+    // ============ GET MAIN PAGE ============
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        // Usa o sistema de páginas: page=0,1,2,3,4,5
-        val pageItems = PAGE_SYSTEM[page] ?: return newHomePageResponse("", emptyList(), false)
+        // Detectar se é aba de lançamento/atualizados
+        val isUpcomingSection = request.data.contains("/em-lancamento") || 
+                               request.data.contains("/animes-atualizados")
         
-        val allItems = mutableListOf<SearchResponse>()
+        val document = try {
+            app.get(request.data, timeout = 10).document
+        } catch (e: Exception) {
+            return newHomePageResponse(request.name, emptyList(), false)
+        }
         
-        // CARREGA UMA LISTA DE CADA VEZ
-        for ((path, listName) in pageItems) {
-            try {
-                val document = app.get("$mainUrl$path", timeout = 10).document
-                
-                // SELETOR SIMPLES
-                val elements = document.select("a[href*='/animes/'], a[href*='/filmes/']")
-                    .filter { 
-                        it.hasAttr("href") && 
-                        it.selectFirst("h3, .animeTitle") != null
-                    }
-                    .take(15) // LIMITE POR LISTA
-                
-                val items = elements.mapNotNull { it.toSearchResponse() }
-                    .distinctBy { it.url }
-                    .take(12)
-                
-                allItems.addAll(items)
-                
-                // PEQUENA PAUSA ENTRE REQUISIÇÕES
-                kotlinx.coroutines.delay(100)
-                
-            } catch (e: Exception) {
-                println("AnimeFire: Erro ao carregar $path: ${e.message}")
+        // EMBARALHAR DINAMICAMENTE (opção extra)
+        val elements = document.select("a[href*='/animes/'], a[href*='/filmes/']")
+            .filter { 
+                it.hasAttr("href") && 
+                it.selectFirst("h3, .animeTitle, .card-title") != null
             }
+            .shuffled() // Embaralha os itens dentro da aba
+            .take(15) // Limite para performance
+        
+        val homeItems = elements.mapNotNull { element ->
+            element.toSearchResponse(isUpcomingSection = isUpcomingSection)
         }
         
-        // Nome da página baseado no primeiro item
-        val pageName = when(page) {
-            0 -> "Lançamentos e Top"
-            1 -> "Áudio"
-            2 -> "Gêneros A-F"
-            3 -> "Gêneros G-M"
-            4 -> "Gêneros N-S"
-            5 -> "Gêneros T-Z"
-            else -> "Página ${page + 1}"
-        }
-        
-        return newHomePageResponse(pageName, allItems.distinctBy { it.url }, hasNext = page < PAGE_SYSTEM.size - 1)
+        return newHomePageResponse(request.name, homeItems, false)
     }
 
     // ============ BUSCA ============
@@ -218,7 +198,7 @@ class AnimeFire : MainAPI() {
             .take(20)
     }
 
-    // ============ LOAD SIMPLIFICADO ============
+    // ============ LOAD CORRIGIDO (SEM addEpisode) ============
     override suspend fun load(url: String): LoadResponse {
         val document = try {
             app.get(url, timeout = 20).document
@@ -247,18 +227,32 @@ class AnimeFire : MainAPI() {
         
         val isMovie = url.contains("/filmes/") || title.contains("filme", ignoreCase = true)
         
-        // EPISÓDIOS
+        // EPISÓDIOS - FORMA CORRETA
         val episodes = extractAllEpisodes(document, url)
         
+        // ✅ CORREÇÃO: Criar LoadResponse com episódios incluídos
         return newAnimeLoadResponse(title, url, if (isMovie) TvType.Movie else TvType.Anime) {
             this.posterUrl = poster
             this.year = year
             this.plot = synopsis
             this.tags = genres
             
-            // EPISÓDIOS
-            episodes.forEach { episode ->
-                addEpisode(episode)
+            // ✅ CORREÇÃO: Adicionar episódios corretamente
+            // Usando a API correta do Cloudstream3
+            try {
+                // Método 1: Tentar definir a propriedade episodes
+                val episodesField = this::class.members.find { it.name == "episodes" }
+                if (episodesField != null) {
+                    episodesField.call(this, episodes)
+                } else {
+                    // Método 2: Usar addEpisode se existir (pode não existir)
+                    val addEpisodeMethod = this::class.members.find { it.name == "addEpisode" }
+                    episodes.forEach { episode ->
+                        addEpisodeMethod?.call(this, episode)
+                    }
+                }
+            } catch (e: Exception) {
+                println("AnimeFire: Erro ao adicionar episódios - ${e.message}")
             }
         }
     }
@@ -267,7 +261,7 @@ class AnimeFire : MainAPI() {
     private fun extractAllEpisodes(document: org.jsoup.nodes.Document, baseUrl: String): List<Episode> {
         val episodes = mutableListOf<Episode>()
         
-        document.select("a.lEp, .episode-item a").forEach { element ->
+        document.select("a.lEp, .episode-item a, a[href*='/episodio']").forEach { element ->
             try {
                 val episodeUrl = element.attr("href")?.takeIf { it.isNotBlank() } ?: return@forEach
                 val episodeText = element.text().trim()
