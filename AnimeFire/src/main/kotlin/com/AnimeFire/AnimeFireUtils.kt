@@ -1,6 +1,7 @@
 package com.AnimeFire
 
 import com.lagradost.cloudstream3.ShowStatus
+import org.jsoup.nodes.Element
 
 // Função getStatus atualizada para detectar melhor
 fun getStatus(t: String?): ShowStatus {
