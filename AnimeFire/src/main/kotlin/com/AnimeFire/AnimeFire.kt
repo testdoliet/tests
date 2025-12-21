@@ -27,7 +27,7 @@ class AnimeFire : MainAPI() {
         "$mainUrl" to "Últimos Episódios Adicionados"
     )
 
-    // ============ FUNÇÃO AUXILIAR DE BUSCA ============
+    // ============ FUNÇÃO AUXILIAR DE BUSCA COM BADGES ============
     
     private fun Element.toSearchResponse(forceAudioType: String? = null): AnimeSearchResponse? {
         val href = attr("href") ?: return null
@@ -80,6 +80,34 @@ class AnimeFire : MainAPI() {
         return newAnimeSearchResponse(displayTitle, fixUrl(href)) {
             this.posterUrl = sitePoster?.let { fixUrl(it) }
             this.type = if (isMovie) TvType.Movie else TvType.Anime
+            
+            // ============ BADGE DE TESTE "L" ============
+            // Adiciona uma badge simples com "L" para todos os animes
+            // O método addDubStatus() aceita apenas true/false, não texto livre
+            
+            // Teste 1: Usar o sistema de badges do CloudStream
+            // Como o CloudStream não permite texto livre, vamos usar o sistema de dub/leg
+            
+            // Verificar se tem leg ou dub
+            val hasDub = rawTitle.contains("dublado", ignoreCase = true)
+            val hasLeg = rawTitle.contains("legendado", ignoreCase = true) || audioType == "Leg"
+            
+            // Adicionar badges usando o sistema do CloudStream
+            addDubStatus(
+                dubExist = hasDub,
+                subExist = hasLeg,
+                dubEpisodes = if (hasDub) epNumber else null,
+                subEpisodes = if (hasLeg) epNumber else null
+            )
+            
+            // ============ ALTERNATIVA: Usar título para simular badge ============
+            // Não podemos adicionar texto livre nas badges, mas podemos
+            // modificar o título para incluir "[L]" como teste
+            if (!hasDub && !hasLeg) {
+                // Se não detectou áudio, adicionar "[L]" ao título para teste
+                // Mas isso modifica o título real
+                // this.title = "[L] $displayTitle"
+            }
         }
     }
 
