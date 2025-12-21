@@ -22,7 +22,6 @@ class AnimeFire : MainAPI() {
         
         private val loadingMutex = Mutex()
         
-        // LISTA COMPLETA DE TODAS AS CATEGORIAS
         private val ALL_CATEGORIES = listOf(
             "/em-lancamento" to "Lançamentos",
             "/animes-atualizados" to "Atualizados",
@@ -55,17 +54,26 @@ class AnimeFire : MainAPI() {
             "/genero/sobrenatural" to "Sobrenatural",
             "/genero/superpoder" to "Superpoder",
             "/genero/vampiros" to "Vampiros",
-            "/genero/vida-escolar" to "Vida Escolar",
-            "/genero/suspense" to "Suspense",
-            "/genero/musica" to "Música",
-            "/genero/space" to "Espaço",
-            "/genero/supernatural" to "Sobrenatural",
-            "/genero/sci-fi" to "Sci-Fi",
-            "/genero/policial" to "Policial",
-            "/genero/historia" to "História",
-            "/genero/guerra" to "Guerra",
-            "/genero/familia" to "Família"
+            "/genero/vida-escolar" to "Vida Escolar"
         )
+        
+        private var cachedTabs: List<Pair<String, String>>? = null
+        private var cacheTime: Long = 0
+        private const val CACHE_DURATION = 300000L // 5 minutos
+        
+        fun getRandomTabs(count: Int = 8): List<Pair<String, String>> {
+            val currentTime = System.currentTimeMillis()
+            
+            if (cachedTabs != null && (currentTime - cacheTime) < CACHE_DURATION) {
+                return cachedTabs!!
+            }
+            
+            val randomTabs = ALL_CATEGORIES.shuffled().take(count)
+            cachedTabs = randomTabs
+            cacheTime = currentTime
+            
+            return randomTabs
+        }
         
         // Função para verificar se a aba permite N/A
         fun allowsNaItems(basePath: String): Boolean {
@@ -76,16 +84,11 @@ class AnimeFire : MainAPI() {
     }
 
     init {
-        println("🔥 ANIMEFIRE: Plugin inicializado com ${ALL_CATEGORIES.size} abas")
-        println("📊 Lista completa de abas:")
-        ALL_CATEGORIES.forEachIndexed { index, (path, name) ->
-            println("   ${index + 1}. $name ($path)")
-        }
+        println("🔥 ANIMEFIRE: Plugin inicializado")
     }
 
-    // RETORNA TODAS AS ABAS SEM LIMITE
     override val mainPage = mainPageOf(
-        *ALL_CATEGORIES.map { (path, name) -> 
+        *getRandomTabs().map { (path, name) -> 
             "$mainUrl$path" to name 
         }.toTypedArray()
     )
@@ -120,7 +123,7 @@ class AnimeFire : MainAPI() {
             println("   • Permite N/A? $allowsNaItems")
         }
         
-        // ============ LÓGICA DE FILTRO ============
+        // ============ LÓGICA DE FILTRO CORRIGIDA ============
         val shouldKeepItem = when {
             // Se a aba permite N/A, mantém tudo
             allowsNaItems -> {
