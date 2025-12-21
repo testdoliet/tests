@@ -347,7 +347,7 @@ class AnimeFire : MainAPI() {
         )
     }
 
-    // ============ EXTRATOR DE LINKS DE VÍDEO (Simplificado) ============
+    // ============ EXTRATOR DE LINKS DE VÍDEO (Versão Simplificada e Estável) ============
     
     override suspend fun loadLinks(
         data: String,
@@ -365,50 +365,77 @@ class AnimeFire : MainAPI() {
             // Carregar iframe
             val iframeDoc = app.get(fixUrl(iframeSrc)).document
             
-            // Tentar encontrar vídeo
-            val videoSources = iframeDoc.select("source[src], video source[src]")
-            if (videoSources.isNotEmpty()) {
-                videoSources.forEach { source ->
-                    val videoUrl = source.attr("src")
-                    val type = source.attr("type")
-                    val quality = source.attr("title")?.let { 
-                        Regex("(\\d+)p").find(it)?.value 
-                    } ?: "Unknown"
-                    
+            // Versão simplificada - apenas extrair a primeira fonte de vídeo
+            val videoSource = iframeDoc.selectFirst("source[src], video source[src]")
+            if (videoSource != null) {
+                val videoUrl = videoSource.attr("src")
+                if (videoUrl.isNotBlank()) {
                     callback.invoke(
                         ExtractorLink(
                             name,
-                            quality,
+                            "Unknown",
                             videoUrl,
                             referer = mainUrl,
-                            quality = extractQuality(quality),
-                            type = if (type.contains("m3u8")) ExtractorLinkType.HLS else ExtractorLinkType.VIDEO
+                            quality = Qualities.Unknown.value,
+                            type = ExtractorLinkType.VIDEO
                         )
                     )
+                    return true
                 }
-                true
-            } else {
-                // Fallback: tentar extrair de scripts
-                val scriptText = iframeDoc.select("script").toString()
-                val m3u8Pattern = Regex("(https?:[^\"']+\\.m3u8[^\"']*)")
-                val m3u8Match = m3u8Pattern.find(scriptText)
-                
-                if (m3u8Match != null) {
+            }
+            
+            // Tentar encontrar vídeo direto
+            val videoElement = iframeDoc.selectFirst("video")
+            if (videoElement != null) {
+                val videoUrl = videoElement.attr("src")
+                if (videoUrl.isNotBlank()) {
                     callback.invoke(
                         ExtractorLink(
                             name,
-                            "HLS",
-                            m3u8Match.value,
+                            "Unknown",
+                            videoUrl,
                             referer = mainUrl,
                             quality = Qualities.Unknown.value,
-                            type = ExtractorLinkType.HLS
+                            type = ExtractorLinkType.VIDEO
                         )
                     )
-                    true
-                } else {
-                    false
+                    return true
                 }
             }
+            
+            // Fallback: tentar extrair de scripts
+            val scripts = iframeDoc.select("script")
+            for (script in scripts) {
+                val scriptText = script.html()
+                val urlPatterns = listOf(
+                    Regex("\"([^\"]+\\.mp4[^\"]*)\""),
+                    Regex("\'([^\']+\\.mp4[^\']*)\'"),
+                    Regex("src\\s*=\\s*[\"']([^\"']+)[\"']"),
+                    Regex("url\\s*=\\s*[\"']([^\"']+)[\"']")
+                )
+                
+                for (pattern in urlPatterns) {
+                    val match = pattern.find(scriptText)
+                    if (match != null) {
+                        val url = match.groupValues[1]
+                        if (url.contains("http") && (url.contains(".mp4") || url.contains(".m3u8"))) {
+                            callback.invoke(
+                                ExtractorLink(
+                                    name,
+                                    "Unknown",
+                                    url,
+                                    referer = mainUrl,
+                                    quality = Qualities.Unknown.value,
+                                    type = ExtractorLinkType.VIDEO
+                                )
+                            )
+                            return true
+                        }
+                    }
+                }
+            }
+            
+            false
         } catch (e: Exception) {
             e.printStackTrace()
             false
@@ -431,15 +458,5 @@ class AnimeFire : MainAPI() {
             }
         }
         return null
-    }
-    
-    private fun extractQuality(qualityStr: String): Int {
-        return when {
-            qualityStr.contains("1080") -> Qualities.P1080.value
-            qualityStr.contains("720") -> Qualities.P720.value
-            qualityStr.contains("480") -> Qualities.P480.value
-            qualityStr.contains("360") -> Qualities.P360.value
-            else -> Qualities.Unknown.value
-        }
     }
 }
