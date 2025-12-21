@@ -23,7 +23,7 @@ class AnimeFire : MainAPI() {
         // ============ MUTEX PARA UMA ABA POR VEZ ============
         private val loadingMutex = Mutex()
         
-        // ============ CATEGORIAS CONFIÁVEIS ============
+        // ============ CATEGORIAS CONFIRMADAS QUE FUNCIONAM ============
         private val WORKING_CATEGORIES = listOf(
             "/em-lancamento" to "Em Lançamento",
             "/animes-atualizados" to "Atualizados",
@@ -59,23 +59,102 @@ class AnimeFire : MainAPI() {
             "/genero/vida-escolar" to "Vida Escolar"
         )
         
-        fun getRandomCategories(): List<Pair<String, String>> {
-            return WORKING_CATEGORIES.shuffled().take(5)
+        // ============ ESCOLHE CATEGORIAS ALEATÓRIAS ============
+        fun getRandomCategories(count: Int = 8): List<Pair<String, String>> {
+            println("ANIMEFIRE: 🎲 Selecionando $count categorias aleatórias...")
+            val selected = WORKING_CATEGORIES.shuffled().take(count)
+            selected.forEachIndexed { i, (path, name) ->
+                println("ANIMEFIRE:   $i. $name ($path)")
+            }
+            return selected
         }
     }
 
     init {
-        println("ANIMEFIRE: ✅ Inicializado - Sistema uma-aba-por-vez")
+        println("ANIMEFIRE: ✅ Inicializado - Sistema MUTEX ativo")
     }
 
-    // ============ PÁGINA INICIAL ============
+    // ============ PÁGINA INICIAL DINÂMICA ============
     override val mainPage = mainPageOf(
         *getRandomCategories().map { (path, name) -> 
             "$mainUrl$path" to name 
         }.toTypedArray()
     )
 
-    // ============ FUNÇÃO PRINCIPAL ============
+    // ============ GET MAIN PAGE - UMA ABA POR VEZ (OTIMIZADO) ============
+    override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
+        // ✅ MUTEX: TRAVA PARA UMA ABA POR VEZ
+        return loadingMutex.withLock {
+            try {
+                println("ANIMEFIRE: 🔒 TRAVA PEGA - ${request.name}")
+                
+                // DELAY INICIAL REDUZIDO - MUTEX já garante controle
+                kotlinx.coroutines.delay(800) // 800ms em vez de 2000ms
+                
+                // PAGINAÇÃO
+                val basePath = request.data.removePrefix(mainUrl)
+                val pageSuffix = if (page > 0) "/${page + 1}" else ""
+                val pageUrl = "$mainUrl${basePath.removeSuffix("/")}$pageSuffix"
+                
+                println("ANIMEFIRE: 📥 Carregando ${request.name} ($pageUrl)")
+                
+                val document = app.get(pageUrl, timeout = 30).document
+                
+                val isUpcomingSection = basePath.contains("/em-lancamento") || 
+                                       basePath.contains("/animes-atualizados")
+                
+                // SELEÇÃO EFICIENTE
+                val elements = document.select("""
+                    article a,
+                    .card a,
+                    .anime-item a,
+                    a[href*='/animes/'],
+                    a[href*='/filmes/']
+                """).take(30)
+                
+                val homeItems = mutableListOf<SearchResponse>()
+                
+                // PROCESSAMENTO SEM DELAY ENTRE ITENS
+                elements.forEach { element ->
+                    try {
+                        val item = element.toSearchResponse(isUpcomingSection = isUpcomingSection)
+                        if (item != null) {
+                            homeItems.add(item)
+                        }
+                    } catch (e: Exception) {
+                        // Ignorar erro no item
+                    }
+                }
+                
+                // VERIFICAR PRÓXIMA PÁGINA
+                val hasNextPage = document.select("a[href*='/${page + 2}']").isNotEmpty()
+                
+                println("ANIMEFIRE: ✅ ${request.name} - ${homeItems.size} itens")
+                
+                // DELAY MÍNIMO ANTES DE LIBERAR TRAVA
+                kotlinx.coroutines.delay(300) // 300ms apenas
+                
+                println("ANIMEFIRE: 🔓 TRAVA SOLTA - ${request.name}")
+                
+                newHomePageResponse(
+                    if (page > 0) "${request.name} (P${page + 1})" else request.name,
+                    homeItems.distinctBy { it.url },
+                    hasNext = hasNextPage
+                )
+                
+            } catch (e: Exception) {
+                println("ANIMEFIRE: ❌ ERRO em ${request.name}: ${e.message}")
+                
+                // LIBERAR TRAVA RAPIDAMENTE EM CASO DE ERRO
+                kotlinx.coroutines.delay(100)
+                println("ANIMEFIRE: 🔓 TRAVA SOLTA (erro) - ${request.name}")
+                
+                newHomePageResponse(request.name, emptyList(), false)
+            }
+        }
+    }
+
+    // ============ FUNÇÃO PRINCIPAL DE PARSING ============
     private fun Element.toSearchResponse(isUpcomingSection: Boolean = false): AnimeSearchResponse? {
         val href = attr("href") ?: return null
         if (href.isBlank() || (!href.contains("/animes/") && !href.contains("/filmes/"))) return null
@@ -185,97 +264,6 @@ class AnimeFire : MainAPI() {
         return cleanName.trim().replace(Regex("\\s+"), " ")
     }
 
-    // ============ GET MAIN PAGE - UMA ABA POR VEZ ============
-    override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        // ✅ MUTEX: TRAVA PARA UMA ABA POR VEZ
-        return loadingMutex.withLock {
-            val startTime = System.currentTimeMillis()
-            
-            try {
-                println("ANIMEFIRE: 🔒 TRAVA PEGA - ${request.name}")
-                
-                // DELAY INICIAL OBRIGATÓRIO
-                kotlinx.coroutines.delay(2000) // 2 segundos fixos
-                
-                // PAGINAÇÃO
-                val basePath = request.data.removePrefix(mainUrl)
-                val pageSuffix = if (page > 0) "/${page + 1}" else ""
-                val pageUrl = "$mainUrl${basePath.removeSuffix("/")}$pageSuffix"
-                
-                println("ANIMEFIRE: 📥 Carregando ${request.name} ($pageUrl)")
-                
-                val document = app.get(pageUrl, timeout = 25).document
-                
-                val isUpcomingSection = basePath.contains("/em-lancamento") || 
-                                       basePath.contains("/animes-atualizados")
-                
-                // SELEÇÃO AMPLA
-                val elements = document.select("""
-                    article a,
-                    .card a,
-                    .anime-item a,
-                    a[href*='/animes/'],
-                    a[href*='/filmes/']
-                """).take(30)
-                
-                val homeItems = mutableListOf<SearchResponse>()
-                
-                // PROCESSAMENTO LENTO (simula carregamento)
-                elements.forEachIndexed { index, element ->
-                    try {
-                        val item = element.toSearchResponse(isUpcomingSection = isUpcomingSection)
-                        if (item != null) {
-                            homeItems.add(item)
-                            
-                            // Delay entre itens para não sobrecarregar
-                            if (index % 3 == 0) {
-                                kotlinx.coroutines.delay(100)
-                            }
-                        }
-                    } catch (e: Exception) {
-                        // Ignorar erro no item
-                    }
-                }
-                
-                // GARANTIR TEMPO MÍNIMO DE 4 SEGUNDOS
-                val elapsed = System.currentTimeMillis() - startTime
-                val minTime = 4000L
-                
-                if (elapsed < minTime) {
-                    val extra = minTime - elapsed
-                    println("ANIMEFIRE: ⏱️ Delay extra de ${extra}ms")
-                    kotlinx.coroutines.delay(extra)
-                }
-                
-                // VERIFICAR PRÓXIMA PÁGINA
-                val hasNextPage = document.select("a[href*='/${page + 2}']").isNotEmpty()
-                
-                val finalElapsed = System.currentTimeMillis() - startTime
-                println("ANIMEFIRE: ✅ ${request.name} - ${homeItems.size} itens em ${finalElapsed}ms")
-                
-                // DELAY ANTES DE LIBERAR TRAVA
-                kotlinx.coroutines.delay(1000)
-                
-                println("ANIMEFIRE: 🔓 TRAVA SOLTA - ${request.name}")
-                
-                newHomePageResponse(
-                    if (page > 0) "${request.name} (P${page + 1})" else request.name,
-                    homeItems.distinctBy { it.url },
-                    hasNext = hasNextPage
-                )
-                
-            } catch (e: Exception) {
-                println("ANIMEFIRE: ❌ ERRO em ${request.name}: ${e.message}")
-                
-                // LIBERAR TRAVA MESMO COM ERRO
-                kotlinx.coroutines.delay(500)
-                println("ANIMEFIRE: 🔓 TRAVA SOLTA (erro) - ${request.name}")
-                
-                newHomePageResponse(request.name, emptyList(), false)
-            }
-        }
-    }
-
     // ============ BUSCA ============
     override suspend fun search(query: String): List<SearchResponse> {
         if (query.length < 2) return emptyList()
@@ -283,7 +271,6 @@ class AnimeFire : MainAPI() {
         val searchUrl = "$mainUrl$SEARCH_PATH/${query.trim().replace(" ", "-").lowercase()}"
         
         return try {
-            // Busca não usa mutex (permite concorrência)
             val document = app.get(searchUrl, timeout = 15).document
             
             document.select("a[href*='/animes/'], a[href*='/filmes/']")
@@ -298,7 +285,6 @@ class AnimeFire : MainAPI() {
 
     // ============ LOAD ============
     override suspend fun load(url: String): LoadResponse {
-        // Load também não usa mutex
         return try {
             val document = app.get(url, timeout = 25).document
             
