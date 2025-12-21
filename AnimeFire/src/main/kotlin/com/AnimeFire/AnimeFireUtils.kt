@@ -2,7 +2,7 @@ package com.AnimeFire
 
 import com.lagradost.cloudstream3.ShowStatus
 
-// ============ FUNÇÕES UTILITÁRIAS IGUAL ALLWISH ============
+// ============ FUNÇÕES UTILITÁRIAS ============
 
 fun getStatus(t: String?): ShowStatus {
     return when (t?.lowercase()?.trim()) {
@@ -30,11 +30,14 @@ object AnimeFireBadgeExtractor {
         val epSelectors = listOf(".numEp", ".episode", ".eps", ".badge", "span")
         for (selector in epSelectors) {
             val epText = element.selectFirst(selector)?.text()?.trim()
-            epText?.let {
-                val match = Regex("(\\d+)").find(it)
-                match?.let {
-                    lastEpNumber = it.value.toIntOrNull()
-                    if (lastEpNumber != null) return@let
+            if (epText != null) {
+                val match = Regex("(\\d+)").find(epText)
+                if (match != null) {
+                    lastEpNumber = match.value.toIntOrNull()
+                    if (lastEpNumber != null) {
+                        // Sai do loop quando encontra
+                        break
+                    }
                 }
             }
         }
@@ -50,8 +53,8 @@ object AnimeFireBadgeExtractor {
             
             for (pattern in patterns) {
                 val match = pattern.find(text)
-                match?.let {
-                    lastEpNumber = it.groupValues[1].toIntOrNull()
+                if (match != null) {
+                    lastEpNumber = match.groupValues[1].toIntOrNull()
                     if (lastEpNumber != null) break
                 }
             }
@@ -67,7 +70,7 @@ object AnimeFireBadgeExtractor {
     
     // Extrair informações de badge da página de detalhes
     fun extractBadgeInfoFromDetailPage(document: org.jsoup.nodes.Document): BadgeInfo {
-        // Extrair tipo de áudio (seletor: div.animeInfo:nth-child(7))
+        // Extrair tipo de áudio
         val animeInfoDivs = document.select("div.animeInfo")
         val audioDiv = if (animeInfoDivs.size >= 7) animeInfoDivs[6] 
                       else document.select("div.animeInfo:contains(Audio:)").firstOrNull()
@@ -89,11 +92,15 @@ object AnimeFireBadgeExtractor {
             val isDub = text.contains("dublado", ignoreCase = true)
             val isLeg = text.contains("legendado", ignoreCase = true)
             
-            if (isLeg && (lastLegEp == null || epNumber > lastLegEp!!)) {
-                lastLegEp = epNumber
+            if (isLeg) {
+                if (lastLegEp == null || epNumber > lastLegEp!!) {
+                    lastLegEp = epNumber
+                }
             }
-            if (isDub && (lastDubEp == null || epNumber > lastDubEp!!)) {
-                lastDubEp = epNumber
+            if (isDub) {
+                if (lastDubEp == null || epNumber > lastDubEp!!) {
+                    lastDubEp = epNumber
+                }
             }
         }
         
