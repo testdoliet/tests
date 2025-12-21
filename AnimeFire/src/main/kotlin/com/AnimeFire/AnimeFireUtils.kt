@@ -3,7 +3,7 @@ package com.AnimeFire
 import com.lagradost.cloudstream3.ShowStatus
 import org.jsoup.nodes.Element
 
-// Função getStatus atualizada para detectar melhor
+// Função getStatus para detectar status do anime
 fun getStatus(t: String?): ShowStatus {
     if (t == null) return ShowStatus.Completed
     
@@ -22,16 +22,61 @@ fun getStatus(t: String?): ShowStatus {
         status.contains("terminado", ignoreCase = true) ||
         status.contains("finished", ignoreCase = true) -> ShowStatus.Completed
         
-        else -> {
-            // DEBUG
-            println("DEBUG - Status desconhecido: '$status', usando Completed como padrão")
-            ShowStatus.Completed
-        }
+        else -> ShowStatus.Completed
     }
 }
 
-// Outras funções utilitárias
+// Funções utilitárias para o AnimeFire
 object AnimeFireUtils {
+    
+    // Extrai o último episódio e tipo de áudio para mostrar na thumb
+    fun extractLastEpisodeInfo(document: org.jsoup.nodes.Document): Pair<String, String?> {
+        // Procurar por informações de episódios
+        val episodeElements = document.select("a.lEp.epT, a.lEp, .divListaEps a")
+        var lastEpNumber = 0
+        var lastAudioType: String? = null
+        
+        episodeElements.forEach { element ->
+            try {
+                val text = element.text().trim()
+                val epNumber = extractEpisodeNumber(text) ?: 0
+                
+                if (epNumber > lastEpNumber) {
+                    lastEpNumber = epNumber
+                    lastAudioType = when {
+                        text.contains("dublado", ignoreCase = true) -> "Dub"
+                        text.contains("legendado", ignoreCase = true) -> "Leg"
+                        else -> null
+                    }
+                }
+            } catch (e: Exception) {
+                // Ignorar erro
+            }
+        }
+        
+        return Pair(if (lastEpNumber > 0) "Ep $lastEpNumber" else "", lastAudioType)
+    }
+    
+    // Extrai tipo de áudio da página (Leg/Dub)
+    fun extractAudioTypeFromPage(document: org.jsoup.nodes.Document): String? {
+        // Primeiro método: elemento específico
+        val audioElement = document.select("div.animeInfo:nth-child(7) span.spanAnimeInfo").firstOrNull()
+        val audioText = audioElement?.text()?.trim() ?: ""
+        
+        return when {
+            audioText.contains("dublado", ignoreCase = true) && audioText.contains("legendado", ignoreCase = true) -> "Both"
+            audioText.contains("dublado", ignoreCase = true) -> "Dub"
+            audioText.contains("legendado", ignoreCase = true) -> "Leg"
+            else -> null
+        }
+    }
+    
+    // Extrai status da página
+    fun extractStatusFromPage(document: org.jsoup.nodes.Document): String? {
+        // Seletor: div.animeInfo:nth-child(11)
+        val statusElement = document.select("div.animeInfo:nth-child(11) span.spanAnimeInfo").firstOrNull()
+        return statusElement?.text()?.trim()
+    }
     
     // Extrai número do episódio de um texto
     fun extractEpisodeNumber(text: String): Int? {
@@ -52,34 +97,12 @@ object AnimeFireUtils {
         return null
     }
     
-    // Determina se é dublado ou legendado
-    fun determineAudioType(element: Element): String {
-        val text = element.text().lowercase()
-        return when {
-            text.contains("dublado") -> "Dub"
-            text.contains("legendado") -> "Leg"
-            else -> "Sub"
-        }
-    }
-    
-    // Extrai tipo de áudio disponível
-    fun extractAudioTypes(audioText: String?): Pair<Boolean, Boolean> {
-        val text = audioText ?: "Legendado"
-        
-        val hasSub = text.contains("Legendado", ignoreCase = true)
-        val hasDub = text.contains("Dublado", ignoreCase = true)
-        
-        return Pair(hasSub, hasDub)
-    }
-    
-    // Formata título com info de episódio
+    // Formata título com info de episódio (como o AllWish)
     fun formatTitleWithEpisode(cleanTitle: String, audioType: String?, epNumber: Int?): String {
-        return if (audioType != null && epNumber != null) {
-            "$cleanTitle ($audioType Ep $epNumber)"
-        } else if (epNumber != null) {
-            "$cleanTitle - Episódio $epNumber"
-        } else {
-            cleanTitle
+        return when {
+            audioType != null && epNumber != null -> "$cleanTitle ($audioType Ep $epNumber)"
+            epNumber != null -> "$cleanTitle - Episódio $epNumber"
+            else -> cleanTitle
         }
     }
 }
