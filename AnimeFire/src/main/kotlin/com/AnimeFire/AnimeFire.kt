@@ -20,8 +20,10 @@ class AnimeFire : MainAPI() {
     companion object {
         private const val SEARCH_PATH = "/pesquisar"
         
-        // ============ MUTEX COM DELAY LONGO ============
+        // ============ CONTROLE DE CARREGAMENTO ============
         private val loadingMutex = Mutex()
+        private var currentLoadingTab = ""
+        private val callCount = mutableMapOf<String, Int>()
         
         // ============ TODAS CATEGORIAS DISPONÍVEIS ============
         private val ALL_CATEGORIES = listOf(
@@ -51,7 +53,7 @@ class AnimeFire : MainAPI() {
             "/genero/magia" to "Magia",
             "/genero/mecha" to "Mecha",
             "/genero/militar" to "Militar",
-            "/genero/psicologico" to "Psicológico",
+            "/genero/psicológico" to "Psicológico",
             "/genero/slice-of-life" to "Slice of Life",
             "/genero/sobrenatural" to "Sobrenatural",
             "/genero/superpoder" to "Superpoder",
@@ -186,130 +188,119 @@ class AnimeFire : MainAPI() {
         return cleanName.trim().replace(Regex("\\s+"), " ")
     }
 
-    // ============ GET MAIN PAGE - PRÉ-CARREGA TODAS PÁGINAS ============
+    // ============ GET MAIN PAGE CORRIGIDO COM PAGINAÇÃO ============
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
+        // ✅ CONTADOR DE CHAMADAS
+        callCount[request.name] = callCount.getOrDefault(request.name, 0) + 1
+        val callNumber = callCount[request.name]!!
+        
+        // ✅ VERIFICAR SE OUTRA ABA ESTÁ CARREGANDO
+        if (currentLoadingTab.isNotEmpty() && currentLoadingTab != request.name) {
+            println("🔥 ANIMEFIRE: ⚠️ Chamada #$callNumber - '${request.name}' aguardando '$currentLoadingTab'")
+            kotlinx.coroutines.delay(800)
+        }
+        
         return loadingMutex.withLock {
             try {
-                println("\n" + "=".repeat(80))
-                println("🔥 ANIMEFIRE: 📥 INICIANDO PRÉ-CARREGAMENTO TOTAL")
-                println("   • Aba: '${request.name}'")
-                println("   • Cloudstream Page: $page")
-                println("   • URL Base: ${request.data}")
-                println("=".repeat(80))
+                currentLoadingTab = request.name
+                val startTime = System.currentTimeMillis()
                 
-                // ============ DELAY LONGO PARA CARREGAR TUDO ============
-                println("⏱️ Aguardando 3 segundos para estabilizar...")
-                kotlinx.coroutines.delay(3000)
+                println("🔥 ANIMEFIRE: 🔒 TRAVA PEGA - '${request.name}' (chamada #$callNumber, página $page)")
                 
+                // ============ PAGINAÇÃO CORRETA ============
                 val basePath = request.data.removePrefix(mainUrl)
+                val sitePageNumber = page + 1 // Cloudstream page 0 = Site página 1
+                
+                val pageUrl = if (page == 0) {
+                    "$mainUrl$basePath"
+                } else {
+                    "$mainUrl$basePath/$sitePageNumber"
+                }
+                
+                println("🔥 ANIMEFIRE: 📥 Carregando: $pageUrl")
+                
+                val document = app.get(pageUrl, timeout = 30).document
+                
                 val isUpcomingSection = basePath.contains("/em-lancamento") || 
                                        basePath.contains("/animes-atualizados")
                 
-                // ============ LISTA PARA TODOS OS ITENS ============
-                val allItems = mutableListOf<SearchResponse>()
+                // ✅ COLETAR ELEMENTOS
+                val elements = document.select("""
+                    article a,
+                    .card a,
+                    .anime-item a,
+                    a[href*='/animes/'],
+                    a[href*='/filmes/']
+                """).take(30)
                 
-                // ============ PRÉ-CARREGAR ATÉ 5 PÁGINAS ============
-                for (pageNum in 1..5) {
+                val homeItems = mutableListOf<SearchResponse>()
+                
+                elements.forEach { element ->
                     try {
-                        val pageUrl = if (pageNum == 1) {
-                            "$mainUrl$basePath"  // Página 1 sem número
-                        } else {
-                            "$mainUrl$basePath/$pageNum"  // Páginas 2, 3, 4, 5
+                        val item = element.toSearchResponse(isUpcomingSection = isUpcomingSection)
+                        if (item != null) {
+                            homeItems.add(item)
                         }
-                        
-                        println("\n📄 PRÉ-CARREGANDO PÁGINA $pageNum")
-                        println("   • URL: $pageUrl")
-                        
-                        // DELAY ENTRE PÁGINAS
-                        if (pageNum > 1) {
-                            kotlinx.coroutines.delay(1500)
-                        }
-                        
-                        val document = app.get(pageUrl, timeout = 35).document
-                        
-                        // Coletar elementos
-                        val elements = document.select("""
-                            article a,
-                            .card a,
-                            .anime-item a,
-                            a[href*='/animes/'],
-                            a[href*='/filmes/']
-                        """).take(40)  // Pegar mais itens
-                        
-                        val pageItems = mutableListOf<SearchResponse>()
-                        elements.forEach { element ->
-                            try {
-                                val item = element.toSearchResponse(isUpcomingSection = isUpcomingSection)
-                                if (item != null) {
-                                    pageItems.add(item)
-                                }
-                            } catch (e: Exception) {
-                                // Ignorar
-                            }
-                        }
-                        
-                        allItems.addAll(pageItems)
-                        println("   • ✅ Página $pageNum: ${pageItems.size} itens (Total: ${allItems.size})")
-                        
-                        // Verificar se tem próxima página
-                        val hasNextPage = document.select("a[href*='/${pageNum + 1}']").isNotEmpty() ||
-                                         document.select("a:contains('Próxima')").isNotEmpty()
-                        
-                        if (!hasNextPage || pageItems.isEmpty()) {
-                            println("   • ⏹️ Sem mais páginas ou itens vazios, parando...")
-                            break
-                        }
-                        
                     } catch (e: Exception) {
-                        println("   • ❌ Erro na página $pageNum: ${e.message}")
-                        // Continua para próxima página mesmo com erro
+                        // Ignorar erro em item específico
                     }
                 }
                 
-                // ============ REMOVER DUPLICADOS ============
-                val uniqueItems = allItems.distinctBy { it.url }
-                
-                println("\n" + "=".repeat(80))
-                println("📊 RESULTADO FINAL DO PRÉ-CARREGAMENTO:")
-                println("   • Aba: '${request.name}'")
-                println("   • Total de páginas carregadas: ${minOf(5, allItems.size / 30 + 1)}")
-                println("   • Itens coletados: ${allItems.size}")
-                println("   • Itens únicos: ${uniqueItems.size}")
-                println("   • Retornando: ${minOf(50, uniqueItems.size)} itens")
-                
-                // Mostrar alguns exemplos
-                if (uniqueItems.isNotEmpty()) {
-                    println("   • Exemplos:")
-                    uniqueItems.take(3).forEachIndexed { i, item ->
-                        println("     ${i + 1}. ${item.name}")
-                    }
-                    if (uniqueItems.size > 3) {
-                        println("     ... e mais ${uniqueItems.size - 3} itens")
-                    }
+                // ✅ DETECTAR PRÓXIMA PÁGINA (MELHORADO)
+                val hasNextPage = try {
+                    val nextPageNum = sitePageNumber + 1
+                    
+                    // Múltiplas formas de detecção
+                    val hasExplicitLink = document.select("""
+                        a[href*='$basePath/$nextPageNum'],
+                        a[href*='/page/$nextPageNum'],
+                        .pagination a:contains($nextPageNum),
+                        a:contains(Próxima),
+                        a:contains(Next),
+                        .next-page,
+                        .load-more
+                    """).isNotEmpty()
+                    
+                    // ✅ TESTE DE PAGINAÇÃO FORÇADA (DEBUG)
+                    val debugForcePagination = false // Mude para true para testar
+                    val forceTest = debugForcePagination && homeItems.size >= 15 && page < 3
+                    
+                    // Verificar se há conteúdo suficiente
+                    val hasEnoughItems = homeItems.size >= 18
+                    
+                    (hasExplicitLink || forceTest) && hasEnoughItems
+                } catch (e: Exception) {
+                    false
                 }
-                println("=".repeat(80) + "\n")
                 
-                // ============ DELAY FINAL LONGO ============
-                println("⏱️ Finalizando processamento (2 segundos)...")
-                kotlinx.coroutines.delay(2000)
+                // ✅ NOME DA ABA COM PAGINAÇÃO
+                val tabName = if (page > 0) "${request.name} (P$sitePageNumber)" else request.name
                 
-                // ============ SEM PAGINAÇÃO (já carregou tudo) ============
-                // Retorna até 50 itens de uma vez
-                newHomePageResponse(
-                    request.name,
-                    uniqueItems.take(50),
-                    hasNext = false  // Já carregou tudo, não precisa de mais
+                // ✅ LOGS DETALHADOS
+                val elapsedTime = System.currentTimeMillis() - startTime
+                println("🔥 ANIMEFIRE: 📊 RESUMO - '${request.name}' P$sitePageNumber")
+                println("🔥 ANIMEFIRE: 📊 Itens: ${homeItems.size}")
+                println("🔥 ANIMEFIRE: 📊 Próxima página: $hasNextPage")
+                println("🔥 ANIMEFIRE: 📊 Tempo: ${elapsedTime}ms")
+                println("🔥 ANIMEFIRE: ✅ CONCLUÍDO - '${request.name}' P$sitePageNumber")
+                
+                // ✅ DELAY ENTRE ABAS
+                kotlinx.coroutines.delay(300)
+                
+                return@withLock newHomePageResponse(
+                    tabName,
+                    homeItems.distinctBy { it.url },
+                    hasNext = hasNextPage
                 )
                 
             } catch (e: Exception) {
-                println("\n❌ ANIMEFIRE: ERRO CRÍTICO NO PRÉ-CARREGAMENTO")
-                println("   • Aba: '${request.name}'")
-                println("   • Erro: ${e.message}")
-                println("=".repeat(80) + "\n")
-                
-                // Liberar rápido em caso de erro
-                kotlinx.coroutines.delay(500)
-                newHomePageResponse(request.name, emptyList(), false)
+                println("🔥 ANIMEFIRE: ❌ ERRO em '${request.name}' P$page: ${e.message}")
+                return@withLock newHomePageResponse(request.name, emptyList(), false)
+            } finally {
+                // ✅ SEMPRE LIBERAR A TRAVA
+                currentLoadingTab = ""
+                println("🔥 ANIMEFIRE: 🔓 TRAVA SOLTA - '${request.name}'")
+                kotlinx.coroutines.delay(200)
             }
         }
     }
