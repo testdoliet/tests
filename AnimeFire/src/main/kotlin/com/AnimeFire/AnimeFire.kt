@@ -27,17 +27,6 @@ class AnimeFire : MainAPI() {
         "$mainUrl" to "Últimos Episódios Adicionados"
     )
 
-    // ============ FUNÇÃO PARA CRIAR BADGES ============
-    
-    private fun createBadgeText(hasLeg: Boolean, hasDub: Boolean, legEp: Int?, dubEp: Int?): String? {
-        return when {
-            hasLeg && hasDub && legEp != null && dubEp != null -> "Leg Ep $legEp / Dub Ep $dubEp"
-            hasLeg && legEp != null -> "Leg Ep $legEp"
-            hasDub && dubEp != null -> "Dub Ep $dubEp"
-            else -> null
-        }
-    }
-
     // ============ FUNÇÃO AUXILIAR DE BUSCA ============
     
     private fun Element.toSearchResponse(): AnimeSearchResponse? {
@@ -73,15 +62,37 @@ class AnimeFire : MainAPI() {
             this.posterUrl = sitePoster?.let { fixUrl(it) }
             this.type = if (isMovie) TvType.Movie else TvType.Anime
             
-            // Usar addDubStatus para mostrar badges
-            // Primeiro parâmetro: tem dublado?
-            // Segundo parâmetro: tem legendado?
-            // Terceiro parâmetro: número de episódios dublados (ou null)
-            // Quarto parâmetro: número de episódios legendados (ou null)
+            // CORREÇÃO: Usar addDubStatus corretamente
             if (hasDub || hasLeg) {
-                val dubCount = if (hasDub && epNumber != null) epNumber else null
-                val legCount = if (hasLeg && epNumber != null) epNumber else null
-                addDubStatus(hasDub, hasLeg, dubCount, legCount)
+                // Para o AnimeSearchResponse, a assinatura correta é:
+                // fun addDubStatus(isDub: Boolean, episodes: Int? = null)
+                // OU
+                // fun addDubStatus(dubExist: Boolean, subExist: Boolean, dubEpisodes: Int? = null, subEpisodes: Int? = null)
+                
+                // Vou usar a segunda opção que permite mostrar ambos
+                if (hasDub && hasLeg) {
+                    // Se tem ambos, mostrar os dois contadores
+                    addDubStatus(
+                        dubExist = true,
+                        subExist = true,
+                        dubEpisodes = if (epNumber != null) epNumber else null,
+                        subEpisodes = if (epNumber != null) epNumber else null
+                    )
+                } else if (hasDub) {
+                    // Só tem dublado
+                    addDubStatus(
+                        dubExist = true,
+                        subExist = false,
+                        dubEpisodes = if (epNumber != null) epNumber else null
+                    )
+                } else if (hasLeg) {
+                    // Só tem legendado
+                    addDubStatus(
+                        dubExist = false,
+                        subExist = true,
+                        subEpisodes = if (epNumber != null) epNumber else null
+                    )
+                }
             }
         }
     }
@@ -146,9 +157,8 @@ class AnimeFire : MainAPI() {
         val isMovie = url.contains("/filmes/") || rawTitle.contains("Movie", ignoreCase = true)
         val type = if (isMovie) TvType.Movie else TvType.Anime
 
-        // 2. Extrair status CORRETAMENTE (seletor: div.animeInfo:nth-child(11))
+        // 2. Extrair status (seletor: div.animeInfo:nth-child(11))
         val statusText = if (!isMovie) {
-            // Tentar pegar o 11º div.animeInfo
             val animeInfoDivs = document.select("div.animeInfo")
             val statusDiv = if (animeInfoDivs.size >= 11) animeInfoDivs[10] else null
             
@@ -159,9 +169,7 @@ class AnimeFire : MainAPI() {
             null
         }
         
-        println("DEBUG - Status encontrado: '$statusText'")
         val showStatus = if (!isMovie) getStatus(statusText) else null
-        println("DEBUG - ShowStatus convertido: $showStatus")
 
         // 3. Extrair áudio disponível (seletor: div.animeInfo:nth-child(7))
         val (hasLeg, hasDub) = if (!isMovie) {
@@ -171,8 +179,6 @@ class AnimeFire : MainAPI() {
             
             val audioText = audioDiv?.select("span.spanAnimeInfo")?.firstOrNull()?.text()?.trim() ?: "Legendado"
             
-            println("DEBUG - Audio text: '$audioText'")
-            
             Pair(
                 audioText.contains("Legendado", ignoreCase = true),
                 audioText.contains("Dublado", ignoreCase = true)
@@ -180,9 +186,6 @@ class AnimeFire : MainAPI() {
         } else {
             Pair(false, false)
         }
-
-        println("DEBUG - Tem legendado? $hasLeg")
-        println("DEBUG - Tem dublado? $hasDub")
 
         // 4. Extrair poster
         val poster = document.selectFirst(".sub_animepage_img img, img[src*='/img/animes/']")?.let { img ->
@@ -220,9 +223,6 @@ class AnimeFire : MainAPI() {
             Triple(null, null, Pair(emptyList(), emptyList()))
         }
 
-        println("DEBUG - Último episódio legendado: $lastLegEp")
-        println("DEBUG - Último episódio dublado: $lastDubEp")
-
         // 9. Recomendações
         val recommendations = document.select(".owl-carousel-anime .divArticleLancamentos a.item")
             .mapNotNull { it.toSearchResponse() }
@@ -238,7 +238,7 @@ class AnimeFire : MainAPI() {
             }
         } else {
             newAnimeLoadResponse(cleanTitle, url, type) {
-                // Separar episódios como o AllWish
+                // Separar episódios
                 if (hasDub && allEpisodes.second.isNotEmpty()) {
                     addEpisodes(DubStatus.Dubbed, allEpisodes.second)
                 }
@@ -253,12 +253,7 @@ class AnimeFire : MainAPI() {
                 this.backgroundPosterUrl = poster
                 this.recommendations = recommendations.takeIf { it.isNotEmpty() }
                 
-                // Usar os últimos números de episódio para addDubStatus
-                // Isso vai fazer aparecer as badges "Leg Ep X" e "Dub Ep Y"!
-                if (hasLeg || hasDub) {
-                    addDubStatus(hasDub, hasLeg, lastDubEp, lastLegEp)
-                }
-                
+                // CORREÇÃO: Para AnimeLoadResponse, usar showStatus corretamente
                 if (showStatus != null) {
                     this.showStatus = showStatus
                 }
@@ -277,19 +272,7 @@ class AnimeFire : MainAPI() {
         var lastLegEp: Int? = null
         var lastDubEp: Int? = null
         
-        // Procurar episódios
-        val selectors = listOf(
-            "a.lEp.epT",
-            "a.lEp",
-            ".divListaEps a",
-            ".episodios-list a",
-            ".lista-episodios a"
-        )
-        
-        val episodeElements = mutableListOf<Element>()
-        selectors.forEach { selector ->
-            episodeElements.addAll(document.select(selector))
-        }
+        val episodeElements = document.select("a.lEp.epT, a.lEp, .divListaEps a")
         
         episodeElements.forEachIndexed { index, element ->
             try {
@@ -299,10 +282,8 @@ class AnimeFire : MainAPI() {
                 val episodeNumber = extractEpisodeNumber(text) ?: (index + 1)
                 
                 // Determinar se é dub ou leg
-                val isDub = text.contains("dublado", ignoreCase = true) || 
-                           (hasDub && !text.contains("legendado", ignoreCase = true))
-                val isLeg = text.contains("legendado", ignoreCase = true) || 
-                           (!hasDub && !text.contains("dublado", ignoreCase = true))
+                val isDub = text.contains("dublado", ignoreCase = true)
+                val isLeg = text.contains("legendado", ignoreCase = true) || (!isDub && !hasDub)
                 
                 // Atualizar últimos episódios
                 if (isLeg && (lastLegEp == null || episodeNumber > lastLegEp!!)) {
@@ -315,7 +296,6 @@ class AnimeFire : MainAPI() {
                 // Nome do episódio
                 val episodeName = element.selectFirst(".ep-name, .title")?.text()?.trim()
                     ?: text.substringAfterLast("-").trim()
-                    ?: text.substringAfterLast("|").trim()
                     ?: "Episódio $episodeNumber"
                 
                 // Limpar nome
@@ -334,8 +314,7 @@ class AnimeFire : MainAPI() {
                 
                 if (isDub) {
                     dubEpisodes.add(episode)
-                }
-                if (isLeg) {
+                } else if (isLeg) {
                     subEpisodes.add(episode)
                 }
                 
