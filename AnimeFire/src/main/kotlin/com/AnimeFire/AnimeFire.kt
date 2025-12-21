@@ -282,134 +282,155 @@ class AnimeFire : MainAPI() {
 
     // ============ LOAD PRINCIPAL (PÁGINA DE DETALHES) - VERSÃO CORRIGIDA ============
     
-    override suspend fun load(url: String): LoadResponse {
-        val document = app.get(url).document
+    // ============ LOAD PRINCIPAL (PÁGINA DE DETALHES) - VERSÃO FINAL CORRIGIDA ============
+
+override suspend fun load(url: String): LoadResponse {
+    val document = app.get(url).document
+    
+    // ============ TÍTULO ============
+    val title = document.selectFirst("h1.animeTitle")?.text()?.trim()
+        ?: document.selectFirst("h1")?.text()?.trim()
+        ?: "Sem título"
+    
+    // ============ POSTER ============
+    val poster = document.selectFirst("img.imgAnimes")?.attr("src")?.let { fixUrl(it) }
+        ?: document.selectFirst("img.rounded-3")?.attr("src")?.let { fixUrl(it) }
+        ?: document.selectFirst("img.card-img-top")?.attr("src")?.let { fixUrl(it) }
+    
+    // ============ SINOPSE ============
+    val synopsis = document.selectFirst("p.sinopse")?.text()?.trim()
+        ?: document.selectFirst("div.text-muted")?.text()?.trim()
+        ?: "Sinopse não disponível."
+    
+    // ============ ANO E GÊNEROS ============
+    val year = document.select("div.animeInfo")
+        .find { it.text().contains("Ano:", ignoreCase = true) }
+        ?.selectFirst("span.spanAnimeInfo")?.text()?.trim()?.toIntOrNull()
+    
+    val genres = document.select("div.animeInfo")
+        .find { it.text().contains("Gênero:", ignoreCase = true) }
+        ?.select("span.spanAnimeInfo a")?.map { it.text().trim() }
+        ?: emptyList()
+    
+    // ============ VERIFICA SE É FILME ============
+    val isMovie = url.contains("/filmes/") || title.contains("filme", ignoreCase = true)
+    
+    // ============ TRAILER (se disponível) ============
+    val trailer = document.selectFirst("iframe[src*='youtube']")?.attr("src")
+        ?: document.selectFirst("a[href*='youtube']")?.attr("href")
+    
+    // ============ EPISÓDIOS ============
+    val episodes = if (isMovie) {
+        listOf(
+            newEpisode(Pair("Filme", url))
+        )
+    } else {
+        extractAllEpisodes(document, url)
+    }
+    
+    // ============ CONSTRUIR LOAD RESPONSE ============
+    return newAnimeLoadResponse(title, url, if (isMovie) TvType.Movie else TvType.Anime) {
+        this.posterUrl = poster
+        this.year = year
+        this.plot = synopsis
+        this.tags = genres
         
-        // ============ TÍTULO ============
-        val title = document.selectFirst("h1.animeTitle")?.text()?.trim()
-            ?: document.selectFirst("h1")?.text()?.trim()
-            ?: "Sem título"
-        
-        // ============ POSTER ============
-        val poster = document.selectFirst("img.imgAnimes")?.attr("src")?.let { fixUrl(it) }
-            ?: document.selectFirst("img.rounded-3")?.attr("src")?.let { fixUrl(it) }
-            ?: document.selectFirst("img.card-img-top")?.attr("src")?.let { fixUrl(it) }
-        
-        // ============ SINOPSE ============
-        val synopsis = document.selectFirst("p.sinopse")?.text()?.trim()
-            ?: document.selectFirst("div.text-muted")?.text()?.trim()
-            ?: "Sinopse não disponível."
-        
-        // ============ ANO E GÊNEROS ============
-        val year = document.select("div.animeInfo")
-            .find { it.text().contains("Ano:", ignoreCase = true) }
-            ?.selectFirst("span.spanAnimeInfo")?.text()?.trim()?.toIntOrNull()
-        
-        val genres = document.select("div.animeInfo")
-            .find { it.text().contains("Gênero:", ignoreCase = true) }
-            ?.select("span.spanAnimeInfo a")?.map { it.text().trim() }
-            ?: emptyList()
-        
-        // ============ VERIFICA SE É FILME ============
-        val isMovie = url.contains("/filmes/") || title.contains("filme", ignoreCase = true)
-        
-        // ============ TRAILER (se disponível) ============
-        val trailer = document.selectFirst("iframe[src*='youtube']")?.attr("src")
-            ?: document.selectFirst("a[href*='youtube']")?.attr("href")
-        
-        // ============ EPISÓDIOS ============
-        val episodes = if (isMovie) {
-            listOf(
-                newEpisode(Pair("Filme", url))
-            )
-        } else {
-            extractAllEpisodes(document, url)
+        // Adicionar trailer se existir
+        if (trailer != null) {
+            addTrailer(trailer)
         }
         
-        // ============ CONSTRUIR LOAD RESPONSE ============
-        return newAnimeLoadResponse(title, url, if (isMovie) TvType.Movie else TvType.Anime) {
-            this.posterUrl = poster
-            this.year = year
-            this.plot = synopsis
-            this.tags = genres
-            
-            // Adicionar trailer se existir
-            if (trailer != null) {
-                addTrailer(trailer)
-            }
-            
-            // CORREÇÃO: Criar a lista de episódios de forma correta
-            // Em vez de usar addEpisode (que não existe), criamos a lista diretamente
-            val episodeList = episodes.map { episode ->
-                Episode(
-                    episode.data,
-                    episode.name,
-                    episode.season,
-                    episode.episode,
-                    episode.posterUrl,
-                    episode.date
-                )
-            }
-            
-            // Usar reflexão para definir episódios se o campo existir
-            try {
-                val episodesField = this::class.members.find { it.name == "episodes" }
-                episodesField?.call(this, episodeList)
-            } catch (e: Exception) {
-                println("Não foi possível definir episódios: ${e.message}")
-            }
-            
-            // Adicionar recomendações (opcional)
-            try {
-                val recommendations = document.select(".owl-carousel-l_dia .item")
-                    .mapNotNull { element ->
-                        val recTitle = element.selectFirst("h3.animeTitle")?.text()?.trim()
-                        val recUrl = element.selectFirst("a")?.attr("href")
-                        val recPoster = element.selectFirst("img")?.attr("data-src") ?: element.selectFirst("img")?.attr("src")
-                        
-                        if (recTitle != null && recUrl != null) {
-                            newAnimeSearchResponse(recTitle, fixUrl(recUrl)) {
-                                this.posterUrl = recPoster?.let { fixUrl(it) }
-                            }
-                        } else {
-                            null
+        // CORREÇÃO: Usar newEpisode corretamente
+        // Criar lista de episódios usando newEpisode
+        val episodeList = episodes.map { episode ->
+            newEpisode(Pair(episode.name ?: "Episódio", episode.data))
+        }
+        
+        // Usar reflexão para definir episódios se o campo existir
+        try {
+            val episodesField = this::class.members.find { it.name == "episodes" }
+            episodesField?.call(this, episodeList)
+        } catch (e: Exception) {
+            // Se não conseguir definir episódios, o anime ainda carregará
+            println("AnimeFire: Não foi possível definir episódios para $title")
+        }
+        
+        // Adicionar recomendações (opcional)
+        try {
+            val recommendations = document.select(".owl-carousel-l_dia .item")
+                .mapNotNull { element ->
+                    val recTitle = element.selectFirst("h3.animeTitle")?.text()?.trim()
+                    val recUrl = element.selectFirst("a")?.attr("href")
+                    val recPoster = element.selectFirst("img")?.attr("data-src") ?: element.selectFirst("img")?.attr("src")
+                    
+                    if (recTitle != null && recUrl != null) {
+                        newAnimeSearchResponse(recTitle, fixUrl(recUrl)) {
+                            this.posterUrl = recPoster?.let { fixUrl(it) }
                         }
+                    } else {
+                        null
                     }
-                
-                val recommendationsField = this::class.members.find { it.name == "recommendations" }
-                recommendationsField?.call(this, recommendations)
-            } catch (e: Exception) {
-                // Ignorar se não existir
-            }
+                }
+            
+            val recommendationsField = this::class.members.find { it.name == "recommendations" }
+            recommendationsField?.call(this, recommendations)
+        } catch (e: Exception) {
+            // Ignorar se não existir
         }
     }
+}
 
-    // ============ FUNÇÃO PARA EXTRAIR TODOS OS EPISÓDIOS ============
+// ============ FUNÇÃO PARA EXTRAIR TODOS OS EPISÓDIOS - VERSÃO CORRIGIDA ============
+
+private fun extractAllEpisodes(document: org.jsoup.nodes.Document, baseUrl: String): List<Episode> {
+    val episodes = mutableListOf<Episode>()
     
-    private fun extractAllEpisodes(document: org.jsoup.nodes.Document, baseUrl: String): List<Episode> {
-        val episodes = mutableListOf<Episode>()
-        
-        // Extrair todos os episódios da página
-        document.select("a.lEp.epT, a.lEp, .divListaEps a").forEach { episodeElement ->
+    // Extrair todos os episódios da página
+    document.select("a.lEp.epT, a.lEp, .divListaEps a").forEach { episodeElement ->
+        try {
+            val episodeUrl = episodeElement.attr("href")?.takeIf { it.isNotBlank() }
+            if (episodeUrl.isNullOrBlank()) return@forEach
+            
+            val episodeText = episodeElement.text().trim()
+            val episodeNumber = AnimeFireUtils.extractEpisodeNumber(episodeText)
+            
+            if (episodeNumber != null) {
+                val audioType = when {
+                    episodeText.contains("dublado", ignoreCase = true) -> " (Dub)"
+                    episodeText.contains("legendado", ignoreCase = true) -> " (Leg)"
+                    else -> ""
+                }
+                
+                val episodeName = "Episódio $episodeNumber$audioType"
+                
+                // CORREÇÃO: Usar newEpisode corretamente
+                episodes.add(
+                    newEpisode(Pair(episodeName, fixUrl(episodeUrl))) {
+                        this.name = episodeName
+                        this.episode = episodeNumber
+                    }
+                )
+            }
+        } catch (e: Exception) {
+            // Ignorar episódio com erro
+        }
+    }
+    
+    // Se não encontrou episódios, verificar outras estruturas
+    if (episodes.isEmpty()) {
+        document.select("div.episodesContainer a, .episode-item a").forEach { episodeElement ->
             try {
                 val episodeUrl = episodeElement.attr("href")?.takeIf { it.isNotBlank() }
                 if (episodeUrl.isNullOrBlank()) return@forEach
                 
                 val episodeText = episodeElement.text().trim()
-                val episodeNumber = AnimeFireUtils.extractEpisodeNumber(episodeText)
+                val episodeNumber = extractEpisodeNumber(episodeText)
                 
                 if (episodeNumber != null) {
-                    val audioType = when {
-                        episodeText.contains("dublado", ignoreCase = true) -> " (Dub)"
-                        episodeText.contains("legendado", ignoreCase = true) -> " (Leg)"
-                        else -> ""
-                    }
-                    
-                    val episodeName = "Episódio $episodeNumber$audioType"
-                    
+                    // CORREÇÃO: Usar newEpisode corretamente
                     episodes.add(
-                        newEpisode(Pair(episodeName, fixUrl(episodeUrl))) {
-                            this.name = episodeName
+                        newEpisode(Pair("Episódio $episodeNumber", fixUrl(episodeUrl))) {
+                            this.name = "Episódio $episodeNumber"
                             this.episode = episodeNumber
                         }
                     )
@@ -418,35 +439,11 @@ class AnimeFire : MainAPI() {
                 // Ignorar episódio com erro
             }
         }
-        
-        // Se não encontrou episódios, verificar outras estruturas
-        if (episodes.isEmpty()) {
-            document.select("div.episodesContainer a, .episode-item a").forEach { episodeElement ->
-                try {
-                    val episodeUrl = episodeElement.attr("href")?.takeIf { it.isNotBlank() }
-                    if (episodeUrl.isNullOrBlank()) return@forEach
-                    
-                    val episodeText = episodeElement.text().trim()
-                    val episodeNumber = extractEpisodeNumber(episodeText)
-                    
-                    if (episodeNumber != null) {
-                        episodes.add(
-                            newEpisode(Pair("Episódio $episodeNumber", fixUrl(episodeUrl))) {
-                                this.name = "Episódio $episodeNumber"
-                                this.episode = episodeNumber
-                            }
-                        )
-                    }
-                } catch (e: Exception) {
-                    // Ignorar episódio com erro
-                }
-            }
-        }
-        
-        // Ordenar episódios por número
-        return episodes.sortedBy { it.episode }
     }
-
+    
+    // Ordenar episódios por número
+    return episodes.sortedBy { it.episode }
+}
     // ============ LOAD LINKS (CHAMAR EXTRACTOR) ============
     
     override suspend fun loadLinks(
