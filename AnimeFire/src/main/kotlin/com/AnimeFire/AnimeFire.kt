@@ -57,13 +57,27 @@ class AnimeFire : MainAPI() {
             "/genero/vida-escolar" to "Vida Escolar"
         )
         
+        private var cachedTabs: List<Pair<String, String>>? = null
+        private var cacheTime: Long = 0
+        private const val CACHE_DURATION = 300000L // 5 minutos
+        
         fun getRandomTabs(count: Int = 8): List<Pair<String, String>> {
-            return ALL_CATEGORIES.shuffled().take(count)
+            val currentTime = System.currentTimeMillis()
+            
+            if (cachedTabs != null && (currentTime - cacheTime) < CACHE_DURATION) {
+                return cachedTabs!!
+            }
+            
+            val randomTabs = ALL_CATEGORIES.shuffled().take(count)
+            cachedTabs = randomTabs
+            cacheTime = currentTime
+            
+            return randomTabs
         }
     }
 
     init {
-        println("🔥 ANIMEFIRE: Plugin inicializado com paginação corrigida")
+        println("🔥 ANIMEFIRE: Plugin inicializado")
     }
 
     override val mainPage = mainPageOf(
@@ -73,7 +87,7 @@ class AnimeFire : MainAPI() {
     )
 
     // ============ FUNÇÃO DE EXTRACTION ============
-    private fun Element.toSearchResponse(isUpcomingSection: Boolean = false, debugMode: Boolean = true): AnimeSearchResponse? {
+    private fun Element.toSearchResponse(debugMode: Boolean = true): AnimeSearchResponse? {
         val href = attr("href") ?: return null
         if (href.isBlank() || (!href.contains("/animes/") && !href.contains("/filmes/"))) return null
         
@@ -81,7 +95,6 @@ class AnimeFire : MainAPI() {
             println("\n" + "=".repeat(60))
             println("🔍 DEBUG EXTRACTION")
             println("=".repeat(60))
-            println("📄 HTML (resumido): ${outerHtml().take(200)}...")
         }
         
         // TÍTULO
@@ -100,30 +113,7 @@ class AnimeFire : MainAPI() {
         if (debugMode) {
             println("\n📊 AVALIAÇÃO:")
             println("   • Texto: '$scoreText'")
-            println("   • É upcoming? $isUpcomingSection")
         }
-        
-        // LÓGICA DE FILTRO
-        val shouldKeepItem = when {
-            isUpcomingSection -> {
-                if (debugMode) println("✅ Mantido: Seção de lançamentos")
-                true
-            }
-            scoreText != null && scoreText != "N/A" -> {
-                if (debugMode) println("✅ Mantido: Tem avaliação válida")
-                true
-            }
-            scoreText == null -> {
-                if (debugMode) println("⚠️ Sem avaliação, mantendo")
-                true
-            }
-            else -> {
-                if (debugMode) println("❌ Filtrado: Avaliação N/A")
-                false
-            }
-        }
-        
-        if (!shouldKeepItem) return null
         
         // PROCESSAR SCORE FINAL
         val score = when {
@@ -186,14 +176,18 @@ class AnimeFire : MainAPI() {
             println("   • Nome: $cleanName")
             println("   • URL: $href")
             println("   • Score: ${score?.toString() ?: "null"}")
+            println("   • Dub: $finalHasDub, Leg: $finalHasLeg")
             println("=".repeat(60))
         }
 
         return newAnimeSearchResponse(cleanName, fixUrl(href)) {
             this.posterUrl = sitePoster
             this.type = if (isMovie) TvType.Movie else TvType.Anime
+            
+            // AVALIAÇÃO (badge acima)
             this.score = score
             
+            // DUB/LEG (badge abaixo)
             if (finalHasDub || finalHasLeg) {
                 addDubStatus(dubExist = finalHasDub, subExist = finalHasLeg)
             }
@@ -295,17 +289,14 @@ class AnimeFire : MainAPI() {
     }
 
     // ============ DETECTAR SE TEM PRÓXIMA PÁGINA ============
-    private suspend fun detectHasNextPage(document: org.jsoup.nodes.Document, currentUrl: String, currentPageNum: Int): Boolean {
+    private suspend fun detectHasNextPage(document: org.jsoup.nodes.Document, currentPageNum: Int): Boolean {
         try {
-            // Se não tem elementos nesta página, não tem próxima
             val hasElements = document.select("article, .card, .anime-item").isNotEmpty()
             if (!hasElements) return false
             
-            // Verificar se existe paginação no site
             val hasPagination = document.select(".pagination, .page-numbers, .paginacao").isNotEmpty()
             val hasNextLink = document.select("a:contains(Próxima), a:contains(›), a:contains(>), a[href*='/${currentPageNum + 1}']").isNotEmpty()
             
-            // Se tem elementos E tem links de paginação, provavelmente tem próxima
             return hasElements && (hasPagination || hasNextLink)
             
         } catch (e: Exception) {
@@ -313,7 +304,7 @@ class AnimeFire : MainAPI() {
         }
     }
 
-    // ============ GET MAIN PAGE - CORRIGIDO ============
+    // ============ GET MAIN PAGE ============
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         return loadingMutex.withLock {
             try {
@@ -323,43 +314,37 @@ class AnimeFire : MainAPI() {
                 println("📊 Aba: '${request.name}'")
                 println("📊 URL base: ${request.data}")
                 
-                // ============ PAGINAÇÃO CORRETA ============
+                // PAGINAÇÃO
                 val basePath = request.data.removePrefix(mainUrl)
-                
-                // CloudStream page 0 = primeira página do site
-                // CloudStream page 1 = segunda página do site (/2)
-                // CloudStream page 2 = terceira página do site (/3)
                 val sitePageNumber = page + 1
                 
                 val pageUrl = if (sitePageNumber == 1) {
-                    // Primeira página: URL sem número
                     "$mainUrl$basePath"
                 } else {
-                    // Páginas seguintes: /2, /3, etc.
                     "$mainUrl$basePath/$sitePageNumber"
                 }
                 
                 println("📊 URL da página: $pageUrl")
                 println("-".repeat(70))
                 
-                // Delay para não sobrecarregar
                 kotlinx.coroutines.delay(200)
                 
                 val document = app.get(pageUrl, timeout = 25).document
                 
-                val isUpcomingSection = basePath.contains("/em-lancamento") || 
-                                       basePath.contains("/animes-atualizados")
+                // VERIFICAR TODOS OS ELEMENTOS
+                val allElements = document.select("article, .card, .anime-item")
+                println("📊 Elementos container: ${allElements.size}")
                 
-                // ============ PROCESSAR ITENS ============
+                // PROCESSAR ITENS
                 val elements = document.select("""
                     article a,
                     .card a,
                     .anime-item a,
                     a[href*='/animes/'],
                     a[href*='/filmes/']
-                """).take(50) // Aumentei para 50 itens por página
+                """).take(50)
                 
-                println("📊 Elementos encontrados: ${elements.size}")
+                println("📊 Links encontrados: ${elements.size}")
                 
                 val homeItems = mutableListOf<SearchResponse>()
                 
@@ -367,10 +352,7 @@ class AnimeFire : MainAPI() {
                     try {
                         // Debug apenas para os primeiros 2 itens
                         val debugMode = index < 2
-                        val item = element.toSearchResponse(
-                            isUpcomingSection = isUpcomingSection,
-                            debugMode = debugMode
-                        )
+                        val item = element.toSearchResponse(debugMode = debugMode)
                         if (item != null) {
                             homeItems.add(item)
                         }
@@ -379,18 +361,14 @@ class AnimeFire : MainAPI() {
                     }
                 }
                 
-                // ============ DETECTAR PRÓXIMA PÁGINA ============
-                val hasNextPage = detectHasNextPage(document, pageUrl, sitePageNumber)
+                // DETECTAR PRÓXIMA PÁGINA
+                val hasNextPage = detectHasNextPage(document, sitePageNumber)
                 
-                // ============ IMPORTANTE: MANTER MESMO NOME ============
-                // NÃO muda o nome da aba!
-                val tabName = request.name
-                
-                // ============ RESULTADO ============
+                // RESULTADO
                 println("\n" + "=".repeat(70))
                 println("📊 RESULTADO PÁGINA $sitePageNumber:")
-                println("   • Aba: '$tabName'")
-                println("   • Itens processados: ${homeItems.size}")
+                println("   • Aba: '${request.name}'")
+                println("   • Itens válidos: ${homeItems.size}")
                 println("   • Tem próxima página? $hasNextPage")
                 
                 if (homeItems.isNotEmpty()) {
@@ -398,24 +376,20 @@ class AnimeFire : MainAPI() {
                     homeItems.take(3).forEachIndexed { i, item ->
                         println("     ${i + 1}. ${item.name}")
                     }
-                } else {
-                    println("   ⚠️ Nenhum item encontrado!")
                 }
                 println("=".repeat(70) + "\n")
                 
-                // Delay antes de retornar
                 kotlinx.coroutines.delay(150)
                 
                 // Retornar com o MESMO nome da aba
                 newHomePageResponse(
-                    tabName, // ← Nome original, sem (P2), (P3), etc.
+                    request.name, // Nome original
                     homeItems.distinctBy { it.url },
                     hasNext = hasNextPage
                 )
                 
             } catch (e: Exception) {
                 println("\n❌ ERRO na página $page: ${e.message}")
-                // Em caso de erro, retorna lista vazia SEM próxima página
                 newHomePageResponse(request.name, emptyList(), false)
             }
         }
@@ -466,7 +440,6 @@ class AnimeFire : MainAPI() {
                 this.plot = synopsis
                 this.tags = genres
                 
-                // Adicionar episódios
                 try {
                     val episodesField = this::class.members.find { it.name == "episodes" }
                     episodesField?.call(this, episodes)
