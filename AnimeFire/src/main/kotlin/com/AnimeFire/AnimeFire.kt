@@ -22,6 +22,7 @@ class AnimeFire : MainAPI() {
         
         private val loadingMutex = Mutex()
         
+        // LISTA COMPLETA DE TODAS AS CATEGORIAS
         private val ALL_CATEGORIES = listOf(
             "/em-lancamento" to "Lançamentos",
             "/animes-atualizados" to "Atualizados",
@@ -54,40 +55,43 @@ class AnimeFire : MainAPI() {
             "/genero/sobrenatural" to "Sobrenatural",
             "/genero/superpoder" to "Superpoder",
             "/genero/vampiros" to "Vampiros",
-            "/genero/vida-escolar" to "Vida Escolar"
+            "/genero/vida-escolar" to "Vida Escolar",
+            "/genero/suspense" to "Suspense",
+            "/genero/musica" to "Música",
+            "/genero/space" to "Espaço",
+            "/genero/supernatural" to "Sobrenatural",
+            "/genero/sci-fi" to "Sci-Fi",
+            "/genero/policial" to "Policial",
+            "/genero/historia" to "História",
+            "/genero/guerra" to "Guerra",
+            "/genero/familia" to "Família"
         )
         
-        private var cachedTabs: List<Pair<String, String>>? = null
-        private var cacheTime: Long = 0
-        private const val CACHE_DURATION = 300000L // 5 minutos
-        
-        fun getRandomTabs(count: Int = 8): List<Pair<String, String>> {
-            val currentTime = System.currentTimeMillis()
-            
-            if (cachedTabs != null && (currentTime - cacheTime) < CACHE_DURATION) {
-                return cachedTabs!!
-            }
-            
-            val randomTabs = ALL_CATEGORIES.shuffled().take(count)
-            cachedTabs = randomTabs
-            cacheTime = currentTime
-            
-            return randomTabs
+        // Função para verificar se a aba permite N/A
+        fun allowsNaItems(basePath: String): Boolean {
+            return basePath.contains("/em-lancamento") || 
+                   basePath.contains("/animes-atualizados") ||
+                   basePath.contains("/lista-de-animes-legendados")
         }
     }
 
     init {
-        println("🔥 ANIMEFIRE: Plugin inicializado")
+        println("🔥 ANIMEFIRE: Plugin inicializado com ${ALL_CATEGORIES.size} abas")
+        println("📊 Lista completa de abas:")
+        ALL_CATEGORIES.forEachIndexed { index, (path, name) ->
+            println("   ${index + 1}. $name ($path)")
+        }
     }
 
+    // RETORNA TODAS AS ABAS SEM LIMITE
     override val mainPage = mainPageOf(
-        *getRandomTabs().map { (path, name) -> 
+        *ALL_CATEGORIES.map { (path, name) -> 
             "$mainUrl$path" to name 
         }.toTypedArray()
     )
 
     // ============ FUNÇÃO DE EXTRACTION ============
-    private fun Element.toSearchResponse(debugMode: Boolean = true): AnimeSearchResponse? {
+    private fun Element.toSearchResponse(allowsNaItems: Boolean = false, debugMode: Boolean = true): AnimeSearchResponse? {
         val href = attr("href") ?: return null
         if (href.isBlank() || (!href.contains("/animes/") && !href.contains("/filmes/"))) return null
         
@@ -113,7 +117,34 @@ class AnimeFire : MainAPI() {
         if (debugMode) {
             println("\n📊 AVALIAÇÃO:")
             println("   • Texto: '$scoreText'")
+            println("   • Permite N/A? $allowsNaItems")
         }
+        
+        // ============ LÓGICA DE FILTRO ============
+        val shouldKeepItem = when {
+            // Se a aba permite N/A, mantém tudo
+            allowsNaItems -> {
+                if (debugMode) println("✅ Mantido: Aba permite N/A")
+                true
+            }
+            // Se tem avaliação válida (não N/A), mantém
+            scoreText != null && scoreText != "N/A" -> {
+                if (debugMode) println("✅ Mantido: Tem avaliação válida")
+                true
+            }
+            // Se não encontrou avaliação (scoreText == null)
+            scoreText == null -> {
+                if (debugMode) println("✅ Mantido: Não tem avaliação (null)")
+                true
+            }
+            // Se é N/A em aba que NÃO permite
+            else -> {
+                if (debugMode) println("❌ Filtrado: N/A em aba normal")
+                false
+            }
+        }
+        
+        if (!shouldKeepItem) return null
         
         // PROCESSAR SCORE FINAL
         val score = when {
@@ -325,15 +356,15 @@ class AnimeFire : MainAPI() {
                 }
                 
                 println("📊 URL da página: $pageUrl")
+                
+                // VERIFICAR SE ESTA ABA PERMITE N/A
+                val allowsNaItems = allowsNaItems(basePath)
+                println("📊 Permite N/A? $allowsNaItems")
                 println("-".repeat(70))
                 
                 kotlinx.coroutines.delay(200)
                 
                 val document = app.get(pageUrl, timeout = 25).document
-                
-                // VERIFICAR TODOS OS ELEMENTOS
-                val allElements = document.select("article, .card, .anime-item")
-                println("📊 Elementos container: ${allElements.size}")
                 
                 // PROCESSAR ITENS
                 val elements = document.select("""
@@ -347,14 +378,24 @@ class AnimeFire : MainAPI() {
                 println("📊 Links encontrados: ${elements.size}")
                 
                 val homeItems = mutableListOf<SearchResponse>()
+                var naItemsCount = 0
+                var validItemsCount = 0
                 
                 elements.forEachIndexed { index, element ->
                     try {
-                        // Debug apenas para os primeiros 2 itens
                         val debugMode = index < 2
-                        val item = element.toSearchResponse(debugMode = debugMode)
+                        val item = element.toSearchResponse(
+                            allowsNaItems = allowsNaItems,
+                            debugMode = debugMode
+                        )
                         if (item != null) {
                             homeItems.add(item)
+                            // Contar tipos de itens
+                            if (item.score == null) {
+                                naItemsCount++
+                            } else {
+                                validItemsCount++
+                            }
                         }
                     } catch (e: Exception) {
                         // Ignorar erro
@@ -369,12 +410,16 @@ class AnimeFire : MainAPI() {
                 println("📊 RESULTADO PÁGINA $sitePageNumber:")
                 println("   • Aba: '${request.name}'")
                 println("   • Itens válidos: ${homeItems.size}")
+                println("   • Com avaliação: $validItemsCount")
+                println("   • Sem avaliação (N/A): $naItemsCount")
+                println("   • Permite N/A? $allowsNaItems")
                 println("   • Tem próxima página? $hasNextPage")
                 
                 if (homeItems.isNotEmpty()) {
                     println("   • Primeiros itens:")
                     homeItems.take(3).forEachIndexed { i, item ->
-                        println("     ${i + 1}. ${item.name}")
+                        val scoreText = if (item.score != null) "${item.score}" else "N/A"
+                        println("     ${i + 1}. ${item.name} (score: $scoreText)")
                     }
                 }
                 println("=".repeat(70) + "\n")
@@ -405,7 +450,7 @@ class AnimeFire : MainAPI() {
             val document = app.get(searchUrl, timeout = 15).document
             
             document.select("a[href*='/animes/'], a[href*='/filmes/']")
-                .mapNotNull { it.toSearchResponse(debugMode = false) }
+                .mapNotNull { it.toSearchResponse(allowsNaItems = true, debugMode = false) }
                 .distinctBy { it.url }
                 .take(30)
                 
