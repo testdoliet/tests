@@ -19,17 +19,62 @@ class AnimeFire : MainAPI() {
         private const val SEARCH_PATH = "/pesquisar"
     }
 
-    // ============ PÁGINA INICIAL ============
+    // ============ PÁGINA INICIAL COM TODAS AS LISTAS ============
     override val mainPage = mainPageOf(
+        // CATEGORIA: LANÇAMENTOS E DESTAQUES
+        "$mainUrl/em-lancamento" to "Em Lançamento",
+        "$mainUrl/animes-atualizados" to "Animes Atualizados",
+        "$mainUrl/top-animes" to "Top Animes",
         "$mainUrl" to "Lançamentos",
-        "$mainUrl" to "Destaques da Semana",
-        "$mainUrl" to "Últimos Animes Adicionados",
-        "$mainUrl" to "Últimos Episódios Adicionados"
+        
+        // CATEGORIA: AUDIO (DUB/LEG)
+        "$mainUrl/lista-de-animes-legendados" to "Animes Legendados",
+        "$mainUrl/lista-de-animes-dublados" to "Animes Dublados",
+        "$mainUrl/lista-de-filmes-legendados" to "Filmes Legendados",
+        "$mainUrl/lista-de-filmes-dublados" to "Filmes Dublados",
+        
+        // CATEGORIA: GÊNEROS POPULARES
+        "$mainUrl/genero/acao" to "Ação",
+        "$mainUrl/genero/aventura" to "Aventura",
+        "$mainUrl/genero/comedia" to "Comédia",
+        "$mainUrl/genero/drama" to "Drama",
+        "$mainUrl/genero/fantasia" to "Fantasia",
+        "$mainUrl/genero/romance" to "Romance",
+        "$mainUrl/genero/shounen" to "Shounen",
+        "$mainUrl/genero/seinen" to "Seinen",
+        "$mainUrl/genero/esporte" to "Esporte",
+        "$mainUrl/genero/misterio" to "Mistério",
+        
+        // CATEGORIA: MAIS GÊNEROS
+        "$mainUrl/genero/artes-marciais" to "Artes Marciais",
+        "$mainUrl/genero/demonios" to "Demônios",
+        "$mainUrl/genero/ecchi" to "Ecchi",
+        "$mainUrl/genero/ficcao-cientifica" to "Ficção Científica",
+        "$mainUrl/genero/harem" to "Harém",
+        "$mainUrl/genero/horror" to "Horror",
+        "$mainUrl/genero/magia" to "Magia",
+        "$mainUrl/genero/mecha" to "Mecha",
+        "$mainUrl/genero/militar" to "Militar",
+        "$mainUrl/genero/psicologico" to "Psicológico",
+        "$mainUrl/genero/slice-of-life" to "Slice of Life",
+        "$mainUrl/genero/sobrenatural" to "Sobrenatural",
+        "$mainUrl/genero/superpoder" to "Superpoder",
+        "$mainUrl/genero/vampiros" to "Vampiros",
+        "$mainUrl/genero/vida-escolar" to "Vida Escolar",
+        
+        // CATEGORIA: OUTROS GÊNEROS
+        "$mainUrl/genero/espaco" to "Espaço",
+        "$mainUrl/genero/jogos" to "Jogos",
+        "$mainUrl/genero/josei" to "Josei",
+        "$mainUrl/genero/musical" to "Musical",
+        "$mainUrl/genero/parodia" to "Paródia",
+        "$mainUrl/genero/shoujo-ai" to "Shoujo-ai",
+        "$mainUrl/genero/suspense" to "Suspense"
     )
 
-    // ============ FUNÇÃO PRINCIPAL DE BUSCA ATUALIZADA ============
+    // ============ FUNÇÃO PRINCIPAL DE BUSCA ============
     
-    private fun Element.toSearchResponse(isEpisodesSection: Boolean = false): AnimeSearchResponse? {
+    private fun Element.toSearchResponse(): AnimeSearchResponse? {
         val href = attr("href") ?: return null
         if (href.isBlank()) return null
         
@@ -48,32 +93,17 @@ class AnimeFire : MainAPI() {
         var episodeNumber: Int? = null
         var episodeText: String? = null
         
-        // 1. Do elemento .numEp
         val numEpElement = selectFirst(".numEp")
         if (numEpElement != null) {
             episodeText = numEpElement.text().trim()
             episodeNumber = extractEpisodeNumber(episodeText)
         }
         
-        // 2. Do título (ex: "Episódio 12")
-        if (episodeNumber == null) {
-            val epMatch = Regex("Epis[oó]dio\\s*(\\d+)", RegexOption.IGNORE_CASE).find(combinedTitle)
-            episodeNumber = epMatch?.groupValues?.get(1)?.toIntOrNull()
-            episodeText = epMatch?.value
-        }
-        
-        // 3. Da URL (ex: /anime/12)
-        if (episodeNumber == null) {
-            val urlMatch = Regex("/(\\d+)$").find(href)
-            episodeNumber = urlMatch?.groupValues?.get(1)?.toIntOrNull()
-            episodeText = "Ep $episodeNumber"
-        }
-        
         // ============ EXTRAIR NOME LIMPO DO ANIME ============
         val cleanAnimeName = extractAnimeName(combinedTitle, episodeText)
         
         // ============ EXTRAIR NOTA/AVALIAÇÃO ============
-        val scoreText = selectFirst(".horaUltimosEps")?.text()?.trim()
+        val scoreText = selectFirst(".horaUltimosEps, .rating")?.text()?.trim()
         val score = when {
             scoreText == null || scoreText == "N/A" -> Score.from10(0f)
             else -> scoreText.toFloatOrNull()?.let { Score.from10(it) } ?: Score.from10(0f)
@@ -90,94 +120,19 @@ class AnimeFire : MainAPI() {
             }
         }
 
-        // ============ CORREÇÃO: PARA EPISÓDIOS, USAR URL DO ANIME ============
-        val finalUrl = if (isEpisodesSection && episodeNumber != null) {
-            // Converter URL de episódio para URL do anime
-            convertEpisodeUrlToAnimeUrl(href)
-        } else {
-            fixUrl(href)
-        }
-
         // ============ CRIAR RESPOSTA DE BUSCA ============
-        return newAnimeSearchResponse(cleanAnimeName, finalUrl) {
+        return newAnimeSearchResponse(cleanAnimeName, fixUrl(href)) {
             this.posterUrl = sitePoster?.let { fixUrl(it) }
             this.type = if (isMovie) TvType.Movie else TvType.Anime
+            this.score = score
             
-            // ============ SISTEMA DE BADGES INTELIGENTE ============
-            if (isEpisodesSection) {
-                // ✅ SEÇÃO DE EPISÓDIOS: Badge com episódio + áudio
-                if (episodeNumber != null) {
-                    addDubStatus(
-                        dubExist = hasDub,
-                        subExist = hasLeg,
-                        dubEpisodes = if (hasDub) episodeNumber else null,
-                        subEpisodes = if (hasLeg) episodeNumber else null
-                    )
-                }
-                
-                // Se não tiver Dub/Leg mas tiver nota, mostrar nota
-                if (!hasDub && !hasLeg && scoreText != null && scoreText != "N/A") {
-                    this.score = score
-                }
-            } else {
-                // ✅ OUTRAS SEÇÕES: Badge com avaliação
-                this.score = score
-                
-                // Se tiver episódio e for dublado/legendado, mostrar também
-                if (episodeNumber != null && (hasDub || hasLeg)) {
-                    addDubStatus(
-                        dubExist = hasDub,
-                        subExist = hasLeg,
-                        dubEpisodes = if (hasDub) episodeNumber else null,
-                        subEpisodes = if (hasLeg) episodeNumber else null
-                    )
-                }
+            // Adicionar status de dublagem se detectado
+            if (hasDub || hasLeg) {
+                addDubStatus(
+                    dubExist = hasDub,
+                    subExist = hasLeg
+                )
             }
-            
-            // DEBUG
-            println("ANIMEFIRE CARD - Section: ${if (isEpisodesSection) "Episodes" else "Animes"}, " +
-                   "Name: '$cleanAnimeName', AnimeURL: '$finalUrl', " +
-                   "Ep: $episodeNumber, Dub: $hasDub, Leg: $hasLeg, ScoreText: '$scoreText'")
-        }
-    }
-
-    // ============ FUNÇÃO PARA CONVERTER URL DE EPISÓDIO PARA URL DE ANIME ============
-    private fun convertEpisodeUrlToAnimeUrl(episodeUrl: String): String {
-        return try {
-            // Padrões comuns de URL de episódio:
-            // 1. https://animefire.io/animes/one-piece-todos-os-episodios/1085
-            // 2. https://animefire.io/animes/one-piece/1085
-            // 3. https://animefire.io/ver/naruto-shippuden-online/455
-            
-            var processedUrl = episodeUrl
-            
-            // Remover número do episódio no final
-            processedUrl = processedUrl.replace(Regex("/\\d+$"), "")
-            
-            // Remover "todos-os-episodios" se existir
-            processedUrl = processedUrl.replace("-todos-os-episodios", "")
-            processedUrl = processedUrl.replace("/todos-os-episodios", "")
-            
-            // Converter /ver/ para /animes/ se necessário
-            if (processedUrl.contains("/ver/")) {
-                processedUrl = processedUrl.replace("/ver/", "/animes/")
-                    .replace("-online", "")
-            }
-            
-            // Garantir que não termine com /
-            if (processedUrl.endsWith("/")) {
-                processedUrl = processedUrl.dropLast(1)
-            }
-            
-            // Garantir que é uma URL completa
-            if (!processedUrl.startsWith("http")) {
-                processedUrl = fixUrl(processedUrl)
-            }
-            
-            processedUrl
-        } catch (e: Exception) {
-            // Em caso de erro, retorna a URL base
-            fixUrl(episodeUrl)
         }
     }
 
@@ -236,29 +191,28 @@ class AnimeFire : MainAPI() {
     // ============ GET MAIN PAGE ATUALIZADA ============
     
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val document = app.get(mainUrl).document
-        
-        val homeItems = when (request.name) {
-            "Lançamentos" -> {
-                document.select(".owl-carousel-home .divArticleLancamentos a.item")
-                    .mapNotNull { it.toSearchResponse(isEpisodesSection = false) }
-            }
-            "Destaques da Semana" -> {
-                document.select(".owl-carousel-semana .divArticleLancamentos a.item")
-                    .mapNotNull { it.toSearchResponse(isEpisodesSection = false) }
-            }
-            "Últimos Animes Adicionados" -> {
-                document.select(".owl-carousel-l_dia .divArticleLancamentos a.item")
-                    .mapNotNull { it.toSearchResponse(isEpisodesSection = false) }
-            }
-            "Últimos Episódios Adicionados" -> {
-                document.select(".divCardUltimosEpsHome a, .cardUltimosEps a")
-                    .mapNotNull { it.toSearchResponse(isEpisodesSection = true) }
-            }
-            else -> emptyList()
+        val url = if (request.data == mainUrl && request.name == "Lançamentos") {
+            // Para "Lançamentos", usar a página inicial
+            mainUrl
+        } else {
+            request.data
         }
         
-        return newHomePageResponse(request.name, homeItems.distinctBy { it.url }, false)
+        val document = app.get(url).document
+        
+        // Para páginas de gênero, usar seletores específicos
+        val elements = if (url.contains("/genero/")) {
+            document.select("article.card a, .divArticleLancamentos a.item, .anime-item a")
+        } else if (url.contains("/lista-de-") || url.contains("/em-lancamento") || url.contains("/animes-atualizados") || url.contains("/top-animes")) {
+            document.select(".divCardUltimosEps a, .divArticleLancamentos a.item, article.card a")
+        } else {
+            // Página inicial e outras
+            document.select(".owl-carousel-home .divArticleLancamentos a.item, .divCardUltimosEps a")
+        }
+        
+        val homeItems = elements.mapNotNull { it.toSearchResponse() }.distinctBy { it.url }
+        
+        return newHomePageResponse(request.name, homeItems, hasNext = false)
     }
 
     // ============ BUSCA ============
@@ -272,165 +226,112 @@ class AnimeFire : MainAPI() {
         val searchUrl = "$mainUrl$SEARCH_PATH/$formattedQuery"
         val document = app.get(searchUrl).document
 
-        val elements = document.select("div.divCardUltimosEps article.card a")
+        val elements = document.select("div.divCardUltimosEps article.card a, .search-result a")
         
         return elements.mapNotNull { element ->
-            val isEpisodeCard = element.selectFirst(".numEp") != null
-            element.toSearchResponse(isEpisodesSection = isEpisodeCard)
+            element.toSearchResponse()
         }.take(30)
     }
 
-    // ============ LOAD PRINCIPAL (PÁGINA DE DETALHES) - VERSÃO CORRIGIDA ============
+    // ============ LOAD PRINCIPAL (PÁGINA DE DETALHES) ============
     
-    // ============ LOAD PRINCIPAL (PÁGINA DE DETALHES) - VERSÃO FINAL CORRIGIDA ============
-
-override suspend fun load(url: String): LoadResponse {
-    val document = app.get(url).document
-    
-    // ============ TÍTULO ============
-    val title = document.selectFirst("h1.animeTitle")?.text()?.trim()
-        ?: document.selectFirst("h1")?.text()?.trim()
-        ?: "Sem título"
-    
-    // ============ POSTER ============
-    val poster = document.selectFirst("img.imgAnimes")?.attr("src")?.let { fixUrl(it) }
-        ?: document.selectFirst("img.rounded-3")?.attr("src")?.let { fixUrl(it) }
-        ?: document.selectFirst("img.card-img-top")?.attr("src")?.let { fixUrl(it) }
-    
-    // ============ SINOPSE ============
-    val synopsis = document.selectFirst("p.sinopse")?.text()?.trim()
-        ?: document.selectFirst("div.text-muted")?.text()?.trim()
-        ?: "Sinopse não disponível."
-    
-    // ============ ANO E GÊNEROS ============
-    val year = document.select("div.animeInfo")
-        .find { it.text().contains("Ano:", ignoreCase = true) }
-        ?.selectFirst("span.spanAnimeInfo")?.text()?.trim()?.toIntOrNull()
-    
-    val genres = document.select("div.animeInfo")
-        .find { it.text().contains("Gênero:", ignoreCase = true) }
-        ?.select("span.spanAnimeInfo a")?.map { it.text().trim() }
-        ?: emptyList()
-    
-    // ============ VERIFICA SE É FILME ============
-    val isMovie = url.contains("/filmes/") || title.contains("filme", ignoreCase = true)
-    
-    // ============ TRAILER (se disponível) ============
-    val trailer = document.selectFirst("iframe[src*='youtube']")?.attr("src")
-        ?: document.selectFirst("a[href*='youtube']")?.attr("href")
-    
-    // ============ EPISÓDIOS ============
-    val episodes = if (isMovie) {
-        listOf(
-            newEpisode(Pair("Filme", url))
-        )
-    } else {
-        extractAllEpisodes(document, url)
-    }
-    
-    // ============ CONSTRUIR LOAD RESPONSE ============
-    return newAnimeLoadResponse(title, url, if (isMovie) TvType.Movie else TvType.Anime) {
-        this.posterUrl = poster
-        this.year = year
-        this.plot = synopsis
-        this.tags = genres
+    override suspend fun load(url: String): LoadResponse {
+        val document = app.get(url).document
         
-        // Adicionar trailer se existir
-        if (trailer != null) {
-            addTrailer(trailer)
+        // ============ TÍTULO ============
+        val title = document.selectFirst("h1.animeTitle")?.text()?.trim()
+            ?: document.selectFirst("h1")?.text()?.trim()
+            ?: "Sem título"
+        
+        // ============ POSTER ============
+        val poster = document.selectFirst("img.imgAnimes")?.attr("src")?.let { fixUrl(it) }
+            ?: document.selectFirst("img.rounded-3")?.attr("src")?.let { fixUrl(it) }
+            ?: document.selectFirst("img.card-img-top")?.attr("src")?.let { fixUrl(it) }
+        
+        // ============ SINOPSE ============
+        val synopsis = document.selectFirst("p.sinopse")?.text()?.trim()
+            ?: document.selectFirst("div.text-muted")?.text()?.trim()
+            ?: "Sinopse não disponível."
+        
+        // ============ ANO E GÊNEROS ============
+        val year = document.select("div.animeInfo")
+            .find { it.text().contains("Ano:", ignoreCase = true) }
+            ?.selectFirst("span.spanAnimeInfo")?.text()?.trim()?.toIntOrNull()
+        
+        val genres = document.select("div.animeInfo")
+            .find { it.text().contains("Gênero:", ignoreCase = true) }
+            ?.select("span.spanAnimeInfo a")?.map { it.text().trim() }
+            ?: emptyList()
+        
+        // ============ VERIFICA SE É FILME ============
+        val isMovie = url.contains("/filmes/") || title.contains("filme", ignoreCase = true)
+        
+        // ============ TRAILER (se disponível) ============
+        val trailer = document.selectFirst("iframe[src*='youtube']")?.attr("src")
+            ?: document.selectFirst("a[href*='youtube']")?.attr("href")
+        
+        // ============ EPISÓDIOS ============
+        val episodes = if (isMovie) {
+            listOf(
+                newEpisode(Pair("Filme", url))
+            )
+        } else {
+            extractAllEpisodes(document, url)
         }
         
-        // CORREÇÃO: Usar newEpisode corretamente
-        // Criar lista de episódios usando newEpisode
-        val episodeList = episodes.map { episode ->
-            newEpisode(Pair(episode.name ?: "Episódio", episode.data))
-        }
-        
-        // Usar reflexão para definir episódios se o campo existir
-        try {
-            val episodesField = this::class.members.find { it.name == "episodes" }
-            episodesField?.call(this, episodeList)
-        } catch (e: Exception) {
-            // Se não conseguir definir episódios, o anime ainda carregará
-            println("AnimeFire: Não foi possível definir episódios para $title")
-        }
-        
-        // Adicionar recomendações (opcional)
-        try {
-            val recommendations = document.select(".owl-carousel-l_dia .item")
-                .mapNotNull { element ->
-                    val recTitle = element.selectFirst("h3.animeTitle")?.text()?.trim()
-                    val recUrl = element.selectFirst("a")?.attr("href")
-                    val recPoster = element.selectFirst("img")?.attr("data-src") ?: element.selectFirst("img")?.attr("src")
-                    
-                    if (recTitle != null && recUrl != null) {
-                        newAnimeSearchResponse(recTitle, fixUrl(recUrl)) {
-                            this.posterUrl = recPoster?.let { fixUrl(it) }
-                        }
-                    } else {
-                        null
-                    }
-                }
+        // ============ CONSTRUIR LOAD RESPONSE ============
+        return newAnimeLoadResponse(title, url, if (isMovie) TvType.Movie else TvType.Anime) {
+            this.posterUrl = poster
+            this.year = year
+            this.plot = synopsis
+            this.tags = genres
             
-            val recommendationsField = this::class.members.find { it.name == "recommendations" }
-            recommendationsField?.call(this, recommendations)
-        } catch (e: Exception) {
-            // Ignorar se não existir
-        }
-    }
-}
-
-// ============ FUNÇÃO PARA EXTRAIR TODOS OS EPISÓDIOS - VERSÃO CORRIGIDA ============
-
-private fun extractAllEpisodes(document: org.jsoup.nodes.Document, baseUrl: String): List<Episode> {
-    val episodes = mutableListOf<Episode>()
-    
-    // Extrair todos os episódios da página
-    document.select("a.lEp.epT, a.lEp, .divListaEps a").forEach { episodeElement ->
-        try {
-            val episodeUrl = episodeElement.attr("href")?.takeIf { it.isNotBlank() }
-            if (episodeUrl.isNullOrBlank()) return@forEach
-            
-            val episodeText = episodeElement.text().trim()
-            val episodeNumber = AnimeFireUtils.extractEpisodeNumber(episodeText)
-            
-            if (episodeNumber != null) {
-                val audioType = when {
-                    episodeText.contains("dublado", ignoreCase = true) -> " (Dub)"
-                    episodeText.contains("legendado", ignoreCase = true) -> " (Leg)"
-                    else -> ""
-                }
-                
-                val episodeName = "Episódio $episodeNumber$audioType"
-                
-                // CORREÇÃO: Usar newEpisode corretamente
-                episodes.add(
-                    newEpisode(Pair(episodeName, fixUrl(episodeUrl))) {
-                        this.name = episodeName
-                        this.episode = episodeNumber
-                    }
-                )
+            // Adicionar trailer se existir
+            if (trailer != null) {
+                addTrailer(trailer)
             }
-        } catch (e: Exception) {
-            // Ignorar episódio com erro
+            
+            // Criar lista de episódios
+            val episodeList = episodes.map { episode ->
+                newEpisode(Pair(episode.name ?: "Episódio", episode.data))
+            }
+            
+            // Usar reflexão para definir episódios se o campo existir
+            try {
+                val episodesField = this::class.members.find { it.name == "episodes" }
+                episodesField?.call(this, episodeList)
+            } catch (e: Exception) {
+                println("AnimeFire: Não foi possível definir episódios para $title")
+            }
         }
     }
+
+    // ============ FUNÇÃO PARA EXTRAIR TODOS OS EPISÓDIOS ============
     
-    // Se não encontrou episódios, verificar outras estruturas
-    if (episodes.isEmpty()) {
-        document.select("div.episodesContainer a, .episode-item a").forEach { episodeElement ->
+    private fun extractAllEpisodes(document: org.jsoup.nodes.Document, baseUrl: String): List<Episode> {
+        val episodes = mutableListOf<Episode>()
+        
+        // Extrair todos os episódios da página
+        document.select("a.lEp.epT, a.lEp, .divListaEps a").forEach { episodeElement ->
             try {
                 val episodeUrl = episodeElement.attr("href")?.takeIf { it.isNotBlank() }
                 if (episodeUrl.isNullOrBlank()) return@forEach
                 
                 val episodeText = episodeElement.text().trim()
-                val episodeNumber = extractEpisodeNumber(episodeText)
+                val episodeNumber = AnimeFireUtils.extractEpisodeNumber(episodeText)
                 
                 if (episodeNumber != null) {
-                    // CORREÇÃO: Usar newEpisode corretamente
+                    val audioType = when {
+                        episodeText.contains("dublado", ignoreCase = true) -> " (Dub)"
+                        episodeText.contains("legendado", ignoreCase = true) -> " (Leg)"
+                        else -> ""
+                    }
+                    
+                    val episodeName = "Episódio $episodeNumber$audioType"
+                    
                     episodes.add(
-                        newEpisode(Pair("Episódio $episodeNumber", fixUrl(episodeUrl))) {
-                            this.name = "Episódio $episodeNumber"
+                        newEpisode(Pair(episodeName, fixUrl(episodeUrl))) {
+                            this.name = episodeName
                             this.episode = episodeNumber
                         }
                     )
@@ -439,11 +340,35 @@ private fun extractAllEpisodes(document: org.jsoup.nodes.Document, baseUrl: Stri
                 // Ignorar episódio com erro
             }
         }
+        
+        // Se não encontrou episódios, verificar outras estruturas
+        if (episodes.isEmpty()) {
+            document.select("div.episodesContainer a, .episode-item a").forEach { episodeElement ->
+                try {
+                    val episodeUrl = episodeElement.attr("href")?.takeIf { it.isNotBlank() }
+                    if (episodeUrl.isNullOrBlank()) return@forEach
+                    
+                    val episodeText = episodeElement.text().trim()
+                    val episodeNumber = extractEpisodeNumber(episodeText)
+                    
+                    if (episodeNumber != null) {
+                        episodes.add(
+                            newEpisode(Pair("Episódio $episodeNumber", fixUrl(episodeUrl))) {
+                                this.name = "Episódio $episodeNumber"
+                                this.episode = episodeNumber
+                            }
+                        )
+                    }
+                } catch (e: Exception) {
+                    // Ignorar episódio com erro
+                }
+            }
+        }
+        
+        // Ordenar episódios por número
+        return episodes.sortedBy { it.episode }
     }
-    
-    // Ordenar episódios por número
-    return episodes.sortedBy { it.episode }
-}
+
     // ============ LOAD LINKS (CHAMAR EXTRACTOR) ============
     
     override suspend fun loadLinks(
