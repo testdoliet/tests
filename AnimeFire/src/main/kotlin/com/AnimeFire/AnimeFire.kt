@@ -195,7 +195,7 @@ class AnimeFire : MainAPI() {
             println("\n🎯 ITEM FINAL:")
             println("   • Nome: $cleanName")
             println("   • URL: $href")
-            println("   • Score: ${score?.value ?: "null"}")
+            println("   • Score: ${score?.toString() ?: "null"}")
             println("   • Poster: ${sitePoster?.take(50) ?: "null"}...")
             println("=".repeat(60))
         }
@@ -457,7 +457,7 @@ class AnimeFire : MainAPI() {
                 if (homeItems.isNotEmpty()) {
                     println("   • Exemplos:")
                     homeItems.take(3).forEachIndexed { i, item ->
-                        println("     ${i + 1}. ${item.name} (score: ${item.score?.value ?: "null"})")
+                        println("     ${i + 1}. ${item.name} (score: ${item.score?.toString() ?: "null"})")
                     }
                 } else {
                     println("   ⚠️ NENHUM ITEM RETORNADO!")
