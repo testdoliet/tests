@@ -2,7 +2,6 @@ package com.AnimeFire
 
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
-import com.lagradost.cloudstream3.LoadResponse.Companion.addTrailer
 import com.lagradost.cloudstream3.app
 import org.jsoup.nodes.Element
 
@@ -13,7 +12,7 @@ class AnimeFire : MainAPI() {
     override var lang = "pt-br"
     override val hasDownloadSupport = true
     override val supportedTypes = setOf(TvType.Anime, TvType.Movie, TvType.OVA)
-    override val usesWebView = true
+    override val usesWebView = false
 
     companion object {
         private const val SEARCH_PATH = "/pesquisar"
@@ -256,9 +255,6 @@ class AnimeFire : MainAPI() {
                 this.score = score
                 this.recommendations = recommendations.takeIf { it.isNotEmpty() }
                 this.showStatus = showStatus
-                
-                // Debug
-                println("AnimeFire - Last Episodes: Leg=${episodeData.lastLegEp}, Dub=${episodeData.lastDubEp}")
             }
         }
     }
@@ -347,7 +343,7 @@ class AnimeFire : MainAPI() {
         )
     }
 
-    // ============ EXTRATOR DE LINKS DE VÍDEO (Versão Simplificada e Estável) ============
+    // ============ EXTRATOR DE LINKS DE VÍDEO (APENAS CHAMA O EXTRACTOR EXISTENTE) ============
     
     override suspend fun loadLinks(
         data: String,
@@ -355,91 +351,11 @@ class AnimeFire : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        return try {
-            val document = app.get(data).document
-            
-            // Extrair iframe do vídeo
-            val iframe = document.selectFirst("iframe[src*='animefire'], iframe[src*='embed']")
-            val iframeSrc = iframe?.attr("src") ?: return false
-            
-            // Carregar iframe
-            val iframeDoc = app.get(fixUrl(iframeSrc)).document
-            
-            // Versão simplificada - apenas extrair a primeira fonte de vídeo
-            val videoSource = iframeDoc.selectFirst("source[src], video source[src]")
-            if (videoSource != null) {
-                val videoUrl = videoSource.attr("src")
-                if (videoUrl.isNotBlank()) {
-                    callback.invoke(
-                        ExtractorLink(
-                            name,
-                            "Unknown",
-                            videoUrl,
-                            referer = mainUrl,
-                            quality = Qualities.Unknown.value,
-                            type = ExtractorLinkType.VIDEO
-                        )
-                    )
-                    return true
-                }
-            }
-            
-            // Tentar encontrar vídeo direto
-            val videoElement = iframeDoc.selectFirst("video")
-            if (videoElement != null) {
-                val videoUrl = videoElement.attr("src")
-                if (videoUrl.isNotBlank()) {
-                    callback.invoke(
-                        ExtractorLink(
-                            name,
-                            "Unknown",
-                            videoUrl,
-                            referer = mainUrl,
-                            quality = Qualities.Unknown.value,
-                            type = ExtractorLinkType.VIDEO
-                        )
-                    )
-                    return true
-                }
-            }
-            
-            // Fallback: tentar extrair de scripts
-            val scripts = iframeDoc.select("script")
-            for (script in scripts) {
-                val scriptText = script.html()
-                val urlPatterns = listOf(
-                    Regex("\"([^\"]+\\.mp4[^\"]*)\""),
-                    Regex("\'([^\']+\\.mp4[^\']*)\'"),
-                    Regex("src\\s*=\\s*[\"']([^\"']+)[\"']"),
-                    Regex("url\\s*=\\s*[\"']([^\"']+)[\"']")
-                )
-                
-                for (pattern in urlPatterns) {
-                    val match = pattern.find(scriptText)
-                    if (match != null) {
-                        val url = match.groupValues[1]
-                        if (url.contains("http") && (url.contains(".mp4") || url.contains(".m3u8"))) {
-                            callback.invoke(
-                                ExtractorLink(
-                                    name,
-                                    "Unknown",
-                                    url,
-                                    referer = mainUrl,
-                                    quality = Qualities.Unknown.value,
-                                    type = ExtractorLinkType.VIDEO
-                                )
-                            )
-                            return true
-                        }
-                    }
-                }
-            }
-            
-            false
-        } catch (e: Exception) {
-            e.printStackTrace()
-            false
-        }
+        // Se você tem um arquivo AnimeFireExtractor.kt, chame-o aqui
+        // Exemplo: return AnimeFireExtractor().extract(data, callback, subtitleCallback)
+        
+        // Por enquanto, vamos retornar false e você pode implementar depois
+        return false
     }
     
     private fun extractEpisodeNumber(text: String): Int? {
