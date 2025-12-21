@@ -18,10 +18,13 @@ class AnimeFire : MainAPI() {
     companion object {
         private const val SEARCH_PATH = "/pesquisar"
         
-        // ============ TODAS AS CATEGORIAS DISPONÍVEIS ============
-        private val ALL_CATEGORIES = listOf(
+        // ============ CATEGORIAS COM PRIORIDADE ============
+        private val PRIORITY_CATEGORIES = listOf(
             "/em-lancamento" to "Em Lançamento",
-            "/animes-atualizados" to "Atualizados",
+            "/animes-atualizados" to "Atualizados"
+        )
+        
+        private val OTHER_CATEGORIES = listOf(
             "/top-animes" to "Top Animes",
             "/lista-de-animes-legendados" to "Animes Legendados",
             "/lista-de-animes-dublados" to "Animes Dublados",
@@ -50,31 +53,29 @@ class AnimeFire : MainAPI() {
             "/genero/slice-of-life" to "Slice of Life",
             "/genero/sobrenatural" to "Sobrenatural",
             "/genero/superpoder" to "Superpoder",
-            "/genero/vampiros" to "Vampiros",
-            "/genero/vida-escolar" to "Vida Escolar",
-            "/genero/espaco" to "Espaço",
-            "/genero/jogos" to "Jogos",
-            "/genero/josei" to "Josei",
-            "/genero/musical" to "Musical",
-            "/genero/parodia" to "Paródia",
-            "/genero/shoujo-ai" to "Shoujo-ai",
-            "/genero/suspense" to "Suspense"
+            "/genero/vampiros" to "Vampiros"
         )
         
-        // ============ SELECIONA 8 CATEGORIAS ALEATÓRIAS ============
+        // ============ SELECIONA 5 CATEGORIAS ALEATÓRIAS ============
         fun getRandomCategories(): List<Pair<String, String>> {
-            return ALL_CATEGORIES.shuffled().take(8)
+            // Sempre inclui as prioritárias
+            val selected = PRIORITY_CATEGORIES.toMutableList()
+            
+            // Adiciona 3 aleatórias das outras (5 total)
+            selected.addAll(OTHER_CATEGORIES.shuffled().take(3))
+            
+            return selected.shuffled() // Embaralha a ordem final
         }
     }
 
-    // ============ PÁGINA INICIAL COM 8 ABAS ALEATÓRIAS ============
+    // ============ PÁGINA INICIAL COM 5 ABAS ============
     override val mainPage = mainPageOf(
         *getRandomCategories().map { (path, name) -> 
             "$mainUrl$path" to name 
         }.toTypedArray()
     )
 
-    // ============ FUNÇÃO PRINCIPAL COM FILTRO N/A ============
+    // ============ FUNÇÃO COM BADGES CORRIGIDAS ============
     private fun Element.toSearchResponse(isUpcomingSection: Boolean = false): AnimeSearchResponse? {
         val href = attr("href") ?: return null
         if (href.isBlank() || (!href.contains("/animes/") && !href.contains("/filmes/"))) return null
@@ -88,17 +89,40 @@ class AnimeFire : MainAPI() {
         
         if (combinedTitle.isBlank()) return null
         
-        // DETECTAR ÁUDIO
-        val hasDub = combinedTitle.contains("dublado", ignoreCase = true)
-        val hasLeg = combinedTitle.contains("legendado", ignoreCase = true)
+        // ✅ BADGES CORRIGIDAS: DETECTAR ÁUDIO PRECISAMENTE
+        val hasExplicitDub = combinedTitle.contains("dublado", ignoreCase = true)
+        val hasExplicitLeg = combinedTitle.contains("legendado", ignoreCase = true)
+        
+        // Lógica: AnimeFire padrão é legendado, a não ser que especifique dublado
+        val finalHasDub: Boolean
+        val finalHasLeg: Boolean
+        
+        when {
+            hasExplicitDub && !hasExplicitLeg -> {
+                finalHasDub = true   // Só dublado
+                finalHasLeg = false
+            }
+            !hasExplicitDub && hasExplicitLeg -> {
+                finalHasDub = false
+                finalHasLeg = true    // Só legendado
+            }
+            hasExplicitDub && hasExplicitLeg -> {
+                finalHasDub = true    // Ambos disponíveis
+                finalHasLeg = true
+            }
+            else -> {
+                // Padrão do site: se não especificar, assume legendado
+                finalHasDub = false
+                finalHasLeg = true
+            }
+        }
         
         // NOME LIMPO
         val cleanName = extractAnimeName(combinedTitle, selectFirst(".numEp")?.text())
         
-        // ✅ FILTRO N/A (OPÇÃO 2)
+        // FILTRO N/A (exceto em lançamento/atualizados)
         val scoreText = selectFirst(".horaUltimosEps, .rating, .score")?.text()?.trim()
         
-        // Se for N/A e NÃO for aba de lançamento → descarta
         if ((scoreText == "N/A" || scoreText == null) && !isUpcomingSection) {
             return null
         }
@@ -124,9 +148,13 @@ class AnimeFire : MainAPI() {
             this.type = if (isMovie) TvType.Movie else TvType.Anime
             this.score = score
             
-            if (hasDub || hasLeg) {
-                addDubStatus(dubExist = hasDub, subExist = hasLeg)
+            // ✅ BADGES APLICADAS CORRETAMENTE
+            if (finalHasDub || finalHasLeg) {
+                addDubStatus(dubExist = finalHasDub, subExist = finalHasLeg)
             }
+            
+            // DEBUG
+            println("ANIMEFIRE: '$cleanName' - Dub: $finalHasDub, Leg: $finalHasLeg")
         }
     }
 
@@ -153,35 +181,52 @@ class AnimeFire : MainAPI() {
         return cleanName.trim().replace(Regex("\\s+"), " ")
     }
 
-    // ============ GET MAIN PAGE ============
+    // ============ GET MAIN PAGE COM PAGINAÇÃO INFINITA ============
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         // Detectar se é aba de lançamento/atualizados
         val isUpcomingSection = request.data.contains("/em-lancamento") || 
                                request.data.contains("/animes-atualizados")
         
+        // ✅ PAGINAÇÃO: /2, /3, etc para páginas seguintes
+        val pageUrl = if (page > 0) {
+            // Adiciona número da página: /em-lancamento/2, /em-lancamento/3, etc
+            val baseUrl = request.data.removeSuffix("/")
+            "$baseUrl/${page + 1}"
+        } else {
+            request.data
+        }
+        
         val document = try {
-            app.get(request.data, timeout = 10).document
+            app.get(pageUrl, timeout = 10).document
         } catch (e: Exception) {
             return newHomePageResponse(request.name, emptyList(), false)
         }
         
-        // EMBARALHAR DINAMICAMENTE (opção extra)
+        // Verificar se há mais páginas (scrolling infinito)
+        val hasNextPage = document.select("a[href*='/${page + 2}'], .pagination a:contains(${page + 2})")
+            .isNotEmpty() || document.select(".load-more").isNotEmpty()
+        
+        // EMBARALHAR DINAMICAMENTE
         val elements = document.select("a[href*='/animes/'], a[href*='/filmes/']")
             .filter { 
                 it.hasAttr("href") && 
                 it.selectFirst("h3, .animeTitle, .card-title") != null
             }
-            .shuffled() // Embaralha os itens dentro da aba
-            .take(15) // Limite para performance
+            .shuffled()
+            .take(20) // Mais itens por página
         
         val homeItems = elements.mapNotNull { element ->
             element.toSearchResponse(isUpcomingSection = isUpcomingSection)
         }
         
-        return newHomePageResponse(request.name, homeItems, false)
+        return newHomePageResponse(
+            if (page > 0) "${request.name} - Página ${page + 1}" else request.name,
+            homeItems,
+            hasNext = hasNextPage && homeItems.isNotEmpty()
+        )
     }
 
-    // ============ BUSCA ============
+    // ============ BUSCA COM PAGINAÇÃO ============
     override suspend fun search(query: String): List<SearchResponse> {
         if (query.length < 2) return emptyList()
         
@@ -195,10 +240,10 @@ class AnimeFire : MainAPI() {
         return document.select("a[href*='/animes/'], a[href*='/filmes/']")
             .mapNotNull { it.toSearchResponse() }
             .distinctBy { it.url }
-            .take(20)
+            .take(30)
     }
 
-    // ============ LOAD CORRIGIDO (SEM addEpisode) ============
+    // ============ LOAD COM EPISÓDIOS ============
     override suspend fun load(url: String): LoadResponse {
         val document = try {
             app.get(url, timeout = 20).document
@@ -227,32 +272,21 @@ class AnimeFire : MainAPI() {
         
         val isMovie = url.contains("/filmes/") || title.contains("filme", ignoreCase = true)
         
-        // EPISÓDIOS - FORMA CORRETA
+        // EPISÓDIOS
         val episodes = extractAllEpisodes(document, url)
         
-        // ✅ CORREÇÃO: Criar LoadResponse com episódios incluídos
         return newAnimeLoadResponse(title, url, if (isMovie) TvType.Movie else TvType.Anime) {
             this.posterUrl = poster
             this.year = year
             this.plot = synopsis
             this.tags = genres
             
-            // ✅ CORREÇÃO: Adicionar episódios corretamente
-            // Usando a API correta do Cloudstream3
+            // Adicionar episódios
             try {
-                // Método 1: Tentar definir a propriedade episodes
                 val episodesField = this::class.members.find { it.name == "episodes" }
-                if (episodesField != null) {
-                    episodesField.call(this, episodes)
-                } else {
-                    // Método 2: Usar addEpisode se existir (pode não existir)
-                    val addEpisodeMethod = this::class.members.find { it.name == "addEpisode" }
-                    episodes.forEach { episode ->
-                        addEpisodeMethod?.call(this, episode)
-                    }
-                }
+                episodesField?.call(this, episodes)
             } catch (e: Exception) {
-                println("AnimeFire: Erro ao adicionar episódios - ${e.message}")
+                // Fallback silencioso
             }
         }
     }
