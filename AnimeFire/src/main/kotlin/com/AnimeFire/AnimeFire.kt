@@ -267,7 +267,7 @@ class AnimeFire : MainAPI() {
         }.take(30)
     }
 
-    // ============ LOAD PRINCIPAL (PÁGINA DE DETALHES) ============
+    // ============ LOAD PRINCIPAL (PÁGINA DE DETALHES) - VERSÃO CORRIGIDA ============
     
     override suspend fun load(url: String): LoadResponse {
         val document = app.get(url).document
@@ -299,7 +299,7 @@ class AnimeFire : MainAPI() {
         
         // ============ STATUS (USA FUNÇÃO UTILITÁRIA) ============
         val statusText = AnimeFireUtils.extractStatusFromPage(document)
-        val status = getStatus(statusText)
+        val showStatus = getStatus(statusText)
         
         // ============ TRAILER (se disponível) ============
         val trailer = document.selectFirst("iframe[src*='youtube']")?.attr("src")
@@ -323,28 +323,33 @@ class AnimeFire : MainAPI() {
         }
         
         // ============ CONSTRUIR LOAD RESPONSE ============
-        return newAnimeLoadResponse(title, url, TvType.Anime) {
+        return newAnimeLoadResponse(title, url, if (isMovie) TvType.Movie else TvType.Anime) {
             this.posterUrl = poster
             this.year = year
             this.plot = synopsis
             this.tags = genres
-            this.status = status
+            this.status = showStatus
             
             if (trailer != null) {
                 addTrailer(trailer)
             }
             
             // ============ AUDIO STATUS ============
-            addDubStatus(
-                dubExist = hasDub,
-                subExist = hasSub
-            )
-            
-            // ============ EPISÓDIOS ============
-            if (isMovie) {
-                addActors(listOf("Filme Completo"))
+            if (hasDub || hasSub) {
+                this.dubStatus = when {
+                    hasDub && hasSub -> DubStatus.Both
+                    hasDub -> DubStatus.Dubbed
+                    hasSub -> DubStatus.Subbed
+                    else -> DubStatus.Subbed
+                }
             }
             
+            // ============ EPISÓDIOS ============
+            episodes.forEach { episode ->
+                addEpisode(episode)
+            }
+            
+            // ============ RECOMENDAÇÕES ============
             this.recommendations = document.select(".owl-carousel-l_dia .item")
                 .mapNotNull { element ->
                     val recTitle = element.selectFirst("h3.animeTitle")?.text()?.trim()
