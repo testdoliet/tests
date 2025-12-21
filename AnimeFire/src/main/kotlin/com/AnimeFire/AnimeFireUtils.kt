@@ -2,125 +2,150 @@ package com.AnimeFire
 
 import com.lagradost.cloudstream3.ShowStatus
 
-// Função getStatus para detectar status do anime
+// ============ FUNÇÕES UTILITÁRIAS IGUAL ALLWISH ============
+
 fun getStatus(t: String?): ShowStatus {
-    if (t == null) {
-        println("DEBUG - getStatus: entrada nula, retornando Completed")
-        return ShowStatus.Completed
-    }
-    
-    val status = t.trim()
-    println("DEBUG - getStatus: processando '$status'")
-    
-    return when {
-        status.contains("em lançamento", ignoreCase = true) ||
-        status.contains("lançando", ignoreCase = true) ||
-        status.contains("em andamento", ignoreCase = true) ||
-        status.contains("ongoing", ignoreCase = true) ||
-        status.contains("atualizando", ignoreCase = true) -> {
-            println("DEBUG - getStatus: detectado como Ongoing")
-            ShowStatus.Ongoing
-        }
-        
-        status.contains("concluído", ignoreCase = true) ||
-        status.contains("completo", ignoreCase = true) ||
-        status.contains("completado", ignoreCase = true) ||
-        status.contains("terminado", ignoreCase = true) ||
-        status.contains("finished", ignoreCase = true) -> {
-            println("DEBUG - getStatus: detectado como Completed")
-            ShowStatus.Completed
-        }
-        
-        else -> {
-            println("DEBUG - getStatus: status desconhecido '$status', usando Completed como padrão")
-            ShowStatus.Completed
-        }
+    return when (t?.lowercase()?.trim()) {
+        "em lançamento", "lançando", "em andamento", "ongoing", "atualizando" -> ShowStatus.Ongoing
+        "concluído", "completo", "completado", "terminado", "finished" -> ShowStatus.Completed
+        else -> ShowStatus.Completed
     }
 }
 
-// Funções utilitárias para o AnimeFire
-object AnimeFireUtils {
+// Classe para extrair informações de badges
+object AnimeFireBadgeExtractor {
     
-    // Extrai o último episódio e tipo de áudio para mostrar na thumb
-    fun extractLastEpisodeInfo(document: org.jsoup.nodes.Document): Pair<String, String?> {
-        // Procurar por informações de episódios
-        val episodeElements = document.select("a.lEp.epT, a.lEp, .divListaEps a")
-        var lastEpNumber = 0
-        var lastAudioType: String? = null
+    // Extrair informações para badges dos cards
+    fun extractBadgeInfoFromCard(element: org.jsoup.nodes.Element): BadgeInfo {
+        val text = element.text().trim()
         
-        episodeElements.forEach { element ->
-            try {
-                val text = element.text().trim()
-                val epNumber = extractEpisodeNumber(text) ?: 0
-                
-                if (epNumber > lastEpNumber) {
-                    lastEpNumber = epNumber
-                    lastAudioType = when {
-                        text.contains("dublado", ignoreCase = true) -> "Dub"
-                        text.contains("legendado", ignoreCase = true) -> "Leg"
-                        else -> null
-                    }
+        // Detectar tipo de áudio
+        val hasDub = text.contains("dublado", ignoreCase = true)
+        val hasLeg = text.contains("legendado", ignoreCase = true)
+        
+        // Extrair número do episódio
+        var lastEpNumber: Int? = null
+        
+        // Tentar de diferentes fontes
+        val epSelectors = listOf(".numEp", ".episode", ".eps", ".badge", "span")
+        for (selector in epSelectors) {
+            val epText = element.selectFirst(selector)?.text()?.trim()
+            epText?.let {
+                val match = Regex("(\\d+)").find(it)
+                match?.let {
+                    lastEpNumber = it.value.toIntOrNull()
+                    if (lastEpNumber != null) return@let
                 }
-            } catch (e: Exception) {
-                // Ignorar erro
             }
         }
         
-        return Pair(if (lastEpNumber > 0) "Ep $lastEpNumber" else "", lastAudioType)
+        // Se não encontrou, tentar do texto completo
+        if (lastEpNumber == null) {
+            val patterns = listOf(
+                Regex("Ep[\\s.]*(\\d+)", RegexOption.IGNORE_CASE),
+                Regex("Epis[oó]dio\\s*(\\d+)"),
+                Regex("(\\d{1,3})\\s*-"),
+                Regex("#(\\d+)")
+            )
+            
+            for (pattern in patterns) {
+                val match = pattern.find(text)
+                match?.let {
+                    lastEpNumber = it.groupValues[1].toIntOrNull()
+                    if (lastEpNumber != null) break
+                }
+            }
+        }
+        
+        return BadgeInfo(
+            hasDub = hasDub,
+            hasLeg = hasLeg,
+            lastDubEp = if (hasDub) lastEpNumber else null,
+            lastLegEp = if (hasLeg) lastEpNumber else null
+        )
     }
     
-    // Extrai tipo de áudio da página (Leg/Dub)
-    fun extractAudioTypeFromPage(document: org.jsoup.nodes.Document): String? {
-        // Procurar por "Audio:" em qualquer div.animeInfo
-        val audioDiv = document.select("div.animeInfo").firstOrNull { 
-            it.text().contains("Audio:", ignoreCase = true) 
-        }
+    // Extrair informações de badge da página de detalhes
+    fun extractBadgeInfoFromDetailPage(document: org.jsoup.nodes.Document): BadgeInfo {
+        // Extrair tipo de áudio (seletor: div.animeInfo:nth-child(7))
+        val animeInfoDivs = document.select("div.animeInfo")
+        val audioDiv = if (animeInfoDivs.size >= 7) animeInfoDivs[6] 
+                      else document.select("div.animeInfo:contains(Audio:)").firstOrNull()
         
         val audioText = audioDiv?.select("span.spanAnimeInfo")?.firstOrNull()?.text()?.trim() ?: ""
         
-        return when {
-            audioText.contains("dublado", ignoreCase = true) && audioText.contains("legendado", ignoreCase = true) -> "Both"
-            audioText.contains("dublado", ignoreCase = true) -> "Dub"
-            audioText.contains("legendado", ignoreCase = true) -> "Leg"
+        val hasDub = audioText.contains("dublado", ignoreCase = true)
+        val hasLeg = audioText.contains("legendado", ignoreCase = true)
+        
+        // Extrair últimos episódios da lista de episódios
+        var lastLegEp: Int? = null
+        var lastDubEp: Int? = null
+        
+        val episodeElements = document.select("a.lEp.epT, a.lEp, .divListaEps a")
+        episodeElements.forEach { element ->
+            val text = element.text().trim()
+            val epNumber = extractEpisodeNumber(text) ?: return@forEach
+            
+            val isDub = text.contains("dublado", ignoreCase = true)
+            val isLeg = text.contains("legendado", ignoreCase = true)
+            
+            if (isLeg && (lastLegEp == null || epNumber > lastLegEp!!)) {
+                lastLegEp = epNumber
+            }
+            if (isDub && (lastDubEp == null || epNumber > lastDubEp!!)) {
+                lastDubEp = epNumber
+            }
+        }
+        
+        return BadgeInfo(
+            hasDub = hasDub,
+            hasLeg = hasLeg,
+            lastDubEp = lastDubEp,
+            lastLegEp = lastLegEp
+        )
+    }
+    
+    private fun extractEpisodeNumber(text: String): Int? {
+        return Regex("(\\d{1,4})").find(text)?.value?.toIntOrNull()
+    }
+}
+
+// Data class para informações de badge
+data class BadgeInfo(
+    val hasDub: Boolean = false,
+    val hasLeg: Boolean = false,
+    val lastDubEp: Int? = null,
+    val lastLegEp: Int? = null
+)
+
+// Funções para formatar badges
+object BadgeFormatter {
+    
+    fun formatBadgeText(audioType: String?, episodeNumber: Int?): String? {
+        if (audioType == null || episodeNumber == null) return null
+        
+        return when (audioType.lowercase()) {
+            "dub" -> "Dub Ep $episodeNumber"
+            "leg" -> "Leg Ep $episodeNumber"
             else -> null
         }
     }
     
-    // Extrai status da página
-    fun extractStatusFromPage(document: org.jsoup.nodes.Document): String? {
-        // Procurar por "Status:" em qualquer div.animeInfo
-        val statusDiv = document.select("div.animeInfo").firstOrNull { 
-            it.text().contains("Status:", ignoreCase = true) 
+    fun getBadgeTitle(cleanTitle: String, badgeInfo: BadgeInfo): String {
+        val badges = mutableListOf<String>()
+        
+        badgeInfo.lastLegEp?.let {
+            badges.add("Leg Ep $it")
         }
         
-        return statusDiv?.select("span.spanAnimeInfo")?.firstOrNull()?.text()?.trim()
-    }
-    
-    // Extrai número do episódio de um texto
-    fun extractEpisodeNumber(text: String): Int? {
-        val patterns = listOf(
-            Regex("Epis[oó]dio\\s*(\\d+)"),
-            Regex("Ep\\.?\\s*(\\d+)"),
-            Regex("(\\d{1,3})\\s*-"),
-            Regex("#(\\d+)"),
-            Regex("\\b(\\d{1,4})\\b")
-        )
-        
-        for (pattern in patterns) {
-            val match = pattern.find(text)
-            if (match != null) {
-                return match.groupValues[1].toIntOrNull()
-            }
+        badgeInfo.lastDubEp?.let {
+            badges.add("Dub Ep $it")
         }
-        return null
-    }
-    
-    // Formata título com info de episódio (como o AllWish)
-    fun formatTitleWithEpisode(cleanTitle: String, audioType: String?, epNumber: Int?): String {
-        return when {
-            audioType != null && epNumber != null -> "$cleanTitle ($audioType Ep $epNumber)"
-            epNumber != null -> "$cleanTitle - Episódio $epNumber"
-            else -> cleanTitle
+        
+        return if (badges.isNotEmpty()) {
+            "$cleanTitle (${badges.joinToString(", ")})"
+        } else {
+            cleanTitle
         }
     }
 }
