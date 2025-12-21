@@ -117,11 +117,13 @@ class AnimeFire : MainAPI() {
                 }
                 
                 // Se não tiver Dub/Leg mas tiver nota, mostrar nota
-                if (!hasDub && !hasLeg && score.value > 0) {
+                // Verificando se o score não é N/A
+                if (!hasDub && !hasLeg && scoreText != null && scoreText != "N/A") {
                     this.score = score
                 }
             } else {
-                // ✅ OUTRAS SEÇÕES: Badge com avaliação (mesmo que seja 0)
+                // ✅ OUTRAS SEÇÕES: Badge com avaliação
+                // Mostrar avaliação mesmo que seja 0 (N/A)
                 this.score = score
                 
                 // Se tiver episódio e for dublado/legendado, mostrar também
@@ -138,7 +140,7 @@ class AnimeFire : MainAPI() {
             // DEBUG
             println("ANIMEFIRE CARD - Section: ${if (isEpisodesSection) "Episodes" else "Animes"}, " +
                    "Name: '$cleanAnimeName', AnimeURL: '$finalUrl', " +
-                   "Ep: $episodeNumber, Dub: $hasDub, Leg: $hasLeg, Score: ${score.value}")
+                   "Ep: $episodeNumber, Dub: $hasDub, Leg: $hasLeg, ScoreText: '$scoreText'")
         }
     }
 
@@ -266,11 +268,163 @@ class AnimeFire : MainAPI() {
     }
 
     // ============ LOAD PRINCIPAL (PÁGINA DE DETALHES) ============
-    // ... [mantenha o código da função load() igual ao anterior]
     
+    override suspend fun load(url: String): LoadResponse {
+        val document = app.get(url).document
+        
+        // ============ TÍTULO ============
+        val title = document.selectFirst("h1.animeTitle")?.text()?.trim()
+            ?: document.selectFirst("h1")?.text()?.trim()
+            ?: "Sem título"
+        
+        // ============ POSTER ============
+        val poster = document.selectFirst("img.imgAnimes")?.attr("src")?.let { fixUrl(it) }
+            ?: document.selectFirst("img.rounded-3")?.attr("src")?.let { fixUrl(it) }
+            ?: document.selectFirst("img.card-img-top")?.attr("src")?.let { fixUrl(it) }
+        
+        // ============ SINOPSE ============
+        val synopsis = document.selectFirst("p.sinopse")?.text()?.trim()
+            ?: document.selectFirst("div.text-muted")?.text()?.trim()
+            ?: "Sinopse não disponível."
+        
+        // ============ ANO E GÊNEROS ============
+        val year = document.select("div.animeInfo")
+            .find { it.text().contains("Ano:", ignoreCase = true) }
+            ?.selectFirst("span.spanAnimeInfo")?.text()?.trim()?.toIntOrNull()
+        
+        val genres = document.select("div.animeInfo")
+            .find { it.text().contains("Gênero:", ignoreCase = true) }
+            ?.select("span.spanAnimeInfo a")?.map { it.text().trim() }
+            ?: emptyList()
+        
+        // ============ STATUS (USA FUNÇÃO UTILITÁRIA) ============
+        val statusText = AnimeFireUtils.extractStatusFromPage(document)
+        val status = getStatus(statusText)
+        
+        // ============ TRAILER (se disponível) ============
+        val trailer = document.selectFirst("iframe[src*='youtube']")?.attr("src")
+            ?: document.selectFirst("a[href*='youtube']")?.attr("href")
+        
+        // ============ VERIFICA SE É FILME ============
+        val isMovie = url.contains("/filmes/") || title.contains("filme", ignoreCase = true)
+        
+        // ============ AUDIO TYPE ============
+        val audioType = AnimeFireUtils.extractAudioTypeFromPage(document)
+        val hasDub = audioType == "Dub" || audioType == "Both" || document.text().contains("dublado", ignoreCase = true)
+        val hasSub = audioType == "Leg" || audioType == "Both" || document.text().contains("legendado", ignoreCase = true)
+        
+        // ============ EPISÓDIOS ============
+        val episodes = if (isMovie) {
+            listOf(
+                newEpisode(Pair("Filme", url))
+            )
+        } else {
+            extractAllEpisodes(document, url)
+        }
+        
+        // ============ CONSTRUIR LOAD RESPONSE ============
+        return newAnimeLoadResponse(title, url, TvType.Anime) {
+            this.posterUrl = poster
+            this.year = year
+            this.plot = synopsis
+            this.tags = genres
+            this.status = status
+            
+            if (trailer != null) {
+                addTrailer(trailer)
+            }
+            
+            // ============ AUDIO STATUS ============
+            addDubStatus(
+                dubExist = hasDub,
+                subExist = hasSub
+            )
+            
+            // ============ EPISÓDIOS ============
+            if (isMovie) {
+                addActors(listOf("Filme Completo"))
+            }
+            
+            this.recommendations = document.select(".owl-carousel-l_dia .item")
+                .mapNotNull { element ->
+                    val recTitle = element.selectFirst("h3.animeTitle")?.text()?.trim()
+                    val recUrl = element.selectFirst("a")?.attr("href")
+                    val recPoster = element.selectFirst("img")?.attr("data-src") ?: element.selectFirst("img")?.attr("src")
+                    
+                    if (recTitle != null && recUrl != null) {
+                        newAnimeSearchResponse(recTitle, fixUrl(recUrl)) {
+                            this.posterUrl = recPoster?.let { fixUrl(it) }
+                        }
+                    } else {
+                        null
+                    }
+                }
+        }
+    }
+
     // ============ FUNÇÃO PARA EXTRAIR TODOS OS EPISÓDIOS ============
-    // ... [mantenha o código da função extractAllEpisodes() igual ao anterior]
     
+    private fun extractAllEpisodes(document: org.jsoup.nodes.Document, baseUrl: String): List<Episode> {
+        val episodes = mutableListOf<Episode>()
+        
+        // Extrair todos os episódios da página
+        document.select("a.lEp.epT, a.lEp, .divListaEps a").forEach { episodeElement ->
+            try {
+                val episodeUrl = episodeElement.attr("href")?.takeIf { it.isNotBlank() }
+                if (episodeUrl.isNullOrBlank()) return@forEach
+                
+                val episodeText = episodeElement.text().trim()
+                val episodeNumber = AnimeFireUtils.extractEpisodeNumber(episodeText)
+                
+                if (episodeNumber != null) {
+                    val audioType = when {
+                        episodeText.contains("dublado", ignoreCase = true) -> " (Dub)"
+                        episodeText.contains("legendado", ignoreCase = true) -> " (Leg)"
+                        else -> ""
+                    }
+                    
+                    val episodeName = "Episódio $episodeNumber$audioType"
+                    
+                    episodes.add(
+                        newEpisode(Pair(episodeName, fixUrl(episodeUrl))) {
+                            this.name = episodeName
+                            this.episode = episodeNumber
+                        }
+                    )
+                }
+            } catch (e: Exception) {
+                // Ignorar episódio com erro
+            }
+        }
+        
+        // Se não encontrou episódios, verificar outras estruturas
+        if (episodes.isEmpty()) {
+            document.select("div.episodesContainer a, .episode-item a").forEach { episodeElement ->
+                try {
+                    val episodeUrl = episodeElement.attr("href")?.takeIf { it.isNotBlank() }
+                    if (episodeUrl.isNullOrBlank()) return@forEach
+                    
+                    val episodeText = episodeElement.text().trim()
+                    val episodeNumber = extractEpisodeNumber(episodeText)
+                    
+                    if (episodeNumber != null) {
+                        episodes.add(
+                            newEpisode(Pair("Episódio $episodeNumber", fixUrl(episodeUrl))) {
+                                this.name = "Episódio $episodeNumber"
+                                this.episode = episodeNumber
+                            }
+                        )
+                    }
+                } catch (e: Exception) {
+                    // Ignorar episódio com erro
+                }
+            }
+        }
+        
+        // Ordenar episódios por número
+        return episodes.sortedBy { it.episode }
+    }
+
     // ============ LOAD LINKS (CHAMAR EXTRACTOR) ============
     
     override suspend fun loadLinks(
