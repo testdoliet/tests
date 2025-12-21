@@ -79,9 +79,6 @@ class AnimeFire : MainAPI() {
             else -> scoreText.toFloatOrNull()?.let { Score.from10(it) }
         }
         
-        // ============ EXTRAIR CLASSIFICAÇÃO ETÁRIA ============
-        val ageRating = selectFirst(".text-blockCapaAnimeTags span")?.text()?.trim()
-        
         val isMovie = href.contains("/filmes/") || combinedTitle.contains("filme", ignoreCase = true)
         
         // ============ EXTRAIR POSTER ============
@@ -131,7 +128,7 @@ class AnimeFire : MainAPI() {
                 }
             }
             
-            // DEBUG - CORRIGIDO: usar score?.toString() em vez de score?.value
+            // DEBUG
             println("ANIMEFIRE CARD - Section: ${if (isEpisodesSection) "Episodes" else "Animes"}, " +
                    "Name: '$cleanAnimeName', Ep: $episodeNumber, " +
                    "Dub: $hasDub, Leg: $hasLeg, Score: ${score?.toString()}")
@@ -259,7 +256,7 @@ class AnimeFire : MainAPI() {
         val isMovie = url.contains("/filmes/") || rawTitle.contains("Movie", ignoreCase = true)
         val type = if (isMovie) TvType.Movie else TvType.Anime
 
-        // ============ EXTRAIR STATUS DO ANIME ============
+        // ============ EXTRAIR STATUS DO ANIME (APENAS PARA ANIMES) ============
         val showStatus = if (!isMovie) {
             val animeInfoDivs = document.select("div.animeInfo")
             val statusDiv = animeInfoDivs.firstOrNull { 
@@ -271,7 +268,7 @@ class AnimeFire : MainAPI() {
             
             getStatus(statusText)
         } else {
-            ShowStatus.Completed
+            null  // ✅ FILMES NÃO TEM SHOWSTATUS
         }
 
         // ============ EXTRAIR TIPO DE ÁUDIO ============
@@ -345,6 +342,7 @@ class AnimeFire : MainAPI() {
                 this.posterUrl = poster
                 this.backgroundPosterUrl = poster
                 this.recommendations = recommendations.takeIf { it.isNotEmpty() }
+                // ✅ FILME: NÃO ADICIONAR SHOWSTATUS
             }
         } else {
             newAnimeLoadResponse(cleanTitle, url, type) {
@@ -364,7 +362,11 @@ class AnimeFire : MainAPI() {
                 this.posterUrl = poster
                 this.backgroundPosterUrl = poster
                 this.recommendations = recommendations.takeIf { it.isNotEmpty() }
-                this.showStatus = showStatus
+                
+                // ✅ ANIME: ADICIONAR SHOWSTATUS APENAS SE NÃO FOR NULO
+                showStatus?.let {
+                    this.showStatus = it
+                }
             }
         }
     }
@@ -387,7 +389,6 @@ class AnimeFire : MainAPI() {
             // Tentar seletores alternativos
             val altElements = document.select("div.episodios-list a, .lista-episodios a, .episodes-list a")
             println("ANIMEFIRE EPISODES - Elementos alternativos: ${altElements.size}")
-            // Não podemos usar addAll em uma lista imutável, então processamos separadamente
             return extractAllEpisodesFromElements(altElements, hasDub)
         }
         
@@ -467,7 +468,7 @@ class AnimeFire : MainAPI() {
     }
 }
 
-// ============ FUNÇÃO GETSTATUS SEPARADA (na mesma classe ou em arquivo separado) ============
+// ============ FUNÇÃO GETSTATUS (APENAS AQUI NO ARQUIVO PRINCIPAL) ============
 fun getStatus(t: String?): ShowStatus {
     if (t == null) {
         return ShowStatus.Completed
