@@ -25,6 +25,25 @@ class AnimeFire : MainAPI() {
         private const val SEARCH_PATH = "/pesquisar"
     }
 
+    // ============ FUNÇÃO PARA CONVERTER STATUS ============
+    private fun getStatus(t: String?): ShowStatus {
+        return when {
+            t == null -> ShowStatus.Completed
+            t.contains("em andamento", ignoreCase = true) || 
+            t.contains("lançando", ignoreCase = true) ||
+            t.contains("lançamento", ignoreCase = true) ||
+            t.contains("updating", ignoreCase = true) ||
+            t.contains("ongoing", ignoreCase = true) -> ShowStatus.Ongoing
+            
+            t.contains("concluído", ignoreCase = true) ||
+            t.contains("completo", ignoreCase = true) ||
+            t.contains("completado", ignoreCase = true) ||
+            t.contains("finished", ignoreCase = true) -> ShowStatus.Completed
+            
+            else -> ShowStatus.Completed
+        }
+    }
+
     // ============ PÁGINA INICIAL ============
     override val mainPage = mainPageOf(
         "$mainUrl" to "Lançamentos",
@@ -79,29 +98,19 @@ class AnimeFire : MainAPI() {
             "Lançamentos" -> {
                 document.select(".owl-carousel-home .divArticleLancamentos a.item")
                     .mapNotNull { element -> 
-                        val response = element.toSearchResponse()
-                        response?.let {
-                            // Adicionar info de episódio se disponível
-                            addEpisodeInfoToSearchResponse(it, element)
-                        }
+                        element.toSearchResponse()
                     }
             }
             "Destaques da Semana" -> {
                 document.select(".owl-carousel-semana .divArticleLancamentos a.item")
                     .mapNotNull { element -> 
-                        val response = element.toSearchResponse()
-                        response?.let {
-                            addEpisodeInfoToSearchResponse(it, element)
-                        }
+                        element.toSearchResponse()
                     }
             }
             "Últimos Animes Adicionados" -> {
                 document.select(".owl-carousel-l_dia .divArticleLancamentos a.item")
                     .mapNotNull { element -> 
-                        val response = element.toSearchResponse()
-                        response?.let {
-                            addEpisodeInfoToSearchResponse(it, element)
-                        }
+                        element.toSearchResponse()
                     }
             }
             "Últimos Episódios Adicionados" -> {
@@ -149,17 +158,6 @@ class AnimeFire : MainAPI() {
         }
         
         return newHomePageResponse(request.name, homeItems.distinctBy { it.url }, false)
-    }
-
-    // ============ FUNÇÃO PARA ADICIONAR INFO DE EPISÓDIO ============
-    
-    private suspend fun addEpisodeInfoToSearchResponse(
-        response: AnimeSearchResponse,
-        element: Element
-    ): AnimeSearchResponse {
-        // Não podemos modificar o response.name diretamente, então criamos um novo
-        // ou simplesmente retornamos o original (pois já mostra o título correto)
-        return response
     }
 
     // ============ SEARCH CORRIGIDO ============
@@ -215,7 +213,7 @@ class AnimeFire : MainAPI() {
         }.take(30)
     }
 
-    // ============ LOAD PRINCIPAL ATUALIZADA ============
+    // ============ LOAD PRINCIPAL ATUALIZADA COM SHOWSTATUS ============
     
     override suspend fun load(url: String): LoadResponse {
         val document = app.get(url).document
@@ -233,12 +231,7 @@ class AnimeFire : MainAPI() {
         // Extrair status do anime
         val statusElement = document.selectFirst("div.animeInfo:contains(Status:) span.spanAnimeInfo")
         val statusText = statusElement?.text()?.trim() ?: "Desconhecido"
-        val showStatus = when {
-            statusText.contains("Completo", ignoreCase = true) -> ShowStatus.Completed
-            statusText.contains("Em andamento", ignoreCase = true) -> ShowStatus.Ongoing
-            statusText.contains("Lançando", ignoreCase = true) -> ShowStatus.Ongoing
-            else -> ShowStatus.Completed
-        }
+        val showStatus = getStatus(statusText)
 
         // Extrair tipo de áudio disponível
         val audioElement = document.selectFirst("div.animeInfo:contains(Audio:) span.spanAnimeInfo")
@@ -291,7 +284,8 @@ class AnimeFire : MainAPI() {
                 this.posterUrl = poster
                 this.backgroundPosterUrl = poster // Usar mesma imagem para banner
                 this.recommendations = recommendations.takeIf { it.isNotEmpty() }
-                // Para MovieLoadResponse, use showStatus assim:
+                
+                // USANDO A MESMA ABORDAGEM DO ALLWISH
                 this.showStatus = showStatus
             }
         } else {
@@ -309,7 +303,8 @@ class AnimeFire : MainAPI() {
                 this.posterUrl = poster
                 this.backgroundPosterUrl = poster // Usar mesma imagem para banner
                 this.recommendations = recommendations.takeIf { it.isNotEmpty() }
-                // Para AnimeLoadResponse, use showStatus assim:
+                
+                // USANDO A MESMA ABORDAGEM DO ALLWISH
                 this.showStatus = showStatus
             }
         }
