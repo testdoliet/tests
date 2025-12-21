@@ -68,113 +68,128 @@ class AnimeFire : MainAPI() {
         val cachedAt: Long = System.currentTimeMillis()
     )
 
-    // ============ SISTEMA DE CACHE DE METADADOS ============
+// ============ SISTEMA DE CACHE DE METADADOS ============
     
-    private suspend fun getAnimeMetadata(animeName: String, url: String? = null): AnimeMetadata? {
-        val cacheKey = animeName.lowercase().trim()
-        
-        // Verificar cache em memória primeiro
-        animeMetadataCache[cacheKey]?.let { cached ->
-            // Cache válido por 7 dias
-            if (System.currentTimeMillis() - cached.cachedAt < 7 * 24 * 60 * 60 * 1000) {
-                return cached
-            }
+private suspend fun getAnimeMetadata(animeName: String, url: String? = null): AnimeMetadata? {
+    val cacheKey = animeName.lowercase().trim()
+    
+    // Verificar cache em memória primeiro
+    animeMetadataCache[cacheKey]?.let { cached ->
+        // Cache válido por 7 dias
+        if (System.currentTimeMillis() - cached.cachedAt < 7 * 24 * 60 * 60 * 1000) {
+            return cached
         }
-        
-        // Buscar MAL ID
-        val malId = searchMALIdByName(animeName)
-        if (malId == null) {
-            // Se não encontrar MAL ID, criar metadados básicos
-            val basicMetadata = AnimeMetadata(
-                titleEnglish = animeName,
-                hasEpisodes = checkIfHasEpisodes(url)
-            )
-            animeMetadataCache[cacheKey] = basicMetadata
-            saveMetadataCache()
-            return basicMetadata
-        }
-        
-        // Buscar metadados completos do AniList
-        val metadata = fetchAniListMetadata(malId, url)
-        animeMetadataCache[cacheKey] = metadata
-        saveMetadataCache()
-        
-        return metadata
     }
     
-    private suspend fun fetchAniListMetadata(malId: Int, url: String? = null): AnimeMetadata {
-        return try {
-            val query = """
-                query {
-                    Media(idMal: $malId, type: ANIME) {
-                        title {
-                            english
-                            romaji
-                            native
-                        }
-                        coverImage {
-                            extraLarge
-                            large
-                            medium
-                        }
-                        bannerImage
-                        episodes
-                        status
-                        nextAiringEpisode {
-                            episode
-                            timeUntilAiring
-                        }
+    // Buscar MAL ID
+    val malId = searchMALIdByName(animeName)
+    
+    // Sempre obter o valor de hasEpisodes (não nullable)
+    val hasEpsResult = checkIfHasEpisodes(url)
+    val hasEps = hasEpsResult ?: true  // Converte para non-nullable
+    
+    if (malId == null) {
+        // Se não encontrar MAL ID, criar metadados básicos
+        val basicMetadata = AnimeMetadata(
+            titleEnglish = animeName,
+            hasEpisodes = hasEps,
+            isUpcoming = !hasEps  // Se não tem episódios, considera como "em breve"
+        )
+        animeMetadataCache[cacheKey] = basicMetadata
+        saveMetadataCache()
+        return basicMetadata
+    }
+    
+    // Buscar metadados completos do AniList
+    val metadata = fetchAniListMetadata(malId, hasEps)
+    animeMetadataCache[cacheKey] = metadata
+    saveMetadataCache()
+    
+    return metadata
+}
+
+private suspend fun fetchAniListMetadata(malId: Int, hasEpsFromUrl: Boolean): AnimeMetadata {
+    return try {
+        val query = """
+            query {
+                Media(idMal: $malId, type: ANIME) {
+                    title {
+                        english
+                        romaji
+                        native
+                    }
+                    coverImage {
+                        extraLarge
+                        large
+                        medium
+                    }
+                    bannerImage
+                    episodes
+                    status
+                    nextAiringEpisode {
+                        episode
+                        timeUntilAiring
                     }
                 }
-            """.trimIndent()
-            
-            val response = app.post(
-                "https://graphql.anilist.co",
-                data = mapOf("query" to query),
-                headers = mapOf("Content-Type" to "application/json", "Accept" to "application/json"),
-                timeout = 10_000
-            )
-            
-            if (response.code == 200) {
-                val data = response.parsedSafe<AniListFullResponse>()
-                val media = data?.data?.Media
-                
-                if (media != null) {
-                    val hasEps = checkIfHasEpisodes(url) ?: (media.episodes ?: 0) > 0
-                    val isUpcoming = media.status == "NOT_YET_RELEASED" || 
-                                     media.nextAiringEpisode != null
-                    
-                    return AnimeMetadata(
-                        malId = malId,
-                        titleEnglish = media.title?.english ?: media.title?.romaji ?: "",
-                        titleRomaji = media.title?.romaji,
-                        titlePortuguese = media.title?.native,
-                        posterUrl = media.coverImage?.extraLarge ?: 
-                                   media.coverImage?.large ?: 
-                                   media.coverImage?.medium,
-                        bannerUrl = media.bannerImage,
-                        hasEpisodes = hasEps,
-                        isUpcoming = isUpcoming
-                    )
-                }
             }
+        """.trimIndent()
+        
+        val response = app.post(
+            "https://graphql.anilist.co",
+            data = mapOf("query" to query),
+            headers = mapOf("Content-Type" to "application/json", "Accept" to "application/json"),
+            timeout = 10_000
+        )
+        
+        if (response.code == 200) {
+            val data = response.parsedSafe<AniListFullResponse>()
+            val media = data?.data?.Media
             
-            // Fallback básico
-            AnimeMetadata(
-                malId = malId,
-                titleEnglish = "",
-                hasEpisodes = checkIfHasEpisodes(url) ?: true
-            )
-        } catch (e: Exception) {
-            println("❌ Erro ao buscar metadados AniList: ${e.message}")
-            AnimeMetadata(
-                malId = malId,
-                titleEnglish = "",
-                hasEpisodes = checkIfHasEpisodes(url) ?: true
-            )
+            if (media != null) {
+                // Usar o valor de hasEpsFromUrl (já convertido para non-nullable)
+                // ou verificar se tem episódios no AniList
+                val hasEps = if (hasEpsFromUrl) {
+                    true
+                } else {
+                    (media.episodes ?: 0) > 0
+                }
+                
+                val isUpcoming = media.status == "NOT_YET_RELEASED" || 
+                                 media.nextAiringEpisode != null
+                
+                return AnimeMetadata(
+                    malId = malId,
+                    titleEnglish = media.title?.english ?: media.title?.romaji ?: "",
+                    titleRomaji = media.title?.romaji,
+                    titlePortuguese = media.title?.native,
+                    posterUrl = media.coverImage?.extraLarge ?: 
+                               media.coverImage?.large ?: 
+                               media.coverImage?.medium,
+                    bannerUrl = media.bannerImage,
+                    hasEpisodes = hasEps,      // Non-nullable
+                    isUpcoming = isUpcoming    // Non-nullable
+                )
+            }
         }
+        
+        // Fallback básico - usa o valor já verificado
+        AnimeMetadata(
+            malId = malId,
+            titleEnglish = "",
+            hasEpisodes = hasEpsFromUrl,
+            isUpcoming = !hasEpsFromUrl
+        )
+    } catch (e: Exception) {
+        println("❌ Erro ao buscar metadados AniList: ${e.message}")
+        AnimeMetadata(
+            malId = malId,
+            titleEnglish = "",
+            hasEpisodes = hasEpsFromUrl,
+            isUpcoming = !hasEpsFromUrl
+        )
     }
-    
+}
+            
     private suspend fun checkIfHasEpisodes(url: String?): Boolean? {
         if (url == null) return null
         
