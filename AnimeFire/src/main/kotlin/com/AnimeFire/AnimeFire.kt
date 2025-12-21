@@ -26,7 +26,7 @@ class AnimeFire : MainAPI() {
         "$mainUrl/dublados" to "Dublados"
     )
 
-    // ============ ESTRUTURA PARA BADGES (igual AllWish) ============
+    // ============ ESTRUTURA PARA BADGES ============
     
     private fun Element.toSearchResponse(): AnimeSearchResponse? {
         val href = attr("href") ?: return null
@@ -42,11 +42,11 @@ class AnimeFire : MainAPI() {
         
         val isMovie = href.contains("/filmes/") || rawTitle.contains("filme", ignoreCase = true)
         
-        // 1. Detectar tipo de áudio do título
+        // Detectar tipo de áudio do título
         val hasDub = rawTitle.contains("dublado", ignoreCase = true)
         val hasLeg = rawTitle.contains("legendado", ignoreCase = true)
         
-        // 2. Tentar extrair número do episódio de múltiplas fontes
+        // Tentar extrair número do episódio
         var lastEpNumber: Int? = null
         val epSelectors = listOf(".numEp", ".episode", ".eps", ".badge", "span")
         
@@ -54,18 +54,18 @@ class AnimeFire : MainAPI() {
             val epText = selectFirst(selector)?.text()?.trim()
             if (epText != null) {
                 val epMatch = Regex("(\\d+)").find(epText)
-                epMatch?.let {
-                    lastEpNumber = it.value.toIntOrNull()
+                if (epMatch != null) {
+                    lastEpNumber = epMatch.value.toIntOrNull()
                     if (lastEpNumber != null) break
                 }
             }
         }
         
-        // 3. Tentar extrair do título
+        // Tentar extrair do título
         if (lastEpNumber == null) {
             val epMatch = Regex("Ep[\\s.]*(\\d+)", RegexOption.IGNORE_CASE).find(rawTitle)
-            epMatch?.let {
-                lastEpNumber = it.groupValues[1].toIntOrNull()
+            if (epMatch != null) {
+                lastEpNumber = epMatch.groupValues[1].toIntOrNull()
             }
         }
         
@@ -81,8 +81,7 @@ class AnimeFire : MainAPI() {
             this.posterUrl = sitePoster?.let { fixUrl(it) }
             this.type = if (isMovie) TvType.Movie else TvType.Anime
             
-            // ============ BADGES IGUAL ALLWISH ============
-            // Usar addDubStatus com contadores (igual AllWish faz)
+            // BADGES IGUAL ALLWISH
             addDubStatus(
                 dubExist = hasDub,
                 subExist = hasLeg,
@@ -152,7 +151,7 @@ class AnimeFire : MainAPI() {
         val isMovie = url.contains("/filmes/") || rawTitle.contains("Movie", ignoreCase = true)
         val type = if (isMovie) TvType.Movie else TvType.Anime
 
-        // 2. Extrair status do anime (seletor: div.animeInfo:nth-child(11))
+        // 2. Extrair status do anime
         val showStatus = if (!isMovie) {
             val animeInfoDivs = document.select("div.animeInfo")
             val statusDiv = if (animeInfoDivs.size >= 11) animeInfoDivs[10] else null
@@ -166,7 +165,7 @@ class AnimeFire : MainAPI() {
             ShowStatus.Completed
         }
 
-        // 3. Extrair tipo de áudio (seletor: div.animeInfo:nth-child(7))
+        // 3. Extrair tipo de áudio
         val (hasLeg, hasDub) = if (!isMovie) {
             val animeInfoDivs = document.select("div.animeInfo")
             val audioDiv = if (animeInfoDivs.size >= 7) animeInfoDivs[6] 
@@ -211,14 +210,14 @@ class AnimeFire : MainAPI() {
             ?.trim()
             ?.toIntOrNull()
 
-        // 8. Extrair episódios (com os últimos números para badges)
-        val (subEpisodes, dubEpisodes, lastLegEp, lastDubEp) = if (!isMovie) {
-            extractEpisodesWithLastNumbers(document, hasDub)
+        // 8. Extrair episódios com informações de badges
+        val episodeData = if (!isMovie) {
+            extractEpisodesWithBadgeInfo(document, hasDub)
         } else {
-            Triple(emptyList(), emptyList(), null, null)
+            EpisodeData(emptyList(), emptyList(), null, null)
         }
 
-        // 9. Extrair nota/score (se disponível)
+        // 9. Extrair nota/score
         val score = document.selectFirst("div.score, .rating, [itemprop='ratingValue']")
             ?.text()
             ?.trim()
@@ -242,11 +241,11 @@ class AnimeFire : MainAPI() {
         } else {
             newAnimeLoadResponse(cleanTitle, url, type) {
                 // Separar episódios por tipo de áudio
-                if (hasDub && dubEpisodes.isNotEmpty()) {
-                    addEpisodes(DubStatus.Dubbed, dubEpisodes)
+                if (hasDub && episodeData.dubEpisodes.isNotEmpty()) {
+                    addEpisodes(DubStatus.Dubbed, episodeData.dubEpisodes)
                 }
-                if (hasLeg && subEpisodes.isNotEmpty()) {
-                    addEpisodes(DubStatus.Subbed, subEpisodes)
+                if (hasLeg && episodeData.subEpisodes.isNotEmpty()) {
+                    addEpisodes(DubStatus.Subbed, episodeData.subEpisodes)
                 }
                 
                 this.year = finalYear
@@ -258,18 +257,26 @@ class AnimeFire : MainAPI() {
                 this.recommendations = recommendations.takeIf { it.isNotEmpty() }
                 this.showStatus = showStatus
                 
-                // DEBUG: Log dos últimos episódios
-                println("DEBUG - AnimeFire - Last Episodes: Leg=$lastLegEp, Dub=$lastDubEp")
+                // Debug
+                println("AnimeFire - Last Episodes: Leg=${episodeData.lastLegEp}, Dub=${episodeData.lastDubEp}")
             }
         }
     }
 
-    // ============ EXTRATOR DE EPISÓDIOS COM ÚLTIMOS NÚMEROS ============
+    // ============ ESTRUTURA PARA DADOS DE EPISÓDIOS ============
+    private data class EpisodeData(
+        val subEpisodes: List<Episode>,
+        val dubEpisodes: List<Episode>,
+        val lastLegEp: Int?,
+        val lastDubEp: Int?
+    )
+
+    // ============ EXTRATOR DE EPISÓDIOS ============
     
-    private suspend fun extractEpisodesWithLastNumbers(
+    private suspend fun extractEpisodesWithBadgeInfo(
         document: org.jsoup.nodes.Document,
         hasDub: Boolean
-    ): Triple<List<Episode>, List<Episode>, Int?, Int?> {
+    ): EpisodeData {
         val subEpisodes = mutableListOf<Episode>()
         val dubEpisodes = mutableListOf<Episode>()
         var lastLegEp: Int? = null
@@ -290,11 +297,15 @@ class AnimeFire : MainAPI() {
                 val isLeg = text.contains("legendado", ignoreCase = true) || (!isDub && !hasDub)
                 
                 // Atualizar últimos episódios (para badges)
-                if (isLeg && (lastLegEp == null || episodeNumber > lastLegEp!!)) {
-                    lastLegEp = episodeNumber
+                if (isLeg) {
+                    if (lastLegEp == null || episodeNumber > lastLegEp!!) {
+                        lastLegEp = episodeNumber
+                    }
                 }
-                if (isDub && (lastDubEp == null || episodeNumber > lastDubEp!!)) {
-                    lastDubEp = episodeNumber
+                if (isDub) {
+                    if (lastDubEp == null || episodeNumber > lastDubEp!!) {
+                        lastDubEp = episodeNumber
+                    }
                 }
                 
                 // Nome do episódio
@@ -328,15 +339,15 @@ class AnimeFire : MainAPI() {
             }
         }
         
-        return Triple(
-            subEpisodes.sortedBy { it.episode },
-            dubEpisodes.sortedBy { it.episode },
-            lastLegEp,
-            lastDubEp
+        return EpisodeData(
+            subEpisodes = subEpisodes.sortedBy { it.episode },
+            dubEpisodes = dubEpisodes.sortedBy { it.episode },
+            lastLegEp = lastLegEp,
+            lastDubEp = lastDubEp
         )
     }
 
-    // ============ EXTRATOR DE LINKS DE VÍDEO ============
+    // ============ EXTRATOR DE LINKS DE VÍDEO (Simplificado) ============
     
     override suspend fun loadLinks(
         data: String,
@@ -382,19 +393,21 @@ class AnimeFire : MainAPI() {
                 val m3u8Pattern = Regex("(https?:[^\"']+\\.m3u8[^\"']*)")
                 val m3u8Match = m3u8Pattern.find(scriptText)
                 
-                m3u8Match?.let { match ->
+                if (m3u8Match != null) {
                     callback.invoke(
                         ExtractorLink(
                             name,
                             "HLS",
-                            match.value,
+                            m3u8Match.value,
                             referer = mainUrl,
                             quality = Qualities.Unknown.value,
                             type = ExtractorLinkType.HLS
                         )
                     )
                     true
-                } ?: false
+                } else {
+                    false
+                }
             }
         } catch (e: Exception) {
             e.printStackTrace()
@@ -412,7 +425,8 @@ class AnimeFire : MainAPI() {
         )
         
         for (pattern in patterns) {
-            pattern.find(text)?.let { match ->
+            val match = pattern.find(text)
+            if (match != null) {
                 return match.groupValues[1].toIntOrNull()
             }
         }
