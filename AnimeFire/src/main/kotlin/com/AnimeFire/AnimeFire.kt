@@ -23,13 +23,13 @@ class AnimeFire : MainAPI() {
         // ============ MUTEX PARA UMA ABA POR VEZ ============
         private val loadingMutex = Mutex()
         
-        // ============ CATEGORIAS CONFIRMADAS QUE FUNCIONAM ============
-        private val WORKING_CATEGORIES = listOf(
-            "/em-lancamento" to "Em Lançamento",
+        // ============ TODAS CATEGORIAS DISPONÍVEIS ============
+        private val ALL_CATEGORIES = listOf(
+            "/em-lancamento" to "Lançamentos",
             "/animes-atualizados" to "Atualizados",
             "/top-animes" to "Top Animes",
-            "/lista-de-animes-legendados" to "Animes Legendados",
-            "/lista-de-animes-dublados" to "Animes Dublados",
+            "/lista-de-animes-legendados" to "Legendados",
+            "/lista-de-animes-dublados" to "Dublados",
             "/lista-de-filmes-legendados" to "Filmes Legendados",
             "/lista-de-filmes-dublados" to "Filmes Dublados",
             "/genero/acao" to "Ação",
@@ -59,100 +59,22 @@ class AnimeFire : MainAPI() {
             "/genero/vida-escolar" to "Vida Escolar"
         )
         
-        // ============ ESCOLHE CATEGORIAS ALEATÓRIAS ============
-        fun getRandomCategories(count: Int = 8): List<Pair<String, String>> {
-            println("ANIMEFIRE: 🎲 Selecionando $count categorias aleatórias...")
-            val selected = WORKING_CATEGORIES.shuffled().take(count)
-            selected.forEachIndexed { i, (path, name) ->
-                println("ANIMEFIRE:   $i. $name ($path)")
-            }
-            return selected
+        // ============ GERA 8 ABAS ALEATÓRIAS ============
+        fun getRandomTabs(count: Int = 8): List<Pair<String, String>> {
+            return ALL_CATEGORIES.shuffled().take(count)
         }
     }
 
     init {
-        println("ANIMEFIRE: ✅ Inicializado - Sistema MUTEX ativo")
+        println("🔥 ANIMEFIRE: Plugin inicializado - 8 abas aleatórias")
     }
 
     // ============ PÁGINA INICIAL DINÂMICA ============
     override val mainPage = mainPageOf(
-        *getRandomCategories().map { (path, name) -> 
+        *getRandomTabs().map { (path, name) -> 
             "$mainUrl$path" to name 
         }.toTypedArray()
     )
-
-    // ============ GET MAIN PAGE - UMA ABA POR VEZ (OTIMIZADO) ============
-    override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        // ✅ MUTEX: TRAVA PARA UMA ABA POR VEZ
-        return loadingMutex.withLock {
-            try {
-                println("ANIMEFIRE: 🔒 TRAVA PEGA - ${request.name}")
-                
-                // DELAY INICIAL REDUZIDO - MUTEX já garante controle
-                kotlinx.coroutines.delay(800) // 800ms em vez de 2000ms
-                
-                // PAGINAÇÃO
-                val basePath = request.data.removePrefix(mainUrl)
-                val pageSuffix = if (page > 0) "/${page + 1}" else ""
-                val pageUrl = "$mainUrl${basePath.removeSuffix("/")}$pageSuffix"
-                
-                println("ANIMEFIRE: 📥 Carregando ${request.name} ($pageUrl)")
-                
-                val document = app.get(pageUrl, timeout = 30).document
-                
-                val isUpcomingSection = basePath.contains("/em-lancamento") || 
-                                       basePath.contains("/animes-atualizados")
-                
-                // SELEÇÃO EFICIENTE
-                val elements = document.select("""
-                    article a,
-                    .card a,
-                    .anime-item a,
-                    a[href*='/animes/'],
-                    a[href*='/filmes/']
-                """).take(30)
-                
-                val homeItems = mutableListOf<SearchResponse>()
-                
-                // PROCESSAMENTO SEM DELAY ENTRE ITENS
-                elements.forEach { element ->
-                    try {
-                        val item = element.toSearchResponse(isUpcomingSection = isUpcomingSection)
-                        if (item != null) {
-                            homeItems.add(item)
-                        }
-                    } catch (e: Exception) {
-                        // Ignorar erro no item
-                    }
-                }
-                
-                // VERIFICAR PRÓXIMA PÁGINA
-                val hasNextPage = document.select("a[href*='/${page + 2}']").isNotEmpty()
-                
-                println("ANIMEFIRE: ✅ ${request.name} - ${homeItems.size} itens")
-                
-                // DELAY MÍNIMO ANTES DE LIBERAR TRAVA
-                kotlinx.coroutines.delay(300) // 300ms apenas
-                
-                println("ANIMEFIRE: 🔓 TRAVA SOLTA - ${request.name}")
-                
-                newHomePageResponse(
-                    if (page > 0) "${request.name} (P${page + 1})" else request.name,
-                    homeItems.distinctBy { it.url },
-                    hasNext = hasNextPage
-                )
-                
-            } catch (e: Exception) {
-                println("ANIMEFIRE: ❌ ERRO em ${request.name}: ${e.message}")
-                
-                // LIBERAR TRAVA RAPIDAMENTE EM CASO DE ERRO
-                kotlinx.coroutines.delay(100)
-                println("ANIMEFIRE: 🔓 TRAVA SOLTA (erro) - ${request.name}")
-                
-                newHomePageResponse(request.name, emptyList(), false)
-            }
-        }
-    }
 
     // ============ FUNÇÃO PRINCIPAL DE PARSING ============
     private fun Element.toSearchResponse(isUpcomingSection: Boolean = false): AnimeSearchResponse? {
@@ -168,7 +90,7 @@ class AnimeFire : MainAPI() {
         
         if (combinedTitle.isBlank()) return null
         
-        // BADGES
+        // BADGES (DUB/LEG)
         val hasExplicitDub = combinedTitle.contains("dublado", ignoreCase = true)
         val hasExplicitLeg = combinedTitle.contains("legendado", ignoreCase = true)
         
@@ -197,7 +119,7 @@ class AnimeFire : MainAPI() {
         // NOME LIMPO
         val cleanName = extractAnimeName(combinedTitle, selectFirst(".numEp")?.text())
         
-        // FILTRO N/A
+        // FILTRO N/A (exceto em Lançamentos/Atualizados)
         val scoreText = selectFirst(".horaUltimosEps, .rating, .score")?.text()?.trim()
         
         if ((scoreText == "N/A" || scoreText == null) && !isUpcomingSection) {
@@ -241,7 +163,7 @@ class AnimeFire : MainAPI() {
         }
     }
 
-    // ============ EXTRATOR DE NOME ============
+    // ============ LIMPAR NOME DO ANIME ============
     private fun extractAnimeName(fullText: String, episodeText: String?): String {
         var cleanName = fullText
         
@@ -264,6 +186,99 @@ class AnimeFire : MainAPI() {
         return cleanName.trim().replace(Regex("\\s+"), " ")
     }
 
+    // ============ GET MAIN PAGE CORRIGIDO ============
+    override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
+        return loadingMutex.withLock {
+            try {
+                println("🔥 ANIMEFIRE: 📥 Iniciando - Aba: '${request.name}', Cloudstream Page: $page")
+                
+                // Delay mínimo para estabilidade
+                kotlinx.coroutines.delay(300)
+                
+                // ============ PAGINAÇÃO CORRETA ============
+                val basePath = request.data.removePrefix(mainUrl)
+                
+                // Lógica CORRETA:
+                // - Cloudstream page 0 → Site página 1 (sem número: /em-lancamento)
+                // - Cloudstream page 1 → Site página 2 (/em-lancamento/2)
+                // - Cloudstream page 2 → Site página 3 (/em-lancamento/3)
+                // - Cloudstream page 3 → Site página 4 (/em-lancamento/4)
+                
+                val pageUrl = if (page == 0) {
+                    // Primeira página do site: URL sem número
+                    "$mainUrl$basePath"
+                } else {
+                    // Páginas seguintes: adiciona /2, /3, /4...
+                    "$mainUrl$basePath/${page + 1}"
+                }
+                
+                println("🔥 ANIMEFIRE: 🔗 Carregando: $pageUrl")
+                
+                val document = app.get(pageUrl, timeout = 30).document
+                
+                val isUpcomingSection = basePath.contains("/em-lancamento") || 
+                                       basePath.contains("/animes-atualizados")
+                
+                // Coletar todos os elementos
+                val elements = document.select("""
+                    article a,
+                    .card a,
+                    .anime-item a,
+                    a[href*='/animes/'],
+                    a[href*='/filmes/']
+                """).take(30)
+                
+                val homeItems = mutableListOf<SearchResponse>()
+                
+                // Processar elementos
+                elements.forEach { element ->
+                    try {
+                        val item = element.toSearchResponse(isUpcomingSection = isUpcomingSection)
+                        if (item != null) {
+                            homeItems.add(item)
+                        }
+                    } catch (e: Exception) {
+                        // Ignorar erro em item específico
+                    }
+                }
+                
+                // ============ DETECTAR PRÓXIMA PÁGINA ============
+                val hasNextPage = if (page == 0) {
+                    // Para primeira página, verificar se existe /2
+                    document.select("a[href*='/2']").isNotEmpty() ||
+                    document.select("a:contains('Próxima')").isNotEmpty()
+                } else {
+                    // Para páginas 2+, verificar se existe página seguinte
+                    val nextPageNum = page + 2
+                    document.select("a[href*='/$nextPageNum']").isNotEmpty() ||
+                    document.select("a:contains('Próxima')").isNotEmpty()
+                }
+                
+                // ============ NOME DA ABA ============
+                // Mostrar número da página corretamente
+                val sitePageNumber = if (page == 0) 1 else page + 1
+                val tabName = if (page > 0) "${request.name} (P$sitePageNumber)" else request.name
+                
+                println("🔥 ANIMEFIRE: ✅ Concluído - ${homeItems.size} itens, Próxima página? $hasNextPage")
+                
+                // Delay final antes de liberar mutex
+                kotlinx.coroutines.delay(200)
+                
+                newHomePageResponse(
+                    tabName,
+                    homeItems.distinctBy { it.url },
+                    hasNext = hasNextPage
+                )
+                
+            } catch (e: Exception) {
+                println("🔥 ANIMEFIRE: ❌ Erro em '${request.name}': ${e.message}")
+                // Liberar rápido em caso de erro
+                kotlinx.coroutines.delay(100)
+                newHomePageResponse(request.name, emptyList(), false)
+            }
+        }
+    }
+
     // ============ BUSCA ============
     override suspend fun search(query: String): List<SearchResponse> {
         if (query.length < 2) return emptyList()
@@ -283,7 +298,7 @@ class AnimeFire : MainAPI() {
         }
     }
 
-    // ============ LOAD ============
+    // ============ LOAD (PÁGINA DO ANIME) ============
     override suspend fun load(url: String): LoadResponse {
         return try {
             val document = app.get(url, timeout = 25).document
@@ -309,11 +324,12 @@ class AnimeFire : MainAPI() {
                 this.plot = synopsis
                 this.tags = genres
                 
+                // Adicionar episódios (se disponível)
                 try {
                     val episodesField = this::class.members.find { it.name == "episodes" }
                     episodesField?.call(this, episodes)
                 } catch (e: Exception) {
-                    // Silencioso
+                    // Campo pode não existir em algumas versões
                 }
             }
             
@@ -347,7 +363,7 @@ class AnimeFire : MainAPI() {
                     }
                 )
             } catch (e: Exception) {
-                // Ignorar
+                // Ignorar episódio com erro
             }
         }
         
