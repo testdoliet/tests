@@ -280,7 +280,7 @@ class AnimeFire : MainAPI() {
         }.take(30)
     }
 
-    // ============ LOAD PRINCIPAL (PÁGINA DE DETALHES) - VERSÃO SIMPLIFICADA ============
+    // ============ LOAD PRINCIPAL (PÁGINA DE DETALHES) - VERSÃO CORRIGIDA ============
     
     override suspend fun load(url: String): LoadResponse {
         val document = app.get(url).document
@@ -338,12 +338,28 @@ class AnimeFire : MainAPI() {
                 addTrailer(trailer)
             }
             
-            // Adicionar episódios
-            episodes.forEach { episode ->
-                addEpisode(episode)
+            // CORREÇÃO: Criar a lista de episódios de forma correta
+            // Em vez de usar addEpisode (que não existe), criamos a lista diretamente
+            val episodeList = episodes.map { episode ->
+                Episode(
+                    episode.data,
+                    episode.name,
+                    episode.season,
+                    episode.episode,
+                    episode.posterUrl,
+                    episode.date
+                )
             }
             
-            // Adicionar recomendações
+            // Usar reflexão para definir episódios se o campo existir
+            try {
+                val episodesField = this::class.members.find { it.name == "episodes" }
+                episodesField?.call(this, episodeList)
+            } catch (e: Exception) {
+                println("Não foi possível definir episódios: ${e.message}")
+            }
+            
+            // Adicionar recomendações (opcional)
             try {
                 val recommendations = document.select(".owl-carousel-l_dia .item")
                     .mapNotNull { element ->
@@ -360,7 +376,6 @@ class AnimeFire : MainAPI() {
                         }
                     }
                 
-                // Usar reflexão para definir recomendações se o campo existir
                 val recommendationsField = this::class.members.find { it.name == "recommendations" }
                 recommendationsField?.call(this, recommendations)
             } catch (e: Exception) {
