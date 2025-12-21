@@ -17,92 +17,91 @@ class AnimeFire : MainAPI() {
 
     companion object {
         private const val SEARCH_PATH = "/pesquisar"
+        
+        // ============ SISTEMA DE PÁGINAS POR CARREGAMENTO ============
+        private val PAGE_SYSTEM = mapOf(
+            // PÁGINA 1 - LANÇAMENTOS E TOP
+            0 to listOf(
+                "/em-lancamento" to "Em Lançamento",
+                "/animes-atualizados" to "Atualizados",
+                "/top-animes" to "Top Animes"
+            ),
+            // PÁGINA 2 - ÁUDIO
+            1 to listOf(
+                "/lista-de-animes-legendados" to "Animes Legendados",
+                "/lista-de-animes-dublados" to "Animes Dublados",
+                "/lista-de-filmes-legendados" to "Filmes Legendados",
+                "/lista-de-filmes-dublados" to "Filmes Dublados"
+            ),
+            // PÁGINA 3 - GÊNEROS A-D
+            2 to listOf(
+                "/genero/acao" to "Ação",
+                "/genero/aventura" to "Aventura",
+                "/genero/comedia" to "Comédia",
+                "/genero/drama" to "Drama",
+                "/genero/fantasia" to "Fantasia",
+                "/genero/romance" to "Romance"
+            ),
+            // PÁGINA 4 - GÊNEROS E-S
+            3 to listOf(
+                "/genero/shounen" to "Shounen",
+                "/genero/seinen" to "Seinen",
+                "/genero/esporte" to "Esporte",
+                "/genero/misterio" to "Mistério",
+                "/genero/artes-marciais" to "Artes Marciais",
+                "/genero/demonios" to "Demônios"
+            ),
+            // PÁGINA 5 - GÊNEROS T-Z
+            4 to listOf(
+                "/genero/ecchi" to "Ecchi",
+                "/genero/ficcao-cientifica" to "Ficção Científica",
+                "/genero/harem" to "Harém",
+                "/genero/horror" to "Horror",
+                "/genero/magia" to "Magia",
+                "/genero/mecha" to "Mecha"
+            ),
+            // PÁGINA 6 - GÊNEROS DIVERSOS
+            5 to listOf(
+                "/genero/militar" to "Militar",
+                "/genero/psicologico" to "Psicológico",
+                "/genero/slice-of-life" to "Slice of Life",
+                "/genero/sobrenatural" to "Sobrenatural",
+                "/genero/superpoder" to "Superpoder",
+                "/genero/vampiros" to "Vampiros"
+            )
+        )
     }
 
-    // ============ PÁGINA INICIAL COM TODAS AS LISTAS ============
+    // ============ MAIN PAGE (CARREGA UMA PÁGINA POR VEZ) ============
     override val mainPage = mainPageOf(
-        // CATEGORIA: LANÇAMENTOS E DESTAQUES
-        "$mainUrl/em-lancamento" to "Em Lançamento",
-        "$mainUrl/animes-atualizados" to "Animes Atualizados",
-        "$mainUrl/top-animes" to "Top Animes",
-        "$mainUrl" to "Lançamentos",
-        
-        // CATEGORIA: AUDIO (DUB/LEG)
-        "$mainUrl/lista-de-animes-legendados" to "Animes Legendados",
-        "$mainUrl/lista-de-animes-dublados" to "Animes Dublados",
-        "$mainUrl/lista-de-filmes-legendados" to "Filmes Legendados",
-        "$mainUrl/lista-de-filmes-dublados" to "Filmes Dublados",
-        
-        // CATEGORIA: GÊNEROS POPULARES
-        "$mainUrl/genero/acao" to "Ação",
-        "$mainUrl/genero/aventura" to "Aventura",
-        "$mainUrl/genero/comedia" to "Comédia",
-        "$mainUrl/genero/drama" to "Drama",
-        "$mainUrl/genero/fantasia" to "Fantasia",
-        "$mainUrl/genero/romance" to "Romance",
-        "$mainUrl/genero/shounen" to "Shounen",
-        "$mainUrl/genero/seinen" to "Seinen",
-        "$mainUrl/genero/esporte" to "Esporte",
-        "$mainUrl/genero/misterio" to "Mistério",
-        
-        // CATEGORIA: MAIS GÊNEROS
-        "$mainUrl/genero/artes-marciais" to "Artes Marciais",
-        "$mainUrl/genero/demonios" to "Demônios",
-        "$mainUrl/genero/ecchi" to "Ecchi",
-        "$mainUrl/genero/ficcao-cientifica" to "Ficção Científica",
-        "$mainUrl/genero/harem" to "Harém",
-        "$mainUrl/genero/horror" to "Horror",
-        "$mainUrl/genero/magia" to "Magia",
-        "$mainUrl/genero/mecha" to "Mecha",
-        "$mainUrl/genero/militar" to "Militar",
-        "$mainUrl/genero/psicologico" to "Psicológico",
-        "$mainUrl/genero/slice-of-life" to "Slice of Life",
-        "$mainUrl/genero/sobrenatural" to "Sobrenatural",
-        "$mainUrl/genero/superpoder" to "Superpoder",
-        "$mainUrl/genero/vampiros" to "Vampiros",
-        "$mainUrl/genero/vida-escolar" to "Vida Escolar",
-        
-        // CATEGORIA: OUTROS GÊNEROS
-        "$mainUrl/genero/espaco" to "Espaço",
-        "$mainUrl/genero/jogos" to "Jogos",
-        "$mainUrl/genero/josei" to "Josei",
-        "$mainUrl/genero/musical" to "Musical",
-        "$mainUrl/genero/parodia" to "Paródia",
-        "$mainUrl/genero/shoujo-ai" to "Shoujo-ai",
-        "$mainUrl/genero/suspense" to "Suspense"
+        // Apenas a primeira página carrega inicialmente
+        *PAGE_SYSTEM[0]!!.map { (path, name) -> 
+            "$mainUrl$path" to name 
+        }.toTypedArray()
     )
 
-    // ============ FUNÇÃO PRINCIPAL DE BUSCA ============
-    
+    // ============ FUNÇÃO PRINCIPAL OTIMIZADA ============
     private fun Element.toSearchResponse(): AnimeSearchResponse? {
         val href = attr("href") ?: return null
-        if (href.isBlank()) return null
+        if (href.isBlank() || !href.contains("/animes/") && !href.contains("/filmes/")) return null
         
-        // ============ EXTRAIR TÍTULO E ATRIBUTOS ============
-        val titleElement = selectFirst("h3.animeTitle, .text-block h3, .animeTitle, h3") ?: return null
+        // TÍTULO
+        val titleElement = selectFirst("h3.animeTitle, .animeTitle, h3") ?: return null
         val rawTitle = titleElement.text().trim()
         
         val titleAttr = attr("title")?.trim() ?: ""
-        val combinedTitle = if (titleAttr.isNotBlank()) titleAttr else rawTitle
+        val combinedTitle = if (titleAttr.isNotBlank() && titleAttr.length > 3) titleAttr else rawTitle
         
-        // ============ DETECTAR DUBLADO/LEGENDADO ============
+        if (combinedTitle.isBlank()) return null
+        
+        // DETECTAR ÁUDIO
         val hasDub = combinedTitle.contains("dublado", ignoreCase = true)
         val hasLeg = combinedTitle.contains("legendado", ignoreCase = true)
         
-        // ============ EXTRAIR NÚMERO DO EPISÓDIO ============
-        var episodeNumber: Int? = null
-        var episodeText: String? = null
+        // NOME LIMPO
+        val cleanName = extractAnimeName(combinedTitle, selectFirst(".numEp")?.text())
         
-        val numEpElement = selectFirst(".numEp")
-        if (numEpElement != null) {
-            episodeText = numEpElement.text().trim()
-            episodeNumber = extractEpisodeNumber(episodeText)
-        }
-        
-        // ============ EXTRAIR NOME LIMPO DO ANIME ============
-        val cleanAnimeName = extractAnimeName(combinedTitle, episodeText)
-        
-        // ============ EXTRAIR NOTA/AVALIAÇÃO ============
+        // NOTA
         val scoreText = selectFirst(".horaUltimosEps, .rating")?.text()?.trim()
         val score = when {
             scoreText == null || scoreText == "N/A" -> Score.from10(0f)
@@ -111,297 +110,196 @@ class AnimeFire : MainAPI() {
         
         val isMovie = href.contains("/filmes/") || combinedTitle.contains("filme", ignoreCase = true)
         
-        // ============ EXTRAIR POSTER ============
-        val sitePoster = selectFirst("img.imgAnimes, img.card-img-top, img.transitioning_src, img.owl-lazy, .imgAnimesUltimosEps")?.let { img ->
+        // POSTER
+        val sitePoster = selectFirst("img.imgAnimes, img.card-img-top, img[src*='.jpg'], img[src*='.png']")?.let { img ->
             when {
-                img.hasAttr("data-src") -> img.attr("data-src")
-                img.hasAttr("src") -> img.attr("src")
+                img.hasAttr("data-src") && img.attr("data-src").contains("http") -> img.attr("data-src")
+                img.hasAttr("src") && img.attr("src").contains("http") -> img.attr("src")
                 else -> null
             }
-        }
+        }?.takeIf { it.isNotBlank() }?.let { fixUrl(it) }
 
-        // ============ CRIAR RESPOSTA DE BUSCA ============
-        return newAnimeSearchResponse(cleanAnimeName, fixUrl(href)) {
-            this.posterUrl = sitePoster?.let { fixUrl(it) }
+        return newAnimeSearchResponse(cleanName, fixUrl(href)) {
+            this.posterUrl = sitePoster
             this.type = if (isMovie) TvType.Movie else TvType.Anime
             this.score = score
             
-            // Adicionar status de dublagem se detectado
             if (hasDub || hasLeg) {
-                addDubStatus(
-                    dubExist = hasDub,
-                    subExist = hasLeg
-                )
+                addDubStatus(dubExist = hasDub, subExist = hasLeg)
             }
         }
     }
 
-    // ============ FUNÇÃO PARA EXTRAIR NOME DO ANIME ============
+    // ============ EXTRATOR DE NOME ============
     private fun extractAnimeName(fullText: String, episodeText: String?): String {
         var cleanName = fullText
         
-        // Remover indicação de episódio
         episodeText?.let {
-            cleanName = cleanName.replace(it, "")
+            cleanName = cleanName.replace(it, "").trim()
         }
         
-        // Padrões de limpeza
         val patterns = listOf(
             Regex("(?i)\\(dublado\\)"),
             Regex("(?i)\\(legendado\\)"),
             Regex("(?i)todos os episódios"),
-            Regex("\\(\\d{4}\\)"),
             Regex("\\s*-\\s*$"),
-            Regex("\\s*:\\s*$")
+            Regex("\\(\\d{4}\\)")
         )
         
         patterns.forEach { pattern ->
             cleanName = cleanName.replace(pattern, "")
         }
         
-        // Limpar espaços extras
-        cleanName = cleanName.trim().replace(Regex("\\s+"), " ")
-        
-        // Se ainda tiver " - " no final, remover
-        if (cleanName.endsWith("-")) {
-            cleanName = cleanName.substringBeforeLast("-").trim()
-        }
-        
-        return cleanName
+        return cleanName.trim().replace(Regex("\\s+"), " ")
     }
 
-    // ============ EXTRATOR DE NÚMERO DE EPISÓDIO ============
-    private fun extractEpisodeNumber(text: String): Int? {
-        val patterns = listOf(
-            Regex("Epis[oó]dio\\s*(\\d+)"),
-            Regex("Ep\\.?\\s*(\\d+)"),
-            Regex("(\\d{1,3})\\s*-"),
-            Regex("#(\\d+)"),
-            Regex("\\b(\\d{1,4})\\b")
-        )
+    // ============ GET MAIN PAGE COM PAGINAÇÃO ============
+    override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
+        // Usa o sistema de páginas: page=0,1,2,3,4,5
+        val pageItems = PAGE_SYSTEM[page] ?: return newHomePageResponse("", emptyList(), false)
         
-        for (pattern in patterns) {
-            pattern.find(text)?.let { match ->
-                return match.groupValues[1].toIntOrNull()
+        val allItems = mutableListOf<SearchResponse>()
+        
+        // CARREGA UMA LISTA DE CADA VEZ
+        for ((path, listName) in pageItems) {
+            try {
+                val document = app.get("$mainUrl$path", timeout = 10).document
+                
+                // SELETOR SIMPLES
+                val elements = document.select("a[href*='/animes/'], a[href*='/filmes/']")
+                    .filter { 
+                        it.hasAttr("href") && 
+                        it.selectFirst("h3, .animeTitle") != null
+                    }
+                    .take(15) // LIMITE POR LISTA
+                
+                val items = elements.mapNotNull { it.toSearchResponse() }
+                    .distinctBy { it.url }
+                    .take(12)
+                
+                allItems.addAll(items)
+                
+                // PEQUENA PAUSA ENTRE REQUISIÇÕES
+                kotlinx.coroutines.delay(100)
+                
+            } catch (e: Exception) {
+                println("AnimeFire: Erro ao carregar $path: ${e.message}")
             }
         }
-        return null
-    }
-
-    // ============ GET MAIN PAGE ATUALIZADA ============
-    
-    override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val url = if (request.data == mainUrl && request.name == "Lançamentos") {
-            // Para "Lançamentos", usar a página inicial
-            mainUrl
-        } else {
-            request.data
+        
+        // Nome da página baseado no primeiro item
+        val pageName = when(page) {
+            0 -> "Lançamentos e Top"
+            1 -> "Áudio"
+            2 -> "Gêneros A-F"
+            3 -> "Gêneros G-M"
+            4 -> "Gêneros N-S"
+            5 -> "Gêneros T-Z"
+            else -> "Página ${page + 1}"
         }
         
-        val document = app.get(url).document
-        
-        // Para páginas de gênero, usar seletores específicos
-        val elements = if (url.contains("/genero/")) {
-            document.select("article.card a, .divArticleLancamentos a.item, .anime-item a")
-        } else if (url.contains("/lista-de-") || url.contains("/em-lancamento") || url.contains("/animes-atualizados") || url.contains("/top-animes")) {
-            document.select(".divCardUltimosEps a, .divArticleLancamentos a.item, article.card a")
-        } else {
-            // Página inicial e outras
-            document.select(".owl-carousel-home .divArticleLancamentos a.item, .divCardUltimosEps a")
-        }
-        
-        val homeItems = elements.mapNotNull { it.toSearchResponse() }.distinctBy { it.url }
-        
-        return newHomePageResponse(request.name, homeItems, hasNext = false)
+        return newHomePageResponse(pageName, allItems.distinctBy { it.url }, hasNext = page < PAGE_SYSTEM.size - 1)
     }
 
     // ============ BUSCA ============
-    
     override suspend fun search(query: String): List<SearchResponse> {
-        val formattedQuery = query
-            .trim()
-            .replace(Regex("\\s+"), "-")
-            .lowercase()
+        if (query.length < 2) return emptyList()
         
-        val searchUrl = "$mainUrl$SEARCH_PATH/$formattedQuery"
-        val document = app.get(searchUrl).document
-
-        val elements = document.select("div.divCardUltimosEps article.card a, .search-result a")
-        
-        return elements.mapNotNull { element ->
-            element.toSearchResponse()
-        }.take(30)
-    }
-
-    // ============ LOAD PRINCIPAL (PÁGINA DE DETALHES) ============
-    
-    override suspend fun load(url: String): LoadResponse {
-        val document = app.get(url).document
-        
-        // ============ TÍTULO ============
-        val title = document.selectFirst("h1.animeTitle")?.text()?.trim()
-            ?: document.selectFirst("h1")?.text()?.trim()
-            ?: "Sem título"
-        
-        // ============ POSTER ============
-        val poster = document.selectFirst("img.imgAnimes")?.attr("src")?.let { fixUrl(it) }
-            ?: document.selectFirst("img.rounded-3")?.attr("src")?.let { fixUrl(it) }
-            ?: document.selectFirst("img.card-img-top")?.attr("src")?.let { fixUrl(it) }
-        
-        // ============ SINOPSE ============
-        val synopsis = document.selectFirst("p.sinopse")?.text()?.trim()
-            ?: document.selectFirst("div.text-muted")?.text()?.trim()
-            ?: "Sinopse não disponível."
-        
-        // ============ ANO E GÊNEROS ============
-        val year = document.select("div.animeInfo")
-            .find { it.text().contains("Ano:", ignoreCase = true) }
-            ?.selectFirst("span.spanAnimeInfo")?.text()?.trim()?.toIntOrNull()
-        
-        val genres = document.select("div.animeInfo")
-            .find { it.text().contains("Gênero:", ignoreCase = true) }
-            ?.select("span.spanAnimeInfo a")?.map { it.text().trim() }
-            ?: emptyList()
-        
-        // ============ VERIFICA SE É FILME ============
-        val isMovie = url.contains("/filmes/") || title.contains("filme", ignoreCase = true)
-        
-        // ============ TRAILER (se disponível) ============
-        val trailer = document.selectFirst("iframe[src*='youtube']")?.attr("src")
-            ?: document.selectFirst("a[href*='youtube']")?.attr("href")
-        
-        // ============ EPISÓDIOS ============
-        val episodes = if (isMovie) {
-            listOf(
-                newEpisode(Pair("Filme", url))
-            )
-        } else {
-            extractAllEpisodes(document, url)
+        val searchUrl = "$mainUrl$SEARCH_PATH/${query.trim().replace(" ", "-").lowercase()}"
+        val document = try {
+            app.get(searchUrl, timeout = 15).document
+        } catch (e: Exception) {
+            return emptyList()
         }
         
-        // ============ CONSTRUIR LOAD RESPONSE ============
+        return document.select("a[href*='/animes/'], a[href*='/filmes/']")
+            .mapNotNull { it.toSearchResponse() }
+            .distinctBy { it.url }
+            .take(20)
+    }
+
+    // ============ LOAD SIMPLIFICADO ============
+    override suspend fun load(url: String): LoadResponse {
+        val document = try {
+            app.get(url, timeout = 20).document
+        } catch (e: Exception) {
+            return newAnimeLoadResponse("Erro ao carregar", url, TvType.Anime) {
+                this.plot = "Não foi possível carregar esta página."
+            }
+        }
+        
+        // TÍTULO
+        val title = document.selectFirst("h1.animeTitle, h1")?.text()?.trim() ?: "Sem Título"
+        
+        // POSTER
+        val poster = document.selectFirst("img.imgAnimes, .poster img")?.attr("src")?.let { fixUrl(it) }
+        
+        // SINOPSE
+        val synopsis = document.selectFirst("p.sinopse, .description")?.text()?.trim()
+            ?: "Sinopse não disponível."
+        
+        // INFORMAÇÕES
+        val year = document.select("div.animeInfo:contains(Ano:) span.spanAnimeInfo")
+            .firstOrNull()?.text()?.trim()?.toIntOrNull()
+        
+        val genres = document.select("div.animeInfo:contains(Gênero:) a")
+            .map { it.text().trim() }
+        
+        val isMovie = url.contains("/filmes/") || title.contains("filme", ignoreCase = true)
+        
+        // EPISÓDIOS
+        val episodes = extractAllEpisodes(document, url)
+        
         return newAnimeLoadResponse(title, url, if (isMovie) TvType.Movie else TvType.Anime) {
             this.posterUrl = poster
             this.year = year
             this.plot = synopsis
             this.tags = genres
             
-            // Adicionar trailer se existir
-            if (trailer != null) {
-                addTrailer(trailer)
-            }
-            
-            // Criar lista de episódios
-            val episodeList = episodes.map { episode ->
-                newEpisode(Pair(episode.name ?: "Episódio", episode.data))
-            }
-            
-            // Usar reflexão para definir episódios se o campo existir
-            try {
-                val episodesField = this::class.members.find { it.name == "episodes" }
-                episodesField?.call(this, episodeList)
-            } catch (e: Exception) {
-                println("AnimeFire: Não foi possível definir episódios para $title")
+            // EPISÓDIOS
+            episodes.forEach { episode ->
+                addEpisode(episode)
             }
         }
     }
 
-    // ============ FUNÇÃO PARA EXTRAIR TODOS OS EPISÓDIOS ============
-    
+    // ============ EXTRAIR EPISÓDIOS ============
     private fun extractAllEpisodes(document: org.jsoup.nodes.Document, baseUrl: String): List<Episode> {
         val episodes = mutableListOf<Episode>()
         
-        // Extrair todos os episódios da página
-        document.select("a.lEp.epT, a.lEp, .divListaEps a").forEach { episodeElement ->
+        document.select("a.lEp, .episode-item a").forEach { element ->
             try {
-                val episodeUrl = episodeElement.attr("href")?.takeIf { it.isNotBlank() }
-                if (episodeUrl.isNullOrBlank()) return@forEach
+                val episodeUrl = element.attr("href")?.takeIf { it.isNotBlank() } ?: return@forEach
+                val episodeText = element.text().trim()
+                val episodeNumber = Regex("(\\d{1,4})").find(episodeText)?.groupValues?.get(1)?.toIntOrNull() ?: return@forEach
                 
-                val episodeText = episodeElement.text().trim()
-                val episodeNumber = AnimeFireUtils.extractEpisodeNumber(episodeText)
-                
-                if (episodeNumber != null) {
-                    val audioType = when {
-                        episodeText.contains("dublado", ignoreCase = true) -> " (Dub)"
-                        episodeText.contains("legendado", ignoreCase = true) -> " (Leg)"
-                        else -> ""
-                    }
-                    
-                    val episodeName = "Episódio $episodeNumber$audioType"
-                    
-                    episodes.add(
-                        newEpisode(Pair(episodeName, fixUrl(episodeUrl))) {
-                            this.name = episodeName
-                            this.episode = episodeNumber
-                        }
-                    )
+                val audioType = when {
+                    episodeText.contains("dublado", ignoreCase = true) -> " (Dub)"
+                    episodeText.contains("legendado", ignoreCase = true) -> " (Leg)"
+                    else -> ""
                 }
+                
+                episodes.add(
+                    newEpisode(Pair("Episódio $episodeNumber$audioType", fixUrl(episodeUrl))) {
+                        this.name = "Episódio $episodeNumber$audioType"
+                        this.episode = episodeNumber
+                    }
+                )
             } catch (e: Exception) {
-                // Ignorar episódio com erro
+                // Ignorar erro
             }
         }
         
-        // Se não encontrou episódios, verificar outras estruturas
-        if (episodes.isEmpty()) {
-            document.select("div.episodesContainer a, .episode-item a").forEach { episodeElement ->
-                try {
-                    val episodeUrl = episodeElement.attr("href")?.takeIf { it.isNotBlank() }
-                    if (episodeUrl.isNullOrBlank()) return@forEach
-                    
-                    val episodeText = episodeElement.text().trim()
-                    val episodeNumber = extractEpisodeNumber(episodeText)
-                    
-                    if (episodeNumber != null) {
-                        episodes.add(
-                            newEpisode(Pair("Episódio $episodeNumber", fixUrl(episodeUrl))) {
-                                this.name = "Episódio $episodeNumber"
-                                this.episode = episodeNumber
-                            }
-                        )
-                    }
-                } catch (e: Exception) {
-                    // Ignorar episódio com erro
-                }
-            }
-        }
-        
-        // Ordenar episódios por número
         return episodes.sortedBy { it.episode }
     }
 
-    // ============ LOAD LINKS (CHAMAR EXTRACTOR) ============
-    
+    // ============ LOAD LINKS ============
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        return AnimeFireVideoExtractor.extractVideoLinks(data, mainUrl, name, callback)
-    }
-}
-
-// ============ FUNÇÃO GETSTATUS ============
-fun getStatus(t: String?): ShowStatus {
-    if (t == null) {
-        return ShowStatus.Completed
-    }
-    
-    val status = t.trim()
-    
-    return when {
-        status.contains("em lançamento", ignoreCase = true) ||
-        status.contains("lançando", ignoreCase = true) ||
-        status.contains("em andamento", ignoreCase = true) ||
-        status.contains("ongoing", ignoreCase = true) ||
-        status.contains("atualizando", ignoreCase = true) -> ShowStatus.Ongoing
-        
-        status.contains("concluído", ignoreCase = true) ||
-        status.contains("completo", ignoreCase = true) ||
-        status.contains("completado", ignoreCase = true) ||
-        status.contains("terminado", ignoreCase = true) ||
-        status.contains("finished", ignoreCase = true) -> ShowStatus.Completed
-        
-        else -> ShowStatus.Completed
+        return false
     }
 }
