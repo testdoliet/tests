@@ -1,28 +1,40 @@
 package com.AnimeFire
 
 import com.lagradost.cloudstream3.ShowStatus
-import org.jsoup.nodes.Element
 
 // Função getStatus para detectar status do anime
 fun getStatus(t: String?): ShowStatus {
-    if (t == null) return ShowStatus.Completed
+    if (t == null) {
+        println("DEBUG - getStatus: entrada nula, retornando Completed")
+        return ShowStatus.Completed
+    }
     
     val status = t.trim()
+    println("DEBUG - getStatus: processando '$status'")
     
     return when {
         status.contains("em lançamento", ignoreCase = true) ||
         status.contains("lançando", ignoreCase = true) ||
         status.contains("em andamento", ignoreCase = true) ||
         status.contains("ongoing", ignoreCase = true) ||
-        status.contains("atualizando", ignoreCase = true) -> ShowStatus.Ongoing
+        status.contains("atualizando", ignoreCase = true) -> {
+            println("DEBUG - getStatus: detectado como Ongoing")
+            ShowStatus.Ongoing
+        }
         
         status.contains("concluído", ignoreCase = true) ||
         status.contains("completo", ignoreCase = true) ||
         status.contains("completado", ignoreCase = true) ||
         status.contains("terminado", ignoreCase = true) ||
-        status.contains("finished", ignoreCase = true) -> ShowStatus.Completed
+        status.contains("finished", ignoreCase = true) -> {
+            println("DEBUG - getStatus: detectado como Completed")
+            ShowStatus.Completed
+        }
         
-        else -> ShowStatus.Completed
+        else -> {
+            println("DEBUG - getStatus: status desconhecido '$status', usando Completed como padrão")
+            ShowStatus.Completed
+        }
     }
 }
 
@@ -59,9 +71,12 @@ object AnimeFireUtils {
     
     // Extrai tipo de áudio da página (Leg/Dub)
     fun extractAudioTypeFromPage(document: org.jsoup.nodes.Document): String? {
-        // Primeiro método: elemento específico
-        val audioElement = document.select("div.animeInfo:nth-child(7) span.spanAnimeInfo").firstOrNull()
-        val audioText = audioElement?.text()?.trim() ?: ""
+        // Procurar por "Audio:" em qualquer div.animeInfo
+        val audioDiv = document.select("div.animeInfo").firstOrNull { 
+            it.text().contains("Audio:", ignoreCase = true) 
+        }
+        
+        val audioText = audioDiv?.select("span.spanAnimeInfo")?.firstOrNull()?.text()?.trim() ?: ""
         
         return when {
             audioText.contains("dublado", ignoreCase = true) && audioText.contains("legendado", ignoreCase = true) -> "Both"
@@ -73,9 +88,12 @@ object AnimeFireUtils {
     
     // Extrai status da página
     fun extractStatusFromPage(document: org.jsoup.nodes.Document): String? {
-        // Seletor: div.animeInfo:nth-child(11)
-        val statusElement = document.select("div.animeInfo:nth-child(11) span.spanAnimeInfo").firstOrNull()
-        return statusElement?.text()?.trim()
+        // Procurar por "Status:" em qualquer div.animeInfo
+        val statusDiv = document.select("div.animeInfo").firstOrNull { 
+            it.text().contains("Status:", ignoreCase = true) 
+        }
+        
+        return statusDiv?.select("span.spanAnimeInfo")?.firstOrNull()?.text()?.trim()
     }
     
     // Extrai número do episódio de um texto
