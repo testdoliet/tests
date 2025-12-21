@@ -124,35 +124,3 @@ data class BadgeInfo(
     val lastDubEp: Int? = null,
     val lastLegEp: Int? = null
 )
-
-// Funções para formatar badges
-object BadgeFormatter {
-    
-    fun formatBadgeText(audioType: String?, episodeNumber: Int?): String? {
-        if (audioType == null || episodeNumber == null) return null
-        
-        return when (audioType.lowercase()) {
-            "dub" -> "Dub Ep $episodeNumber"
-            "leg" -> "Leg Ep $episodeNumber"
-            else -> null
-        }
-    }
-    
-    fun getBadgeTitle(cleanTitle: String, badgeInfo: BadgeInfo): String {
-        val badges = mutableListOf<String>()
-        
-        badgeInfo.lastLegEp?.let {
-            badges.add("Leg Ep $it")
-        }
-        
-        badgeInfo.lastDubEp?.let {
-            badges.add("Dub Ep $it")
-        }
-        
-        return if (badges.isNotEmpty()) {
-            "$cleanTitle (${badges.joinToString(", ")})"
-        } else {
-            cleanTitle
-        }
-    }
-}
