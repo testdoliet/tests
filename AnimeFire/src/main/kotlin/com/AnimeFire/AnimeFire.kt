@@ -22,6 +22,7 @@ class AnimeFire : MainAPI() {
         
         private val loadingMutex = Mutex()
         
+        // LISTA COMPLETA DE TODAS AS CATEGORIAS
         private val ALL_CATEGORIES = listOf(
             "/em-lancamento" to "Lançamentos",
             "/animes-atualizados" to "Atualizados",
@@ -54,26 +55,17 @@ class AnimeFire : MainAPI() {
             "/genero/sobrenatural" to "Sobrenatural",
             "/genero/superpoder" to "Superpoder",
             "/genero/vampiros" to "Vampiros",
-            "/genero/vida-escolar" to "Vida Escolar"
+            "/genero/vida-escolar" to "Vida Escolar",
+            "/genero/suspense" to "Suspense",
+            "/genero/musica" to "Música",
+            "/genero/space" to "Espaço",
+            "/genero/supernatural" to "Sobrenatural",
+            "/genero/sci-fi" to "Sci-Fi",
+            "/genero/policial" to "Policial",
+            "/genero/historia" to "História",
+            "/genero/guerra" to "Guerra",
+            "/genero/familia" to "Família"
         )
-        
-        private var cachedTabs: List<Pair<String, String>>? = null
-        private var cacheTime: Long = 0
-        private const val CACHE_DURATION = 300000L // 5 minutos
-        
-        fun getRandomTabs(count: Int = 8): List<Pair<String, String>> {
-            val currentTime = System.currentTimeMillis()
-            
-            if (cachedTabs != null && (currentTime - cacheTime) < CACHE_DURATION) {
-                return cachedTabs!!
-            }
-            
-            val randomTabs = ALL_CATEGORIES.shuffled().take(count)
-            cachedTabs = randomTabs
-            cacheTime = currentTime
-            
-            return randomTabs
-        }
         
         // Função para verificar se a aba permite N/A
         fun allowsNaItems(basePath: String): Boolean {
@@ -84,11 +76,16 @@ class AnimeFire : MainAPI() {
     }
 
     init {
-        println("🔥 ANIMEFIRE: Plugin inicializado")
+        println("🔥 ANIMEFIRE: Plugin inicializado com ${ALL_CATEGORIES.size} abas")
+        println("📊 Lista completa de abas:")
+        ALL_CATEGORIES.forEachIndexed { index, (path, name) ->
+            println("   ${index + 1}. $name ($path)")
+        }
     }
 
+    // RETORNA TODAS AS ABAS SEM LIMITE
     override val mainPage = mainPageOf(
-        *getRandomTabs().map { (path, name) -> 
+        *ALL_CATEGORIES.map { (path, name) -> 
             "$mainUrl$path" to name 
         }.toTypedArray()
     )
@@ -123,7 +120,7 @@ class AnimeFire : MainAPI() {
             println("   • Permite N/A? $allowsNaItems")
         }
         
-        // ============ LÓGICA DE FILTRO CORRIGIDA ============
+        // ============ LÓGICA DE FILTRO ============
         val shouldKeepItem = when {
             // Se a aba permite N/A, mantém tudo
             allowsNaItems -> {
@@ -462,55 +459,261 @@ class AnimeFire : MainAPI() {
         }
     }
 
-    // ============ LOAD ============
+    // ============ FUNÇÃO AUXILIAR PARA EXTRAIR TEXTO ============
+    private fun extractTextAfterLabel(document: org.jsoup.nodes.Document, label: String): String? {
+        return document.select("div.animeInfo:contains($label) span.spanAnimeInfo")
+            .firstOrNull()?.text()?.trim()
+    }
+
+    // ============ FUNÇÃO PARA EXTRAIR ANO CORRETO ============
+    private fun extractYear(text: String?): Int? {
+        if (text.isNullOrBlank()) return null
+        
+        // Extrair ano de datas como "Oct 8, 2025"
+        val yearRegex = Regex("""(\d{4})""")
+        val match = yearRegex.find(text)
+        return match?.groupValues?.get(1)?.toIntOrNull()
+    }
+
+    // ============ LOAD - CORRIGIDO ============
     override suspend fun load(url: String): LoadResponse {
         return try {
-            val document = app.get(url, timeout = 25).document
+            println("\n" + "=".repeat(80))
+            println("🔥 ANIMEFIRE: Carregando anime")
+            println("=".repeat(80))
+            println("📊 URL: $url")
             
-            val title = document.selectFirst("h1.animeTitle, h1")?.text()?.trim() ?: "Sem Título"
-            val poster = document.selectFirst("img.imgAnimes, .poster img")?.attr("src")?.let { fixUrl(it) }
-            val synopsis = document.selectFirst("p.sinopse, .description")?.text()?.trim()
+            val document = app.get(url, timeout = 30).document
+            
+            // ============ TÍTULO ============
+            val title = document.selectFirst("h1.quicksand400")?.text()?.trim() 
+                ?: document.selectFirst("h1.animeTitle, h1")?.text()?.trim() 
+                ?: "Sem Título"
+            
+            println("📊 Título: $title")
+            
+            // ============ POSTER ============
+            val poster = try {
+                // Primeiro tentar pegar a imagem grande
+                val largeImg = document.selectFirst("img.transitioning_src[src*='-large.webp']")
+                if (largeImg != null) {
+                    fixUrl(largeImg.attr("src").trim())
+                } else {
+                    // Tentar outras imagens
+                    document.selectFirst("img.imgAnimes, .poster img, .sub_animepage_img img, img[src*='img/animes/']")
+                        ?.attr("src")
+                        ?.takeIf { it.isNotBlank() }
+                        ?.let { fixUrl(it) }
+                }
+            } catch (e: Exception) {
+                null
+            }
+            
+            println("📊 Poster: ${poster?.take(50)}...")
+            
+            // ============ SINOPSE ============
+            val synopsis = document.selectFirst("div.divSinopse span.spanAnimeInfo")
+                ?.text()
+                ?.trim()
+                ?: document.selectFirst("div.divSinopse")
+                ?.text()
+                ?.replace("Sinopse:", "")
+                ?.trim()
+                ?: document.selectFirst("p.sinopse, .description")
+                ?.text()
+                ?.trim()
                 ?: "Sinopse não disponível."
             
-            val year = document.select("div.animeInfo:contains(Ano:) span.spanAnimeInfo")
-                .firstOrNull()?.text()?.trim()?.toIntOrNull()
+            println("📊 Sinopse (primeiros 100 chars): ${synopsis.take(100)}...")
             
-            val genres = document.select("div.animeInfo:contains(Gênero:) a")
-                .map { it.text().trim() }
+            // ============ ANO ============
+            val yearText = extractTextAfterLabel(document, "Ano:")
+            val year = extractYear(yearText)
+            println("📊 Ano: $year (texto: '$yearText')")
             
-            val isMovie = url.contains("/filmes/") || title.contains("filme", ignoreCase = true)
+            // ============ STATUS ============
+            val status = extractTextAfterLabel(document, "Status do Anime:")
+                ?: "Desconhecido"
+            println("📊 Status: $status")
             
+            // ============ GÊNEROS/TAGS ============
+            val genres = mutableListOf<String>()
+            
+            // Extrair gêneros dos links
+            document.select("div.animeInfo a[href*='/genero/']").forEach { element ->
+                element.text().trim().takeIf { it.isNotBlank() }?.let { 
+                    genres.add(it) 
+                }
+            }
+            
+            // Se não encontrou pelos links, tentar extrair do texto
+            if (genres.isEmpty()) {
+                document.select("div.animeInfo:contains(Gênero:) span.spanAnimeInfo")
+                    .firstOrNull()
+                    ?.text()
+                    ?.trim()
+                    ?.split(",", ";")
+                    ?.forEach { genre ->
+                        genre.trim().takeIf { it.isNotBlank() }?.let { 
+                            genres.add(it) 
+                        }
+                    }
+            }
+            
+            println("📊 Gêneros: ${genres.joinToString(", ")}")
+            
+            // ============ ÁUDIO (DUB/LEG) ============
+            val audioText = extractTextAfterLabel(document, "Áudio:")
+            val hasDub = audioText?.contains("dublado", ignoreCase = true) ?: false
+            val hasSub = audioText?.contains("legendado", ignoreCase = true) ?: true
+            
+            println("📊 Áudio: $audioText (Dub: $hasDub, Leg: $hasSub)")
+            
+            // ============ ESTÚDIO ============
+            val studio = extractTextAfterLabel(document, "Estúdios:")
+            println("📊 Estúdio: $studio")
+            
+            // ============ TEMPORADA ============
+            val season = extractTextAfterLabel(document, "Temporada:")
+            println("📊 Temporada: $season")
+            
+            // ============ CLASSIFICAÇÃO ============
+            val rating = document.selectFirst("a.spanAnimeInfo[href*='classificação=']")
+                ?.text()
+                ?.trim()
+                ?: "Desconhecido"
+            println("📊 Classificação: $rating")
+            
+            // ============ SCORE ============
+            val scoreText = document.selectFirst("#anime_score")?.text()?.trim()
+            val score = scoreText?.toFloatOrNull()?.let { Score.from10(it) }
+            println("📊 Score: $scoreText -> $score")
+            
+            // ============ EPISÓDIOS ============
+            val totalEpisodesText = extractTextAfterLabel(document, "Episódios:")
+            val totalEpisodes = totalEpisodesText?.toIntOrNull()
+            println("📊 Total de episódios: $totalEpisodes (texto: '$totalEpisodesText')")
+            
+            // ============ DETECTAR SE É FILME ============
+            val isMovie = url.contains("/filmes/") || 
+                         title.contains("filme", ignoreCase = true) ||
+                         totalEpisodesText == "1"
+            
+            println("📊 É filme? $isMovie")
+            
+            // ============ EXTRAIR EPISÓDIOS ============
             val episodes = extractAllEpisodes(document, url)
+            println("📊 Episódios extraídos: ${episodes.size}")
             
-            newAnimeLoadResponse(title, url, if (isMovie) TvType.Movie else TvType.Anime) {
+            // ============ CRIAR LOAD RESPONSE ============
+            val response = newAnimeLoadResponse(
+                title, 
+                url, 
+                if (isMovie) TvType.Movie else TvType.Anime
+            ) {
                 this.posterUrl = poster
                 this.year = year
                 this.plot = synopsis
                 this.tags = genres
+                this.score = score
                 
+                // Adicionar status
+                try {
+                    val statusField = this::class.members.find { it.name == "status" }
+                    statusField?.call(this, when (status.lowercase()) {
+                        "em lançamento", "lançando" -> ShowStatus.Ongoing
+                        "completo", "finalizado" -> ShowStatus.Completed
+                        else -> null
+                    })
+                } catch (e: Exception) {}
+                
+                // Adicionar estúdio
+                if (studio != null) {
+                    try {
+                        val studioField = this::class.members.find { it.name == "studio" }
+                        studioField?.call(this, studio)
+                    } catch (e: Exception) {}
+                }
+                
+                // Adicionar episódios
                 try {
                     val episodesField = this::class.members.find { it.name == "episodes" }
                     episodesField?.call(this, episodes)
                 } catch (e: Exception) {}
+                
+                // Adicionar dub/leg status
+                if (hasDub || hasSub) {
+                    addDubStatus(dubExist = hasDub, subExist = hasSub)
+                }
             }
             
+            // ============ DEBUG FINAL ============
+            println("\n" + "=".repeat(80))
+            println("📊 LOAD COMPLETO:")
+            println("   • Título: ${response.name}")
+            println("   • Tipo: ${response.type}")
+            println("   • Ano: ${response.year}")
+            println("   • Score: ${response.score}")
+            println("   • Status: ${response.status}")
+            println("   • Episódios: ${response.episodes?.size ?: 0}")
+            println("   • Tags: ${response.tags?.joinToString(", ") ?: "nenhum"}")
+            println("=".repeat(80) + "\n")
+            
+            response
+            
         } catch (e: Exception) {
+            println("\n❌ ERRO no load: ${e.message}")
+            e.printStackTrace()
+            
             newAnimeLoadResponse("Erro ao carregar", url, TvType.Anime) {
-                this.plot = "Não foi possível carregar esta página."
+                this.plot = "Não foi possível carregar esta página. Erro: ${e.message}"
             }
         }
     }
 
-    // ============ EXTRACT EPISODES ============
+    // ============ EXTRACT EPISODES - MELHORADA ============
     private fun extractAllEpisodes(document: org.jsoup.nodes.Document, baseUrl: String): List<Episode> {
         val episodes = mutableListOf<Episode>()
         
-        document.select("a.lEp, .episode-item a, a[href*='/episodio']").forEach { element ->
+        println("\n🔍 Procurando episódios...")
+        
+        // Procurar por links de episódios
+        document.select("a.lEp, .episode-item a, a[href*='/episodio'], a[href*='/animes/']").forEach { element ->
             try {
                 val episodeUrl = element.attr("href")?.takeIf { it.isNotBlank() } ?: return@forEach
-                val episodeText = element.text().trim()
-                val episodeNumber = Regex("(\\d{1,4})").find(episodeText)?.groupValues?.get(1)?.toIntOrNull() ?: return@forEach
                 
+                // Verificar se é realmente um link de episódio
+                if (!episodeUrl.contains("/episodio") && !episodeUrl.contains("/animes/")) {
+                    return@forEach
+                }
+                
+                val episodeText = element.text().trim()
+                println("   • Link encontrado: $episodeText -> $episodeUrl")
+                
+                // Extrair número do episódio
+                val episodeNumber = try {
+                    // Tentar extrair número de várias formas
+                    val patterns = listOf(
+                        Regex("""Episódio\s+(\d{1,4})"""),
+                        Regex("""Ep\.?\s*(\d{1,4})"""),
+                        Regex("""(\d{1,4})""")
+                    )
+                    
+                    var foundNumber: Int? = null
+                    for (pattern in patterns) {
+                        val match = pattern.find(episodeText)
+                        if (match != null) {
+                            foundNumber = match.groupValues[1].toIntOrNull()
+                            if (foundNumber != null) break
+                        }
+                    }
+                    
+                    foundNumber ?: return@forEach
+                } catch (e: Exception) {
+                    return@forEach
+                }
+                
+                // Determinar tipo de áudio
                 val audioType = when {
                     episodeText.contains("dublado", ignoreCase = true) -> " (Dub)"
                     episodeText.contains("legendado", ignoreCase = true) -> " (Leg)"
@@ -523,10 +726,26 @@ class AnimeFire : MainAPI() {
                         this.episode = episodeNumber
                     }
                 )
+                
+                println("     ✅ Episódio $episodeNumber adicionado")
+                
             } catch (e: Exception) {
-                // Ignorar
+                println("     ❌ Erro no episódio: ${e.message}")
             }
         }
+        
+        // Se não encontrou episódios, verificar se é um filme (apenas 1 episódio)
+        if (episodes.isEmpty()) {
+            println("   ⚠️ Nenhum episódio encontrado, tratando como filme")
+            episodes.add(
+                newEpisode(Pair("Assistir Filme", fixUrl(baseUrl))) {
+                    this.name = "Assistir Filme"
+                    this.episode = 1
+                }
+            )
+        }
+        
+        println("📊 Total de episódios processados: ${episodes.size}")
         
         return episodes.sortedBy { it.episode }
     }
