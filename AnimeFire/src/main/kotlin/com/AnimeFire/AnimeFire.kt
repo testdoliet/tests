@@ -53,7 +53,7 @@ class AnimeFire : MainAPI() {
             "/genero/magia" to "Magia",
             "/genero/mecha" to "Mecha",
             "/genero/militar" to "Militar",
-            "/genero/psicológico" to "Psicológico",
+            "/genero/psicologico" to "Psicológico",
             "/genero/slice-of-life" to "Slice of Life",
             "/genero/sobrenatural" to "Sobrenatural",
             "/genero/superpoder" to "Superpoder",
@@ -188,43 +188,77 @@ class AnimeFire : MainAPI() {
         return cleanName.trim().replace(Regex("\\s+"), " ")
     }
 
+    // ============ FUNÇÃO QUE CALCULA URL DA PÁGINA CORRETA ============
+    private fun calculatePageUrl(basePath: String, page: Int): String {
+        println("📊 CALCULANDO URL PARA PAGINAÇÃO:")
+        println("   • Base Path: '$basePath'")
+        println("   • Cloudstream Page: $page")
+        
+        return when {
+            // Página inicial (Cloudstream page 0) → Sem número
+            page == 0 -> {
+                val url = "$mainUrl$basePath"
+                println("   • Caso: Página inicial (0)")
+                println("   • URL: $url (sem /2)")
+                url
+            }
+            
+            // Primeira vez que rola (Cloudstream page 1) → /2
+            page == 1 -> {
+                val url = "$mainUrl$basePath/2"
+                println("   • Caso: Primeiro scroll (1)")
+                println("   • URL: $url (+/2)")
+                url
+            }
+            
+            // Demais rolagens (Cloudstream page 2, 3, ...) → /3, /4, ...
+            else -> {
+                // page=2 → /3 (porque já carregamos /2)
+                // page=3 → /4
+                val sitePageNumber = page + 1
+                val url = "$mainUrl$basePath/$sitePageNumber"
+                println("   • Caso: Scroll adicional ($page)")
+                println("   • URL: $url (+/$sitePageNumber)")
+                url
+            }
+        }
+    }
+
     // ============ GET MAIN PAGE CORRIGIDO COM PAGINAÇÃO ============
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        // ✅ CONTADOR DE CHAMADAS
-        callCount[request.name] = callCount.getOrDefault(request.name, 0) + 1
-        val callNumber = callCount[request.name]!!
-        
-        // ✅ VERIFICAR SE OUTRA ABA ESTÁ CARREGANDO
-        if (currentLoadingTab.isNotEmpty() && currentLoadingTab != request.name) {
-            println("🔥 ANIMEFIRE: ⚠️ Chamada #$callNumber - '${request.name}' aguardando '$currentLoadingTab'")
-            kotlinx.coroutines.delay(800)
-        }
-        
         return loadingMutex.withLock {
             try {
-                currentLoadingTab = request.name
-                val startTime = System.currentTimeMillis()
+                println("\n" + "=".repeat(80))
+                println("🔥 ANIMEFIRE: INICIANDO CARREGAMENTO")
+                println("=".repeat(80))
+                println("📊 PARÂMETROS INICIAIS:")
+                println("   • Aba: '${request.name}'")
+                println("   • Cloudstream Page: $page")
+                println("   • URL Base: ${request.data}")
                 
-                println("🔥 ANIMEFIRE: 🔒 TRAVA PEGA - '${request.name}' (chamada #$callNumber, página $page)")
-                
-                // ============ PAGINAÇÃO CORRETA ============
+                // ============ CALCULAR URL CORRETA ============
                 val basePath = request.data.removePrefix(mainUrl)
-                val sitePageNumber = page + 1 // Cloudstream page 0 = Site página 1
+                val pageUrl = calculatePageUrl(basePath, page)
                 
-                val pageUrl = if (page == 0) {
-                    "$mainUrl$basePath"
-                } else {
-                    "$mainUrl$basePath/$sitePageNumber"
-                }
+                println("\n📊 URL CALCULADA:")
+                println("   • Página do Cloudstream: $page")
+                println("   • Página do Site: ${if (page == 0) "1 (sem número)" else if (page == 1) "2 (/2)" else "${page + 1} (/${page + 1})"}")
+                println("   • URL Final: $pageUrl")
+                println("-".repeat(80))
                 
-                println("🔥 ANIMEFIRE: 📥 Carregando: $pageUrl")
+                // ============ DELAY DE ESTABILIDADE ============
+                kotlinx.coroutines.delay(500)
                 
+                // ============ CARREGAR DOCUMENTO ============
+                println("🌐 Carregando página...")
                 val document = app.get(pageUrl, timeout = 30).document
+                println("✅ Página carregada com sucesso")
                 
+                // ============ DETECTAR SEÇÃO ============
                 val isUpcomingSection = basePath.contains("/em-lancamento") || 
                                        basePath.contains("/animes-atualizados")
                 
-                // ✅ COLETAR ELEMENTOS
+                // ============ COLETAR ELEMENTOS ============
                 val elements = document.select("""
                     article a,
                     .card a,
@@ -233,76 +267,114 @@ class AnimeFire : MainAPI() {
                     a[href*='/filmes/']
                 """).take(30)
                 
+                println("📊 Elementos encontrados: ${elements.size}")
+                
                 val homeItems = mutableListOf<SearchResponse>()
                 
-                elements.forEach { element ->
+                elements.forEachIndexed { index, element ->
                     try {
                         val item = element.toSearchResponse(isUpcomingSection = isUpcomingSection)
                         if (item != null) {
                             homeItems.add(item)
+                            if (index < 3) { // Log dos primeiros 3 itens
+                                println("   • Item ${index + 1}: ${item.name}")
+                            }
                         }
                     } catch (e: Exception) {
                         // Ignorar erro em item específico
                     }
                 }
                 
-                // ✅ DETECTAR PRÓXIMA PÁGINA (MELHORADO)
-                val hasNextPage = try {
-                    val nextPageNum = sitePageNumber + 1
-                    
-                    // Múltiplas formas de detecção
-                    val hasExplicitLink = document.select("""
-                        a[href*='$basePath/$nextPageNum'],
-                        a[href*='/page/$nextPageNum'],
-                        .pagination a:contains($nextPageNum),
-                        a:contains(Próxima),
-                        a:contains(Next),
-                        .next-page,
-                        .load-more
-                    """).isNotEmpty()
-                    
-                    // ✅ TESTE DE PAGINAÇÃO FORÇADA (DEBUG)
-                    val debugForcePagination = false // Mude para true para testar
-                    val forceTest = debugForcePagination && homeItems.size >= 15 && page < 3
-                    
-                    // Verificar se há conteúdo suficiente
-                    val hasEnoughItems = homeItems.size >= 18
-                    
-                    (hasExplicitLink || forceTest) && hasEnoughItems
-                } catch (e: Exception) {
-                    false
+                // ============ DETECTAR PRÓXIMA PÁGINA (MELHORADO) ============
+                val hasNextPage = detectNextPage(document, page)
+                
+                // ============ NOME DA ABA ============
+                val tabName = if (page == 0) {
+                    request.name  // Primeira página sem (P1)
+                } else {
+                    val sitePageNum = if (page == 1) 2 else page + 1
+                    "${request.name} (P$sitePageNum)"
                 }
                 
-                // ✅ NOME DA ABA COM PAGINAÇÃO
-                val tabName = if (page > 0) "${request.name} (P$sitePageNumber)" else request.name
+                // ============ LOGS FINAIS ============
+                println("\n" + "=".repeat(80))
+                println("📊 RESULTADO FINAL:")
+                println("   • Aba: '$tabName'")
+                println("   • Itens carregados: ${homeItems.size}")
+                println("   • Próxima página disponível? $hasNextPage")
+                println("   • URL utilizada: $pageUrl")
+                println("=".repeat(80) + "\n")
                 
-                // ✅ LOGS DETALHADOS
-                val elapsedTime = System.currentTimeMillis() - startTime
-                println("🔥 ANIMEFIRE: 📊 RESUMO - '${request.name}' P$sitePageNumber")
-                println("🔥 ANIMEFIRE: 📊 Itens: ${homeItems.size}")
-                println("🔥 ANIMEFIRE: 📊 Próxima página: $hasNextPage")
-                println("🔥 ANIMEFIRE: 📊 Tempo: ${elapsedTime}ms")
-                println("🔥 ANIMEFIRE: ✅ CONCLUÍDO - '${request.name}' P$sitePageNumber")
-                
-                // ✅ DELAY ENTRE ABAS
+                // ============ DELAY FINAL ============
                 kotlinx.coroutines.delay(300)
                 
-                return@withLock newHomePageResponse(
+                newHomePageResponse(
                     tabName,
                     homeItems.distinctBy { it.url },
                     hasNext = hasNextPage
                 )
                 
             } catch (e: Exception) {
-                println("🔥 ANIMEFIRE: ❌ ERRO em '${request.name}' P$page: ${e.message}")
-                return@withLock newHomePageResponse(request.name, emptyList(), false)
-            } finally {
-                // ✅ SEMPRE LIBERAR A TRAVA
-                currentLoadingTab = ""
-                println("🔥 ANIMEFIRE: 🔓 TRAVA SOLTA - '${request.name}'")
-                kotlinx.coroutines.delay(200)
+                println("\n❌ ANIMEFIRE: ERRO CRÍTICO")
+                println("   • Aba: '${request.name}'")
+                println("   • Cloudstream Page: $page")
+                println("   • Erro: ${e.message}")
+                println("=".repeat(80) + "\n")
+                
+                newHomePageResponse(request.name, emptyList(), false)
             }
         }
+    }
+
+    // ============ FUNÇÃO PARA DETECTAR PRÓXIMA PÁGINA ============
+    private fun detectNextPage(document: org.jsoup.nodes.Document, currentPage: Int): Boolean {
+        println("\n🔍 DETECTANDO PRÓXIMA PÁGINA:")
+        println("   • Página atual do Cloudstream: $currentPage")
+        
+        // Calcular qual seria a próxima página do site
+        val nextSitePage = when {
+            currentPage == 0 -> 2  // Da página 1 (sem número) para página 2 (/2)
+            else -> currentPage + 2 // Da página /X para página /(X+1)
+        }
+        
+        println("   • Próxima página do site: $nextSitePage (/$nextSitePage)")
+        
+        // Verificar múltiplas formas de detecção
+        val detectionMethods = listOf(
+            // 1. Link numérico direto
+            { document.select("a[href*='/$nextSitePage']").isNotEmpty() } to "Link numérico /$nextSitePage",
+            
+            // 2. Botão "Próxima"
+            { document.select("a:contains(Próxima), a:contains(Próximo)").isNotEmpty() } to "Botão 'Próxima'",
+            
+            // 3. Botão ">"
+            { document.select("a:contains(>), .pagination a:contains(›)").isNotEmpty() } to "Botão '>'",
+            
+            // 4. Paginação numerada
+            { document.select(".pagination a:not(.active)").isNotEmpty() } to "Paginação numerada",
+            
+            // 5. Se tem muitos itens (indicativo de mais páginas)
+            { document.select("article, .card, .anime-item").size >= 24 } to "Muitos itens (>=24)"
+        )
+        
+        var hasNext = false
+        detectionMethods.forEachIndexed { index, (detector, description) ->
+            val detected = detector()
+            println("   • Método ${index + 1} ($description): ${if (detected) "✅" else "❌"}")
+            if (detected) hasNext = true
+        }
+        
+        // Forçar próxima página nas primeiras 3 páginas se tiver muitos itens
+        if (!hasNext && currentPage < 3) {
+            val itemCount = document.select("article, .card, .anime-item").size
+            if (itemCount >= 20) {
+                println("   • ⚠️ Forçando próxima página (muitos itens: $itemCount)")
+                hasNext = true
+            }
+        }
+        
+        println("   • Resultado final: ${if (hasNext) "✅ TEM" else "❌ NÃO TEM"} próxima página")
+        return hasNext
     }
 
     // ============ BUSCA ============
