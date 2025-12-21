@@ -18,13 +18,10 @@ class AnimeFire : MainAPI() {
     companion object {
         private const val SEARCH_PATH = "/pesquisar"
         
-        // ============ CATEGORIAS COM PRIORIDADE ============
-        private val PRIORITY_CATEGORIES = listOf(
+        // ============ TODAS AS CATEGORIAS ============
+        private val ALL_CATEGORIES = listOf(
             "/em-lancamento" to "Em Lançamento",
-            "/animes-atualizados" to "Atualizados"
-        )
-        
-        private val OTHER_CATEGORIES = listOf(
+            "/animes-atualizados" to "Atualizados",
             "/top-animes" to "Top Animes",
             "/lista-de-animes-legendados" to "Animes Legendados",
             "/lista-de-animes-dublados" to "Animes Dublados",
@@ -58,24 +55,22 @@ class AnimeFire : MainAPI() {
         
         // ============ SELECIONA 5 CATEGORIAS ALEATÓRIAS ============
         fun getRandomCategories(): List<Pair<String, String>> {
-            // Sempre inclui as prioritárias
-            val selected = PRIORITY_CATEGORIES.toMutableList()
-            
-            // Adiciona 3 aleatórias das outras (5 total)
-            selected.addAll(OTHER_CATEGORIES.shuffled().take(3))
-            
-            return selected.shuffled() // Embaralha a ordem final
+            return ALL_CATEGORIES.shuffled().distinctBy { it.first }.take(5)
         }
     }
 
-    // ============ PÁGINA INICIAL COM 5 ABAS ============
+    init {
+        println("ANIMEFIRE: Inicializando - 5 abas aleatórias")
+    }
+
+    // ============ PÁGINA INICIAL ============
     override val mainPage = mainPageOf(
         *getRandomCategories().map { (path, name) -> 
             "$mainUrl$path" to name 
         }.toTypedArray()
     )
 
-    // ============ FUNÇÃO COM BADGES CORRIGIDAS ============
+    // ============ FUNÇÃO PRINCIPAL COM POSTER CORRIGIDO ============
     private fun Element.toSearchResponse(isUpcomingSection: Boolean = false): AnimeSearchResponse? {
         val href = attr("href") ?: return null
         if (href.isBlank() || (!href.contains("/animes/") && !href.contains("/filmes/"))) return null
@@ -89,38 +84,36 @@ class AnimeFire : MainAPI() {
         
         if (combinedTitle.isBlank()) return null
         
-        // ✅ BADGES CORRIGIDAS: DETECTAR ÁUDIO PRECISAMENTE
+        // ✅ BADGES CORRIGIDAS
         val hasExplicitDub = combinedTitle.contains("dublado", ignoreCase = true)
         val hasExplicitLeg = combinedTitle.contains("legendado", ignoreCase = true)
         
-        // Lógica: AnimeFire padrão é legendado, a não ser que especifique dublado
         val finalHasDub: Boolean
         val finalHasLeg: Boolean
         
         when {
             hasExplicitDub && !hasExplicitLeg -> {
-                finalHasDub = true   // Só dublado
+                finalHasDub = true
                 finalHasLeg = false
             }
             !hasExplicitDub && hasExplicitLeg -> {
                 finalHasDub = false
-                finalHasLeg = true    // Só legendado
+                finalHasLeg = true
             }
             hasExplicitDub && hasExplicitLeg -> {
-                finalHasDub = true    // Ambos disponíveis
+                finalHasDub = true
                 finalHasLeg = true
             }
             else -> {
-                // Padrão do site: se não especificar, assume legendado
                 finalHasDub = false
-                finalHasLeg = true
+                finalHasLeg = true  // Padrão: legendado
             }
         }
         
         // NOME LIMPO
         val cleanName = extractAnimeName(combinedTitle, selectFirst(".numEp")?.text())
         
-        // FILTRO N/A (exceto em lançamento/atualizados)
+        // FILTRO N/A
         val scoreText = selectFirst(".horaUltimosEps, .rating, .score")?.text()?.trim()
         
         if ((scoreText == "N/A" || scoreText == null) && !isUpcomingSection) {
@@ -134,27 +127,38 @@ class AnimeFire : MainAPI() {
         
         val isMovie = href.contains("/filmes/") || combinedTitle.contains("filme", ignoreCase = true)
         
-        // POSTER
-        val sitePoster = selectFirst("img.imgAnimes, img.card-img-top, img[src*='.jpg'], img[src*='.png']")?.let { img ->
-            when {
-                img.hasAttr("data-src") && img.attr("data-src").contains("http") -> img.attr("data-src")
-                img.hasAttr("src") && img.attr("src").contains("http") -> img.attr("src")
-                else -> null
+        // ✅ POSTER CORRIGIDO (SEM ERRO NULL)
+        val sitePoster = try {
+            selectFirst("img")?.let { img ->
+                val src = when {
+                    img.hasAttr("data-src") -> img.attr("data-src")
+                    img.hasAttr("src") -> img.attr("src")
+                    else -> null
+                }?.takeIf { it.isNotBlank() }?.let { 
+                    if (it.startsWith("//")) {
+                        "https:$it"
+                    } else if (it.startsWith("/")) {
+                        "$mainUrl$it"
+                    } else if (!it.startsWith("http")) {
+                        "$mainUrl/$it"
+                    } else {
+                        it
+                    }
+                }
+                src
             }
-        }?.takeIf { it.isNotBlank() }?.let { fixUrl(it) }
+        } catch (e: Exception) {
+            null
+        }?.let { fixUrl(it) }
 
         return newAnimeSearchResponse(cleanName, fixUrl(href)) {
             this.posterUrl = sitePoster
             this.type = if (isMovie) TvType.Movie else TvType.Anime
             this.score = score
             
-            // ✅ BADGES APLICADAS CORRETAMENTE
             if (finalHasDub || finalHasLeg) {
                 addDubStatus(dubExist = finalHasDub, subExist = finalHasLeg)
             }
-            
-            // DEBUG
-            println("ANIMEFIRE: '$cleanName' - Dub: $finalHasDub, Leg: $finalHasLeg")
         }
     }
 
@@ -181,112 +185,115 @@ class AnimeFire : MainAPI() {
         return cleanName.trim().replace(Regex("\\s+"), " ")
     }
 
-    // ============ GET MAIN PAGE COM PAGINAÇÃO INFINITA ============
+    // ============ GET MAIN PAGE COM PAGINAÇÃO INFINITA FUNCIONANDO ============
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        // Detectar se é aba de lançamento/atualizados
-        val isUpcomingSection = request.data.contains("/em-lancamento") || 
-                               request.data.contains("/animes-atualizados")
-        
-        // ✅ PAGINAÇÃO: /2, /3, etc para páginas seguintes
-        val pageUrl = if (page > 0) {
-            // Adiciona número da página: /em-lancamento/2, /em-lancamento/3, etc
-            val baseUrl = request.data.removeSuffix("/")
-            "$baseUrl/${page + 1}"
-        } else {
-            request.data
-        }
-        
-        val document = try {
-            app.get(pageUrl, timeout = 10).document
+        try {
+            // ✅ PAGINAÇÃO CORRETA: /pagina/2, /pagina/3, etc
+            val basePath = request.data.removePrefix(mainUrl)
+            val pageSuffix = if (page > 0) "/${page + 1}" else ""
+            val pageUrl = "$mainUrl${basePath.removeSuffix("/")}$pageSuffix"
+            
+            println("ANIMEFIRE: Carregando $pageUrl (página ${page + 1})")
+            
+            val document = app.get(pageUrl, timeout = 10).document
+            
+            val isUpcomingSection = basePath.contains("/em-lancamento") || 
+                                   basePath.contains("/animes-atualizados")
+            
+            // ✅ DETECTAR SE TEM PRÓXIMA PÁGINA
+            val hasNextPage = document.select("""
+                a[href*="${basePath}/"], 
+                a[href*="/${page + 2}"], 
+                .pagination a, 
+                .next-page, 
+                .load-more
+            """).isNotEmpty()
+            
+            val elements = document.select("a[href*='/animes/'], a[href*='/filmes/']")
+                .filter { 
+                    it.hasAttr("href") && 
+                    it.selectFirst("h3, .animeTitle, .card-title, img") != null
+                }
+                .take(20)
+            
+            val homeItems = elements.mapNotNull { element ->
+                try {
+                    element.toSearchResponse(isUpcomingSection = isUpcomingSection)
+                } catch (e: Exception) {
+                    null
+                }
+            }
+            
+            println("ANIMEFIRE: ${request.name} - ${homeItems.size} itens, próxima página: $hasNextPage")
+            
+            return newHomePageResponse(
+                if (page > 0) "${request.name} (Página ${page + 1})" else request.name,
+                homeItems,
+                hasNext = hasNextPage && homeItems.isNotEmpty()
+            )
+            
         } catch (e: Exception) {
+            println("ANIMEFIRE: ERRO em ${request.name} página $page: ${e.message}")
             return newHomePageResponse(request.name, emptyList(), false)
         }
-        
-        // Verificar se há mais páginas (scrolling infinito)
-        val hasNextPage = document.select("a[href*='/${page + 2}'], .pagination a:contains(${page + 2})")
-            .isNotEmpty() || document.select(".load-more").isNotEmpty()
-        
-        // EMBARALHAR DINAMICAMENTE
-        val elements = document.select("a[href*='/animes/'], a[href*='/filmes/']")
-            .filter { 
-                it.hasAttr("href") && 
-                it.selectFirst("h3, .animeTitle, .card-title") != null
-            }
-            .shuffled()
-            .take(20) // Mais itens por página
-        
-        val homeItems = elements.mapNotNull { element ->
-            element.toSearchResponse(isUpcomingSection = isUpcomingSection)
-        }
-        
-        return newHomePageResponse(
-            if (page > 0) "${request.name} - Página ${page + 1}" else request.name,
-            homeItems,
-            hasNext = hasNextPage && homeItems.isNotEmpty()
-        )
     }
 
-    // ============ BUSCA COM PAGINAÇÃO ============
+    // ============ BUSCA ============
     override suspend fun search(query: String): List<SearchResponse> {
         if (query.length < 2) return emptyList()
         
         val searchUrl = "$mainUrl$SEARCH_PATH/${query.trim().replace(" ", "-").lowercase()}"
-        val document = try {
-            app.get(searchUrl, timeout = 15).document
-        } catch (e: Exception) {
-            return emptyList()
-        }
         
-        return document.select("a[href*='/animes/'], a[href*='/filmes/']")
-            .mapNotNull { it.toSearchResponse() }
-            .distinctBy { it.url }
-            .take(30)
+        return try {
+            val document = app.get(searchUrl, timeout = 15).document
+            
+            document.select("a[href*='/animes/'], a[href*='/filmes/']")
+                .mapNotNull { it.toSearchResponse() }
+                .distinctBy { it.url }
+                .take(30)
+                
+        } catch (e: Exception) {
+            emptyList()
+        }
     }
 
-    // ============ LOAD COM EPISÓDIOS ============
+    // ============ LOAD ============
     override suspend fun load(url: String): LoadResponse {
-        val document = try {
-            app.get(url, timeout = 20).document
-        } catch (e: Exception) {
-            return newAnimeLoadResponse("Erro ao carregar", url, TvType.Anime) {
-                this.plot = "Não foi possível carregar esta página."
-            }
-        }
-        
-        // TÍTULO
-        val title = document.selectFirst("h1.animeTitle, h1")?.text()?.trim() ?: "Sem Título"
-        
-        // POSTER
-        val poster = document.selectFirst("img.imgAnimes, .poster img")?.attr("src")?.let { fixUrl(it) }
-        
-        // SINOPSE
-        val synopsis = document.selectFirst("p.sinopse, .description")?.text()?.trim()
-            ?: "Sinopse não disponível."
-        
-        // INFORMAÇÕES
-        val year = document.select("div.animeInfo:contains(Ano:) span.spanAnimeInfo")
-            .firstOrNull()?.text()?.trim()?.toIntOrNull()
-        
-        val genres = document.select("div.animeInfo:contains(Gênero:) a")
-            .map { it.text().trim() }
-        
-        val isMovie = url.contains("/filmes/") || title.contains("filme", ignoreCase = true)
-        
-        // EPISÓDIOS
-        val episodes = extractAllEpisodes(document, url)
-        
-        return newAnimeLoadResponse(title, url, if (isMovie) TvType.Movie else TvType.Anime) {
-            this.posterUrl = poster
-            this.year = year
-            this.plot = synopsis
-            this.tags = genres
+        return try {
+            val document = app.get(url, timeout = 20).document
             
-            // Adicionar episódios
-            try {
-                val episodesField = this::class.members.find { it.name == "episodes" }
-                episodesField?.call(this, episodes)
-            } catch (e: Exception) {
-                // Fallback silencioso
+            val title = document.selectFirst("h1.animeTitle, h1")?.text()?.trim() ?: "Sem Título"
+            val poster = document.selectFirst("img.imgAnimes, .poster img")?.attr("src")?.let { fixUrl(it) }
+            val synopsis = document.selectFirst("p.sinopse, .description")?.text()?.trim()
+                ?: "Sinopse não disponível."
+            
+            val year = document.select("div.animeInfo:contains(Ano:) span.spanAnimeInfo")
+                .firstOrNull()?.text()?.trim()?.toIntOrNull()
+            
+            val genres = document.select("div.animeInfo:contains(Gênero:) a")
+                .map { it.text().trim() }
+            
+            val isMovie = url.contains("/filmes/") || title.contains("filme", ignoreCase = true)
+            
+            val episodes = extractAllEpisodes(document, url)
+            
+            newAnimeLoadResponse(title, url, if (isMovie) TvType.Movie else TvType.Anime) {
+                this.posterUrl = poster
+                this.year = year
+                this.plot = synopsis
+                this.tags = genres
+                
+                try {
+                    val episodesField = this::class.members.find { it.name == "episodes" }
+                    episodesField?.call(this, episodes)
+                } catch (e: Exception) {
+                    // Silencioso
+                }
+            }
+            
+        } catch (e: Exception) {
+            newAnimeLoadResponse("Erro ao carregar", url, TvType.Anime) {
+                this.plot = "Não foi possível carregar esta página."
             }
         }
     }
@@ -314,7 +321,7 @@ class AnimeFire : MainAPI() {
                     }
                 )
             } catch (e: Exception) {
-                // Ignorar erro
+                // Ignorar
             }
         }
         
