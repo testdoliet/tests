@@ -4,6 +4,8 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.LoadResponse.Companion.addTrailer
 import com.lagradost.cloudstream3.app
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.jsoup.nodes.Element
 
 class AnimeFire : MainAPI() {
@@ -18,8 +20,11 @@ class AnimeFire : MainAPI() {
     companion object {
         private const val SEARCH_PATH = "/pesquisar"
         
-        // ============ TODAS AS CATEGORIAS ============
-        private val ALL_CATEGORIES = listOf(
+        // ============ MUTEX PARA UMA ABA POR VEZ ============
+        private val loadingMutex = Mutex()
+        
+        // ============ CATEGORIAS CONFIÁVEIS ============
+        private val WORKING_CATEGORIES = listOf(
             "/em-lancamento" to "Em Lançamento",
             "/animes-atualizados" to "Atualizados",
             "/top-animes" to "Top Animes",
@@ -50,17 +55,17 @@ class AnimeFire : MainAPI() {
             "/genero/slice-of-life" to "Slice of Life",
             "/genero/sobrenatural" to "Sobrenatural",
             "/genero/superpoder" to "Superpoder",
-            "/genero/vampiros" to "Vampiros"
+            "/genero/vampiros" to "Vampiros",
+            "/genero/vida-escolar" to "Vida Escolar"
         )
         
-        // ============ SELECIONA 5 CATEGORIAS ALEATÓRIAS ============
         fun getRandomCategories(): List<Pair<String, String>> {
-            return ALL_CATEGORIES.shuffled().distinctBy { it.first }.take(5)
+            return WORKING_CATEGORIES.shuffled().take(5)
         }
     }
 
     init {
-        println("ANIMEFIRE: Inicializando - 5 abas aleatórias")
+        println("ANIMEFIRE: ✅ Inicializado - Sistema uma-aba-por-vez")
     }
 
     // ============ PÁGINA INICIAL ============
@@ -70,7 +75,7 @@ class AnimeFire : MainAPI() {
         }.toTypedArray()
     )
 
-    // ============ FUNÇÃO PRINCIPAL COM POSTER CORRIGIDO ============
+    // ============ FUNÇÃO PRINCIPAL ============
     private fun Element.toSearchResponse(isUpcomingSection: Boolean = false): AnimeSearchResponse? {
         val href = attr("href") ?: return null
         if (href.isBlank() || (!href.contains("/animes/") && !href.contains("/filmes/"))) return null
@@ -84,7 +89,7 @@ class AnimeFire : MainAPI() {
         
         if (combinedTitle.isBlank()) return null
         
-        // ✅ BADGES CORRIGIDAS
+        // BADGES
         val hasExplicitDub = combinedTitle.contains("dublado", ignoreCase = true)
         val hasExplicitLeg = combinedTitle.contains("legendado", ignoreCase = true)
         
@@ -106,7 +111,7 @@ class AnimeFire : MainAPI() {
             }
             else -> {
                 finalHasDub = false
-                finalHasLeg = true  // Padrão: legendado
+                finalHasLeg = true
             }
         }
         
@@ -127,7 +132,7 @@ class AnimeFire : MainAPI() {
         
         val isMovie = href.contains("/filmes/") || combinedTitle.contains("filme", ignoreCase = true)
         
-        // ✅ POSTER CORRIGIDO (SEM ERRO NULL)
+        // POSTER
         val sitePoster = try {
             selectFirst("img")?.let { img ->
                 val src = when {
@@ -135,15 +140,10 @@ class AnimeFire : MainAPI() {
                     img.hasAttr("src") -> img.attr("src")
                     else -> null
                 }?.takeIf { it.isNotBlank() }?.let { 
-                    if (it.startsWith("//")) {
-                        "https:$it"
-                    } else if (it.startsWith("/")) {
-                        "$mainUrl$it"
-                    } else if (!it.startsWith("http")) {
-                        "$mainUrl/$it"
-                    } else {
-                        it
-                    }
+                    if (it.startsWith("//")) "https:$it"
+                    else if (it.startsWith("/")) "$mainUrl$it"
+                    else if (!it.startsWith("http")) "$mainUrl/$it"
+                    else it
                 }
                 src
             }
@@ -185,83 +185,97 @@ class AnimeFire : MainAPI() {
         return cleanName.trim().replace(Regex("\\s+"), " ")
     }
 
-    // ============ GET MAIN PAGE COM TIMING CONTROLADO ============
-override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-    val startTime = System.currentTimeMillis()
-    
-    try {
-        // PAGINAÇÃO
-        val basePath = request.data.removePrefix(mainUrl)
-        val pageSuffix = if (page > 0) "/${page + 1}" else ""
-        val pageUrl = "$mainUrl${basePath.removeSuffix("/")}$pageSuffix"
-        
-        println("ANIMEFIRE: Iniciando ${request.name} (${page + 1})")
-        
-        // ✅ DELAY ARTIFICIAL PARA NÃO CANCELAR (como SuperFlix)
-        kotlinx.coroutines.delay(1000) // 1 segundo de delay inicial
-        
-        val document = app.get(pageUrl, timeout = 15).document
-        
-        val isUpcomingSection = basePath.contains("/em-lancamento") || 
-                               basePath.contains("/animes-atualizados")
-        
-        // ✅ DELAY ENTRE PROCESSAMENTO DE ITENS
-        val elements = document.select("a[href*='/animes/'], a[href*='/filmes/']")
-            .filter { 
-                it.hasAttr("href") && 
-                it.selectFirst("h3, .animeTitle, .card-title, img") != null
-            }
-            .take(25)
-        
-        val homeItems = mutableListOf<SearchResponse>()
-        
-        // ✅ PROCESSAR UM POR UM COM PEQUENOS DELAYS
-        elements.forEachIndexed { index, element ->
+    // ============ GET MAIN PAGE - UMA ABA POR VEZ ============
+    override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
+        // ✅ MUTEX: TRAVA PARA UMA ABA POR VEZ
+        return loadingMutex.withLock {
+            val startTime = System.currentTimeMillis()
+            
             try {
-                val item = element.toSearchResponse(isUpcomingSection = isUpcomingSection)
-                if (item != null) {
-                    homeItems.add(item)
-                    
-                    // Pequeno delay a cada 5 itens (simula carregamento real)
-                    if (index % 5 == 0) {
-                        kotlinx.coroutines.delay(50)
+                println("ANIMEFIRE: 🔒 TRAVA PEGA - ${request.name}")
+                
+                // DELAY INICIAL OBRIGATÓRIO
+                kotlinx.coroutines.delay(2000) // 2 segundos fixos
+                
+                // PAGINAÇÃO
+                val basePath = request.data.removePrefix(mainUrl)
+                val pageSuffix = if (page > 0) "/${page + 1}" else ""
+                val pageUrl = "$mainUrl${basePath.removeSuffix("/")}$pageSuffix"
+                
+                println("ANIMEFIRE: 📥 Carregando ${request.name} ($pageUrl)")
+                
+                val document = app.get(pageUrl, timeout = 25).document
+                
+                val isUpcomingSection = basePath.contains("/em-lancamento") || 
+                                       basePath.contains("/animes-atualizados")
+                
+                // SELEÇÃO AMPLA
+                val elements = document.select("""
+                    article a,
+                    .card a,
+                    .anime-item a,
+                    a[href*='/animes/'],
+                    a[href*='/filmes/']
+                """).take(30)
+                
+                val homeItems = mutableListOf<SearchResponse>()
+                
+                // PROCESSAMENTO LENTO (simula carregamento)
+                elements.forEachIndexed { index, element ->
+                    try {
+                        val item = element.toSearchResponse(isUpcomingSection = isUpcomingSection)
+                        if (item != null) {
+                            homeItems.add(item)
+                            
+                            // Delay entre itens para não sobrecarregar
+                            if (index % 3 == 0) {
+                                kotlinx.coroutines.delay(100)
+                            }
+                        }
+                    } catch (e: Exception) {
+                        // Ignorar erro no item
                     }
                 }
+                
+                // GARANTIR TEMPO MÍNIMO DE 4 SEGUNDOS
+                val elapsed = System.currentTimeMillis() - startTime
+                val minTime = 4000L
+                
+                if (elapsed < minTime) {
+                    val extra = minTime - elapsed
+                    println("ANIMEFIRE: ⏱️ Delay extra de ${extra}ms")
+                    kotlinx.coroutines.delay(extra)
+                }
+                
+                // VERIFICAR PRÓXIMA PÁGINA
+                val hasNextPage = document.select("a[href*='/${page + 2}']").isNotEmpty()
+                
+                val finalElapsed = System.currentTimeMillis() - startTime
+                println("ANIMEFIRE: ✅ ${request.name} - ${homeItems.size} itens em ${finalElapsed}ms")
+                
+                // DELAY ANTES DE LIBERAR TRAVA
+                kotlinx.coroutines.delay(1000)
+                
+                println("ANIMEFIRE: 🔓 TRAVA SOLTA - ${request.name}")
+                
+                newHomePageResponse(
+                    if (page > 0) "${request.name} (P${page + 1})" else request.name,
+                    homeItems.distinctBy { it.url },
+                    hasNext = hasNextPage
+                )
+                
             } catch (e: Exception) {
-                // Ignorar erro no item
+                println("ANIMEFIRE: ❌ ERRO em ${request.name}: ${e.message}")
+                
+                // LIBERAR TRAVA MESMO COM ERRO
+                kotlinx.coroutines.delay(500)
+                println("ANIMEFIRE: 🔓 TRAVA SOLTA (erro) - ${request.name}")
+                
+                newHomePageResponse(request.name, emptyList(), false)
             }
         }
-        
-        // ✅ GARANTIR NO MÍNIMO 2 SEGUNDOS DE CARREGAMENTO
-        val elapsed = System.currentTimeMillis() - startTime
-        val minLoadTime = 2000L // 2 segundos mínimo
-        
-        if (elapsed < minLoadTime) {
-            val remaining = minLoadTime - elapsed
-            kotlinx.coroutines.delay(remaining)
-            println("ANIMEFIRE: Delay extra de ${remaining}ms")
-        }
-        
-        val hasNextPage = document.select("""
-            a[href*="${basePath}/"], 
-            a[href*="/${page + 2}"], 
-            .pagination a
-        """).isNotEmpty()
-        
-        println("ANIMEFIRE: ${request.name} - ${homeItems.size} itens em ${System.currentTimeMillis() - startTime}ms")
-        
-        return newHomePageResponse(
-            if (page > 0) "${request.name} (Página ${page + 1})" else request.name,
-            homeItems,
-            hasNext = hasNextPage && homeItems.isNotEmpty()
-        )
-        
-    } catch (e: Exception) {
-        println("ANIMEFIRE: ERRO em ${request.name}: ${e.message}")
-        // ✅ RETORNAR LISTA VAZIA EM VEZ DE TRAVAR
-        return newHomePageResponse(request.name, emptyList(), false)
     }
-}
+
     // ============ BUSCA ============
     override suspend fun search(query: String): List<SearchResponse> {
         if (query.length < 2) return emptyList()
@@ -269,6 +283,7 @@ override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageR
         val searchUrl = "$mainUrl$SEARCH_PATH/${query.trim().replace(" ", "-").lowercase()}"
         
         return try {
+            // Busca não usa mutex (permite concorrência)
             val document = app.get(searchUrl, timeout = 15).document
             
             document.select("a[href*='/animes/'], a[href*='/filmes/']")
@@ -283,8 +298,9 @@ override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageR
 
     // ============ LOAD ============
     override suspend fun load(url: String): LoadResponse {
+        // Load também não usa mutex
         return try {
-            val document = app.get(url, timeout = 20).document
+            val document = app.get(url, timeout = 25).document
             
             val title = document.selectFirst("h1.animeTitle, h1")?.text()?.trim() ?: "Sem Título"
             val poster = document.selectFirst("img.imgAnimes, .poster img")?.attr("src")?.let { fixUrl(it) }
