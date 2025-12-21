@@ -233,6 +233,8 @@ class AnimeFire : MainAPI() {
         val statusText = statusElement?.text()?.trim() ?: "Desconhecido"
         val showStatus = getStatus(statusText)
 
+        return if (isMovie) {
+        newMovieLoadResponse(cleanTitle, url, type, url) {
         // Extrair tipo de áudio disponível
         val audioElement = document.selectFirst("div.animeInfo:contains(Audio:) span.spanAnimeInfo")
         val audioText = audioElement?.text()?.trim() ?: "Legendado"
