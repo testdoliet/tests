@@ -1,16 +1,10 @@
 package com.AnimeFire
 
-import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.LoadResponse.Companion.addTrailer
 import com.lagradost.cloudstream3.app
 import org.jsoup.nodes.Element
-import java.net.URLEncoder
-import java.text.SimpleDateFormat
-import com.fasterxml.jackson.databind.ObjectMapper
-import com.google.gson.JsonParser
-import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 
 class AnimeFire : MainAPI() {
     override var mainUrl = "https://animefire.io"
@@ -23,25 +17,6 @@ class AnimeFire : MainAPI() {
 
     companion object {
         private const val SEARCH_PATH = "/pesquisar"
-    }
-
-    // ============ FUNÇÃO PARA CONVERTER STATUS ============
-    private fun getStatus(t: String?): ShowStatus {
-        return when {
-            t == null -> ShowStatus.Completed
-            t.contains("em andamento", ignoreCase = true) || 
-            t.contains("lançando", ignoreCase = true) ||
-            t.contains("lançamento", ignoreCase = true) ||
-            t.contains("updating", ignoreCase = true) ||
-            t.contains("ongoing", ignoreCase = true) -> ShowStatus.Ongoing
-            
-            t.contains("concluído", ignoreCase = true) ||
-            t.contains("completo", ignoreCase = true) ||
-            t.contains("completado", ignoreCase = true) ||
-            t.contains("finished", ignoreCase = true) -> ShowStatus.Completed
-            
-            else -> ShowStatus.Completed
-        }
     }
 
     // ============ PÁGINA INICIAL ============
@@ -213,7 +188,7 @@ class AnimeFire : MainAPI() {
         }.take(30)
     }
 
-    // ============ LOAD PRINCIPAL ATUALIZADA COM SHOWSTATUS ============
+    // ============ LOAD PRINCIPAL ATUALIZADA ============
     
     override suspend fun load(url: String): LoadResponse {
         val document = app.get(url).document
@@ -233,8 +208,6 @@ class AnimeFire : MainAPI() {
         val statusText = statusElement?.text()?.trim() ?: "Desconhecido"
         val showStatus = getStatus(statusText)
 
-        return if (isMovie) {
-        newMovieLoadResponse(cleanTitle, url, type, url) {
         // Extrair tipo de áudio disponível
         val audioElement = document.selectFirst("div.animeInfo:contains(Audio:) span.spanAnimeInfo")
         val audioText = audioElement?.text()?.trim() ?: "Legendado"
@@ -284,10 +257,8 @@ class AnimeFire : MainAPI() {
                 this.plot = plot
                 this.tags = tags?.distinct()?.take(10)
                 this.posterUrl = poster
-                this.backgroundPosterUrl = poster // Usar mesma imagem para banner
+                this.backgroundPosterUrl = poster
                 this.recommendations = recommendations.takeIf { it.isNotEmpty() }
-                
-                // USANDO A MESMA ABORDAGEM DO ALLWISH
                 this.showStatus = showStatus
             }
         } else {
@@ -303,10 +274,8 @@ class AnimeFire : MainAPI() {
                 this.plot = plot
                 this.tags = tags?.distinct()?.take(10)
                 this.posterUrl = poster
-                this.backgroundPosterUrl = poster // Usar mesma imagem para banner
+                this.backgroundPosterUrl = poster
                 this.recommendations = recommendations.takeIf { it.isNotEmpty() }
-                
-                // USANDO A MESMA ABORDAGEM DO ALLWISH
                 this.showStatus = showStatus
             }
         }
