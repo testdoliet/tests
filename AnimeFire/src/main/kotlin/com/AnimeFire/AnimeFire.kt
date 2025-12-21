@@ -203,10 +203,26 @@ class AnimeFire : MainAPI() {
         val isMovie = url.contains("/filmes/") || rawTitle.contains("Movie", ignoreCase = true)
         val type = if (isMovie) TvType.Movie else TvType.Anime
 
-        // Extrair status do anime
-        val statusElement = document.selectFirst("div.animeInfo:contains(Status:) span.spanAnimeInfo")
-        val statusText = statusElement?.text()?.trim() ?: "Desconhecido"
-        val showStatus = getStatus(statusText)
+        // CORREÇÃO: Extrair status do anime usando o seletor correto
+        val statusText = if (!isMovie) {
+            // Primeiro método: procurar elemento que contém "Status:" e pegar o próximo span
+            val statusDiv = document.select("div.animeInfo:contains(Status:)").firstOrNull()
+            if (statusDiv != null) {
+                statusDiv.select("span.spanAnimeInfo").firstOrNull()?.text()?.trim()
+            } else {
+                // Segundo método: procurar texto específico
+                val statusElement = document.select("span.spanAnimeInfo:contains(Em lançamento), span.spanAnimeInfo:contains(Concluído)")
+                    .firstOrNull()
+                statusElement?.text()?.trim()
+            } ?: "Desconhecido"
+        } else {
+            null
+        }
+        
+        // DEBUG: Ver o que está sendo extraído
+        println("DEBUG - Status extraído: '$statusText' para URL: $url")
+        
+        val showStatus = if (!isMovie) getStatus(statusText) else null
 
         // Extrair tipo de áudio disponível
         val audioElement = document.selectFirst("div.animeInfo:contains(Audio:) span.spanAnimeInfo")
@@ -252,6 +268,7 @@ class AnimeFire : MainAPI() {
             }
 
         return if (isMovie) {
+            // PARA FILMES: não adicionar showStatus
             newMovieLoadResponse(cleanTitle, url, type, url) {
                 this.year = finalYear
                 this.plot = plot
@@ -259,8 +276,10 @@ class AnimeFire : MainAPI() {
                 this.posterUrl = poster
                 this.backgroundPosterUrl = poster
                 this.recommendations = recommendations.takeIf { it.isNotEmpty() }
+                // Não adicionar showStatus para filmes
             }
         } else {
+            // PARA ANIMES: adicionar showStatus
             newAnimeLoadResponse(cleanTitle, url, type) {
                 if (hasDub) {
                     addEpisodes(DubStatus.Dubbed, episodes.filter { it.name?.contains("(Dub)", ignoreCase = true) == true })
@@ -275,7 +294,11 @@ class AnimeFire : MainAPI() {
                 this.posterUrl = poster
                 this.backgroundPosterUrl = poster
                 this.recommendations = recommendations.takeIf { it.isNotEmpty() }
-                this.showStatus = showStatus
+                
+                // Adicionar showStatus apenas para animes
+                if (showStatus != null) {
+                    this.showStatus = showStatus
+                }
             }
         }
     }
