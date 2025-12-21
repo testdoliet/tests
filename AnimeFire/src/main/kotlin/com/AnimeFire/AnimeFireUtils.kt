@@ -1,32 +1,5 @@
 package com.AnimeFire
 
-import com.lagradost.cloudstream3.ShowStatus
-
-// ============ FUNÇÃO PARA STATUS DO ANIME ============
-fun getStatus(t: String?): ShowStatus {
-    if (t == null) {
-        return ShowStatus.Completed
-    }
-    
-    val status = t.trim()
-    
-    return when {
-        status.contains("em lançamento", ignoreCase = true) ||
-        status.contains("lançando", ignoreCase = true) ||
-        status.contains("em andamento", ignoreCase = true) ||
-        status.contains("ongoing", ignoreCase = true) ||
-        status.contains("atualizando", ignoreCase = true) -> ShowStatus.Ongoing
-        
-        status.contains("concluído", ignoreCase = true) ||
-        status.contains("completo", ignoreCase = true) ||
-        status.contains("completado", ignoreCase = true) ||
-        status.contains("terminado", ignoreCase = true) ||
-        status.contains("finished", ignoreCase = true) -> ShowStatus.Completed
-        
-        else -> ShowStatus.Completed
-    }
-}
-
 // ============ FUNÇÕES UTILITÁRIAS PARA O ANIMEFIRE ============
 object AnimeFireUtils {
     
@@ -73,7 +46,7 @@ object AnimeFireUtils {
         }
     }
     
-    // Extrai status da página
+    // Extrai status da página (apenas o texto, não converte)
     fun extractStatusFromPage(document: org.jsoup.nodes.Document): String? {
         val statusDiv = document.select("div.animeInfo").firstOrNull { 
             it.text().contains("Status:", ignoreCase = true) 
