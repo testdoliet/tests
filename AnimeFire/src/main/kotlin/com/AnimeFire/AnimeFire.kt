@@ -259,7 +259,6 @@ class AnimeFire : MainAPI() {
                 this.posterUrl = poster
                 this.backgroundPosterUrl = poster
                 this.recommendations = recommendations.takeIf { it.isNotEmpty() }
-                this.showStatus = showStatus
             }
         } else {
             newAnimeLoadResponse(cleanTitle, url, type) {
