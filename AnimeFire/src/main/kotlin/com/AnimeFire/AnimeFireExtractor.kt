@@ -8,7 +8,7 @@ import org.json.JSONObject
 import org.jsoup.Jsoup
 
 // MUDAR O NOME DA CLASSE PARA AnimeFireVideoExtractor
-object AnimeFireExtractor {
+object AnimeFireVideoExtractor {
     // Mapa de itag para qualidade
     private val itagQualityMap = mapOf(
         18 to 360,   // 360p MP4
