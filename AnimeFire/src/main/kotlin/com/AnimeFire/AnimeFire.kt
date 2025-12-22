@@ -631,11 +631,21 @@ class AnimeFire : MainAPI() {
                     episodesField?.call(this, episodes)
                 } catch (e: Exception) {}
                 
-                // Adicionar dub/leg status - CORRIGIDO
-                addDubStatus(
-                    dubExist = hasDub,
-                    subExist = hasSub
-                )
+                // Adicionar dub/leg status usando reflection
+                if (hasDub || hasSub) {
+                    try {
+                        val dubStatusField = this::class.members.find { it.name == "dubStatus" }
+                        if (hasDub && hasSub) {
+                            dubStatusField?.call(this, DubStatus.Both)
+                        } else if (hasDub) {
+                            dubStatusField?.call(this, DubStatus.Dubbed)
+                        } else if (hasSub) {
+                            dubStatusField?.call(this, DubStatus.Subbed)
+                        }
+                    } catch (e: Exception) {
+                        println("⚠️ Não foi possível adicionar dubStatus: ${e.message}")
+                    }
+                }
                 
                 // Adicionar status APENAS se NÃO for filme
                 if (!isMovie) {
