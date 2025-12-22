@@ -821,8 +821,8 @@ class AnimeFire : MainAPI() {
         println("=".repeat(80))
         
         return try {
-            // Usar AnimeFireVideoExtractor
-            AnimeFireVideoExtractor().extractVideoLinks(data, mainUrl, name, callback)
+            // Usar AnimeFireExtractor (nome correto)
+            AnimeFireExtractor().extract(data, mainUrl, name, callback)
             true
         } catch (e: Exception) {
             println("❌ Erro no loadLinks: ${e.message}")
