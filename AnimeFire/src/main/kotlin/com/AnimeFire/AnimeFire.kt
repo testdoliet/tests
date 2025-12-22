@@ -704,101 +704,102 @@ class AnimeFire : MainAPI() {
         }
     }
 
-    // ============ EXTRACT EPISODES - FUNCIONAL ============
-    private fun extractAllEpisodesFuncional(document: org.jsoup.nodes.Document, baseUrl: String): List<Episode> {
-        println("\n🔍 EXTRACTING EPISODES")
-        println("📊 URL base: $baseUrl")
-        
-        val episodes = mutableListOf<Episode>()
-        
-        // PRIMEIRO: Tentar com o seletor específico da seção de episódios
-        var episodeElements = document.select("div.div_video_list a.lEp.epT")
-        
-        if (episodeElements.isEmpty()) {
-            // SEGUNDO: Tentar com seletores mais genéricos
-            episodeElements = document.select("a.lEp.epT, a.lEp, .divListaEps a, [href*='/video/'], [href*='/episodio/']")
-        }
-        
-        if (episodeElements.isEmpty()) {
-            // TERCEIRO: Tentar buscar por padrão de URL
-            episodeElements = document.select("a[href*='/animes/']")
-                .filter { element ->
-                    val href = element.attr("href")
-                    href.matches(Regex(".*/animes/[^/]+/\\d+/?$"))
-                }
-        }
-        
-        println("📊 Elementos de episódio encontrados: ${episodeElements.size}")
-        
-        if (episodeElements.isEmpty()) {
-            println("❌ NENHUM EPISÓDIO ENCONTRADO!")
-            return emptyList()
-        }
-        
-        println("✅ PROCESSANDO EPISÓDIOS...")
-        
-        episodeElements.forEachIndexed { index, element ->
-            try {
-                val href = element.attr("href")
-                val text = element.text().trim()
-                
-                if (href.isBlank() || text.isBlank()) {
-                    println("   ⚠️ Episódio ${index + 1}: href ou texto vazio")
-                    return@forEachIndexed
-                }
-                
-                // EXTRAIR NÚMERO DO EPISÓDIO
-                val episodeNumber = extractEpisodeNumberFuncional(text, href)
-                
-                if (episodeNumber == null) {
-                    println("   ⚠️ Episódio ${index + 1}: Não consegui extrair número")
-                    println("      Texto: '$text'")
-                    println("      Href: '$href'")
-                    return@forEachIndexed
-                }
-                
-                // CORRIGIR URL
-                val fixedHref = when {
-                    href.startsWith("//") -> "https:$href"
-                    href.startsWith("/") -> "$mainUrl$href"
-                    !href.startsWith("http") -> "$mainUrl/$href"
-                    else -> href
-                }
-                
-                // CRIAR EPISÓDIO
-                val episode = newEpisode(fixedHref) {
-                    this.name = text
-                    this.episode = episodeNumber
-                    this.season = 1
-                }
-                
-                episodes.add(episode)
-                
-                // DEBUG: Mostrar apenas os primeiros 3 e o último
-                when {
-                    index < 3 -> println("   ✅ Ep $episodeNumber: '$text'")
-                    index == episodeElements.size - 1 -> println("   ... e mais ${episodeElements.size - 3} episódios")
-                    else -> {}
-                }
-                
-            } catch (e: Exception) {
-                println("   ❌ Erro no episódio ${index + 1}: ${e.message}")
-            }
-        }
-        
-        // Ordenar por número do episódio
-        val sortedEpisodes = episodes.sortedBy { it.episode }
-        
-        println("\n📊 RESULTADO FINAL:")
-        println("   • Total de episódios extraídos: ${sortedEpisodes.size}")
-        if (sortedEpisodes.isNotEmpty()) {
-            println("   • Primeiro episódio: ${sortedEpisodes.first().episode}")
-            println("   • Último episódio: ${sortedEpisodes.last().episode}")
-        }
-        
-        return sortedEpisodes
+// ============ EXTRACT EPISODES - FUNCIONAL ============
+private fun extractAllEpisodesFuncional(document: org.jsoup.nodes.Document, baseUrl: String): List<Episode> {
+    println("\n🔍 EXTRACTING EPISODES")
+    println("📊 URL base: $baseUrl")
+    
+    val episodes = mutableListOf<Episode>()
+    
+    // PRIMEIRO: Tentar com o seletor específico da seção de episódios
+    var episodeElements = document.select("div.div_video_list a.lEp.epT")
+    
+    if (episodeElements.isEmpty()) {
+        // SEGUNDO: Tentar com seletores mais genéricos
+        episodeElements = document.select("a.lEp.epT, a.lEp, .divListaEps a, [href*='/video/'], [href*='/episodio/']")
     }
-
+    
+    if (episodeElements.isEmpty()) {
+        // TERCEIRO: Tentar buscar por padrão de URL
+        val allLinks = document.select("a[href*='/animes/']")
+        val filteredLinks = allLinks.filter { element ->
+            val href = element.attr("href")
+            href.matches(Regex(".*/animes/[^/]+/\\d+/?$"))
+        }
+        // Converter List<Element> para Elements
+        episodeElements = org.jsoup.select.Elements(filteredLinks)
+    }
+    
+    println("📊 Elementos de episódio encontrados: ${episodeElements.size}")
+    
+    if (episodeElements.isEmpty()) {
+        println("❌ NENHUM EPISÓDIO ENCONTRADO!")
+        return emptyList()
+    }
+    
+    println("✅ PROCESSANDO EPISÓDIOS...")
+    
+    episodeElements.forEachIndexed { index, element ->
+        try {
+            val href = element.attr("href")
+            val text = element.text().trim()
+            
+            if (href.isBlank() || text.isBlank()) {
+                println("   ⚠️ Episódio ${index + 1}: href ou texto vazio")
+                return@forEachIndexed
+            }
+            
+            // EXTRAIR NÚMERO DO EPISÓDIO
+            val episodeNumber = extractEpisodeNumberFuncional(text, href)
+            
+            if (episodeNumber == null) {
+                println("   ⚠️ Episódio ${index + 1}: Não consegui extrair número")
+                println("      Texto: '$text'")
+                println("      Href: '$href'")
+                return@forEachIndexed
+            }
+            
+            // CORRIGIR URL
+            val fixedHref = when {
+                href.startsWith("//") -> "https:$href"
+                href.startsWith("/") -> "$mainUrl$href"
+                !href.startsWith("http") -> "$mainUrl/$href"
+                else -> href
+            }
+            
+            // CRIAR EPISÓDIO
+            val episode = newEpisode(fixedHref) {
+                this.name = text
+                this.episode = episodeNumber
+                this.season = 1
+            }
+            
+            episodes.add(episode)
+            
+            // DEBUG: Mostrar apenas os primeiros 3 e o último
+            when {
+                index < 3 -> println("   ✅ Ep $episodeNumber: '$text'")
+                index == episodeElements.size - 1 -> println("   ... e mais ${episodeElements.size - 3} episódios")
+                else -> {}
+            }
+            
+        } catch (e: Exception) {
+            println("   ❌ Erro no episódio ${index + 1}: ${e.message}")
+        }
+    }
+    
+    // Ordenar por número do episódio
+    val sortedEpisodes = episodes.sortedBy { it.episode }
+    
+    println("\n📊 RESULTADO FINAL:")
+    println("   • Total de episódios extraídos: ${sortedEpisodes.size}")
+    if (sortedEpisodes.isNotEmpty()) {
+        println("   • Primeiro episódio: ${sortedEpisodes.first().episode}")
+        println("   • Último episódio: ${sortedEpisodes.last().episode}")
+    }
+    
+    return sortedEpisodes
+}
     // ============ EXTRACT EPISODE NUMBER - FUNCIONAL ============
     private fun extractEpisodeNumberFuncional(text: String, href: String = ""): Int? {
         // Tentar extrair do texto primeiro
