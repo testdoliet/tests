@@ -449,10 +449,10 @@ class AnimeFire : MainAPI() {
             
             println("📊 Título: $title")
             
-            // ============ POSTER (IMAGEM DA PÁGINA DE DETALHES) ============
+            // ============ POSTER (CORREÇÃO PARA PEGAR A IMAGEM CORRETA) ============
             val poster = try {
-                // PRIMEIRO: Tentar pegar a imagem da página de detalhes
-                document.selectFirst(".sub_animepage_img img")?.let { img ->
+                // MÉTODO 1: Pela classe específica do AnimeFire
+                document.selectFirst("img.imgAnimes")?.let { img ->
                     when {
                         img.hasAttr("src") -> {
                             val src = img.attr("src").trim()
@@ -465,17 +465,36 @@ class AnimeFire : MainAPI() {
                         else -> null
                     }
                 } ?:
-                // SEGUNDO: Tentar qualquer imagem de anime
-                document.selectFirst("img[src*='/img/animes/']:not([src*='logo'])")
-                    ?.attr("src")
-                    ?.takeIf { it.isNotBlank() }
+                
+                // MÉTODO 2: Pela estrutura da página de detalhes
+                document.selectFirst(".sub_animepage_img img, .anime-poster img, .poster img")?.let { img ->
+                    when {
+                        img.hasAttr("src") -> {
+                            val src = img.attr("src").trim()
+                            if (src.isNotBlank()) fixUrl(src) else null
+                        }
+                        img.hasAttr("data-src") -> {
+                            val src = img.attr("data-src").trim()
+                            if (src.isNotBlank()) fixUrl(src) else null
+                        }
+                        else -> null
+                    }
+                } ?:
+                
+                // MÉTODO 3: Qualquer imagem que contenha '/animes/' na URL
+                document.selectFirst("img[src*='/animes/'], img[src*='/img/animes/']")?.attr("src")
+                    ?.takeIf { it.isNotBlank() && !it.contains("logo") }
                     ?.let { fixUrl(it) }
+                    
             } catch (e: Exception) {
                 println("⚠️ Erro ao extrair poster: ${e.message}")
                 null
             }
             
-            println("📊 Poster: ${poster?.take(50)}...")
+            println("📊 Poster: ${poster ?: "NÃO ENCONTRADO"}")
+            if (poster != null) {
+                println("   • URL completa: ${poster.take(100)}...")
+            }
             
             // ============ BANNER/BACKGROUND ============
             val background = poster
@@ -578,14 +597,24 @@ class AnimeFire : MainAPI() {
                 this.tags = genres
                 this.score = score
                 
-                // Adicionar status do anime (APENAS se NÃO for filme)
-                if (!isMovie) {
-                    showStatus?.let { status ->
+                // CORREÇÃO: Adicionar status do anime usando a propriedade correta
+                showStatus?.let { status ->
+                    // Para filmes, não adicionar status
+                    if (!isMovie) {
                         try {
-                            val statusField = this::class.members.find { it.name == "status" }
-                            statusField?.call(this, status)
+                            // A forma correta de adicionar status no CloudStream 3
+                            this.status = status
+                            println("✅ Status adicionado: $status")
                         } catch (e: Exception) {
-                            println("⚠️ Erro ao adicionar status: ${e.message}")
+                            println("⚠️ Erro ao adicionar status (tentativa 1): ${e.message}")
+                            // Tentativa alternativa
+                            try {
+                                val statusField = this::class.members.find { it.name == "status" }
+                                statusField?.call(this, status)
+                                println("✅ Status adicionado via reflexão: $status")
+                            } catch (e2: Exception) {
+                                println("⚠️ Erro ao adicionar status (tentativa 2): ${e2.message}")
+                            }
                         }
                     }
                 }
@@ -595,6 +624,7 @@ class AnimeFire : MainAPI() {
                     try {
                         val studioField = this::class.members.find { it.name == "studio" }
                         studioField?.call(this, it)
+                        println("✅ Estúdio adicionado: $it")
                     } catch (e: Exception) {
                         println("⚠️ Erro ao adicionar estúdio: ${e.message}")
                     }
@@ -616,7 +646,8 @@ class AnimeFire : MainAPI() {
             println("   • Tipo: ${response.type}")
             println("   • Ano: ${response.year}")
             println("   • Score: ${response.score?.toString()}")
-            println("   • Status: $showStatus")
+            println("   • Status original: $statusText")
+            println("   • Status convertido: $showStatus")
             println("   • É filme? $isMovie")
             println("   • Episódios: ${episodes.size}")
             println("   • Poster URL: ${poster?.take(50)}...")
