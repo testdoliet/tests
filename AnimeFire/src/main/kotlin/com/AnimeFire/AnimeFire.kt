@@ -809,24 +809,23 @@ class AnimeFire : MainAPI() {
         return null
     }
 
-    // ============ LOAD LINKS ============
-    override suspend fun loadLinks(
-        data: String,
-        isCasting: Boolean,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        println("\n" + "=".repeat(80))
-        println("🔥 ANIMEFIRE: Carregando links para $data")
-        println("=".repeat(80))
-        
-        return try {
-            // Usar AnimeFireExtractor (nome correto)
-            AnimeFireVideoExtractor().extract(data, mainUrl, name, callback)
-            true
-        } catch (e: Exception) {
-            println("❌ Erro no loadLinks: ${e.message}")
-            false
-        }
+// ============ LOAD LINKS ============
+override suspend fun loadLinks(
+    data: String,
+    isCasting: Boolean,
+    subtitleCallback: (SubtitleFile) -> Unit,
+    callback: (ExtractorLink) -> Unit
+): Boolean {
+    println("\n" + "=".repeat(80))
+    println("🔥 ANIMEFIRE: Carregando links para $data")
+    println("=".repeat(80))
+    
+    return try {
+        // Como AnimeFireVideoExtractor é um object (singleton), chamamos diretamente
+        AnimeFireVideoExtractor.extractVideoLinks(data, mainUrl, name, callback)
+    } catch (e: Exception) {
+        println("❌ Erro no loadLinks: ${e.message}")
+        e.printStackTrace()
+        false
     }
 }
