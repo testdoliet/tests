@@ -882,7 +882,7 @@ class AnimeFire : MainAPI() {
         
         return try {
             // Usar o AnimeFireExtractor para processar os links
-            AnimeFireExtractor().handleLinks(data, subtitleCallback, callback)
+            AnimeFireVideoExtractor().handleLinks(data, subtitleCallback, callback)
             
             println("✅ Links processados com sucesso")
             true
