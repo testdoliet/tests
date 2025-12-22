@@ -878,4 +878,5 @@ override suspend fun loadLinks(
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         return AnimeFireVideoExtractor.extractVideoLinks(data, mainUrl, name, callback)
+  }
 }
