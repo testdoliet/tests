@@ -7,7 +7,7 @@ import com.lagradost.cloudstream3.app
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.jsoup.nodes.Element
-
+import com.AnimeFire.AnimeFireExtractor
 class AnimeFire : MainAPI() {
     override var mainUrl = "https://animefire.io"
     override var name = "AnimeFire"
