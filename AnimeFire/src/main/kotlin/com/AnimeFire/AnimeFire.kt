@@ -680,196 +680,260 @@ class AnimeFire : MainAPI() {
         }
     }
 
-    // ============ EXTRACT EPISODES - CORRIGIDO ============
-    private fun extractAllEpisodes(document: org.jsoup.nodes.Document, baseUrl: String): List<Episode> {
-        val episodes = mutableListOf<Episode>()
-        
-        println("\n🔍 Procurando episódios...")
-        
-        // BUSCAR NA SEÇÃO DE EPISÓDIOS - Padrão correto do AnimeFire
-        println("📊 Procurando na seção de episódios (div_video_list)...")
-        
-        // Método 1: Buscar links com classe .lEp (que é o padrão do site)
-        document.select("a.lEp").forEach { link ->
+    // ============ EXTRACT EPISODES - CORRIGIDO BASEADO NO HTML ============
+private fun extractAllEpisodes(document: org.jsoup.nodes.Document, baseUrl: String): List<Episode> {
+    val episodes = mutableListOf<Episode>()
+    
+    println("\n🔍 Procurando episódios...")
+    
+    // DEBUG: Mostrar estrutura da página
+    println("📊 Analisando HTML da página...")
+    
+    // PADRÃO 1: Buscar EXATAMENTE como está no HTML que você enviou
+    val lEpElements = document.select("a.lEp.epT.divNumEp.smallbox")
+    println("📊 Elementos a.lEp.epT.divNumEp.smallbox encontrados: ${lEpElements.size}")
+    
+    if (lEpElements.isNotEmpty()) {
+        println("✅ Encontrados ${lEpElements.size} episódios com o padrão correto")
+        lEpElements.forEach { link ->
             try {
                 processEpisodeLink(link, episodes)
             } catch (e: Exception) {
-                println("   ❌ Erro no link .lEp: ${e.message}")
+                println("   ❌ Erro no link: ${e.message}")
             }
         }
+    }
+    
+    // PADRÃO 2: Se não encontrou, tentar com seletor mais simples
+    if (episodes.isEmpty()) {
+        val simpleElements = document.select("a.lEp")
+        println("📊 Elementos a.lEp encontrados: ${simpleElements.size}")
         
-        // Método 2: Se não encontrou, buscar em .div_video_list a.lEp
-        if (episodes.isEmpty()) {
-            println("📊 Procurando em .div_video_list a.lEp...")
-            document.select(".div_video_list a.lEp").forEach { link ->
+        simpleElements.forEach { link ->
+            try {
+                processEpisodeLink(link, episodes)
+            } catch (e: Exception) {}
+        }
+    }
+    
+    // PADRÃO 3: Buscar na seção específica de episódios
+    if (episodes.isEmpty()) {
+        println("📊 Procurando na seção .div_video_list...")
+        val videoList = document.selectFirst(".div_video_list")
+        if (videoList != null) {
+            val linksInSection = videoList.select("a")
+            println("📊 Links na seção de episódios: ${linksInSection.size}")
+            
+            linksInSection.forEach { link ->
                 try {
                     processEpisodeLink(link, episodes)
                 } catch (e: Exception) {}
             }
         }
+    }
+    
+    // PADRÃO 4: Buscar qualquer link que contenha "/animes/nome/"
+    if (episodes.isEmpty()) {
+        println("📊 Procurando links com padrão de episódio...")
         
-        // Método 3: Buscar todos os links que contêm /animes/nome-do-anime/
-        if (episodes.isEmpty()) {
-            println("📊 Procurando links com padrão /animes/nome-do-anime/...")
-            val animeName = baseUrl.substringAfter("/animes/").substringBefore("/")
-            if (animeName.isNotBlank()) {
-                document.select("a[href*='/animes/$animeName/']").forEach { link ->
+        // Extrair nome do anime da URL
+        val animePath = baseUrl.substringAfter("/animes/")
+        val animeName = animePath.substringBefore("/")
+        
+        if (animeName.isNotBlank()) {
+            println("📊 Nome do anime extraído: $animeName")
+            
+            // Padrões para buscar
+            val patterns = listOf(
+                "a[href*='/animes/$animeName/']",
+                "a[href*='$animeName/']"
+            )
+            
+            patterns.forEach { pattern ->
+                val found = document.select(pattern)
+                println("📊 Links com padrão '$pattern': ${found.size}")
+                
+                found.forEach { link ->
                     try {
                         val href = link.attr("href")
-                        if (href.contains("/animes/$animeName/") && !href.contains("#")) {
+                        // Filtrar links que são realmente episódios
+                        if (href.contains("/animes/$animeName/") && 
+                            !href.contains("#") && 
+                            !href.contains("todos-os-episodios")) {
                             processEpisodeLink(link, episodes)
                         }
                     } catch (e: Exception) {}
                 }
             }
         }
-        
-        // Método 4: Buscar especificamente links com "Episódio" no texto
-        if (episodes.isEmpty()) {
-            println("📊 Procurando links com 'Episódio' no texto...")
-            document.select("a:contains(Episódio), a:contains(episódio)").forEach { link ->
-                try {
-                    processEpisodeLink(link, episodes)
-                } catch (e: Exception) {}
-            }
-        }
-        
-        // Método 5: Última tentativa - verificar se é filme (apenas 1 episódio)
-        if (episodes.isEmpty()) {
-            println("📊 Verificando se é filme...")
-            val isMovie = baseUrl.contains("/filmes/") || 
-                         document.select("h1").text().contains("filme", ignoreCase = true)
-            
-            if (isMovie) {
-                println("   ✅ É um filme, adicionando 1 episódio")
-                episodes.add(
-                    newEpisode(fixUrl(baseUrl)) {
-                        this.name = "Assistir Filme"
-                        this.episode = 1
-                    }
-                )
-            }
-        }
-        
-        // Verificar se encontrou episódios e mostrar debug
-        if (episodes.isNotEmpty()) {
-            println("\n📊 EPISÓDIOS ENCONTRADOS:")
-            println("   • Total: ${episodes.size}")
-            episodes.take(5).forEach { ep ->
-                println("   • Ep ${ep.episode}: ${ep.name}")
-            }
-            if (episodes.size > 5) {
-                println("   • ... e mais ${episodes.size - 5} episódios")
-            }
-        } else {
-            println("\n❌ NENHUM EPISÓDIO ENCONTRADO!")
-            println("   • Verificando estrutura da página...")
-            
-            // Debug: mostrar quantos elementos .lEp existem
-            val lEpCount = document.select("a.lEp").size
-            println("   • Elementos a.lEp encontrados: $lEpCount")
-            
-            // Debug: mostrar HTML da seção de episódios
-            val videoListSection = document.select(".div_video_list").html()
-            if (videoListSection.isNotBlank()) {
-                println("   • Seção .div_video_list encontrada")
-                // Extrair primeiros 500 chars para debug
-                println("   • Primeiros 500 chars da seção:")
-                println(videoListSection.take(500))
-            }
-        }
-        
-        return episodes.sortedBy { it.episode }
     }
-
-    // ============ FUNÇÃO AUXILIAR CORRIGIDA ============
-    private fun processEpisodeLink(link: Element, episodes: MutableList<Episode>) {
-        try {
+    
+    // DEBUG: Se ainda não encontrou, mostrar toda a estrutura
+    if (episodes.isEmpty()) {
+        println("\n❌ NENHUM EPISÓDIO ENCONTRADO - DEBUG DETALHADO:")
+        
+        // 1. Mostrar todas as tags <a> na página
+        val allLinks = document.select("a")
+        println("📊 Total de links na página: ${allLinks.size}")
+        
+        // 2. Filtrar links que podem ser episódios
+        val possibleEpisodeLinks = allLinks.filter { 
+            val href = it.attr("href")
+            href.contains("/animes/") && 
+            !href.contains("todos-os-episodios") &&
+            !href.contains("#")
+        }
+        
+        println("📊 Links possíveis de episódios: ${possibleEpisodeLinks.size}")
+        possibleEpisodeLinks.take(10).forEachIndexed { i, link ->
             val href = link.attr("href")
-            if (href.isBlank() || href.contains("#")) return
-            
             val text = link.text().trim()
-            val episodeNum = extractEpisodeNumber(text, href)
-            
-            if (episodeNum != null) {
-                // Determinar tipo de áudio baseado no texto
-                val audioType = when {
-                    text.contains("dublado", ignoreCase = true) || 
-                    href.contains("dublado", ignoreCase = true) -> " (Dub)"
-                    text.contains("legendado", ignoreCase = true) ||
-                    href.contains("legendado", ignoreCase = true) -> " (Leg)"
-                    else -> ""
-                }
-                
-                // Se o texto já contém o nome do anime, usar texto completo
-                // Senão, criar nome padrão
-                val episodeName = if (text.length > 5 && text.contains("-")) {
-                    text
-                } else {
-                    "Episódio $episodeNum$audioType"
-                }
-                
-                episodes.add(
-                    newEpisode(fixUrl(href)) {
-                        this.name = episodeName
-                        this.episode = episodeNum
-                    }
-                )
-                
-                println("   ✅ Ep $episodeNum: $episodeName (href: ${href.take(50)}...)")
-            } else {
-                println("   ⚠️ Número não extraído: '$text' (href: $href)")
-            }
-            
-        } catch (e: Exception) {
-            println("   ❌ Erro no processamento: ${e.message}")
+            val classes = link.className()
+            println("   $i. Texto: '$text'")
+            println("      Href: $href")
+            println("      Classes: $classes")
+            println()
+        }
+        
+        // 3. Mostrar seções específicas
+        val sections = document.select("section")
+        println("📊 Seções <section> encontradas: ${sections.size}")
+        
+        sections.forEachIndexed { i, section ->
+            val sectionClass = section.className()
+            val sectionHtml = section.html().take(200)
+            println("   Seção $i: class='$sectionClass'")
+            println("      HTML: $sectionHtml...")
         }
     }
+    
+    // Ordenar por número do episódio
+    val sortedEpisodes = episodes.sortedBy { it.episode }
+    
+    println("\n📊 RESULTADO FINAL DA EXTRACTION:")
+    println("   • Total de episódios encontrados: ${sortedEpisodes.size}")
+    
+    if (sortedEpisodes.isNotEmpty()) {
+        sortedEpisodes.forEach { ep ->
+            println("   • Ep ${ep.episode}: ${ep.name}")
+        }
+    }
+    
+    return sortedEpisodes
+}
 
-    // ============ EXTRAÇÃO DE NÚMERO DO EPISÓDIO MELHORADA ============
-    private fun extractEpisodeNumber(text: String, href: String = ""): Int? {
-        // Lista de padrões para tentar extrair o número
-        val patterns = listOf(
-            // Padrões com "Episódio"
-            Regex("""Epis[oó]dio\s*(\d+)""", RegexOption.IGNORE_CASE),
-            // Padrões com "Ep"
-            Regex("""Ep\.?\s*(\d+)""", RegexOption.IGNORE_CASE),
-            // Padrões com " - " ex: "Wandance - Episódio 1"
-            Regex("""-\s*Epis[oó]dio\s*(\d+)""", RegexOption.IGNORE_CASE),
-            // Números no final do texto
-            Regex("""(\d+)$"""),
-            // Números após hífen
-            Regex("""-\s*(\d+)"""),
-            // Padrões na URL
-            Regex("""/animes/[^/]+/(\d+)$"""),
-            Regex("""/episodio/(\d+)""", RegexOption.IGNORE_CASE),
-            // Qualquer número de 1-4 dígitos (último recurso)
-            Regex("""\b(\d{1,4})\b""")
-        )
+// ============ FUNÇÃO AUXILIAR MELHORADA ============
+private fun processEpisodeLink(link: Element, episodes: MutableList<Episode>) {
+    try {
+        val href = link.attr("href")
+        if (href.isBlank() || href.contains("#") || href.contains("todos-os-episodios")) {
+            return
+        }
         
-        // Primeiro tentar extrair do texto
+        val text = link.text().trim()
+        if (text.isBlank()) return
+        
+        val episodeNum = extractEpisodeNumber(text, href)
+        
+        if (episodeNum != null) {
+            // Evitar duplicatas
+            if (episodes.any { it.episode == episodeNum }) {
+                println("   ⚠️ Episódio $episodeNum já existe, ignorando...")
+                return
+            }
+            
+            // Determinar tipo de áudio
+            val audioType = when {
+                text.contains("dublado", ignoreCase = true) || 
+                href.contains("dublado", ignoreCase = true) -> " (Dub)"
+                text.contains("legendado", ignoreCase = true) ||
+                href.contains("legendado", ignoreCase = true) -> " (Leg)"
+                else -> ""
+            }
+            
+            // Nome do episódio
+            val episodeName = if (text.length > 3) {
+                text
+            } else {
+                "Episódio $episodeNum$audioType"
+            }
+            
+            // Corrigir URL se necessário
+            val fixedHref = when {
+                href.startsWith("//") -> "https:$href"
+                href.startsWith("/") -> "$mainUrl$href"
+                !href.startsWith("http") -> "$mainUrl/$href"
+                else -> href
+            }
+            
+            episodes.add(
+                newEpisode(fixedHref) {
+                    this.name = episodeName
+                    this.episode = episodeNum
+                }
+            )
+            
+            println("   ✅ Ep $episodeNum: $episodeName")
+            println("      URL: ${fixedHref.take(80)}...")
+            
+        } else {
+            println("   ⚠️ Não consegui extrair número: '$text'")
+            println("      URL: $href")
+        }
+        
+    } catch (e: Exception) {
+        println("   ❌ Erro: ${e.message}")
+    }
+}
+
+// ============ EXTRACT EPISODE NUMBER - MELHORADA ============
+private fun extractEpisodeNumber(text: String, href: String = ""): Int? {
+    // Lista de padrões para tentar extrair o número
+    val patterns = listOf(
+        // "Wandance - Episódio 1" (padrão do seu HTML)
+        Regex("""Epis[oó]dio\s*(\d+)""", RegexOption.IGNORE_CASE),
+        // "Episódio 1"
+        Regex("""Epis[oó]dio\s*(\d+)""", RegexOption.IGNORE_CASE),
+        // "Ep. 1" ou "Ep 1"
+        Regex("""Ep\.?\s*(\d+)""", RegexOption.IGNORE_CASE),
+        // Números no final
+        Regex("""\b(\d+)$"""),
+        // Padrão na URL: /animes/wandance/1
+        Regex("""/animes/[^/]+/(\d+)$"""),
+        // Padrão na URL: /episodio/1
+        Regex("""/episodio/(\d+)""", RegexOption.IGNORE_CASE),
+        // Qualquer número de 1-3 dígitos isolado
+        Regex("""\b(\d{1,3})\b""")
+    )
+    
+    // Tentar extrair do texto
+    for (pattern in patterns) {
+        val match = pattern.find(text)
+        if (match != null) {
+            val num = match.groupValues[1].toIntOrNull()
+            if (num != null) {
+                println("      Número extraído via texto: '$text' -> $num")
+                return num
+            }
+        }
+    }
+    
+    // Se não encontrou no texto, tentar na URL
+    if (href.isNotBlank()) {
         for (pattern in patterns) {
-            val match = pattern.find(text)
+            val match = pattern.find(href)
             if (match != null) {
                 val num = match.groupValues[1].toIntOrNull()
-                if (num != null) return num
-            }
-        }
-        
-        // Se não encontrou no texto, tentar na URL
-        if (href.isNotBlank()) {
-            for (pattern in patterns) {
-                val match = pattern.find(href)
-                if (match != null) {
-                    val num = match.groupValues[1].toIntOrNull()
-                    if (num != null) return num
+                if (num != null) {
+                    println("      Número extraído via URL: $href -> $num")
+                    return num
                 }
             }
         }
-        
-        return null
     }
-
+    
+    return null
+}
     // ============ LOAD LINKS ============
 override suspend fun loadLinks(
         data: String,
