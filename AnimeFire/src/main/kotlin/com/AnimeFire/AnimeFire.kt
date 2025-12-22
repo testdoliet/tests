@@ -7,6 +7,7 @@ import com.lagradost.cloudstream3.app
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.jsoup.nodes.Element
+import java.util.concurrent.TimeUnit
 
 class AnimeFire : MainAPI() {
     override var mainUrl = "https://animefire.io"
@@ -67,25 +68,50 @@ class AnimeFire : MainAPI() {
             "/genero/familia" to "Família"
         )
         
+        // Cache para as abas
+        private var cachedTabs: List<Pair<String, String>>? = null
+        private var cacheTime: Long = 0
+        private const val CACHE_DURATION = TimeUnit.MINUTES.toMillis(5) // 5 minutos
+        
         // Função para verificar se a aba permite N/A
         fun allowsNaItems(basePath: String): Boolean {
             return basePath.contains("/em-lancamento") || 
                    basePath.contains("/animes-atualizados") ||
                    basePath.contains("/lista-de-animes-legendados")
         }
-    }
-
-    init {
-        println("🔥 ANIMEFIRE: Plugin inicializado com ${ALL_CATEGORIES.size} abas")
-        println("📊 Lista completa de abas:")
-        ALL_CATEGORIES.forEachIndexed { index, (path, name) ->
-            println("   ${index + 1}. $name ($path)")
+        
+        // Função para obter 12 abas aleatórias com cache
+        fun getRandomTabs(): List<Pair<String, String>> {
+            val currentTime = System.currentTimeMillis()
+            
+            // Se tem cache válido, retorna
+            if (cachedTabs != null && (currentTime - cacheTime) < CACHE_DURATION) {
+                return cachedTabs!!
+            }
+            
+            // Gera nova ordem aleatória
+            val randomTabs = ALL_CATEGORIES.shuffled().take(12)
+            cachedTabs = randomTabs
+            cacheTime = currentTime
+            
+            println("🔄 Nova ordem de abas gerada:")
+            randomTabs.forEachIndexed { index, (path, name) ->
+                println("   ${index + 1}. $name")
+            }
+            
+            return randomTabs
         }
     }
 
-    // RETORNA TODAS AS ABAS SEM LIMITE
+    init {
+        println("🔥 ANIMEFIRE: Plugin inicializado")
+        println("📊 Total de categorias disponíveis: ${ALL_CATEGORIES.size}")
+        println("📊 Mostrando 12 abas aleatórias (atualiza a cada 5 minutos)")
+    }
+
+    // 12 ABAS ALEATÓRIAS
     override val mainPage = mainPageOf(
-        *ALL_CATEGORIES.map { (path, name) -> 
+        *getRandomTabs().map { (path, name) -> 
             "$mainUrl$path" to name 
         }.toTypedArray()
     )
@@ -475,7 +501,7 @@ class AnimeFire : MainAPI() {
         return match?.groupValues?.get(1)?.toIntOrNull()
     }
 
-    // ============ LOAD - SIMPLIFICADO ============
+    // ============ LOAD ============
     override suspend fun load(url: String): LoadResponse {
         return try {
             println("\n" + "=".repeat(80))
@@ -573,35 +599,18 @@ class AnimeFire : MainAPI() {
             val studio = extractTextAfterLabel(document, "Estúdios:")
             println("📊 Estúdio: $studio")
             
-            // ============ TEMPORADA ============
-            val season = extractTextAfterLabel(document, "Temporada:")
-            println("📊 Temporada: $season")
-            
-            // ============ CLASSIFICAÇÃO ============
-            val rating = document.selectFirst("a.spanAnimeInfo[href*='classificação=']")
-                ?.text()
-                ?.trim()
-                ?: "Desconhecido"
-            println("📊 Classificação: $rating")
-            
             // ============ SCORE ============
             val scoreText = document.selectFirst("#anime_score")?.text()?.trim()
             val score = scoreText?.toFloatOrNull()?.let { Score.from10(it) }
             println("📊 Score: $scoreText -> $score")
             
-            // ============ EPISÓDIOS ============
-            val totalEpisodesText = extractTextAfterLabel(document, "Episódios:")
-            val totalEpisodes = totalEpisodesText?.toIntOrNull()
-            println("📊 Total de episódios: $totalEpisodes (texto: '$totalEpisodesText')")
-            
             // ============ DETECTAR SE É FILME ============
             val isMovie = url.contains("/filmes/") || 
-                         title.contains("filme", ignoreCase = true) ||
-                         totalEpisodesText == "1"
+                         title.contains("filme", ignoreCase = true)
             
             println("📊 É filme? $isMovie")
             
-            // ============ EXTRAIR EPISÓDIOS ============
+            // ============ EXTRAIR EPISÓDIOS - SIMPLIFICADO ============
             val episodes = extractAllEpisodes(document, url)
             println("📊 Episódios extraídos: ${episodes.size}")
             
@@ -631,8 +640,17 @@ class AnimeFire : MainAPI() {
                     episodesField?.call(this, episodes)
                 } catch (e: Exception) {}
                 
-                // SIMPLIFICADO: Não adicionar dubStatus no load()
-                // (O CloudStream não tem uma maneira fácil de adicionar isso no LoadResponse)
+                // Adicionar status APENAS se NÃO for filme
+                if (!isMovie) {
+                    try {
+                        val statusField = this::class.members.find { it.name == "status" }
+                        statusField?.call(this, when (status.lowercase()) {
+                            "em lançamento", "lançando" -> ShowStatus.Ongoing
+                            "completo", "finalizado" -> ShowStatus.Completed
+                            else -> null
+                        })
+                    } catch (e: Exception) {}
+                }
             }
             
             // ============ DEBUG FINAL ============
@@ -659,66 +677,49 @@ class AnimeFire : MainAPI() {
         }
     }
 
-    // ============ EXTRACT EPISODES - MELHORADA ============
+    // ============ EXTRACT EPISODES - SIMPLIFICADO ============
     private fun extractAllEpisodes(document: org.jsoup.nodes.Document, baseUrl: String): List<Episode> {
         val episodes = mutableListOf<Episode>()
         
         println("\n🔍 Procurando episódios...")
         
-        // Procurar por links de episódios
-        document.select("a.lEp, .episode-item a, a[href*='/episodio'], a[href*='/animes/']").forEach { element ->
+        // Buscar todos os links de episódios
+        document.select("a.lEp, .divNumEp a, a[href*='/episodio/'], a[href*='/video/'], a[href*='/assistir/']").forEach { element ->
             try {
-                val episodeUrl = element.attr("href")?.takeIf { it.isNotBlank() } ?: return@forEach
+                val href = element.attr("href")
+                if (href.isBlank()) return@forEach
                 
-                // Verificar se é realmente um link de episódio
-                if (!episodeUrl.contains("/episodio") && !episodeUrl.contains("/animes/")) {
-                    return@forEach
-                }
-                
-                val episodeText = element.text().trim()
-                println("   • Link encontrado: $episodeText -> $episodeUrl")
+                val text = element.text().trim()
+                if (text.isBlank()) return@forEach
                 
                 // Extrair número do episódio
-                val episodeNumber = try {
-                    // Tentar extrair número de várias formas
-                    val patterns = listOf(
-                        Regex("""Episódio\s+(\d{1,4})"""),
-                        Regex("""Ep\.?\s*(\d{1,4})"""),
-                        Regex("""(\d{1,4})""")
-                    )
-                    
-                    var foundNumber: Int? = null
-                    for (pattern in patterns) {
-                        val match = pattern.find(episodeText)
-                        if (match != null) {
-                            foundNumber = match.groupValues[1].toIntOrNull()
-                            if (foundNumber != null) break
-                        }
-                    }
-                    
-                    foundNumber ?: return@forEach
-                } catch (e: Exception) {
-                    return@forEach
-                }
+                val episodeNumber = extractEpisodeNumber(text) ?: return@forEach
                 
                 // Determinar tipo de áudio
                 val audioType = when {
-                    episodeText.contains("dublado", ignoreCase = true) -> " (Dub)"
-                    episodeText.contains("legendado", ignoreCase = true) -> " (Leg)"
+                    text.contains("dublado", ignoreCase = true) -> " (Dub)"
+                    text.contains("legendado", ignoreCase = true) -> " (Leg)"
                     else -> ""
                 }
                 
+                // Criar nome do episódio
+                val episodeName = if (text.length > 30) {
+                    "Episódio $episodeNumber$audioType"
+                } else {
+                    text
+                }
+                
                 episodes.add(
-                    newEpisode(Pair("Episódio $episodeNumber$audioType", fixUrl(episodeUrl))) {
-                        this.name = "Episódio $episodeNumber$audioType"
+                    newEpisode(fixUrl(href)) {
+                        this.name = episodeName
                         this.episode = episodeNumber
                     }
                 )
                 
-                println("     ✅ Episódio $episodeNumber adicionado")
+                println("   ✅ Ep $episodeNumber: $episodeName")
                 
             } catch (e: Exception) {
-                println("     ❌ Erro no episódio: ${e.message}")
+                println("   ❌ Erro no episódio: ${e.message}")
             }
         }
         
@@ -726,7 +727,7 @@ class AnimeFire : MainAPI() {
         if (episodes.isEmpty()) {
             println("   ⚠️ Nenhum episódio encontrado, tratando como filme")
             episodes.add(
-                newEpisode(Pair("Assistir Filme", fixUrl(baseUrl))) {
+                newEpisode(fixUrl(baseUrl)) {
                     this.name = "Assistir Filme"
                     this.episode = 1
                 }
@@ -736,6 +737,26 @@ class AnimeFire : MainAPI() {
         println("📊 Total de episódios processados: ${episodes.size}")
         
         return episodes.sortedBy { it.episode }
+    }
+
+    // ============ FUNÇÃO PARA EXTRAIR NÚMERO DO EPISÓDIO ============
+    private fun extractEpisodeNumber(text: String): Int? {
+        // Tentar vários padrões
+        val patterns = listOf(
+            Regex("Epis[oó]dio\\s*(\\d+)"),
+            Regex("Ep\\.?\\s*(\\d+)"),
+            Regex("(\\d{1,3})\\s*-"),
+            Regex("#(\\d+)"),
+            Regex("\\b(\\d{1,4})\\b")
+        )
+        
+        for (pattern in patterns) {
+            val match = pattern.find(text)
+            if (match != null) {
+                return match.groupValues[1].toIntOrNull()
+            }
+        }
+        return null
     }
 
     // ============ LOAD LINKS ============
