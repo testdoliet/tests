@@ -870,7 +870,7 @@ class AnimeFire : MainAPI() {
         return null
     }
 
-    // ============ LOAD LINKS ============
+     // ============ LOAD LINKS ============
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -882,7 +882,7 @@ class AnimeFire : MainAPI() {
         println("=".repeat(80))
         
         return try {
-            // Usar o AnimeFireExtractor para processar os links
+            // Como estão no MESMO pacote, você pode instanciar diretamente
             AnimeFireExtractor().handleLinks(data, subtitleCallback, callback)
             
             println("✅ Links processados com sucesso")
