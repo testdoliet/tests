@@ -7,6 +7,7 @@ import com.lagradost.cloudstream3.app
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.jsoup.nodes.Element
+import com.AnimeFire.AnimeFireExtractor
 
 class AnimeFire : MainAPI() {
     override var mainUrl = "https://animefire.plus"
@@ -882,7 +883,7 @@ class AnimeFire : MainAPI() {
         
         return try {
             // Usar o AnimeFireExtractor para processar os links
-            AnimeFireVideoExtractor().handleLinks(data, subtitleCallback, callback)
+            AnimeFireExtractor().handleLinks(data, subtitleCallback, callback)
             
             println("✅ Links processados com sucesso")
             true
