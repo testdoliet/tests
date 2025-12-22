@@ -475,7 +475,7 @@ class AnimeFire : MainAPI() {
         return match?.groupValues?.get(1)?.toIntOrNull()
     }
 
-    // ============ LOAD - CORRIGIDO ============
+    // ============ LOAD - SIMPLIFICADO ============
     override suspend fun load(url: String): LoadResponse {
         return try {
             println("\n" + "=".repeat(80))
@@ -631,33 +631,8 @@ class AnimeFire : MainAPI() {
                     episodesField?.call(this, episodes)
                 } catch (e: Exception) {}
                 
-                // Adicionar dub/leg status usando reflection
-                if (hasDub || hasSub) {
-                    try {
-                        val dubStatusField = this::class.members.find { it.name == "dubStatus" }
-                        if (hasDub && hasSub) {
-                            dubStatusField?.call(this, DubStatus.Both)
-                        } else if (hasDub) {
-                            dubStatusField?.call(this, DubStatus.Dubbed)
-                        } else if (hasSub) {
-                            dubStatusField?.call(this, DubStatus.Subbed)
-                        }
-                    } catch (e: Exception) {
-                        println("⚠️ Não foi possível adicionar dubStatus: ${e.message}")
-                    }
-                }
-                
-                // Adicionar status APENAS se NÃO for filme
-                if (!isMovie) {
-                    try {
-                        val statusField = this::class.members.find { it.name == "status" }
-                        statusField?.call(this, when (status.lowercase()) {
-                            "em lançamento", "lançando" -> ShowStatus.Ongoing
-                            "completo", "finalizado" -> ShowStatus.Completed
-                            else -> null
-                        })
-                    } catch (e: Exception) {}
-                }
+                // SIMPLIFICADO: Não adicionar dubStatus no load()
+                // (O CloudStream não tem uma maneira fácil de adicionar isso no LoadResponse)
             }
             
             // ============ DEBUG FINAL ============
