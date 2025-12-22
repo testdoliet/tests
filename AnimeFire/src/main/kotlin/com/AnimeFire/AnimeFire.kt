@@ -362,111 +362,108 @@ class AnimeFire : MainAPI() {
 
     // ============ GET MAIN PAGE ============
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        // Aumentamos o tempo do mutex para garantir que todas as abas carreguem
-        val startTime = System.currentTimeMillis()
-        
-        return try {
-            println("\n" + "=".repeat(70))
-            println("🔥 ANIMEFIRE: Carregando página $page")
-            println("=".repeat(70))
-            println("📊 Aba: '${request.name}'")
-            println("📊 URL base: ${request.data}")
-            
-            // PAGINAÇÃO
-            val basePath = request.data.removePrefix(mainUrl)
-            val sitePageNumber = page + 1
-            
-            val pageUrl = if (sitePageNumber == 1) {
-                "$mainUrl$basePath"
-            } else {
-                "$mainUrl$basePath/$sitePageNumber"
-            }
-            
-            println("📊 URL da página: $pageUrl")
-            
-            // VERIFICAR SE ESTA ABA PERMITE N/A
-            val allowsNaItems = allowsNaItems(basePath)
-            println("📊 Permite N/A? $allowsNaItems")
-            println("-".repeat(70))
-            
-            // Aumentar timeout para 45 segundos e adicionar delay maior
-            kotlinx.coroutines.delay(500)
-            
-            val document = app.get(pageUrl, timeout = 45).document
-            
-            // PROCESSAR ITENS
-            val elements = document.select("""
-                article a,
-                .card a,
-                .anime-item a,
-                a[href*='/animes/'],
-                a[href*='/filmes/']
-            """).take(50)
-            
-            println("📊 Links encontrados: ${elements.size}")
-            
-            val homeItems = mutableListOf<SearchResponse>()
-            var naItemsCount = 0
-            var validItemsCount = 0
-            
-            elements.forEachIndexed { index, element ->
-                try {
-                    val debugMode = index < 2
-                    val item = element.toSearchResponse(
-                        allowsNaItems = allowsNaItems,
-                        debugMode = debugMode
-                    )
-                    if (item != null) {
-                        homeItems.add(item)
-                        // Contar tipos de itens
-                        if (item.score == null) {
-                            naItemsCount++
-                        } else {
-                            validItemsCount++
+        return loadingMutex.withLock {
+            try {
+                println("\n" + "=".repeat(70))
+                println("🔥 ANIMEFIRE: Carregando página $page")
+                println("=".repeat(70))
+                println("📊 Aba: '${request.name}'")
+                println("📊 URL base: ${request.data}")
+                
+                // PAGINAÇÃO
+                val basePath = request.data.removePrefix(mainUrl)
+                val sitePageNumber = page + 1
+                
+                val pageUrl = if (sitePageNumber == 1) {
+                    "$mainUrl$basePath"
+                } else {
+                    "$mainUrl$basePath/$sitePageNumber"
+                }
+                
+                println("📊 URL da página: $pageUrl")
+                
+                // VERIFICAR SE ESTA ABA PERMITE N/A
+                val allowsNaItems = allowsNaItems(basePath)
+                println("📊 Permite N/A? $allowsNaItems")
+                println("-".repeat(70))
+                
+                // AUMENTAR DELAY PARA 2 SEGUNDOS
+                kotlinx.coroutines.delay(2000)
+                
+                val document = app.get(pageUrl, timeout = 30).document
+                
+                // PROCESSAR ITENS
+                val elements = document.select("""
+                    article a,
+                    .card a,
+                    .anime-item a,
+                    a[href*='/animes/'],
+                    a[href*='/filmes/']
+                """).take(50)
+                
+                println("📊 Links encontrados: ${elements.size}")
+                
+                val homeItems = mutableListOf<SearchResponse>()
+                var naItemsCount = 0
+                var validItemsCount = 0
+                
+                elements.forEachIndexed { index, element ->
+                    try {
+                        val debugMode = index < 2
+                        val item = element.toSearchResponse(
+                            allowsNaItems = allowsNaItems,
+                            debugMode = debugMode
+                        )
+                        if (item != null) {
+                            homeItems.add(item)
+                            // Contar tipos de itens
+                            if (item.score == null) {
+                                naItemsCount++
+                            } else {
+                                validItemsCount++
+                            }
                         }
+                    } catch (e: Exception) {
+                        // Ignorar erro
                     }
-                } catch (e: Exception) {
-                    // Ignorar erro
                 }
-            }
-            
-            // DETECTAR PRÓXIMA PÁGINA
-            val hasNextPage = detectHasNextPage(document, sitePageNumber)
-            
-            // RESULTADO
-            val elapsedTime = System.currentTimeMillis() - startTime
-            println("\n" + "=".repeat(70))
-            println("📊 RESULTADO PÁGINA $sitePageNumber:")
-            println("   • Aba: '${request.name}'")
-            println("   • Itens válidos: ${homeItems.size}")
-            println("   • Com avaliação: $validItemsCount")
-            println("   • Sem avaliação (N/A): $naItemsCount")
-            println("   • Permite N/A? $allowsNaItems")
-            println("   • Tem próxima página? $hasNextPage")
-            println("   • Tempo de execução: ${elapsedTime}ms")
-            
-            if (homeItems.isNotEmpty()) {
-                println("   • Primeiros itens:")
-                homeItems.take(3).forEachIndexed { i, item ->
-                    // CORREÇÃO: Usar toString() em vez de .value
-                    val scoreText = if (item.score != null) item.score.toString() else "N/A"
-                    println("     ${i + 1}. ${item.name} (score: $scoreText)")
+                
+                // DETECTAR PRÓXIMA PÁGINA
+                val hasNextPage = detectHasNextPage(document, sitePageNumber)
+                
+                // RESULTADO
+                println("\n" + "=".repeat(70))
+                println("📊 RESULTADO PÁGINA $sitePageNumber:")
+                println("   • Aba: '${request.name}'")
+                println("   • Itens válidos: ${homeItems.size}")
+                println("   • Com avaliação: $validItemsCount")
+                println("   • Sem avaliação (N/A): $naItemsCount")
+                println("   • Permite N/A? $allowsNaItems")
+                println("   • Tem próxima página? $hasNextPage")
+                
+                if (homeItems.isNotEmpty()) {
+                    println("   • Primeiros itens:")
+                    homeItems.take(3).forEachIndexed { i, item ->
+                        // CORREÇÃO: Usar toString() em vez de .value
+                        val scoreText = if (item.score != null) item.score.toString() else "N/A"
+                        println("     ${i + 1}. ${item.name} (score: $scoreText)")
+                    }
                 }
+                println("=".repeat(70) + "\n")
+                
+                kotlinx.coroutines.delay(500)
+                
+                // Retornar com o MESMO nome da aba
+                newHomePageResponse(
+                    request.name, // Nome original
+                    homeItems.distinctBy { it.url },
+                    hasNext = hasNextPage
+                )
+                
+            } catch (e: Exception) {
+                println("\n❌ ERRO na página $page: ${e.message}")
+                newHomePageResponse(request.name, emptyList(), false)
             }
-            println("=".repeat(70) + "\n")
-            
-            kotlinx.coroutines.delay(200)
-            
-            // Retornar com o MESMO nome da aba
-            newHomePageResponse(
-                request.name, // Nome original
-                homeItems.distinctBy { it.url },
-                hasNext = hasNextPage
-            )
-            
-        } catch (e: Exception) {
-            println("\n❌ ERRO na página $page: ${e.message}")
-            newHomePageResponse(request.name, emptyList(), false)
         }
     }
 
@@ -477,7 +474,7 @@ class AnimeFire : MainAPI() {
         val searchUrl = "$mainUrl$SEARCH_PATH/${query.trim().replace(" ", "-").lowercase()}"
         
         return try {
-            val document = app.get(searchUrl, timeout = 25).document
+            val document = app.get(searchUrl, timeout = 15).document
             
             document.select("a[href*='/animes/'], a[href*='/filmes/']")
                 .mapNotNull { it.toSearchResponse(allowsNaItems = true, debugMode = false) }
@@ -513,7 +510,7 @@ class AnimeFire : MainAPI() {
             println("=".repeat(80))
             println("📊 URL: $url")
             
-            val document = app.get(url, timeout = 45).document
+            val document = app.get(url, timeout = 30).document
             
             // ============ TÍTULO ============
             val title = document.selectFirst("h1.quicksand400")?.text()?.trim() 
@@ -615,8 +612,8 @@ class AnimeFire : MainAPI() {
             
             println("📊 É filme? $isMovie")
             
-            // ============ EXTRAIR EPISÓDIOS - MELHORADO ============
-            val episodes = extractAllEpisodesEnhanced(document, url)
+            // ============ EXTRAIR EPISÓDIOS - SIMPLIFICADO ============
+            val episodes = extractAllEpisodes(document, url)
             println("📊 Episódios extraídos: ${episodes.size}")
             
             // ============ CRIAR LOAD RESPONSE ============
@@ -682,143 +679,40 @@ class AnimeFire : MainAPI() {
         }
     }
 
-    // ============ EXTRACT EPISODES - MELHORADO ============
-    private fun extractAllEpisodesEnhanced(document: org.jsoup.nodes.Document, baseUrl: String): List<Episode> {
+    // ============ EXTRACT EPISODES - SIMPLIFICADO ============
+    private fun extractAllEpisodes(document: org.jsoup.nodes.Document, baseUrl: String): List<Episode> {
         val episodes = mutableListOf<Episode>()
         
         println("\n🔍 Procurando episódios...")
         
-        // PADRÃO 1: Lista padrão de episódios com numeração
-        println("📊 Procurando na lista padrão...")
-        document.select(".listEpisodios li, .episode-list li, .episodios li").forEach { li ->
+        // Método 1: Buscar na lista principal de episódios
+        println("📊 Tentando lista principal...")
+        document.select(".listEpisodios li a, .episode-list li a, .episodios li a").forEach { link ->
             try {
-                val link = li.selectFirst("a")
-                if (link != null) {
-                    val href = link.attr("href")
-                    if (href.isNotBlank()) {
-                        val text = link.text().trim()
-                        val episodeNum = extractEpisodeNumberEnhanced(text, li.outerHtml())
-                        
-                        if (episodeNum != null) {
-                            val audioType = when {
-                                text.contains("dublado", ignoreCase = true) || 
-                                href.contains("dublado", ignoreCase = true) -> " (Dub)"
-                                text.contains("legendado", ignoreCase = true) ||
-                                href.contains("legendado", ignoreCase = true) -> " (Leg)"
-                                else -> ""
-                            }
-                            
-                            val episodeName = if (text.length > 30 || text.isBlank()) {
-                                "Episódio $episodeNum$audioType"
-                            } else {
-                                text
-                            }
-                            
-                            episodes.add(
-                                newEpisode(fixUrl(href)) {
-                                    this.name = episodeName
-                                    this.episode = episodeNum
-                                }
-                            )
-                            
-                            println("   ✅ Ep $episodeNum: $episodeName")
-                        }
-                    }
-                }
+                processEpisodeLink(link, episodes)
             } catch (e: Exception) {}
         }
         
-        // PADRÃO 2: Cards de episódios
+        // Método 2: Se não encontrou, tentar busca mais ampla
         if (episodes.isEmpty()) {
-            println("📊 Procurando em cards...")
-            document.select(".episode-card, .ep-card, .card-ep").forEach { card ->
-                try {
-                    val link = card.selectFirst("a")
-                    if (link != null) {
-                        val href = link.attr("href")
-                        if (href.isNotBlank()) {
-                            val text = link.text().trim()
-                            val episodeNum = extractEpisodeNumberEnhanced(text, card.outerHtml())
-                            
-                            if (episodeNum != null) {
-                                episodes.add(
-                                    newEpisode(fixUrl(href)) {
-                                        this.name = text.takeIf { it.isNotBlank() } ?: "Episódio $episodeNum"
-                                        this.episode = episodeNum
-                                    }
-                                )
-                                
-                                println("   ✅ Card Ep $episodeNum")
-                            }
-                        }
-                    }
-                } catch (e: Exception) {}
-            }
-        }
-        
-        // PADRÃO 3: Links diretos na página
-        if (episodes.isEmpty()) {
-            println("📊 Procurando links diretos...")
+            println("📊 Tentando busca ampla...")
             val allLinks = document.select("a[href*='/episodio/'], a[href*='/video/'], a[href*='/assistir/']")
             
             allLinks.forEach { link ->
                 try {
-                    val href = link.attr("href")
-                    if (href.isNotBlank() && !href.contains("#")) {
-                        val text = link.text().trim()
-                        val episodeNum = extractEpisodeNumberEnhanced(text, link.outerHtml())
-                        
-                        if (episodeNum != null) {
-                            episodes.add(
-                                newEpisode(fixUrl(href)) {
-                                    this.name = text.takeIf { it.isNotBlank() } ?: "Episódio $episodeNum"
-                                    this.episode = episodeNum
-                                }
-                            )
-                            
-                            println("   ✅ Link Ep $episodeNum")
-                        }
-                    }
+                    processEpisodeLink(link, episodes)
                 } catch (e: Exception) {}
             }
         }
         
-        // PADRÃO 4: Seletor específico do AnimeFire
-        if (episodes.isEmpty()) {
-            println("📊 Procurando seletor específico AnimeFire...")
-            document.select(".divNumEp, .ep-number, .episode-num").forEach { epElement ->
-                try {
-                    val parentLink = epElement.parent()?.selectFirst("a")
-                    if (parentLink != null) {
-                        val href = parentLink.attr("href")
-                        if (href.isNotBlank()) {
-                            val text = epElement.text().trim()
-                            val episodeNum = extractEpisodeNumberEnhanced(text, epElement.outerHtml())
-                            
-                            if (episodeNum != null) {
-                                episodes.add(
-                                    newEpisode(fixUrl(href)) {
-                                        this.name = "Episódio $episodeNum"
-                                        this.episode = episodeNum
-                                    }
-                                )
-                                
-                                println("   ✅ Seletor Ep $episodeNum")
-                            }
-                        }
-                    }
-                } catch (e: Exception) {}
-            }
-        }
-        
-        // PADRÃO 5: Se for filme, adicionar 1 episódio
+        // Método 3: Verificar se é filme (apenas 1 episódio)
         if (episodes.isEmpty()) {
             println("📊 Verificando se é filme...")
             val isMovie = baseUrl.contains("/filmes/") || 
                          document.select("h1").text().contains("filme", ignoreCase = true)
             
             if (isMovie) {
-                println("   ✅ É um filme, adicionando 1 episódio")
+                println("✅ É um filme, adicionando 1 episódio")
                 episodes.add(
                     newEpisode(fixUrl(baseUrl)) {
                         this.name = "Assistir Filme"
@@ -828,56 +722,101 @@ class AnimeFire : MainAPI() {
             }
         }
         
-        // Ordenar por número do episódio
-        val sortedEpisodes = episodes.sortedBy { it.episode }
-        
-        println("\n📊 Total de episódios encontrados: ${sortedEpisodes.size}")
-        if (sortedEpisodes.isNotEmpty()) {
-            println("📊 Range: ${sortedEpisodes.first().episode} a ${sortedEpisodes.last().episode}")
+        // Método 4: Última tentativa - extrair da página inteira
+        if (episodes.isEmpty()) {
+            println("📊 Última tentativa - análise completa da página")
+            val pageHtml = document.html()
+            
+            // Procurar padrões de episódios no HTML
+            val episodePattern = Regex("""/episodio/(\d+)[^"']*""")
+            val matches = episodePattern.findAll(pageHtml)
+            
+            matches.forEach { match ->
+                try {
+                    val episodeNum = match.groupValues[1].toIntOrNull()
+                    val href = match.value
+                    
+                    if (episodeNum != null && href.isNotBlank()) {
+                        episodes.add(
+                            newEpisode(fixUrl(href)) {
+                                this.name = "Episódio $episodeNum"
+                                this.episode = episodeNum
+                            }
+                        )
+                        println("   ✅ Ep $episodeNum via regex")
+                    }
+                } catch (e: Exception) {}
+            }
         }
         
-        return sortedEpisodes
+        println("\n📊 Total de episódios encontrados: ${episodes.size}")
+        if (episodes.isNotEmpty()) {
+            episodes.take(5).forEach { ep ->
+                println("   • Ep ${ep.episode}: ${ep.name}")
+            }
+            if (episodes.size > 5) {
+                println("   • ... e mais ${episodes.size - 5} episódios")
+            }
+        }
+        
+        return episodes.sortedBy { it.episode }
+    }
+    
+    // Função auxiliar para processar link de episódio
+    private fun processEpisodeLink(link: Element, episodes: MutableList<Episode>) {
+        val href = link.attr("href")
+        if (href.isBlank() || href.contains("#")) return
+        
+        val text = link.text().trim()
+        val episodeNum = extractEpisodeNumber(text)
+        
+        if (episodeNum != null) {
+            // Determinar tipo de áudio
+            val audioType = when {
+                text.contains("dublado", ignoreCase = true) || 
+                href.contains("dublado", ignoreCase = true) -> " (Dub)"
+                text.contains("legendado", ignoreCase = true) ||
+                href.contains("legendado", ignoreCase = true) -> " (Leg)"
+                else -> ""
+            }
+            
+            // Criar nome do episódio
+            val episodeName = if (text.length > 30 || text.isBlank()) {
+                "Episódio $episodeNum$audioType"
+            } else {
+                text
+            }
+            
+            episodes.add(
+                newEpisode(fixUrl(href)) {
+                    this.name = episodeName
+                    this.episode = episodeNum
+                }
+            )
+            
+            println("   ✅ Ep $episodeNum: $episodeName")
+        }
     }
 
-    // ============ FUNÇÃO PARA EXTRAIR NÚMERO DO EPISÓDIO - MELHORADA ============
-    private fun extractEpisodeNumberEnhanced(text: String, html: String = ""): Int? {
-        // Tentar vários padrões no texto
-        val textPatterns = listOf(
-            Regex("""Epis[oó]dio\s*(\d{1,4})""", RegexOption.IGNORE_CASE),
-            Regex("""Ep\.?\s*(\d{1,4})""", RegexOption.IGNORE_CASE),
-            Regex("""(\d{1,4})\s*-"""),
-            Regex("""#(\d{1,4})"""),
+    // ============ FUNÇÃO PARA EXTRAIR NÚMERO DO EPISÓDIO ============
+    private fun extractEpisodeNumber(text: String): Int? {
+        // Tentar vários padrões
+        val patterns = listOf(
+            Regex("""Epis[oó]dio\s*(\d+)""", RegexOption.IGNORE_CASE),
+            Regex("""Ep\.?\s*(\d+)""", RegexOption.IGNORE_CASE),
+            Regex("""#(\d+)"""),
             Regex("""\b(\d{1,4})\s*/\s*\d+\b"""),
             Regex("""\b(\d{1,4})\s*\(dublado\)""", RegexOption.IGNORE_CASE),
             Regex("""\b(\d{1,4})\s*\(legendado\)""", RegexOption.IGNORE_CASE),
             Regex("""\b(\d{1,4})\b""") // Último recurso: qualquer número de 1-4 dígitos
         )
         
-        for (pattern in textPatterns) {
+        for (pattern in patterns) {
             val match = pattern.find(text)
             if (match != null) {
                 return match.groupValues[1].toIntOrNull()
             }
         }
-        
-        // Se não encontrou no texto, tentar no HTML
-        if (html.isNotBlank()) {
-            val htmlPatterns = listOf(
-                Regex("""episodio[_-]?(\d{1,4})""", RegexOption.IGNORE_CASE),
-                Regex("""ep[_-]?(\d{1,4})""", RegexOption.IGNORE_CASE),
-                Regex("""/ep(\d{1,4})/""", RegexOption.IGNORE_CASE),
-                Regex("""data-episode=['"](\d{1,4})['"]"""),
-                Regex("""class=['"][^'"]*episode[_-]?(\d{1,4})[^'"]*['"]""")
-            )
-            
-            for (pattern in htmlPatterns) {
-                val match = pattern.find(html)
-                if (match != null) {
-                    return match.groupValues[1].toIntOrNull()
-                }
-            }
-        }
-        
         return null
     }
 
