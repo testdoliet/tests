@@ -617,17 +617,7 @@ class AnimeFire : MainAPI() {
                 this.tags = genres
                 this.score = score
                 
-                // Adicionar status
-                try {
-                    val statusField = this::class.members.find { it.name == "status" }
-                    statusField?.call(this, when (status.lowercase()) {
-                        "em lançamento", "lançando" -> ShowStatus.Ongoing
-                        "completo", "finalizado" -> ShowStatus.Completed
-                        else -> null
-                    })
-                } catch (e: Exception) {}
-                
-                // Adicionar estúdio
+                // Adicionar estúdio (se disponível)
                 if (studio != null) {
                     try {
                         val studioField = this::class.members.find { it.name == "studio" }
@@ -641,9 +631,22 @@ class AnimeFire : MainAPI() {
                     episodesField?.call(this, episodes)
                 } catch (e: Exception) {}
                 
-                // Adicionar dub/leg status
-                if (hasDub || hasSub) {
-                    addDubStatus(dubExist = hasDub, subExist = hasSub)
+                // Adicionar dub/leg status - CORRIGIDO
+                addDubStatus(
+                    dubExist = hasDub,
+                    subExist = hasSub
+                )
+                
+                // Adicionar status APENAS se NÃO for filme
+                if (!isMovie) {
+                    try {
+                        val statusField = this::class.members.find { it.name == "status" }
+                        statusField?.call(this, when (status.lowercase()) {
+                            "em lançamento", "lançando" -> ShowStatus.Ongoing
+                            "completo", "finalizado" -> ShowStatus.Completed
+                            else -> null
+                        })
+                    } catch (e: Exception) {}
                 }
             }
             
@@ -654,8 +657,8 @@ class AnimeFire : MainAPI() {
             println("   • Tipo: ${response.type}")
             println("   • Ano: ${response.year}")
             println("   • Score: ${response.score}")
-            println("   • Status: ${response.status}")
-            println("   • Episódios: ${response.episodes?.size ?: 0}")
+            println("   • É filme? $isMovie")
+            println("   • Episódios: ${episodes.size}")
             println("   • Tags: ${response.tags?.joinToString(", ") ?: "nenhum"}")
             println("=".repeat(80) + "\n")
             
