@@ -154,24 +154,19 @@ class AnimeFire : MainAPI() {
         
         val isMovie = href.contains("/filmes/") || combinedTitle.contains("filme", ignoreCase = true)
         
-        // POSTER
+        // POSTER - AQUI É ONDE VAMOS MUDAR!
         val sitePoster = try {
-            selectFirst("img")?.let { img ->
-                val src = when {
-                    img.hasAttr("data-src") -> img.attr("data-src")
-                    img.hasAttr("src") -> img.attr("src")
-                    else -> null
-                }?.takeIf { it.isNotBlank() }?.let { 
-                    if (it.startsWith("//")) "https:$it"
-                    else if (it.startsWith("/")) "$mainUrl$it"
-                    else if (!it.startsWith("http")) "$mainUrl/$it"
-                    else it
-                }
-                src
-            }
+            // MÉTODO 1: Primeiro tentar pelas meta tags (og:image)
+            selectFirst("meta[property='og:image']")?.attr("content")?.takeIf { it.isNotBlank() }?.let { fixUrl(it) }
+                ?:
+            // MÉTODO 2: Tentar pela tag img com data-src
+            selectFirst("img[data-src]")?.attr("data-src")?.takeIf { it.isNotBlank() }?.let { fixUrl(it) }
+                ?:
+            // MÉTODO 3: Tentar pela tag img com src
+            selectFirst("img[src]")?.attr("src")?.takeIf { it.isNotBlank() }?.let { fixUrl(it) }
         } catch (e: Exception) {
             null
-        }?.let { fixUrl(it) }
+        }
 
         if (debugMode) {
             println("\n🎯 ITEM FINAL:")
@@ -179,6 +174,7 @@ class AnimeFire : MainAPI() {
             println("   • URL: $href")
             println("   • Score: ${score?.toString() ?: "null"}")
             println("   • Dub: $finalHasDub, Leg: $finalHasLeg")
+            println("   • Poster: ${sitePoster?.take(80)}...")
             println("=".repeat(60))
         }
 
@@ -449,51 +445,35 @@ class AnimeFire : MainAPI() {
             
             println("📊 Título: $title")
             
-            // ============ POSTER (CORREÇÃO PARA PEGAR A IMAGEM CORRETA) ============
+            // ============ POSTER (CORREÇÃO - IGUAL AO SUPERFLIX) ============
             val poster = try {
-                // MÉTODO 1: Pela classe específica do AnimeFire
-                document.selectFirst("img.imgAnimes")?.let { img ->
-                    when {
-                        img.hasAttr("src") -> {
-                            val src = img.attr("src").trim()
-                            if (src.isNotBlank()) fixUrl(src) else null
-                        }
-                        img.hasAttr("data-src") -> {
-                            val src = img.attr("data-src").trim()
-                            if (src.isNotBlank()) fixUrl(src) else null
-                        }
-                        else -> null
-                    }
-                } ?:
-                
-                // MÉTODO 2: Pela estrutura da página de detalhes
-                document.selectFirst(".sub_animepage_img img, .anime-poster img, .poster img")?.let { img ->
-                    when {
-                        img.hasAttr("src") -> {
-                            val src = img.attr("src").trim()
-                            if (src.isNotBlank()) fixUrl(src) else null
-                        }
-                        img.hasAttr("data-src") -> {
-                            val src = img.attr("data-src").trim()
-                            if (src.isNotBlank()) fixUrl(src) else null
-                        }
-                        else -> null
-                    }
-                } ?:
-                
-                // MÉTODO 3: Qualquer imagem que contenha '/animes/' na URL
-                document.selectFirst("img[src*='/animes/'], img[src*='/img/animes/']")?.attr("src")
-                    ?.takeIf { it.isNotBlank() && !it.contains("logo") }
+                // MÉTODO 1: Primeiro tentar pelas meta tags (og:image) - MAIS CONFIÁVEL
+                document.selectFirst("meta[property='og:image']")?.attr("content")
+                    ?.takeIf { it.isNotBlank() }
                     ?.let { fixUrl(it) }
-                    
+                ?:
+                // MÉTODO 2: Imagem principal da página
+                document.selectFirst(".sub_animepage_img img, .poster img, .anime-poster img")?.let { img ->
+                    when {
+                        img.hasAttr("src") -> img.attr("src").takeIf { it.isNotBlank() }?.let { fixUrl(it) }
+                        img.hasAttr("data-src") -> img.attr("data-src").takeIf { it.isNotBlank() }?.let { fixUrl(it) }
+                        else -> null
+                    }
+                }
+                ?:
+                // MÉTODO 3: Qualquer imagem de anime
+                document.selectFirst("img[src*='/animes/'], img[src*='/img/animes/']")
+                    ?.attr("src")
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let { fixUrl(it) }
             } catch (e: Exception) {
                 println("⚠️ Erro ao extrair poster: ${e.message}")
                 null
             }
             
-            println("📊 Poster: ${poster ?: "NÃO ENCONTRADO"}")
+            println("📊 Poster encontrado: ${poster ?: "NÃO ENCONTRADO"}")
             if (poster != null) {
-                println("   • URL completa: ${poster.take(100)}...")
+                println("   • URL: ${poster.take(100)}...")
             }
             
             // ============ BANNER/BACKGROUND ============
@@ -597,34 +577,14 @@ class AnimeFire : MainAPI() {
                 this.tags = genres
                 this.score = score
                 
-                // CORREÇÃO: Adicionar status usando reflexão (forma segura)
-                showStatus?.let { status ->
-                    if (!isMovie) {
-                        try {
-                            // Tentativa 1: Usar reflexão para encontrar o campo status
-                            val statusField = this::class.members.find { it.name == "status" }
-                            if (statusField != null) {
-                                statusField.call(this, status)
-                                println("✅ Status adicionado via reflexão: $status")
-                            } else {
-                                println("⚠️ Campo 'status' não encontrado na classe")
-                            }
-                        } catch (e: Exception) {
-                            println("⚠️ Erro ao adicionar status: ${e.message}")
-                        }
-                    }
-                }
-                
                 // Adicionar estúdio (se disponível)
                 studio?.let { 
                     try {
-                        // Tentar adicionar estúdio também via reflexão
+                        // Usando reflexão para ser compatível com CloudStream 3
                         val studioField = this::class.members.find { it.name == "studio" }
                         if (studioField != null) {
                             studioField.call(this, it)
                             println("✅ Estúdio adicionado: $it")
-                        } else {
-                            println("⚠️ Campo 'studio' não encontrado na classe")
                         }
                     } catch (e: Exception) {
                         println("⚠️ Erro ao adicionar estúdio: ${e.message}")
@@ -647,8 +607,7 @@ class AnimeFire : MainAPI() {
             println("   • Tipo: ${response.type}")
             println("   • Ano: ${response.year}")
             println("   • Score: ${response.score?.toString()}")
-            println("   • Status original: $statusText")
-            println("   • Status convertido: $showStatus")
+            println("   • Status: $statusText")
             println("   • É filme? $isMovie")
             println("   • Episódios: ${episodes.size}")
             println("   • Poster URL: ${poster?.take(50)}...")
