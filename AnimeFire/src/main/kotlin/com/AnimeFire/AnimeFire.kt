@@ -7,7 +7,7 @@ import com.lagradost.cloudstream3.app
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.jsoup.nodes.Element
-import com.AnimeFire.AnimeFireExtractor
+import com.AnimeFire.AnimeFireVideoExtractor
 class AnimeFire : MainAPI() {
     override var mainUrl = "https://animefire.io"
     override var name = "AnimeFire"
@@ -822,7 +822,7 @@ class AnimeFire : MainAPI() {
         
         return try {
             // Usar AnimeFireExtractor (nome correto)
-            AnimeFireExtractor().extract(data, mainUrl, name, callback)
+            AnimeFireVideoExtractor().extract(data, mainUrl, name, callback)
             true
         } catch (e: Exception) {
             println("❌ Erro no loadLinks: ${e.message}")
