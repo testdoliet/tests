@@ -8,6 +8,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.jsoup.nodes.Element
 import com.AnimeFire.AnimeFireVideoExtractor
+
 class AnimeFire : MainAPI() {
     override var mainUrl = "https://animefire.io"
     override var name = "AnimeFire"
@@ -20,6 +21,7 @@ class AnimeFire : MainAPI() {
     companion object {
         private const val SEARCH_PATH = "/pesquisar"
         
+        // Mutex para garantir que uma aba seja carregada por vez
         private val loadingMutex = Mutex()
         
         // LISTA COMPLETA DE TODAS AS CATEGORIAS
@@ -360,8 +362,9 @@ class AnimeFire : MainAPI() {
         }
     }
 
-    // ============ GET MAIN PAGE - CORRIGIDO (URL BASE SEM /2) ============
+    // ============ GET MAIN PAGE - COM LOADING MUTEX ============
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
+        // O Mutex garante que apenas uma aba seja carregada por vez
         return loadingMutex.withLock {
             try {
                 println("\n" + "=".repeat(70))
@@ -394,8 +397,7 @@ class AnimeFire : MainAPI() {
                 println("📊 Permite N/A? $allowsNaItems")
                 println("-".repeat(70))
                 
-                // AUMENTAR DELAY PARA 4 SEGUNDOS (antes era 2)
-                kotlinx.coroutines.delay(4000)
+                // REMOVIDO: delay(4000) - conforme solicitado
                 
                 val document = app.get(pageUrl, timeout = 40).document
                 
@@ -457,7 +459,8 @@ class AnimeFire : MainAPI() {
                 }
                 println("=".repeat(70) + "\n")
                 
-                kotlinx.coroutines.delay(500)
+                // Pequeno delay para não sobrecarregar (opcional)
+                kotlinx.coroutines.delay(100)
                 
                 // Retornar com o MESMO nome da aba
                 newHomePageResponse(
@@ -643,34 +646,12 @@ class AnimeFire : MainAPI() {
                     }
                 }
                 
-                // ADICIONAR EPISÓDIOS USANDO O MÉTODO CORRETO
-                try {
-                    // Método 1: Usar setEpisodes se disponível
-                    val episodesMethod = this::class.members.find { it.name == "setEpisodes" }
-                    if (episodesMethod != null) {
-                        episodesMethod.call(this, episodes)
-                        println("✅ Episódios adicionados via setEpisodes: ${episodes.size}")
-                    } else {
-                        // Método 2: Usar field episodes
-                        val episodesField = this::class.members.find { it.name == "episodes" }
-                        if (episodesField != null) {
-                            episodesField.call(this, episodes)
-                            println("✅ Episódios adicionados via field: ${episodes.size}")
-                        } else {
-                            println("❌ Não encontrou método para adicionar episódios")
-                        }
-                    }
-                } catch (e: Exception) {
-                    println("❌ Erro ao adicionar episódios: ${e.message}")
-                    // Tentar reflection como fallback
-                    try {
-                        val field = this::class.java.getDeclaredField("episodes")
-                        field.isAccessible = true
-                        field.set(this, episodes)
-                        println("✅ Episódios adicionados via reflection: ${episodes.size}")
-                    } catch (e2: Exception) {
-                        println("❌ Também falhou via reflection: ${e2.message}")
-                    }
+                // ADICIONAR EPISÓDIOS CORRETAMENTE
+                if (episodes.isNotEmpty()) {
+                    addEpisodes(DubStatus.Subbed, episodes)
+                    println("✅ Episódios adicionados via addEpisodes: ${episodes.size}")
+                } else {
+                    println("⚠️ Nenhum episódio para adicionar")
                 }
                 
                 // Adicionar status APENAS se NÃO for filme
@@ -723,99 +704,147 @@ class AnimeFire : MainAPI() {
         }
     }
 
-// ============ EXTRACT EPISODES - USAR A MESMA LÓGICA DO CÓDIGO QUE FUNCIONA ============
-private fun extractAllEpisodesFuncional(document: org.jsoup.nodes.Document, baseUrl: String): List<Episode> {
-    val episodes = mutableListOf<Episode>()
-    
-    println("\n🔍 Extraindo episódios...")
-    
-    // USAR OS MESMOS SELETORES DO CÓDIGO QUE FUNCIONA
-    val episodeElements = document.select("a.lEp.epT, a.lEp, .divListaEps a, [href*='/video/'], [href*='/episodio/']")
-    
-    println("📊 Links de episódios encontrados: ${episodeElements.size}")
-    
-    if (episodeElements.isEmpty()) {
-        println("⚠️ Nenhum link de episódio encontrado!")
-        return emptyList()
+    // ============ EXTRACT EPISODES - FUNCIONAL ============
+    private fun extractAllEpisodesFuncional(document: org.jsoup.nodes.Document, baseUrl: String): List<Episode> {
+        println("\n🔍 EXTRACTING EPISODES")
+        println("📊 URL base: $baseUrl")
+        
+        val episodes = mutableListOf<Episode>()
+        
+        // PRIMEIRO: Tentar com o seletor específico da seção de episódios
+        var episodeElements = document.select("div.div_video_list a.lEp.epT")
+        
+        if (episodeElements.isEmpty()) {
+            // SEGUNDO: Tentar com seletores mais genéricos
+            episodeElements = document.select("a.lEp.epT, a.lEp, .divListaEps a, [href*='/video/'], [href*='/episodio/']")
+        }
+        
+        if (episodeElements.isEmpty()) {
+            // TERCEIRO: Tentar buscar por padrão de URL
+            episodeElements = document.select("a[href*='/animes/']")
+                .filter { element ->
+                    val href = element.attr("href")
+                    href.matches(Regex(".*/animes/[^/]+/\\d+/?$"))
+                }
+        }
+        
+        println("📊 Elementos de episódio encontrados: ${episodeElements.size}")
+        
+        if (episodeElements.isEmpty()) {
+            println("❌ NENHUM EPISÓDIO ENCONTRADO!")
+            return emptyList()
+        }
+        
+        println("✅ PROCESSANDO EPISÓDIOS...")
+        
+        episodeElements.forEachIndexed { index, element ->
+            try {
+                val href = element.attr("href")
+                val text = element.text().trim()
+                
+                if (href.isBlank() || text.isBlank()) {
+                    println("   ⚠️ Episódio ${index + 1}: href ou texto vazio")
+                    return@forEachIndexed
+                }
+                
+                // EXTRAIR NÚMERO DO EPISÓDIO
+                val episodeNumber = extractEpisodeNumberFuncional(text, href)
+                
+                if (episodeNumber == null) {
+                    println("   ⚠️ Episódio ${index + 1}: Não consegui extrair número")
+                    println("      Texto: '$text'")
+                    println("      Href: '$href'")
+                    return@forEachIndexed
+                }
+                
+                // CORRIGIR URL
+                val fixedHref = when {
+                    href.startsWith("//") -> "https:$href"
+                    href.startsWith("/") -> "$mainUrl$href"
+                    !href.startsWith("http") -> "$mainUrl/$href"
+                    else -> href
+                }
+                
+                // CRIAR EPISÓDIO
+                val episode = newEpisode(fixedHref) {
+                    this.name = text
+                    this.episode = episodeNumber
+                    this.season = 1
+                }
+                
+                episodes.add(episode)
+                
+                // DEBUG: Mostrar apenas os primeiros 3 e o último
+                when {
+                    index < 3 -> println("   ✅ Ep $episodeNumber: '$text'")
+                    index == episodeElements.size - 1 -> println("   ... e mais ${episodeElements.size - 3} episódios")
+                    else -> {}
+                }
+                
+            } catch (e: Exception) {
+                println("   ❌ Erro no episódio ${index + 1}: ${e.message}")
+            }
+        }
+        
+        // Ordenar por número do episódio
+        val sortedEpisodes = episodes.sortedBy { it.episode }
+        
+        println("\n📊 RESULTADO FINAL:")
+        println("   • Total de episódios extraídos: ${sortedEpisodes.size}")
+        if (sortedEpisodes.isNotEmpty()) {
+            println("   • Primeiro episódio: ${sortedEpisodes.first().episode}")
+            println("   • Último episódio: ${sortedEpisodes.last().episode}")
+        }
+        
+        return sortedEpisodes
     }
-    
-    episodeElements.forEachIndexed { index, element ->
-        try {
-            val href = element.attr("href")
-            val text = element.text().trim()
-            
-            if (href.isBlank() || text.isBlank()) return@forEachIndexed
-            
-            // USAR A MESMA FUNÇÃO DE EXTRACTION DO CÓDIGO QUE FUNCIONA
-            val episodeNumber = extractEpisodeNumber(text) ?: (index + 1)
-            
-            // Corrigir URL
-            val fixedHref = when {
-                href.startsWith("//") -> "https:$href"
-                href.startsWith("/") -> "$mainUrl$href"
-                !href.startsWith("http") -> "$mainUrl/$href"
-                else -> href
+
+    // ============ EXTRACT EPISODE NUMBER - FUNCIONAL ============
+    private fun extractEpisodeNumberFuncional(text: String, href: String = ""): Int? {
+        // Tentar extrair do texto primeiro
+        val textPatterns = listOf(
+            Regex("""Epis[oó]dio\s*(\d+)""", RegexOption.IGNORE_CASE),
+            Regex("""Ep\.?\s*(\d+)""", RegexOption.IGNORE_CASE),
+            Regex("""\b(\d+)$""")
+        )
+        
+        for (pattern in textPatterns) {
+            val match = pattern.find(text)
+            if (match != null) {
+                return match.groupValues[1].toIntOrNull()
             }
-            
-            // USAR A MESMA CRIAÇÃO DO CÓDIGO QUE FUNCIONA
-            val episode = newEpisode(fixedHref) {
-                this.name = text
-                this.season = 1
-                this.episode = episodeNumber
-            }
-            
-            episodes.add(episode)
-            println("   ✅ Ep $episodeNumber: ${text.take(60)}...")
-            
+        }
+        
+        // Tentar da URL
+        val urlPattern = Regex("""/animes/[^/]+/(\d+)$""")
+        val urlMatch = urlPattern.find(href)
+        if (urlMatch != null) {
+            return urlMatch.groupValues[1].toIntOrNull()
+        }
+        
+        // Última tentativa: extrair qualquer número do texto
+        val numberPattern = Regex("""\b(\d{1,3})\b""")
+        val numberMatch = numberPattern.find(text)
+        return numberMatch?.groupValues?.get(1)?.toIntOrNull()
+    }
+
+    // ============ LOAD LINKS ============
+    override suspend fun loadLinks(
+        data: String,
+        isCasting: Boolean,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        println("\n" + "=".repeat(80))
+        println("🔥 ANIMEFIRE: Carregando links para $data")
+        println("=".repeat(80))
+        
+        return try {
+            // Como AnimeFireVideoExtractor é um object, chame diretamente
+            AnimeFireVideoExtractor.extractVideoLinks(data, mainUrl, name, callback)
         } catch (e: Exception) {
-            println("   ❌ Erro no episódio $index: ${e.message}")
+            println("❌ Erro no loadLinks: ${e.message}")
+            false
         }
     }
-    
-    // Ordenar por número
-    val sortedEpisodes = episodes.sortedBy { it.episode }
-    println("📊 Total de episódios processados: ${sortedEpisodes.size}")
-    
-    return sortedEpisodes
-}
-
-// ============ EXTRACT EPISODE NUMBER - USAR A MESMA DO CÓDIGO QUE FUNCIONA ============
-private fun extractEpisodeNumber(text: String): Int? {
-    // USAR OS MESMOS PADRÕES DO CÓDIGO QUE FUNCIONA
-    val patterns = listOf(
-        Regex("Epis[oó]dio\\s*(\\d+)"),
-        Regex("Ep\\.?\\s*(\\d+)"),
-        Regex("(\\d{1,3})\\s*-"),
-        Regex("#(\\d+)"),
-        Regex("\\b(\\d{1,4})\\b")
-    )
-    
-    for (pattern in patterns) {
-        val match = pattern.find(text)
-        if (match != null) {
-            return match.groupValues[1].toIntOrNull()
-        }
-    }
-    return null
-}
-
-// ============ LOAD LINKS ============
-override suspend fun loadLinks(
-    data: String,
-    isCasting: Boolean,
-    subtitleCallback: (SubtitleFile) -> Unit,
-    callback: (ExtractorLink) -> Unit
-): Boolean {
-    println("\n" + "=".repeat(80))
-    println("🔥 ANIMEFIRE: Carregando links para $data")
-    println("=".repeat(80))
-    
-    return try {
-        // Como AnimeFireVideoExtractor é um object, chame diretamente
-        AnimeFireVideoExtractor.extractVideoLinks(data, mainUrl, name, callback)
-    } catch (e: Exception) {
-        println("❌ Erro no loadLinks: ${e.message}")
-        false
-    }
-  }
 }
