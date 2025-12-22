@@ -10,7 +10,7 @@ import org.jsoup.nodes.Element
 import com.AnimeFire.AnimeFireVideoExtractor
 
 class AnimeFire : MainAPI() {
-    override var mainUrl = "https://animefire.plus"
+    override var mainUrl = "https://animefire.io"
     override var name = "AnimeFire"
     override val hasMainPage = true
     override var lang = "pt-br"
