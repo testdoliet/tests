@@ -583,61 +583,44 @@ class AnimeFire : MainAPI() {
             // ============ EXTRAIR EPISÓDIOS - FUNCIONAL ============
             val episodes = extractAllEpisodesFuncional(document, url)
             println("📊 Episódios extraídos: ${episodes.size}")
-            
             // ============ CRIAR LOAD RESPONSE ============
-            val response = newAnimeLoadResponse(
-                title, 
-                url, 
-                if (isMovie) TvType.Movie else TvType.Anime
-            ) {
-                this.posterUrl = poster
-                this.backgroundPosterUrl = background
-                this.year = year
-                this.plot = synopsis
-                this.tags = genres
-                this.score = score
-                
-                // CORREÇÃO: Adicionar status do anime usando a propriedade correta
-                showStatus?.let { status ->
-                    // Para filmes, não adicionar status
-                    if (!isMovie) {
-                        try {
-                            // A forma correta de adicionar status no CloudStream 3
-                            this.status = status
-                            println("✅ Status adicionado: $status")
-                        } catch (e: Exception) {
-                            println("⚠️ Erro ao adicionar status (tentativa 1): ${e.message}")
-                            // Tentativa alternativa
-                            try {
-                                val statusField = this::class.members.find { it.name == "status" }
-                                statusField?.call(this, status)
-                                println("✅ Status adicionado via reflexão: $status")
-                            } catch (e2: Exception) {
-                                println("⚠️ Erro ao adicionar status (tentativa 2): ${e2.message}")
-                            }
-                        }
-                    }
-                }
-                
-                // Adicionar estúdio (se disponível)
-                studio?.let { 
-                    try {
-                        val studioField = this::class.members.find { it.name == "studio" }
-                        studioField?.call(this, it)
-                        println("✅ Estúdio adicionado: $it")
-                    } catch (e: Exception) {
-                        println("⚠️ Erro ao adicionar estúdio: ${e.message}")
-                    }
-                }
-                
-                // ADICIONAR EPISÓDIOS CORRETAMENTE
-                if (episodes.isNotEmpty()) {
-                    addEpisodes(DubStatus.Subbed, episodes)
-                    println("✅ Episódios adicionados via addEpisodes: ${episodes.size}")
-                } else {
-                    println("⚠️ Nenhum episódio para adicionar")
-                }
-            }
+val response = newAnimeLoadResponse(
+    title, 
+    url, 
+    if (isMovie) TvType.Movie else TvType.Anime
+) {
+    this.posterUrl = poster
+    this.backgroundPosterUrl = background
+    this.year = year
+    this.plot = synopsis
+    this.tags = genres
+    this.score = score
+    
+    // CORREÇÃO: Adicionar status do anime usando a forma correta do CloudStream
+    // Para filmes, não adicionar status
+    if (!isMovie) {
+        // Usando a forma correta que o CloudStream aceita
+        this.status = showStatus
+    }
+    
+    // Adicionar estúdio (se disponível)
+    studio?.let { 
+        try {
+            this.studio = it
+            println("✅ Estúdio adicionado: $it")
+        } catch (e: Exception) {
+            println("⚠️ Erro ao adicionar estúdio: ${e.message}")
+        }
+    }
+    
+    // ADICIONAR EPISÓDIOS CORRETAMENTE
+    if (episodes.isNotEmpty()) {
+        addEpisodes(DubStatus.Subbed, episodes)
+        println("✅ Episódios adicionados via addEpisodes: ${episodes.size}")
+    } else {
+        println("⚠️ Nenhum episódio para adicionar")
+    }
+}
             
             // ============ DEBUG FINAL ============
             println("\n" + "=".repeat(80))
