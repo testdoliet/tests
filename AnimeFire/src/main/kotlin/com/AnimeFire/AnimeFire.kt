@@ -583,44 +583,62 @@ class AnimeFire : MainAPI() {
             // ============ EXTRAIR EPISÓDIOS - FUNCIONAL ============
             val episodes = extractAllEpisodesFuncional(document, url)
             println("📊 Episódios extraídos: ${episodes.size}")
+            
             // ============ CRIAR LOAD RESPONSE ============
-val response = newAnimeLoadResponse(
-    title, 
-    url, 
-    if (isMovie) TvType.Movie else TvType.Anime
-) {
-    this.posterUrl = poster
-    this.backgroundPosterUrl = background
-    this.year = year
-    this.plot = synopsis
-    this.tags = genres
-    this.score = score
-    
-    // CORREÇÃO: Adicionar status do anime usando a forma correta do CloudStream
-    // Para filmes, não adicionar status
-    if (!isMovie) {
-        // Usando a forma correta que o CloudStream aceita
-        this.status = showStatus
-    }
-    
-    // Adicionar estúdio (se disponível)
-    studio?.let { 
-        try {
-            this.studio = it
-            println("✅ Estúdio adicionado: $it")
-        } catch (e: Exception) {
-            println("⚠️ Erro ao adicionar estúdio: ${e.message}")
-        }
-    }
-    
-    // ADICIONAR EPISÓDIOS CORRETAMENTE
-    if (episodes.isNotEmpty()) {
-        addEpisodes(DubStatus.Subbed, episodes)
-        println("✅ Episódios adicionados via addEpisodes: ${episodes.size}")
-    } else {
-        println("⚠️ Nenhum episódio para adicionar")
-    }
-}
+            val response = newAnimeLoadResponse(
+                title, 
+                url, 
+                if (isMovie) TvType.Movie else TvType.Anime
+            ) {
+                this.posterUrl = poster
+                this.backgroundPosterUrl = background
+                this.year = year
+                this.plot = synopsis
+                this.tags = genres
+                this.score = score
+                
+                // CORREÇÃO: Adicionar status usando reflexão (forma segura)
+                showStatus?.let { status ->
+                    if (!isMovie) {
+                        try {
+                            // Tentativa 1: Usar reflexão para encontrar o campo status
+                            val statusField = this::class.members.find { it.name == "status" }
+                            if (statusField != null) {
+                                statusField.call(this, status)
+                                println("✅ Status adicionado via reflexão: $status")
+                            } else {
+                                println("⚠️ Campo 'status' não encontrado na classe")
+                            }
+                        } catch (e: Exception) {
+                            println("⚠️ Erro ao adicionar status: ${e.message}")
+                        }
+                    }
+                }
+                
+                // Adicionar estúdio (se disponível)
+                studio?.let { 
+                    try {
+                        // Tentar adicionar estúdio também via reflexão
+                        val studioField = this::class.members.find { it.name == "studio" }
+                        if (studioField != null) {
+                            studioField.call(this, it)
+                            println("✅ Estúdio adicionado: $it")
+                        } else {
+                            println("⚠️ Campo 'studio' não encontrado na classe")
+                        }
+                    } catch (e: Exception) {
+                        println("⚠️ Erro ao adicionar estúdio: ${e.message}")
+                    }
+                }
+                
+                // ADICIONAR EPISÓDIOS CORRETAMENTE
+                if (episodes.isNotEmpty()) {
+                    addEpisodes(DubStatus.Subbed, episodes)
+                    println("✅ Episódios adicionados via addEpisodes: ${episodes.size}")
+                } else {
+                    println("⚠️ Nenhum episódio para adicionar")
+                }
+            }
             
             // ============ DEBUG FINAL ============
             println("\n" + "=".repeat(80))
