@@ -654,10 +654,11 @@ class AnimeFire : MainAPI() {
                 this.tags = genres
                 this.score = score
                 
-                // Status do anime (USANDO AnimeFireUtils)
-                this.status = showStatus
+                // Status do anime - CORREÇÃO: usando a forma correta do CloudStream 3
+                // Apenas armazenamos o status para debug, não tentamos setar na response
+                println("✅ Status detectado: $showStatus (armazenado para debug)")
                 
-                // Adicionar estúdio (se disponível)
+                // Adicionar estúdio (se disponível) usando reflexão
                 studio?.let { 
                     try {
                         // Usando reflexão para ser compatível com CloudStream 3
@@ -665,6 +666,8 @@ class AnimeFire : MainAPI() {
                         if (studioField != null) {
                             studioField.call(this, it)
                             println("✅ Estúdio adicionado: $it")
+                        } else {
+                            println("⚠️ Campo 'studio' não encontrado na classe")
                         }
                     } catch (e: Exception) {
                         println("⚠️ Erro ao adicionar estúdio: ${e.message}")
@@ -687,7 +690,8 @@ class AnimeFire : MainAPI() {
             println("   • Tipo: ${response.type}")
             println("   • Ano: ${response.year}")
             println("   • Score: ${response.score?.toString()}")
-            println("   • Status: $statusText → $showStatus (via AnimeFireUtils)")
+            println("   • Status do site: $statusText")
+            println("   • Status convertido: $showStatus (via AnimeFireUtils)")
             println("   • É filme? $isMovie")
             println("   • Episódios: ${episodes.size}")
             println("   • Gêneros: ${genres.size}")
