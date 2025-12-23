@@ -13,7 +13,7 @@ class Goyabu : MainAPI() {
     override var lang = "pt-br"
     override val hasDownloadSupport = false
     override val supportedTypes = setOf(TvType.Anime)
-    override val usesWebView = false // WebView não é mais necessário com extração JS
+    override val usesWebView = false
 
     companion object {
         private const val SEARCH_PATH = "/?s="
@@ -211,15 +211,16 @@ class Goyabu : MainAPI() {
             
             // EPISÓDIOS - USANDO EXTRATOR DE JAVASCRIPT
             println("\n🔍 BUSCANDO EPISÓDIOS NO JAVASCRIPT (allEpisodes)...")
-            val episodes = extractEpisodesFromJavaScript(document, url)
+            var episodes = extractEpisodesFromJavaScript(document, url)
             
             if (episodes.isEmpty()) {
                 println("⚠️ Nenhum episódio encontrado no JavaScript, tentando métodos alternativos...")
                 val fallbackEpisodes = extractEpisodesFallback(document, url)
                 if (fallbackEpisodes.isNotEmpty()) {
                     println("✅ Encontrados ${fallbackEpisodes.size} episódios via fallback")
+                    // CORREÇÃO: Não usar addAll, combinar as listas
+                    episodes = episodes + fallbackEpisodes
                 }
-                episodes.addAll(fallbackEpisodes)
             } else {
                 println("✅ ENCONTRADOS ${episodes.size} EPISÓDIOS NO JAVASCRIPT!")
             }
