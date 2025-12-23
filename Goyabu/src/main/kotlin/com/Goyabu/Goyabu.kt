@@ -182,7 +182,7 @@ class Goyabu : MainAPI() {
             val yearElement = document.selectFirst("li#year")
             val year = yearElement?.text()?.trim()?.toIntOrNull()
             
-            // STATUS - CORRIGIDO: usar ShowStatus
+            // STATUS
             val statusElement = document.selectFirst(".status")
             val statusText = statusElement?.text()?.trim() ?: "Desconhecido"
             val showStatus = when {
@@ -207,7 +207,7 @@ class Goyabu : MainAPI() {
             // EPISÓDIOS
             val episodes = extractEpisodes(document, url)
             
-            // CRIAR RESPOSTA - CORRIGIDO: usar addStatus()
+            // CRIAR RESPOSTA - FORMA CORRETA NO CLOUDSTREAM 3
             newAnimeLoadResponse(title, url, TvType.Anime) {
                 this.posterUrl = poster
                 this.year = year
@@ -215,8 +215,8 @@ class Goyabu : MainAPI() {
                 this.tags = genres
                 this.score = score
                 
-                // CORREÇÃO: Usar addStatus() em vez de this.status
-                addStatus(showStatus)
+                // CORREÇÃO: status é uma propriedade do builder
+                status = showStatus
                 
                 if (episodes.isNotEmpty()) {
                     addEpisodes(DubStatus.Subbed, episodes)
