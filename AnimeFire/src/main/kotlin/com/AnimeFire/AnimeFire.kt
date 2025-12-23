@@ -7,7 +7,6 @@ import com.lagradost.cloudstream3.app
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.jsoup.nodes.Element
-import com.AnimeFire.AnimeFireVideoExtractor
 
 class AnimeFire : MainAPI() {
     override var mainUrl = "https://animefire.io"
@@ -586,13 +585,9 @@ class AnimeFire : MainAPI() {
             val statusText = statusElement?.text()?.trim() ?: "Desconhecido"
             println("📊 Status do Anime: '$statusText'")
             
-            // Converter para ShowStatus do CloudStream
-            val showStatus = when (statusText.lowercase()) {
-                "em lançamento", "lançando", "lançamento", "em andamento" -> ShowStatus.Ongoing
-                "completo", "finalizado", "concluído", "completado" -> ShowStatus.Completed
-                else -> null
-            }
-            println("📊 Status convertido: $showStatus")
+            // USANDO A FUNÇÃO getStatus DO AnimeFireUtils
+            val showStatus = getStatus(statusText)
+            println("📊 Status convertido via AnimeFireUtils: $showStatus")
             
             // ============ GÊNEROS/TAGS ============
             val genres = mutableListOf<String>()
@@ -659,7 +654,7 @@ class AnimeFire : MainAPI() {
                 this.tags = genres
                 this.score = score
                 
-                // Status do anime
+                // Status do anime (USANDO AnimeFireUtils)
                 this.status = showStatus
                 
                 // Adicionar estúdio (se disponível)
@@ -692,7 +687,7 @@ class AnimeFire : MainAPI() {
             println("   • Tipo: ${response.type}")
             println("   • Ano: ${response.year}")
             println("   • Score: ${response.score?.toString()}")
-            println("   • Status: $statusText")
+            println("   • Status: $statusText → $showStatus (via AnimeFireUtils)")
             println("   • É filme? $isMovie")
             println("   • Episódios: ${episodes.size}")
             println("   • Gêneros: ${genres.size}")
