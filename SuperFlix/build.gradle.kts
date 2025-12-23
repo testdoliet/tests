@@ -4,21 +4,16 @@ plugins {
 }
 
 android {
-    buildFeatures {
-    buildConfig = true
     namespace = "com.SuperFlix"
     compileSdk = 33
-}
+
     defaultConfig {
         minSdk = 24
         targetSdk = 33
-
-        // VARIÁVEIS DE BUILD PARA TMDB
-        // API KEY: Usada em queries (?api_key=xxx)
+        
+        // TMDB API Credentials
         buildConfigField("String", "TMDB_API_KEY", 
             "\"${System.getenv("TMDB_API_KEY") ?: "dummy_api_key"}\"")
-        
-        // ACCESS TOKEN: Usada em headers (Authorization: Bearer xxx)
         buildConfigField("String", "TMDB_ACCESS_TOKEN", 
             "\"${System.getenv("TMDB_ACCESS_TOKEN") ?: "dummy_access_token"}\"")
     }
@@ -41,6 +36,7 @@ android {
 }
 
 cloudstream {
+    version = 1  
     description = "SuperFlix - Filmes e Séries em Português"
     language = "pt-br"
     authors = listOf("lawlietbr")
