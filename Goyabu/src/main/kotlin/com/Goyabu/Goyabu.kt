@@ -13,7 +13,7 @@ class Goyabu : MainAPI() {
     override var lang = "pt-br"
     override val hasDownloadSupport = false
     override val supportedTypes = setOf(TvType.Anime)
-    override val usesWebView = true // Vamos tentar WebView DE NOVO
+    override val usesWebView = true
 
     companion object {
         private const val SEARCH_PATH = "/?s="
@@ -95,7 +95,7 @@ class Goyabu : MainAPI() {
             // 1. Usar WebView para carregar JavaScript
             println("🌐 Usando WebView para executar JavaScript...")
             val document = if (usesWebView) {
-                app.get(url, timeout = 60).document // Timeout maior para WebView
+                app.get(url, timeout = 60).document
             } else {
                 app.get(url, timeout = 30).document
             }
@@ -395,7 +395,7 @@ class Goyabu : MainAPI() {
         println("      Total de links: ${allLinks.size}")
         
         val linkTypes = mapOf(
-            "Numéricos (/\d+/)" to allLinks.filter { it.attr("href").matches(Regex("""^/\d+/?$""")) }.size,
+            "Numéricos (/\\d+/)" to allLinks.filter { it.attr("href").matches(Regex("""^/\d+/?$""")) }.size,
             "Com /assistir/" to allLinks.filter { it.attr("href").contains("/assistir/") }.size,
             "Com /episodio/" to allLinks.filter { it.attr("href").contains("/episodio/") }.size,
             "Relativos curtos" to allLinks.filter { 
