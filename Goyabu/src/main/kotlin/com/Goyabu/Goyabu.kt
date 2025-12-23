@@ -292,6 +292,37 @@ class Goyabu : MainAPI() {
     
     return episodes.sortedBy { it.episode }
     }
+
+    private fun debugPageContent(document: org.jsoup.nodes.Document) {
+    println("🔍 DEBUG: Verificando conteúdo da página...")
+    
+    // 1. Ver se a sinopse está lá (confirma que a página carregou)
+    val synopsis = document.selectFirst(".streamer-sinopse")?.text()
+    println("📄 Sinopse encontrada? ${!synopsis.isNullOrBlank()}")
+    
+    // 2. Procurar por QUALQUER container que possa ter episódios
+    val possibleContainers = listOf(
+        "#episodes-container",
+        ".episodes-grid",
+        ".episodes-slide",
+        "[class*='episode']",
+        ".boxEP"
+    )
+    
+    possibleContainers.forEach { selector ->
+        val elements = document.select(selector)
+        println("   Seletor '$selector': ${elements.size} elementos")
+        if (elements.isNotEmpty() && selector == "#episodes-container") {
+            // Se achou o container, mostrar um pedaço do HTML interno
+            println("   HTML do container (primeiros 500 chars):")
+            println(elements.first().html().take(500))
+        }
+    }
+    
+    // 3. Procurar links que pareçam ser de episódios (padrão /número/)
+    val episodeLinks = document.select("a[href]").filter { it.attr("href").matches(Regex("""^/\d+/$""")) }
+    println("🔗 Links com padrão de episódio (/número/): ${episodeLinks.size}")
+    }
     // ============ LOAD LINKS (desabilitado) ============
     override suspend fun loadLinks(
         data: String,
