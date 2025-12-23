@@ -4,6 +4,8 @@ plugins {
 }
 
 android {
+     buildFeatures {
+    buildConfig = true
     namespace = "com.SuperFlix"
     compileSdk = 33
 
