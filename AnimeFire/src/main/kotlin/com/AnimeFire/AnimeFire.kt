@@ -810,7 +810,7 @@ class AnimeFire : MainAPI() {
                 }
                 
                 // Garantir que tenha pelo menos "Episódio X"
-                val epNum = extractEpisodeNumberFuncional(text, href) ?: (index + 1)
+                val epNum = extractEpisodeNumber(text, href) ?: (index + 1)
                 if (!text.contains(Regex("""Epis[oó]dio""", RegexOption.IGNORE_CASE))) {
                     text = "Episódio $epNum"
                 }
@@ -846,4 +846,4 @@ class AnimeFire : MainAPI() {
         }
         
         // Ordenar por número do episódio
-        val sortedEp
+        val sortedEpisodes
