@@ -357,14 +357,13 @@ class Goyabu : MainAPI() {
                     val episodeNum = extractEpisodeNumberFromHref(href, index + 1)
                     val episodeUrl = fixUrl(href)
                     
-                    // CORREÇÃO AQUI: Usar newEpisode com EpisodeFix
+                    // CORREÇÃO: Usar newEpisode corretamente
                     episodes.add(
-                        Episode(
-                            data = episodeUrl,
-                            name = "Episódio $episodeNum",
-                            episode = episodeNum,
-                            season = 1
-                        )
+                        newEpisode(episodeUrl) {
+                            this.name = "Episódio $episodeNum"
+                            this.episode = episodeNum
+                            this.season = 1
+                        }
                     )
                     
                     println("   🔗 Link direto Ep $episodeNum: $episodeUrl")
@@ -409,15 +408,14 @@ class Goyabu : MainAPI() {
         // NOME DO EPISÓDIO
         val episodeTitle = epTypeElement?.text()?.trim() ?: "Episódio $episodeNum"
         
-        // CORREÇÃO AQUI: Usar Episode diretamente em vez de newEpisode
+        // CORREÇÃO: Usar newEpisode corretamente
         episodes.add(
-            Episode(
-                data = fixUrl(href),
-                name = episodeTitle,
-                episode = episodeNum,
-                season = 1,
-                posterUrl = thumb
-            )
+            newEpisode(fixUrl(href)) {
+                this.name = episodeTitle
+                this.episode = episodeNum
+                this.season = 1
+                this.posterUrl = thumb
+            }
         )
         
         println("   ✅ Ep $episodeNum: $episodeTitle -> ${fixUrl(href)}")
