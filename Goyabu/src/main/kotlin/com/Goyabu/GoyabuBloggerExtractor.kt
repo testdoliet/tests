@@ -432,7 +432,7 @@ object GoyabuBloggerExtractor {
     
     // Função auxiliar: Processar URLs do Google Video
     private suspend fun processGooglevideoUrls(
-        matches: List<Regex.MatchResult>,
+        matches: List<kotlin.text.MatchResult>,
         referer: String,
         name: String,
         callback: (ExtractorLink) -> Unit
