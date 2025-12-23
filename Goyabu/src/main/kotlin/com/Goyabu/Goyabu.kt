@@ -484,7 +484,13 @@ class Goyabu : MainAPI() {
             
             val url = urlNode?.asText()?.trim()
             val title = titleNode?.asText()?.trim()
-            val number = numberNode?.asIntOrNull() ?: 1
+            
+            // CORREÇÃO AQUI: Usar asInt() e lidar com nulos manualmente
+            val number = try {
+                numberNode?.asInt() ?: 1
+            } catch (e: Exception) {
+                1
+            }
             
             if (url.isNullOrBlank()) return null
             
