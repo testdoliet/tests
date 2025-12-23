@@ -71,7 +71,7 @@ fun getLocalProperty(key: String): String? {
 }
 
 cloudstream {
-    description = "Site de animes em português com conteúdo do AniList e TMDB"
+    description = "Site brasileiro de animes em português"
     language = "pt-br"
     authors = listOf("lawlietbr")
     status = 1
