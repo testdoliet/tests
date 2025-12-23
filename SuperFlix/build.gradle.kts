@@ -42,7 +42,7 @@ cloudstream {
     authors = listOf("lawlietbr")
     status = 1
     tvTypes = listOf("Movies", "Series", "Animes")
-    iconUrl = "https://imgs.search.brave.com/1ekfsjPNcZ1vInPWIe6FcAT6pLaRpbPmkomfCZLoCg8/rs:fit:32:32:1:0/g:ce/aHR0cDovL2Zhdmlj/b25zLnNlYXJjaC5i/cmF2ZS5jb20vaWNv/bnMvOGU2MDlmM2Y3/NjE2ZTdhZGI5M2Q2/M2ZmOTkyODg5NjYz/YzRmNjBlODVkZjYw/OGMxMmVhMzY2NmU5/NzlmNTY4Yi9zdXBl/cmZsaXgyMS5sb2wv"
+    iconUrl = "https://superflix22.lol/assets/img/favicon.png"
     isCrossPlatform = true
     requiresResources = true
 }
