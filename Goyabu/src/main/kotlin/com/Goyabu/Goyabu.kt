@@ -5,6 +5,8 @@ import com.lagradost.cloudstream3.utils.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.jsoup.nodes.Element
+import org.json.JSONObject
+import org.json.JSONArray
 
 class Goyabu : MainAPI() {
     override var mainUrl = "https://goyabu.io"
@@ -13,7 +15,7 @@ class Goyabu : MainAPI() {
     override var lang = "pt-br"
     override val hasDownloadSupport = false
     override val supportedTypes = setOf(TvType.Anime)
-    override val usesWebView = false
+    override val usesWebView = false // Vamos fazer diferente
 
     companion object {
         private const val SEARCH_PATH = "/?s="
@@ -88,11 +90,16 @@ class Goyabu : MainAPI() {
     override suspend fun load(url: String): LoadResponse {
         return try {
             println("\n" + "=".repeat(60))
-            println("🎬 GOYABU: Carregando: $url")
+            println("🎬 GOYABU - CAPTURANDO DADOS REAIS")
+            println("URL: $url")
+            println("=".repeat(60))
             
-            // 1. Pegar metadados básicos
-            val document = app.get(url, timeout = 30).document
+            // 1. Baixar a página completa
+            val response = app.get(url, timeout = 40)
+            val html = response.text
+            val document = response.document
             
+            // 2. Metadados básicos
             val title = document.selectFirst("h1.text-hidden, h1")?.text()?.trim() ?: "Sem Título"
             val poster = document.selectFirst(".streamer-poster img, .cover")?.attr("src")
                 ?.takeIf { it.isNotBlank() }?.let { fixUrl(it) }
@@ -100,30 +107,44 @@ class Goyabu : MainAPI() {
                 ?.replace("ler mais", "")?.trim() ?: "Sinopse não disponível."
             
             println("📌 Título: $title")
+            println("📝 Tamanho do HTML: ${html.length} caracteres")
             
-            // 2. EXTRAIR EPISÓDIOS ANALISANDO O HTML
-            println("\n🔍 ANALISANDO HTML DA API...")
-            val episodes = analyzeAndExtractEpisodes(url)
-            println("📺 EPISÓDIOS ENCONTRADOS: ${episodes.size}")
+            // 3. ESTRATÉGIA PRINCIPAL: Extrair dados dos scripts
+            println("\n🔍 EXTRAINDO DADOS DOS SCRIPTS...")
+            val episodes = extractEpisodesFromScripts(html, url)
             
-            // 3. Criar resposta
-            val response = newAnimeLoadResponse(title, url, TvType.Anime) {
+            println("📺 EPISÓDIOS ENCONTRADOS NOS SCRIPTS: ${episodes.size}")
+            
+            // 4. Se não encontrou, tentar outras estratégias
+            if (episodes.isEmpty()) {
+                println("\n🔍 PROCURANDO HTML RENDERIZADO...")
+                val htmlEpisodes = extractEpisodesFromRenderedHTML(document, url)
+                episodes.addAll(htmlEpisodes)
+                println("📺 EPISÓDIOS NO HTML: ${htmlEpisodes.size}")
+            }
+            
+            // 5. Mostrar debug detalhado
+            if (episodes.isEmpty()) {
+                println("\n🔍 DEBUG: Analisando estrutura da página...")
+                debugPageStructure(document, html)
+            }
+            
+            // 6. Criar resposta
+            val responseObj = newAnimeLoadResponse(title, url, TvType.Anime) {
                 this.posterUrl = poster
                 this.plot = synopsis
                 
                 if (episodes.isNotEmpty()) {
                     addEpisodes(DubStatus.Subbed, episodes.sortedBy { it.episode })
-                    println("\n✅ ${episodes.size} EPISÓDIOS ADICIONADOS!")
+                    println("\n✅ SUCESSO! ${episodes.size} EPISÓDIOS ADICIONADOS")
                     
                     // Mostrar todos os episódios
-                    episodes.take(10).forEach { ep ->
-                        println("   Ep ${ep.episode}: ${ep.name}")
-                    }
-                    if (episodes.size > 10) {
-                        println("   ... e mais ${episodes.size - 10} episódios")
+                    episodes.forEachIndexed { i, ep ->
+                        println("   ${i + 1}. Ep ${ep.episode}: ${ep.name.take(40)}...")
                     }
                 } else {
                     println("\n⚠️ NENHUM EPISÓDIO ENCONTRADO")
+                    // Fallback mínimo
                     addEpisodes(DubStatus.Subbed, listOf(
                         newEpisode(url) {
                             this.name = "Episódio 1"
@@ -134,11 +155,11 @@ class Goyabu : MainAPI() {
                 }
             }
             
-            println("=".repeat(60))
-            println("🎬 GOYABU: Load concluído")
+            println("\n" + "=".repeat(60))
+            println("🎬 CONCLUÍDO")
             println("=".repeat(60) + "\n")
             
-            response
+            responseObj
             
         } catch (e: Exception) {
             println("❌ ERRO: ${e.message}")
@@ -148,213 +169,302 @@ class Goyabu : MainAPI() {
         }
     }
     
-    // ANÁLISE DETALHADA DO HTML
-    private suspend fun analyzeAndExtractEpisodes(url: String): List<Episode> {
+    // ESTRATÉGIA PRINCIPAL: Extrair dos scripts
+    private fun extractEpisodesFromScripts(html: String, baseUrl: String): List<Episode> {
         val episodes = mutableListOf<Episode>()
         
         try {
-            val animeSlug = url.substringAfter("/anime/").substringBefore("/").substringBefore("?")
-            if (animeSlug.isBlank()) return emptyList()
+            println("   📜 Analisando scripts...")
             
-            println("   🔍 Slug: $animeSlug")
+            // Padrão 1: JSON com episódios
+            val jsonPatterns = listOf(
+                """episodes\s*:\s*(\[[^\]]*?\])""",
+                """episodes\s*=\s*(\[[^\]]*?\])""",
+                """var\s+episodes\s*=\s*(\[[^\]]*?\])""",
+                """data-episodes\s*=\s*['"]([^'"]+)['"]""",
+                """episodeList\s*:\s*(\[[^\]]*?\])""",
+                """"episodes"\s*:\s*(\[[^\]]*?\])"""
+            )
             
-            // Chamar API
-            val apiUrl = "$mainUrl/ajax/episodes/$animeSlug"
-            val response = app.get(apiUrl, timeout = 30, headers = mapOf(
-                "X-Requested-With" to "XMLHttpRequest",
-                "Referer" to url
-            ))
-            
-            val responseText = response.text
-            println("   📊 API retornou: ${responseText.length} chars")
-            
-            if (responseText.length < 100) {
-                println("   ⚠️ Resposta muito curta, mostrando tudo:")
-                println("   '$responseText'")
-            } else {
-                // MOSTRAR AMOSTRA DO HTML PARA DEBUG
-                println("\n   📋 AMOSTRA DO HTML (primeiros 1500 chars):")
-                println("   " + "─".repeat(50))
-                val sample = responseText.take(1500)
-                println("   $sample")
-                println("   " + "─".repeat(50))
+            for (pattern in jsonPatterns) {
+                val regex = Regex(pattern, RegexOption.IGNORE_CASE)
+                val match = regex.find(html)
                 
-                // Procurar padrões específicos
-                analyzeHtmlPatterns(responseText)
-            }
-            
-            // Parsear HTML
-            val doc = org.jsoup.Jsoup.parse(responseText)
-            
-            // ESTRATÉGIA 1: Procurar links numéricos (padrão mais comum)
-            println("\n   🔎 BUSCANDO LINKS NUMÉRICOS...")
-            val numericLinks = doc.select("a[href]").filter { link ->
-                val href = link.attr("href")
-                href.matches(Regex("""^/\d+/?$"""))
-            }
-            
-            println("   📎 Links numéricos encontrados: ${numericLinks.size}")
-            
-            if (numericLinks.isNotEmpty()) {
-                numericLinks.forEachIndexed { index, link ->
-                    val href = link.attr("href")
-                    val episodeNum = href.replace("/", "").toIntOrNull() ?: (index + 1)
-                    val title = link.text().trim().takeIf { it.isNotBlank() } ?: "Episódio $episodeNum"
+                if (match != null) {
+                    println("   ✅ JSON encontrado com padrão: ${pattern.take(30)}...")
+                    val jsonStr = match.groupValues[1]
+                    println("   📦 Tamanho do JSON: ${jsonStr.length} chars")
                     
-                    episodes.add(newEpisode(fixUrl(href)) {
-                        this.name = title
-                        this.episode = episodeNum
-                        this.season = 1
-                    })
-                    
-                    println("   ✅ Ep $episodeNum: $title -> $href")
+                    try {
+                        val jsonArray = JSONArray(jsonStr)
+                        println("   📋 Array JSON com ${jsonArray.length()} itens")
+                        
+                        for (i in 0 until jsonArray.length()) {
+                            try {
+                                val item = jsonArray.getJSONObject(i)
+                                val episode = parseJsonEpisode(item, baseUrl)
+                                if (episode != null) {
+                                    episodes.add(episode)
+                                }
+                            } catch (e: Exception) {
+                                // Ignorar item inválido
+                            }
+                        }
+                        
+                        if (episodes.isNotEmpty()) return episodes
+                        
+                    } catch (e: Exception) {
+                        println("   ⚠️ Não é JSON válido: ${e.message}")
+                    }
                 }
             }
             
-            // ESTRATÉGIA 2: Procurar por /assistir/
-            if (episodes.isEmpty()) {
-                println("\n   🔎 BUSCANDO LINKS /assistir/...")
-                val assistirLinks = doc.select("a[href*='/assistir/']")
-                println("   📎 Links /assistir/ encontrados: ${assistirLinks.size}")
+            // Padrão 2: URLs de episódios em scripts
+            println("\n   🔍 Procurando URLs de episódios...")
+            
+            // Padrões comuns de URLs
+            val urlPatterns = listOf(
+                """["'](/\d+/?)["']""",
+                """["'](/assistir/\d+/?)["']""",
+                """["'](/episodio/\d+/?)["']""",
+                """href\s*=\s*["'](/\d+/?)["']""",
+                """data-url\s*=\s*["'](/\d+/?)["']""",
+                """data-href\s*=\s*["'](/\d+/?)["']"""
+            )
+            
+            val uniqueUrls = mutableSetOf<String>()
+            
+            for (pattern in urlPatterns) {
+                val regex = Regex(pattern, RegexOption.IGNORE_CASE)
+                val matches = regex.findAll(html)
                 
-                assistirLinks.forEachIndexed { index, link ->
-                    val href = link.attr("href")
-                    // Tentar extrair número da URL: /assistir/123/
-                    val episodeNum = Regex("""/assistir/(\d+)/?""").find(href)
-                        ?.groupValues?.get(1)?.toIntOrNull() ?: (index + 1)
-                    
-                    val title = link.text().trim().takeIf { it.isNotBlank() } ?: "Episódio $episodeNum"
-                    
-                    episodes.add(newEpisode(fixUrl(href)) {
-                        this.name = title
-                        this.episode = episodeNum
-                        this.season = 1
-                    })
-                    
-                    println("   ✅ Ep $episodeNum: $title -> $href")
+                matches.forEach { match ->
+                    val url = match.groupValues[1]
+                    if (url !in uniqueUrls) {
+                        uniqueUrls.add(url)
+                        println("   🔗 URL encontrada: $url")
+                        
+                        // Extrair número do episódio
+                        val episodeNum = extractEpisodeNumberFromUrl(url)
+                        if (episodeNum > 0) {
+                            episodes.add(newEpisode(fixUrl(url)) {
+                                this.name = "Episódio $episodeNum"
+                                this.episode = episodeNum
+                                this.season = 1
+                            })
+                        }
+                    }
                 }
             }
             
-            // ESTRATÉGIA 3: Procurar por /episodio/
-            if (episodes.isEmpty()) {
-                println("\n   🔎 BUSCANDO LINKS /episodio/...")
-                val episodioLinks = doc.select("a[href*='/episodio/']")
-                println("   📎 Links /episodio/ encontrados: ${episodioLinks.size}")
-                
-                episodioLinks.forEachIndexed { index, link ->
-                    val href = link.attr("href")
-                    // Tentar extrair número: /episodio/123/ ou /episodio-nome-123/
-                    val episodeNum = extractEpisodeNumberFromUrl(href, index + 1)
-                    val title = link.text().trim().takeIf { it.isNotBlank() } ?: "Episódio $episodeNum"
-                    
-                    episodes.add(newEpisode(fixUrl(href)) {
-                        this.name = title
-                        this.episode = episodeNum
-                        this.season = 1
-                    })
-                    
-                    println("   ✅ Ep $episodeNum: $title -> $href")
-                }
-            }
-            
-            // ESTRATÉGIA 4: Procurar TODOS os links e filtrar
-            if (episodes.isEmpty()) {
-                println("\n   🔎 ANALISANDO TODOS OS LINKS...")
-                val allLinks = doc.select("a[href]")
-                println("   📎 Total de links: ${allLinks.size}")
-                
-                // Mostrar primeiros 20 links para debug
-                allLinks.take(20).forEachIndexed { i, link ->
-                    val href = link.attr("href")
-                    val text = link.text().trim()
-                    println("   $i. href='$href' text='$text'")
-                }
-                
-                // Filtrar links que parecem ser episódios
-                val episodeLinks = allLinks.filter { link ->
-                    val href = link.attr("href")
-                    href.startsWith("/") && 
-                    href.length in 3..20 && // Links razoavelmente curtos
-                    !href.contains("/anime/") && // Não são páginas de anime
-                    !href.contains("/generos/") && // Não são gêneros
-                    !href.contains("/?s=") && // Não são busca
-                    !href.contains("facebook") && // Não são redes sociais
-                    !href.contains("twitter") &&
-                    !href.contains("instagram")
-                }
-                
-                println("   📎 Links filtrados: ${episodeLinks.size}")
-                
-                episodeLinks.forEachIndexed { index, link ->
-                    val href = link.attr("href")
-                    val episodeNum = extractEpisodeNumberFromUrl(href, index + 1)
-                    val title = link.text().trim().takeIf { it.isNotBlank() } ?: "Episódio $episodeNum"
-                    
-                    episodes.add(newEpisode(fixUrl(href)) {
-                        this.name = title
-                        this.episode = episodeNum
-                        this.season = 1
-                    })
-                }
-            }
-            
-            println("\n   🎯 TOTAL DE EPISÓDIOS EXTRAÍDOS: ${episodes.size}")
+            println("   📊 URLs únicas encontradas: ${uniqueUrls.size}")
             
         } catch (e: Exception) {
-            println("   ❌ ERRO na análise: ${e.message}")
+            println("   ❌ Erro nos scripts: ${e.message}")
         }
         
         return episodes
     }
     
-    // Função para analisar padrões no HTML
-    private fun analyzeHtmlPatterns(html: String) {
-        println("\n   🔍 ANALISANDO PADRÕES NO HTML...")
-        
-        // Procurar por padrões comuns
-        val patterns = mapOf(
-            "Links numéricos" to Regex("""href=["']/(\d+)/["']"""),
-            "Links /assistir/" to Regex("""href=["'](/assistir/\d+/?)["']"""),
-            "Links /episodio/" to Regex("""href=["'](/episodio[^"']*)["']"""),
-            "Data attributes" to Regex("""data-[^=]+=["'][^"']*["']"""),
-            "IDs numéricos" to Regex("""id=["'](\d+)["']"""),
-            "data-id" to Regex("""data-id=["'](\d+)["']"""),
-            "data-episode" to Regex("""data-episode=["'](\d+)["']""")
-        )
-        
-        patterns.forEach { (name, regex) ->
-            val matches = regex.findAll(html).toList()
-            if (matches.isNotEmpty()) {
-                println("   📍 $name: ${matches.size} encontrados")
-                matches.take(3).forEach { match ->
-                    println("     - '${match.value}'")
-                }
-                if (matches.size > 3) {
-                    println("     ... e mais ${matches.size - 3}")
-                }
+    private fun parseJsonEpisode(json: JSONObject, baseUrl: String): Episode? {
+        try {
+            // Campos possíveis
+            val url = json.optString("url") ?: 
+                     json.optString("link") ?: 
+                     json.optString("href") ?: ""
+            
+            val title = json.optString("title") ?: 
+                       json.optString("name") ?: 
+                       json.optString("episode_title") ?: ""
+            
+            val number = json.optInt("number", 
+                     json.optInt("episode", 
+                     json.optInt("episode_number", 1)))
+            
+            if (url.isBlank()) return null
+            
+            val episodeUrl = if (url.startsWith("http")) url else fixUrl(url)
+            
+            return newEpisode(episodeUrl) {
+                this.name = if (title.isNotBlank()) title else "Episódio $number"
+                this.episode = number
+                this.season = 1
             }
+            
+        } catch (e: Exception) {
+            return null
         }
     }
     
-    private fun extractEpisodeNumberFromUrl(url: String, default: Int): Int {
-        // Tentar vários padrões
+    // Extrair do HTML já renderizado
+    private fun extractEpisodesFromRenderedHTML(document: org.jsoup.nodes.Document, baseUrl: String): List<Episode> {
+        val episodes = mutableListOf<Episode>()
+        
+        try {
+            println("   🏗️ Procurando no HTML renderizado...")
+            
+            // Estratégia: Procurar por qualquer coisa que pareça episódio
+            val possibleSelectors = listOf(
+                // Containers
+                "#episodes-container",
+                ".episodes",
+                ".episode-list",
+                ".episodes-grid",
+                // Itens individuais
+                ".episode-item",
+                ".boxEP",
+                "[class*='episode']",
+                "[class*='ep-']",
+                // Links específicos
+                "a[href*='/episodio/']",
+                "a[href*='/assistir/']",
+                "a[href^='/']"
+            )
+            
+            for (selector in possibleSelectors) {
+                val elements = document.select(selector)
+                if (elements.isNotEmpty()) {
+                    println("   🔍 Seletor '$selector': ${elements.size} elementos")
+                    
+                    // Limitar para debug
+                    elements.take(5).forEachIndexed { i, element ->
+                        println("     $i. ${element.text().take(50)}...")
+                    }
+                    
+                    // Extrair episódios destes elementos
+                    val extracted = extractFromElements(elements, baseUrl)
+                    if (extracted.isNotEmpty()) {
+                        episodes.addAll(extracted)
+                        println("   ✅ ${extracted.size} episódios extraídos")
+                        break
+                    }
+                }
+            }
+            
+        } catch (e: Exception) {
+            println("   ❌ Erro no HTML: ${e.message}")
+        }
+        
+        return episodes
+    }
+    
+    private fun extractFromElements(elements: org.jsoup.select.Elements, baseUrl: String): List<Episode> {
+        val episodes = mutableListOf<Episode>()
+        val processedUrls = mutableSetOf<String>()
+        
+        try {
+            for (element in elements) {
+                // Procurar links dentro do elemento
+                val links = element.select("a[href]")
+                
+                for (link in links) {
+                    val href = link.attr("href").trim()
+                    if (href.isBlank() || href in processedUrls) continue
+                    
+                    processedUrls.add(href)
+                    
+                    // Verificar se é episódio
+                    val isEpisode = when {
+                        href.matches(Regex("""^/\d+/?$""")) -> true
+                        href.contains("/episodio/") -> true
+                        href.contains("/assistir/") -> true
+                        element.classNames().any { it.contains("episode", ignoreCase = true) } -> true
+                        else -> false
+                    }
+                    
+                    if (isEpisode) {
+                        val episodeNum = extractEpisodeNumberFromUrl(href)
+                        val title = link.text().trim().takeIf { it.isNotBlank() } ?: "Episódio $episodeNum"
+                        
+                        episodes.add(newEpisode(fixUrl(href)) {
+                            this.name = title
+                            this.episode = episodeNum
+                            this.season = 1
+                        })
+                        
+                        println("   📺 Ep $episodeNum: $title")
+                    }
+                }
+            }
+            
+        } catch (e: Exception) {
+            // Ignorar erro
+        }
+        
+        return episodes
+    }
+    
+    private fun extractEpisodeNumberFromUrl(url: String): Int {
+        // Padrões de URLs de episódios
         val patterns = listOf(
-            Regex("""/(\d+)/?$"""), // /123/
-            Regex("""/assistir/(\d+)/?"""), // /assistir/123/
-            Regex("""/episodio/(\d+)/?"""), // /episodio/123/
-            Regex("""-(\d+)/?$"""), // -123/
-            Regex("""ep(\d+)""", RegexOption.IGNORE_CASE), // ep123
-            Regex("""episodio[-_]?(\d+)""", RegexOption.IGNORE_CASE) // episodio-123
+            Regex("""/(\d+)/?$"""),                    // /123/
+            Regex("""/assistir/(\d+)/?"""),            // /assistir/123/
+            Regex("""/episodio/(\d+)/?"""),            // /episodio/123/
+            Regex("""/ep-(\d+)/?"""),                  // /ep-123/
+            Regex("""-episodio-(\d+)""", RegexOption.IGNORE_CASE), // -episodio-123
+            Regex("""-(\d+)/?$""")                     // -123/
         )
         
         for (pattern in patterns) {
             val match = pattern.find(url)
             if (match != null) {
-                return match.groupValues[1].toIntOrNull() ?: default
+                return match.groupValues[1].toIntOrNull() ?: 1
             }
         }
         
-        return default
+        return 1
+    }
+    
+    private fun debugPageStructure(document: org.jsoup.nodes.Document, html: String) {
+        println("\n   🐛 DEBUG DETALHADO:")
+        println("   -------------------")
+        
+        // 1. Ver scripts
+        val scripts = document.select("script")
+        println("   📜 Scripts na página: ${scripts.size}")
+        
+        scripts.forEachIndexed { i, script ->
+            val content = script.html()
+            if (content.contains("episode", ignoreCase = true) || 
+                content.contains("episodio", ignoreCase = true)) {
+                println("   👉 Script $i contém 'episode' (${content.length} chars)")
+                println("   📄 Amostra: ${content.take(100)}...")
+            }
+        }
+        
+        // 2. Ver divs importantes
+        val divs = document.select("div[class], div[id]")
+        println("\n   🏗️ Divs importantes:")
+        
+        divs.filter { div ->
+            val className = div.attr("class")
+            val id = div.attr("id")
+            className.contains("episode", ignoreCase = true) ||
+            className.contains("ep-", ignoreCase = true) ||
+            id.contains("episode", ignoreCase = true) ||
+            id.contains("ep-", ignoreCase = true)
+        }.take(5).forEach { div ->
+            println("   🏷️ Classe: '${div.attr("class")}', ID: '${div.attr("id")}'")
+            println("   📝 Conteúdo: ${div.text().take(50)}...")
+        }
+        
+        // 3. Links numéricos
+        val numericLinks = document.select("a[href]").filter { 
+            it.attr("href").matches(Regex("""^/\d+/?$"""))
+        }
+        println("\n   🔢 Links numéricos: ${numericLinks.size}")
+        numericLinks.take(5).forEach { link ->
+            println("   🔗 ${link.attr("href")} - '${link.text()}'")
+        }
+        
+        // 4. Amostra do HTML onde tem "episode"
+        val episodeIndex = html.indexOf("episode", ignoreCase = true)
+        if (episodeIndex > 0) {
+            val start = maxOf(0, episodeIndex - 100)
+            val end = minOf(html.length, episodeIndex + 200)
+            println("\n   📍 Contexto de 'episode' no HTML:")
+            println("   ${html.substring(start, end)}")
+        }
     }
 
     override suspend fun loadLinks(
