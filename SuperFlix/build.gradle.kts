@@ -44,7 +44,7 @@ cloudstream {
     authors = listOf("lawlietbr")
     status = 1
     tvTypes = listOf("Movies", "Series", "Animes")
-    iconUrl = "https://superflix22.lol/assets/img/favicon.png"
+    iconUrl = "https://icons.duckduckgo.com/ip2/superflix22.lol.ico"
     isCrossPlatform = true
     requiresResources = true
 }
