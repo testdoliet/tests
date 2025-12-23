@@ -13,7 +13,7 @@ class Goyabu : MainAPI() {
     override var lang = "pt-br"
     override val hasDownloadSupport = false
     override val supportedTypes = setOf(TvType.Anime)
-    override val usesWebView = false // Não precisa de WebView se vamos extrair do JS
+    override val usesWebView = false
 
     companion object {
         private const val SEARCH_PATH = "/?s="
@@ -175,11 +175,10 @@ class Goyabu : MainAPI() {
                         println("✅ Encontrado 'allEpisodes' no script")
                         
                         // Padrão: allEpisodes = [ {...}, {...}, ... ]
-                        val arrayPattern = Regex("""allEpisodes\s*=\s*\[(.*?)\];""", setOf(RegexOption.DOTALL, RegexOption.IGNORE_CASE))
-                        val arrayMatch = arrayPattern.find(scriptContent)
+                        // Não usar DOTALL, usar abordagem alternativa
+                        val arrayContent = extractArrayContent(scriptContent, "allEpisodes")
                         
-                        if (arrayMatch != null) {
-                            val arrayContent = arrayMatch.groupValues[1]
+                        if (arrayContent.isNotBlank()) {
                             println("📦 Array extraído (${arrayContent.length} caracteres)")
                             
                             // Extrair objetos individuais do array
@@ -196,15 +195,12 @@ class Goyabu : MainAPI() {
                                     // Construir URL do episódio
                                     val epUrl = buildEpisodeUrl(epId, epNumber)
                                     
-                                    episodes.add(
-                                        Episode(
-                                            data = epUrl,
-                                            name = epTitle,
-                                            episode = epNumber,
-                                            season = 1,
-                                            posterUrl = null
-                                        )
-                                    )
+                                    // Usar newEpisode em vez do construtor depreciado
+                                    episodes.add(newEpisode(epUrl) {
+                                        this.name = epTitle
+                                        this.episode = epNumber
+                                        this.season = 1
+                                    })
                                     
                                     if (objIndex < 3) { // Mostrar apenas os primeiros 3 para debug
                                         println("   📺 Ep $epNumber: $epTitle -> $epUrl")
@@ -237,15 +233,12 @@ class Goyabu : MainAPI() {
                                 val epNum = match.groupValues.getOrNull(2)?.toIntOrNull() ?: matchCount
                                 
                                 if (id.isNotBlank()) {
-                                    episodes.add(
-                                        Episode(
-                                            data = "$mainUrl/$id",
-                                            name = "Episódio $epNum",
-                                            episode = epNum,
-                                            season = 1,
-                                            posterUrl = null
-                                        )
-                                    )
+                                    // Usar newEpisode em vez do construtor depreciado
+                                    episodes.add(newEpisode("$mainUrl/$id") {
+                                        this.name = "Episódio $epNum"
+                                        this.episode = epNum
+                                        this.season = 1
+                                    })
                                     
                                     if (matchCount <= 3) {
                                         println("   📺 Ep $epNum -> $mainUrl/$id")
@@ -282,6 +275,45 @@ class Goyabu : MainAPI() {
         }
         
         return episodes
+    }
+    
+    private fun extractArrayContent(scriptContent: String, arrayName: String): String {
+        // Encontrar o início do array
+        val startIndex = scriptContent.indexOf("$arrayName = [")
+        if (startIndex == -1) return ""
+        
+        var braceCount = 0
+        var inString = false
+        var escapeNext = false
+        var i = startIndex + arrayName.length + 3 // Pular "allEpisodes = ["
+        
+        while (i < scriptContent.length) {
+            val char = scriptContent[i]
+            
+            when {
+                escapeNext -> {
+                    escapeNext = false
+                }
+                char == '\\' -> {
+                    escapeNext = true
+                }
+                char == '"' -> {
+                    inString = !inString
+                }
+                !inString && char == '[' -> {
+                    braceCount++
+                }
+                !inString && char == ']' -> {
+                    braceCount--
+                    if (braceCount == 0) {
+                        return scriptContent.substring(startIndex + arrayName.length + 3, i)
+                    }
+                }
+            }
+            i++
+        }
+        
+        return ""
     }
     
     private fun extractJsonObjects(jsonArray: String): List<String> {
