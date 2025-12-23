@@ -42,11 +42,11 @@
         "name": "Goyabu"
     },
     {
-        "iconUrl": "https://imgs.search.brave.com/1ekfsjPNcZ1vInPWIe6FcAT6pLaRpbPmkomfCZLoCg8/rs:fit:32:32:1:0/g:ce/aHR0cDovL2Zhdmlj/b25zLnNlYXJjaC5i/cmF2ZS5jb20vaWNv/bnMvOGU2MDlmM2Y3/NjE2ZTdhZGI5M2Q2/M2ZmOTkyODg5NjYz/YzRmNjBlODVkZjYw/OGMxMmVhMzY2NmU5/NzlmNTY4Yi9zdXBl/cmZsaXgyMS5sb2wv",
-        "jarFileSize": 182891,
+        "iconUrl": "https://superflix22.lol/assets/img/favicon.png",
+        "jarFileSize": 171270,
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/lawlietbt/lietrepo",
-        "fileSize": 41690,
+        "fileSize": 38763,
         "status": 1,
         "language": "pt-br",
         "authors": [
@@ -57,7 +57,7 @@
             "Series",
             "Animes"
         ],
-        "version": -1,
+        "version": 1,
         "internalName": "SuperFlix",
         "jarUrl": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/SuperFlix.jar",
         "description": "SuperFlix - Filmes e S\u00e9ries em Portugu\u00eas",
