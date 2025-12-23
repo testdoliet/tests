@@ -13,7 +13,7 @@ class Goyabu : MainAPI() {
     override var lang = "pt-br"
     override val hasDownloadSupport = false
     override val supportedTypes = setOf(TvType.Anime)
-    override val usesWebView = false
+    override val usesWebView = true // ⬅️ MUDANÇA CRÍTICA: ATIVAR WEBVIEW
 
     companion object {
         private const val SEARCH_PATH = "/?s="
@@ -43,7 +43,7 @@ class Goyabu : MainAPI() {
     }
 
     init {
-        println("🎬 GOYABU: Plugin inicializado - ${ALL_GENRES.size} gêneros")
+        println("🎬 GOYABU: Plugin inicializado - ${ALL_GENRES.size} gêneros (WebView ATIVADO)")
     }
 
     override val mainPage = mainPageOf(
@@ -158,58 +158,19 @@ class Goyabu : MainAPI() {
         }
     }
 
-    // ============ DEBUG PAGE CONTENT (CORRIGIDO) ============
-    private fun debugPageContent(document: org.jsoup.nodes.Document) {
-        println("\n🔍 DEBUG: Verificando conteúdo da página...")
-        
-        // 1. Ver se a sinopse está lá (confirma que a página carregou)
-        val synopsis = document.selectFirst(".streamer-sinopse")?.text()
-        println("📄 Sinopse encontrada? ${!synopsis.isNullOrBlank()}")
-        
-        // 2. Procurar por QUALQUER container que possa ter episódios
-        val possibleContainers = listOf(
-            "#episodes-container",
-            ".episodes-grid",
-            ".episodes-slide",
-            "[class*='episode']",
-            ".boxEP"
-        )
-        
-        possibleContainers.forEach { selector ->
-            val elements = document.select(selector)
-            println("   Seletor '$selector': ${elements.size} elementos")
-            if (elements.isNotEmpty() && selector == "#episodes-container") {
-                // Se achou o container, mostrar um pedaço do HTML interno
-                val firstElement = elements.firstOrNull()
-                if (firstElement != null) {
-                    println("   HTML do container (primeiros 500 chars):")
-                    println(firstElement.html().take(500))
-                }
-            }
-        }
-        
-        // 3. Procurar links que pareçam ser de episódios (padrão /número/)
-        val episodeLinks = document.select("a[href]").filter { 
-            it.attr("href").matches(Regex("""^/\d+/$""")) 
-        }
-        println("🔗 Links com padrão de episódio (/número/): ${episodeLinks.size}")
-        
-        // 4. Verificar estrutura geral da página
-        val bodyText = document.body()?.text() ?: ""
-        println("📏 Tamanho total do texto da página: ${bodyText.length} caracteres")
-        println("📋 Primeiros 200 chars: ${bodyText.take(200)}...")
-        
-        println("🔍 FIM DEBUG\n")
-    }
-
-    // ============ LOAD (página do anime) ============
+    // ============ LOAD (página do anime) - COM WEBVIEW ============
     override suspend fun load(url: String): LoadResponse {
         return try {
             println("\n" + "=".repeat(60))
-            println("🎬 GOYABU: Carregando: $url")
+            println("🎬 GOYABU: Carregando com WebView: $url")
             println("=".repeat(60))
             
-            val document = app.get(url, timeout = 30).document
+            // Usar WebView para renderizar JavaScript
+            val document = if (usesWebView) {
+                app.get(url, timeout = 45).document
+            } else {
+                app.get(url, timeout = 30).document
+            }
             
             // DEBUG: Verificar conteúdo da página
             debugPageContent(document)
@@ -251,8 +212,8 @@ class Goyabu : MainAPI() {
             val score = parseScore(scoreText)
             println("⭐ Score: $scoreText -> $score")
             
-            // EPISÓDIOS
-            println("\n🔍 BUSCANDO EPISÓDIOS...")
+            // EPISÓDIOS (AGORA DEVE ENCONTRAR!)
+            println("\n🔍 BUSCANDO EPISÓDIOS (com WebView)...")
             val episodes = extractEpisodes(document, url)
             println("📺 Total de episódios extraídos: ${episodes.size}")
             
@@ -267,8 +228,13 @@ class Goyabu : MainAPI() {
                 if (episodes.isNotEmpty()) {
                     addEpisodes(DubStatus.Subbed, episodes)
                     println("✅ ${episodes.size} episódios adicionados à resposta")
+                    
+                    // Mostrar primeiros 3 episódios para debug
+                    episodes.take(3).forEach { ep ->
+                        println("   📝 Ep ${ep.episode}: ${ep.name} -> ${ep.url}")
+                    }
                 } else {
-                    println("⚠️ Nenhum episódio encontrado para adicionar")
+                    println("⚠️ Nenhum episódio encontrado (mesmo com WebView)")
                 }
             }
             
@@ -286,102 +252,181 @@ class Goyabu : MainAPI() {
         }
     }
     
+    // ============ DEBUG PAGE CONTENT ============
+    private fun debugPageContent(document: org.jsoup.nodes.Document) {
+        println("\n🔍 DEBUG: Verificando conteúdo da página...")
+        
+        // 1. Ver se a sinopse está lá (confirma que a página carregou)
+        val synopsis = document.selectFirst(".streamer-sinopse")?.text()
+        println("📄 Sinopse encontrada? ${!synopsis.isNullOrBlank()}")
+        
+        // 2. Procurar por QUALQUER container que possa ter episódios
+        val possibleContainers = listOf(
+            "#episodes-container",
+            ".episodes-grid",
+            ".episodes-slide",
+            "[class*='episode']",
+            ".boxEP"
+        )
+        
+        possibleContainers.forEach { selector ->
+            val elements = document.select(selector)
+            println("   Seletor '$selector': ${elements.size} elementos")
+            if (elements.isNotEmpty() && selector == "#episodes-container") {
+                // Verificar se ainda tem o comentário de JavaScript
+                val firstElement = elements.firstOrNull()
+                if (firstElement != null) {
+                    val html = firstElement.html()
+                    println("   📏 Tamanho do HTML do container: ${html.length} chars")
+                    
+                    if (html.contains("<!-- Episódios serão carregados via JavaScript -->")) {
+                        println("   ⚠️ AINDA TEM COMENTÁRIO DE JAVASCRIPT!")
+                    } else {
+                        println("   ✅ JavaScript executado! HTML real carregado")
+                        // Mostrar um pedaço do HTML para ver os episódios
+                        val sampleHtml = html.take(800)
+                        println("   📋 HTML (primeiros 800 chars):")
+                        println("   $sampleHtml")
+                    }
+                }
+            }
+        }
+        
+        // 3. Procurar links que pareçam ser de episódios
+        val episodeLinks = document.select("a[href]").filter { 
+            val href = it.attr("href")
+            href.matches(Regex("""^/\d+/$""")) || href.contains("/episodio/")
+        }
+        println("🔗 Links com padrão de episódio: ${episodeLinks.size}")
+        
+        if (episodeLinks.isNotEmpty()) {
+            episodeLinks.take(3).forEachIndexed { i, link ->
+                println("   Link ${i + 1}: ${link.attr("href")}")
+            }
+        }
+        
+        println("🔍 FIM DEBUG\n")
+    }
+    
+    // ============ EXTRACT EPISODES (ATUALIZADA) ============
     private fun extractEpisodes(document: org.jsoup.nodes.Document, baseUrl: String): List<Episode> {
         val episodes = mutableListOf<Episode>()
         
-        // ESTRATÉGIA 1: Procurar pelo container principal
-        var episodeElements = document.select("#episodes-container .episode-item")
-        println("   Estratégia 1 (#episodes-container .episode-item): ${episodeElements.size}")
+        println("🔍 Extraindo episódios...")
         
-        // ESTRATÉGIA 2: Se não encontrar, tentar seleção direta
-        if (episodeElements.isEmpty()) {
-            episodeElements = document.select(".boxEP.grid-view, .boxEP")
-            println("   Estratégia 2 (.boxEP): ${episodeElements.size}")
+        // ESTRATÉGIA PRINCIPAL: Procurar por .episode-item dentro do container
+        val episodeItems = document.select("#episodes-container .episode-item, .episode-item")
+        
+        if (episodeItems.isEmpty()) {
+            println("   ⚠️ Nenhum .episode-item encontrado")
+            // Fallback: procurar por .boxEP diretamente
+            val boxEPs = document.select(".boxEP.grid-view, .boxEP")
+            println("   🔄 Fallback: ${boxEPs.size} .boxEP encontrados")
+            
+            boxEPs.forEachIndexed { index, boxEP ->
+                try {
+                    extractEpisodeFromBoxEP(boxEP, index, episodes)
+                } catch (e: Exception) {
+                    println("   ❌ Erro no boxEP ${index + 1}: ${e.message}")
+                }
+            }
+        } else {
+            println("   ✅ ${episodeItems.size} .episode-item encontrados")
+            
+            episodeItems.forEachIndexed { index, episodeItem ->
+                try {
+                    // Dentro do .episode-item, procurar o .boxEP
+                    val boxEP = episodeItem.selectFirst(".boxEP") ?: episodeItem
+                    extractEpisodeFromBoxEP(boxEP, index, episodes)
+                } catch (e: Exception) {
+                    println("   ❌ Erro no episode-item ${index + 1}: ${e.message}")
+                }
+            }
         }
         
-        // ESTRATÉGIA 3: Procurar por links que parecem episódios
-        if (episodeElements.isEmpty()) {
+        // Se ainda não encontrou nada, procurar links diretos
+        if (episodes.isEmpty()) {
+            println("   🔍 Procurando links diretos de episódios...")
             val episodeLinks = document.select("a[href]").filter { 
-                it.attr("href").matches(Regex("""^/\d+/$""")) 
+                val href = it.attr("href")
+                href.matches(Regex("""^/\d+/$""")) || href.contains("/episodio/")
             }
-            println("   Estratégia 3 (links /número/): ${episodeLinks.size}")
             
-            // Processar links diretos
             episodeLinks.forEachIndexed { index, link ->
                 try {
                     val href = link.attr("href").trim()
                     if (href.isBlank()) return@forEachIndexed
                     
-                    // Tentar extrair número da URL
-                    val episodeNum = href.replace(Regex("""[^0-9]"""), "").toIntOrNull() ?: (index + 1)
-                    
-                    // Tentar extrair título
-                    val episodeTitle = link.selectFirst(".ep-type b, .title")?.text()?.trim()
-                        ?: "Episódio $episodeNum"
+                    // Extrair número do episódio
+                    val episodeNum = extractEpisodeNumberFromHref(href, index + 1)
                     
                     episodes.add(newEpisode(fixUrl(href)) {
-                        this.name = episodeTitle
+                        this.name = "Episódio $episodeNum"
                         this.episode = episodeNum
                         this.season = 1
                     })
                     
-                    println("   ✅ Link direto Ep $episodeNum: $href")
+                    println("   🔗 Link direto Ep $episodeNum: $href")
                 } catch (e: Exception) {
                     println("   ⚠️ Erro no link ${index + 1}: ${e.message}")
                 }
             }
-            
-            return episodes.sortedBy { it.episode }
         }
         
-        // PROCESSAR ELEMENTOS ENCONTRADOS (Estratégias 1 ou 2)
-        episodeElements.forEachIndexed { index, container ->
-            try {
-                // Dentro de cada container, buscar o link
-                val boxEP = if (container.className().contains("boxEP")) container else container.selectFirst(".boxEP")
-                val linkElement = boxEP?.selectFirst("a[href]") ?: return@forEachIndexed
-                
-                val href = linkElement.attr("href").trim()
-                if (href.isBlank()) return@forEachIndexed
-                
-                // NÚMERO DO EPISÓDIO (prioridade: data-episode-number > .ep-type > index)
-                var episodeNum = index + 1
-                
-                // 1. Tentar data-episode-number no .episode-item
-                container.attr("data-episode-number")?.toIntOrNull()?.let { episodeNum = it }
-                
-                // 2. Tentar do texto "Episódio X"
-                val epTypeElement = linkElement.selectFirst(".ep-type b")
-                epTypeElement?.text()?.trim()?.let { text ->
-                    val regex = Regex("""\b(\d+)\b""")
-                    val match = regex.find(text)
-                    match?.groupValues?.get(1)?.toIntOrNull()?.let { episodeNum = it }
-                }
-                
-                // THUMBNAIL
-                val thumb = linkElement.selectFirst(".coverImg")?.attr("style")?.let { style ->
-                    val regex = Regex("""url\(['"]?([^'"()]+)['"]?\)""")
-                    regex.find(style)?.groupValues?.get(1)?.replace("&quot;", "")?.trim()
-                }?.takeIf { it.isNotBlank() }?.let { fixUrl(it) }
-                
-                // NOME DO EPISÓDIO
-                val episodeTitle = "Episódio $episodeNum"
-                
-                episodes.add(newEpisode(fixUrl(href)) {
-                    this.name = episodeTitle
-                    this.episode = episodeNum
-                    this.season = 1
-                    this.posterUrl = thumb
-                })
-                
-                println("   ✅ Ep $episodeNum: $href")
-                
-            } catch (e: Exception) {
-                println("   ⚠️ Erro no item ${index + 1}: ${e.message}")
-            }
-        }
-        
+        println("   📊 Total de episódios extraídos: ${episodes.size}")
         return episodes.sortedBy { it.episode }
+    }
+    
+    private fun extractEpisodeFromBoxEP(boxEP: Element, index: Int, episodes: MutableList<Episode>) {
+        val linkElement = boxEP.selectFirst("a[href]") ?: return
+        val href = linkElement.attr("href").trim()
+        if (href.isBlank()) return
+        
+        // NÚMERO DO EPISÓDIO
+        var episodeNum = index + 1
+        
+        // 1. Tentar do texto "Episódio X"
+        val epTypeElement = linkElement.selectFirst(".ep-type b")
+        epTypeElement?.text()?.trim()?.let { text ->
+            val regex = Regex("""Epis[oó]dio\s+(\d+)""", RegexOption.IGNORE_CASE)
+            val match = regex.find(text)
+            match?.groupValues?.get(1)?.toIntOrNull()?.let { episodeNum = it }
+        }
+        
+        // 2. Tentar data-episode-number
+        boxEP.parent()?.attr("data-episode-number")?.toIntOrNull()?.let { episodeNum = it }
+        
+        // 3. Tentar da URL
+        episodeNum = extractEpisodeNumberFromHref(href, episodeNum)
+        
+        // THUMBNAIL
+        val thumb = linkElement.selectFirst(".coverImg")?.attr("style")?.let { style ->
+            val regex = Regex("""url\(['"]?([^'"()]+)['"]?\)""")
+            regex.find(style)?.groupValues?.get(1)?.replace("&quot;", "")?.trim()
+        }?.takeIf { it.isNotBlank() }?.let { fixUrl(it) }
+        
+        // NOME DO EPISÓDIO
+        val episodeTitle = epTypeElement?.text()?.trim() ?: "Episódio $episodeNum"
+        
+        episodes.add(newEpisode(fixUrl(href)) {
+            this.name = episodeTitle
+            this.episode = episodeNum
+            this.season = 1
+            this.posterUrl = thumb
+        })
+        
+        println("   ✅ Ep $episodeNum: $episodeTitle -> $href")
+    }
+    
+    private fun extractEpisodeNumberFromHref(href: String, default: Int): Int {
+        // Tentar extrair número da URL (padrão: /12345/ ou /episodio-1/)
+        val regex1 = Regex("""/(\d+)/?$""")
+        val regex2 = Regex("""/episodio[-_]?(\d+)/?$""", RegexOption.IGNORE_CASE)
+        
+        regex1.find(href)?.groupValues?.get(1)?.toIntOrNull()?.let { return it }
+        regex2.find(href)?.groupValues?.get(1)?.toIntOrNull()?.let { return it }
+        
+        return default
     }
 
     // ============ LOAD LINKS (desabilitado) ============
