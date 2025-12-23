@@ -158,7 +158,7 @@ class Goyabu : MainAPI() {
         }
     }
 
-    // ============ LOAD (página do anime) - CORRIGIDO ============
+    // ============ LOAD (página do anime) - SEM STATUS ============
     override suspend fun load(url: String): LoadResponse {
         return try {
             println("🎬 GOYABU: Carregando: $url")
@@ -182,15 +182,6 @@ class Goyabu : MainAPI() {
             val yearElement = document.selectFirst("li#year")
             val year = yearElement?.text()?.trim()?.toIntOrNull()
             
-            // STATUS
-            val statusElement = document.selectFirst(".status")
-            val statusText = statusElement?.text()?.trim() ?: "Desconhecido"
-            val showStatus = when {
-                statusText.contains("Completo", true) -> ShowStatus.Completed
-                statusText.contains("Lançamento", true) -> ShowStatus.Ongoing
-                else -> ShowStatus.Completed
-            }
-            
             // GÊNEROS
             val genres = mutableListOf<String>()
             document.select(".filter-btn.btn-style, a[href*='/generos/']").forEach { element ->
@@ -207,16 +198,13 @@ class Goyabu : MainAPI() {
             // EPISÓDIOS
             val episodes = extractEpisodes(document, url)
             
-            // CRIAR RESPOSTA - FORMA CORRETA NO CLOUDSTREAM 3
+            // CRIAR RESPOSTA - SEM STATUS
             newAnimeLoadResponse(title, url, TvType.Anime) {
                 this.posterUrl = poster
                 this.year = year
                 this.plot = synopsis
                 this.tags = genres
                 this.score = score
-                
-                // CORREÇÃO: status é uma propriedade do builder
-                status = showStatus
                 
                 if (episodes.isNotEmpty()) {
                     addEpisodes(DubStatus.Subbed, episodes)
