@@ -158,7 +158,7 @@ class Goyabu : MainAPI() {
         }
     }
 
-    // ============ LOAD (página do anime) - COM EXTRATOR DE JAVASCRIPT ============
+    // ============ LOAD (página do anime) ============
     override suspend fun load(url: String): LoadResponse {
         return try {
             println("\n" + "=".repeat(60))
@@ -209,8 +209,8 @@ class Goyabu : MainAPI() {
             val isDubbed = title.contains("dublado", ignoreCase = true)
             println("🎭 Dublado: $isDubbed")
             
-            // EPISÓDIOS - USANDO EXTRATOR DE JAVASCRIPT
-            println("\n🔍 BUSCANDO EPISÓDIOS NO JAVASCRIPT (allEpisodes)...")
+            // EPISÓDIOS
+            println("\n🔍 BUSCANDO EPISÓDIOS...")
             var episodes = extractEpisodesFromJavaScript(document, url)
             
             if (episodes.isEmpty()) {
@@ -218,7 +218,7 @@ class Goyabu : MainAPI() {
                 val fallbackEpisodes = extractEpisodesFallback(document, url)
                 if (fallbackEpisodes.isNotEmpty()) {
                     println("✅ Encontrados ${fallbackEpisodes.size} episódios via fallback")
-                    // CORREÇÃO: Não usar addAll, combinar as listas
+                    // CORREÇÃO: Não usar addAll, usar operador +
                     episodes = episodes + fallbackEpisodes
                 }
             } else {
@@ -267,7 +267,7 @@ class Goyabu : MainAPI() {
         }
     }
     
-    // ============ EXTRATOR DE EPISÓDIOS DO JAVASCRIPT (do primeiro código) ============
+    // ============ EXTRATOR DE EPISÓDIOS DO JAVASCRIPT ============
     private fun extractEpisodesFromJavaScript(document: org.jsoup.nodes.Document, baseUrl: String): List<Episode> {
         val episodes = mutableListOf<Episode>()
         
@@ -375,7 +375,7 @@ class Goyabu : MainAPI() {
         return episodes
     }
     
-    // ============ FALLBACK PARA EXTRATOR DE EPISÓDIOS (do segundo código) ============
+    // ============ FALLBACK PARA EXTRATOR DE EPISÓDIOS ============
     private fun extractEpisodesFallback(document: org.jsoup.nodes.Document, baseUrl: String): List<Episode> {
         val episodes = mutableListOf<Episode>()
         
@@ -485,6 +485,7 @@ class Goyabu : MainAPI() {
         println("   ✅ Ep $episodeNum: $episodeTitle -> $href")
     }
     
+    // ============ FUNÇÕES AUXILIARES ============
     private fun extractEpisodeNumberFromHref(href: String, default: Int): Int {
         // Tentar extrair número da URL
         val regex1 = Regex("""/(\d+)/?$""")
@@ -495,8 +496,6 @@ class Goyabu : MainAPI() {
         
         return default
     }
-    
-    // ============ FUNÇÕES AUXILIARES PARA EXTRATOR DE JAVASCRIPT ============
     
     private fun extractArrayContent(scriptContent: String, arrayName: String): String {
         // Encontrar o início do array
@@ -607,14 +606,79 @@ class Goyabu : MainAPI() {
         }
     }
 
-    // ============ LOAD LINKS (desabilitado) ============
+    // ============ LOAD LINKS (AGORA COM SUPORTE AO BLOGGER) ============
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        println("🎬 GOYABU: loadLinks desabilitado temporariamente")
-        return false
+        println("\n🎬 GOYABU: Iniciando extração de links para: $data")
+        
+        return try {
+            // Usar o extrator específico do Blogger
+            val success = GoyabuBloggerExtractor.extractVideoLinks(data, "Goyabu", callback)
+            
+            if (success) {
+                println("✅ GOYABU: Extração concluída com sucesso!")
+                return true
+            } else {
+                println("⚠️ GOYABU: Extrator Blogger falhou, tentando métodos alternativos...")
+                
+                // Fallback: Tentar extrair diretamente da página
+                val response = app.get(data)
+                val html = response.text
+                
+                // Procurar por URLs de vídeo
+                val videoPatterns = listOf(
+                    """https?://[^"'\s<>]*\.(?:mp4|m3u8|mkv|webm|avi)[^"'\s<>]*""".toRegex(),
+                    """(https?://[^"'\s<>]*\.googlevideo\.com/[^"'\s<>]+)""".toRegex(),
+                    """src\s*:\s*['"](https?://[^"']+)['"]""".toRegex(),
+                    """url\s*:\s*['"](https?://[^"']+)['"]""".toRegex(),
+                    """file\s*:\s*['"](https?://[^"']+)['"]""".toRegex()
+                )
+                
+                var found = false
+                for (pattern in videoPatterns) {
+                    val matches = pattern.findAll(html).toList()
+                    if (matches.isNotEmpty()) {
+                        for (match in matches) {
+                            val videoUrl = match.groupValues[1].takeIf { it.startsWith("http") } ?: continue
+                            
+                            if (videoUrl.contains(".mp4") || videoUrl.contains(".m3u8") || videoUrl.contains("googlevideo")) {
+                                val extractorLink = newExtractorLink(
+                                    source = "Goyabu",
+                                    name = "Vídeo",
+                                    url = videoUrl,
+                                    type = ExtractorLinkType.VIDEO
+                                ) {
+                                    this.referer = data
+                                    this.quality = 720
+                                    this.headers = mapOf(
+                                        "Referer" to data,
+                                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                                    )
+                                }
+                                
+                                callback(extractorLink)
+                                found = true
+                                println("✅ URL de vídeo encontrada: ${videoUrl.take(80)}...")
+                            }
+                        }
+                    }
+                }
+                
+                if (!found) {
+                    println("❌ GOYABU: Nenhum link de vídeo encontrado")
+                }
+                
+                found
+            }
+            
+        } catch (e: Exception) {
+            println("❌ GOYABU: Erro na extração de links: ${e.message}")
+            e.printStackTrace()
+            false
+        }
     }
 }
