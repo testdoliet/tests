@@ -13,7 +13,7 @@ class Goyabu : MainAPI() {
     override var lang = "pt-br"
     override val hasDownloadSupport = false
     override val supportedTypes = setOf(TvType.Anime)
-    override val usesWebView = true // ⬅️ MUDANÇA CRÍTICA: ATIVAR WEBVIEW
+    override val usesWebView = true // ⬅️ ATIVAR WEBVIEW PARA JAVASCRIPT
 
     companion object {
         private const val SEARCH_PATH = "/?s="
@@ -166,11 +166,7 @@ class Goyabu : MainAPI() {
             println("=".repeat(60))
             
             // Usar WebView para renderizar JavaScript
-            val document = if (usesWebView) {
-                app.get(url, timeout = 45).document
-            } else {
-                app.get(url, timeout = 30).document
-            }
+            val document = app.get(url, timeout = 45).document
             
             // DEBUG: Verificar conteúdo da página
             debugPageContent(document)
@@ -231,7 +227,7 @@ class Goyabu : MainAPI() {
                     
                     // Mostrar primeiros 3 episódios para debug
                     episodes.take(3).forEach { ep ->
-                        println("   📝 Ep ${ep.episode}: ${ep.name} -> ${ep.url}")
+                        println("   📝 Ep ${ep.episode}: ${ep.name} -> ${ep.data}")
                     }
                 } else {
                     println("⚠️ Nenhum episódio encontrado (mesmo com WebView)")
@@ -359,14 +355,19 @@ class Goyabu : MainAPI() {
                     
                     // Extrair número do episódio
                     val episodeNum = extractEpisodeNumberFromHref(href, index + 1)
+                    val episodeUrl = fixUrl(href)
                     
-                    episodes.add(newEpisode(fixUrl(href)) {
-                        this.name = "Episódio $episodeNum"
-                        this.episode = episodeNum
-                        this.season = 1
-                    })
+                    // CORREÇÃO AQUI: Usar newEpisode com EpisodeFix
+                    episodes.add(
+                        Episode(
+                            data = episodeUrl,
+                            name = "Episódio $episodeNum",
+                            episode = episodeNum,
+                            season = 1
+                        )
+                    )
                     
-                    println("   🔗 Link direto Ep $episodeNum: $href")
+                    println("   🔗 Link direto Ep $episodeNum: $episodeUrl")
                 } catch (e: Exception) {
                     println("   ⚠️ Erro no link ${index + 1}: ${e.message}")
                 }
@@ -408,14 +409,18 @@ class Goyabu : MainAPI() {
         // NOME DO EPISÓDIO
         val episodeTitle = epTypeElement?.text()?.trim() ?: "Episódio $episodeNum"
         
-        episodes.add(newEpisode(fixUrl(href)) {
-            this.name = episodeTitle
-            this.episode = episodeNum
-            this.season = 1
-            this.posterUrl = thumb
-        })
+        // CORREÇÃO AQUI: Usar Episode diretamente em vez de newEpisode
+        episodes.add(
+            Episode(
+                data = fixUrl(href),
+                name = episodeTitle,
+                episode = episodeNum,
+                season = 1,
+                posterUrl = thumb
+            )
+        )
         
-        println("   ✅ Ep $episodeNum: $episodeTitle -> $href")
+        println("   ✅ Ep $episodeNum: $episodeTitle -> ${fixUrl(href)}")
     }
     
     private fun extractEpisodeNumberFromHref(href: String, default: Int): Int {
