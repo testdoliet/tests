@@ -15,7 +15,7 @@ class Goyabu : MainAPI() {
     override var lang = "pt-br"
     override val hasDownloadSupport = false
     override val supportedTypes = setOf(TvType.Anime)
-    override val usesWebView = false // Vamos fazer diferente
+    override val usesWebView = false
 
     companion object {
         private const val SEARCH_PATH = "/?s="
@@ -111,7 +111,7 @@ class Goyabu : MainAPI() {
             
             // 3. ESTRATÉGIA PRINCIPAL: Extrair dados dos scripts
             println("\n🔍 EXTRAINDO DADOS DOS SCRIPTS...")
-            val episodes = extractEpisodesFromScripts(html, url)
+            var episodes = extractEpisodesFromScripts(html, url)
             
             println("📺 EPISÓDIOS ENCONTRADOS NOS SCRIPTS: ${episodes.size}")
             
@@ -119,7 +119,7 @@ class Goyabu : MainAPI() {
             if (episodes.isEmpty()) {
                 println("\n🔍 PROCURANDO HTML RENDERIZADO...")
                 val htmlEpisodes = extractEpisodesFromRenderedHTML(document, url)
-                episodes.addAll(htmlEpisodes)
+                episodes = htmlEpisodes // CORREÇÃO: não usa addAll
                 println("📺 EPISÓDIOS NO HTML: ${htmlEpisodes.size}")
             }
             
@@ -269,13 +269,13 @@ class Goyabu : MainAPI() {
     private fun parseJsonEpisode(json: JSONObject, baseUrl: String): Episode? {
         try {
             // Campos possíveis
-            val url = json.optString("url") ?: 
-                     json.optString("link") ?: 
-                     json.optString("href") ?: ""
+            val url = json.optString("url", 
+                     json.optString("link", 
+                     json.optString("href", "")))
             
-            val title = json.optString("title") ?: 
-                       json.optString("name") ?: 
-                       json.optString("episode_title") ?: ""
+            val title = json.optString("title", 
+                       json.optString("name", 
+                       json.optString("episode_title", "")))
             
             val number = json.optInt("number", 
                      json.optInt("episode", 
@@ -334,7 +334,7 @@ class Goyabu : MainAPI() {
                     // Extrair episódios destes elementos
                     val extracted = extractFromElements(elements, baseUrl)
                     if (extracted.isNotEmpty()) {
-                        episodes.addAll(extracted)
+                        episodes.addAll(extracted) // CORREÇÃO: usar addAll aqui é OK
                         println("   ✅ ${extracted.size} episódios extraídos")
                         break
                     }
@@ -436,14 +436,16 @@ class Goyabu : MainAPI() {
         val divs = document.select("div[class], div[id]")
         println("\n   🏗️ Divs importantes:")
         
-        divs.filter { div ->
+        val filteredDivs = divs.filter { div ->
             val className = div.attr("class")
             val id = div.attr("id")
             className.contains("episode", ignoreCase = true) ||
             className.contains("ep-", ignoreCase = true) ||
             id.contains("episode", ignoreCase = true) ||
             id.contains("ep-", ignoreCase = true)
-        }.take(5).forEach { div ->
+        }
+        
+        filteredDivs.take(5).forEach { div ->
             println("   🏷️ Classe: '${div.attr("class")}', ID: '${div.attr("id")}'")
             println("   📝 Conteúdo: ${div.text().take(50)}...")
         }
