@@ -119,7 +119,7 @@ class Goyabu : MainAPI() {
             if (episodes.isEmpty()) {
                 println("\n🔍 PROCURANDO HTML RENDERIZADO...")
                 val htmlEpisodes = extractEpisodesFromRenderedHTML(document, url)
-                episodes = htmlEpisodes // CORREÇÃO: não usa addAll
+                episodes = htmlEpisodes
                 println("📺 EPISÓDIOS NO HTML: ${htmlEpisodes.size}")
             }
             
@@ -268,25 +268,32 @@ class Goyabu : MainAPI() {
     
     private fun parseJsonEpisode(json: JSONObject, baseUrl: String): Episode? {
         try {
-            // Campos possíveis
-            val url = json.optString("url", 
-                     json.optString("link", 
-                     json.optString("href", "")))
+            // Campos possíveis - CORREÇÃO: usar ?: para valores nulos
+            val url = json.optString("url") ?: 
+                     json.optString("link") ?: 
+                     json.optString("href") ?: ""
             
-            val title = json.optString("title", 
-                       json.optString("name", 
-                       json.optString("episode_title", "")))
+            val title = json.optString("title") ?: 
+                       json.optString("name") ?: 
+                       json.optString("episode_title") ?: ""
             
-            val number = json.optInt("number", 
-                     json.optInt("episode", 
-                     json.optInt("episode_number", 1)))
+            // Para números, usar optInt com valor padrão
+            val number = if (json.has("number")) {
+                json.optInt("number", 1)
+            } else if (json.has("episode")) {
+                json.optInt("episode", 1)
+            } else if (json.has("episode_number")) {
+                json.optInt("episode_number", 1)
+            } else {
+                1
+            }
             
-            if (url.isBlank()) return null
+            if (url.isEmpty()) return null
             
             val episodeUrl = if (url.startsWith("http")) url else fixUrl(url)
             
             return newEpisode(episodeUrl) {
-                this.name = if (title.isNotBlank()) title else "Episódio $number"
+                this.name = if (title.isNotEmpty()) title else "Episódio $number"
                 this.episode = number
                 this.season = 1
             }
@@ -334,7 +341,7 @@ class Goyabu : MainAPI() {
                     // Extrair episódios destes elementos
                     val extracted = extractFromElements(elements, baseUrl)
                     if (extracted.isNotEmpty()) {
-                        episodes.addAll(extracted) // CORREÇÃO: usar addAll aqui é OK
+                        episodes.addAll(extracted)
                         println("   ✅ ${extracted.size} episódios extraídos")
                         break
                     }
