@@ -4,14 +4,10 @@ import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
-import com.lagradost.cloudstream3.utils.getAndUnpack
 import org.jsoup.Jsoup
-import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import java.net.URLEncoder
 
 object GoyabuBloggerExtractor {
     // Mapa de itag para qualidade
@@ -55,7 +51,6 @@ object GoyabuBloggerExtractor {
                     "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
                     "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
                     "Accept-Language" to "pt-BR,pt;q=0.9,en;q=0.8",
-                    "Accept-Encoding" to "gzip, deflate, br",
                     "DNT" to "1",
                     "Connection" to "keep-alive",
                     "Upgrade-Insecure-Requests" to "1"
@@ -95,7 +90,6 @@ object GoyabuBloggerExtractor {
             
         } catch (e: Exception) {
             println("❌ GOYABU EXTRACTOR: Erro na extração: ${e.message}")
-            e.printStackTrace()
             false
         }
     }
@@ -122,8 +116,7 @@ object GoyabuBloggerExtractor {
                         src,
                         headers = mapOf(
                             "Referer" to originalUrl,
-                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                            "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
+                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
                         )
                     )
                     
@@ -197,11 +190,12 @@ object GoyabuBloggerExtractor {
             
             // Procurar por URL googlevideo
             val videoPattern = """https?://[^"'\s<>]*\.googlevideo\.com/[^"'\s<>]+""".toRegex()
-            val matches = videoPattern.findAll(html).toList()
+            val matches = videoPattern.findAll(html)
             
-            if (matches.isNotEmpty()) {
+            val matchList = matches.toList()
+            if (matchList.isNotEmpty()) {
                 println("✅ URL do Google Video encontrada")
-                return processGooglevideoUrls(matches, originalUrl, name, callback)
+                return processGooglevideoUrls(matchList, originalUrl, name, callback)
             }
         }
         
@@ -279,49 +273,53 @@ object GoyabuBloggerExtractor {
         return try {
             val json = Json.parseToJsonElement(jsonString).jsonObject
             
-            // Tentar diferentes estruturas de dados do Blogger
-            val streams = when {
-                json["streams"] != null -> json["streams"]?.jsonObject?.entries
-                json["play_url"] != null -> listOf(json)
-                else -> null
-            }
-            
             var found = false
-            streams?.forEach { (_, value) ->
-                try {
-                    val streamObj = value.jsonObject
-                    val videoUrl = streamObj["play_url"]?.jsonPrimitive?.content
-                        ?: streamObj["url"]?.jsonPrimitive?.content
-                        ?: return@forEach
-                    
-                    val itag = streamObj["format_id"]?.jsonPrimitive?.content?.toIntOrNull()
-                        ?: streamObj["itag"]?.jsonPrimitive?.content?.toIntOrNull()
-                        ?: 18
-                    
-                    val quality = itagQualityMap[itag] ?: 360
-                    val qualityLabel = getQualityLabel(quality)
-                    
-                    val extractorLink = newExtractorLink(
-                        source = "Goyabu Blogger",
-                        name = "$name ($qualityLabel)",
-                        url = videoUrl,
-                        type = ExtractorLinkType.VIDEO
-                    ) {
-                        this.referer = referer
-                        this.quality = quality
-                        this.headers = mapOf(
-                            "Referer" to referer,
-                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                            "Origin" to "https://www.blogger.com"
-                        )
+            
+            // Verificar diferentes estruturas
+            when {
+                // Estrutura: { "streams": { "18": { "play_url": "..." } } }
+                json["streams"]?.jsonObject != null -> {
+                    val streams = json["streams"]!!.jsonObject
+                    for ((itagStr, streamObj) in streams) {
+                        try {
+                            val itag = itagStr.toIntOrNull() ?: continue
+                            val videoUrl = streamObj.jsonObject["play_url"]?.jsonPrimitive?.content ?: continue
+                            
+                            createExtractorLink(itag, videoUrl, referer, name, callback)
+                            found = true
+                        } catch (e: Exception) {
+                            println("⚠️ Erro ao processar stream $itagStr: ${e.message}")
+                        }
                     }
+                }
+                
+                // Estrutura: { "streams": [ { "format_id": 18, "play_url": "..." } ] }
+                json["streams"]?.jsonPrimitive?.content?.contains("[") == true -> {
+                    val streamsArray = json["streams"]?.jsonPrimitive?.content
+                    if (streamsArray != null && streamsArray.startsWith("[")) {
+                        // Extrair objetos do array
+                        val streamObjects = extractStreamsFromArray(streamsArray)
+                        for (streamObj in streamObjects) {
+                            try {
+                                val itag = streamObj["format_id"]?.toIntOrNull() ?: 18
+                                val videoUrl = streamObj["play_url"] ?: streamObj["url"] ?: continue
+                                
+                                createExtractorLink(itag, videoUrl, referer, name, callback)
+                                found = true
+                            } catch (e: Exception) {
+                                println("⚠️ Erro ao processar objeto do array: ${e.message}")
+                            }
+                        }
+                    }
+                }
+                
+                // Estrutura direta: { "play_url": "..." }
+                json["play_url"] != null -> {
+                    val videoUrl = json["play_url"]?.jsonPrimitive?.content ?: return false
+                    val itag = json["format_id"]?.jsonPrimitive?.content?.toIntOrNull() ?: 18
                     
-                    callback(extractorLink)
+                    createExtractorLink(itag, videoUrl, referer, name, callback)
                     found = true
-                    println("✅ Stream extraído: $qualityLabel (itag: $itag)")
-                    
-                } catch (e: Exception) {
-                    println("⚠️ Erro ao processar stream: ${e.message}")
                 }
             }
             
@@ -331,6 +329,63 @@ object GoyabuBloggerExtractor {
             println("❌ Erro ao parsear JSON: ${e.message}")
             false
         }
+    }
+    
+    // Função auxiliar: Extrair streams de array JSON
+    private fun extractStreamsFromArray(arrayString: String): List<Map<String, String>> {
+        val streams = mutableListOf<Map<String, String>>()
+        val pattern = """\{"[^"]*":"[^"]*"(?:,"[^"]*":"[^"]*")*\}""".toRegex()
+        val matches = pattern.findAll(arrayString)
+        
+        for (match in matches) {
+            val objString = match.value
+            val objMap = mutableMapOf<String, String>()
+            
+            val keyValuePattern = """"([^"]+)":"([^"]*)"""".toRegex()
+            val keyValueMatches = keyValuePattern.findAll(objString)
+            
+            for (kvMatch in keyValueMatches) {
+                val key = kvMatch.groupValues[1]
+                val value = kvMatch.groupValues[2]
+                objMap[key] = value
+            }
+            
+            if (objMap.isNotEmpty()) {
+                streams.add(objMap)
+            }
+        }
+        
+        return streams
+    }
+    
+    // Função auxiliar: Criar ExtractorLink
+    private suspend fun createExtractorLink(
+        itag: Int,
+        videoUrl: String,
+        referer: String,
+        name: String,
+        callback: (ExtractorLink) -> Unit
+    ) {
+        val quality = itagQualityMap[itag] ?: 360
+        val qualityLabel = getQualityLabel(quality)
+        
+        val extractorLink = newExtractorLink(
+            source = "Goyabu Blogger",
+            name = "$name ($qualityLabel)",
+            url = videoUrl,
+            type = ExtractorLinkType.VIDEO
+        ) {
+            this.referer = referer
+            this.quality = quality
+            this.headers = mapOf(
+                "Referer" to referer,
+                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Origin" to "https://www.blogger.com"
+            )
+        }
+        
+        callback(extractorLink)
+        println("✅ Stream extraído: $qualityLabel (itag: $itag)")
     }
     
     // Função auxiliar: Extrair de HTML do Blogger
@@ -357,7 +412,7 @@ object GoyabuBloggerExtractor {
     }
     
     // Função auxiliar: Extrair URLs diretas de vídeo
-    private fun extractDirectVideoUrls(
+    private suspend fun extractDirectVideoUrls(
         content: String,
         referer: String,
         name: String,
@@ -376,7 +431,7 @@ object GoyabuBloggerExtractor {
     }
     
     // Função auxiliar: Processar URLs do Google Video
-    private fun processGooglevideoUrls(
+    private suspend fun processGooglevideoUrls(
         matches: List<Regex.MatchResult>,
         referer: String,
         name: String,
