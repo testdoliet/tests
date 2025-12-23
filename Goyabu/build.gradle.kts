@@ -46,7 +46,7 @@ cloudstream {
     authors = listOf("lawlietbr")
     status = 1
     tvTypes = listOf("Animes")
-    iconUrl = "https://imgs.search.brave.com/Cz3NeRck6yEHS1-3i5Za8ebF-kuuj8j1Oh5II2B4NSg/rs:fit:32:32:1:0/g:ce/aHR0cDovL2Zhdmlj/b25zLnNlYXJjaC5i/cmF2ZS5jb20vaWNv/bnMvNTk1NGQ3MmRh/ZjAyNjE2YmY4NDVh/MTMxNTVmZTM2ZGE2/MTZhNDgwMjgzM2Iz/MjRiNjJjYmYzN2Nh/ZWRhOWJmMy9nb3lh/YnUuaW8v"
+    iconUrl = "https://goyabu.io/wp-content/uploads/2025/12/cropped-goyabu-favicon-192x192.png"
     isCrossPlatform = true
     requiresResources = true
 }
