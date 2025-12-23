@@ -158,7 +158,7 @@ class Goyabu : MainAPI() {
         }
     }
 
-    // ============ LOAD (página do anime) ============
+    // ============ LOAD (página do anime) - CORRIGIDO ============
     override suspend fun load(url: String): LoadResponse {
         return try {
             println("🎬 GOYABU: Carregando: $url")
@@ -174,7 +174,7 @@ class Goyabu : MainAPI() {
             
             // SINOPSE
             val synopsis = document.selectFirst(".streamer-sinopse")?.text()?.trim()
-                ?.replace("ler mais", "") // Remover "ler mais"
+                ?.replace("ler mais", "")
                 ?.trim()
                 ?: "Sinopse não disponível."
             
@@ -182,7 +182,7 @@ class Goyabu : MainAPI() {
             val yearElement = document.selectFirst("li#year")
             val year = yearElement?.text()?.trim()?.toIntOrNull()
             
-            // STATUS
+            // STATUS - CORRIGIDO: usar ShowStatus
             val statusElement = document.selectFirst(".status")
             val statusText = statusElement?.text()?.trim() ?: "Desconhecido"
             val showStatus = when {
@@ -191,7 +191,7 @@ class Goyabu : MainAPI() {
                 else -> ShowStatus.Completed
             }
             
-            // GÊNEROS (da página individual)
+            // GÊNEROS
             val genres = mutableListOf<String>()
             document.select(".filter-btn.btn-style, a[href*='/generos/']").forEach { element ->
                 element.text().trim().takeIf { it.isNotBlank() }?.let { 
@@ -207,14 +207,16 @@ class Goyabu : MainAPI() {
             // EPISÓDIOS
             val episodes = extractEpisodes(document, url)
             
-            // CRIAR RESPOSTA
+            // CRIAR RESPOSTA - CORRIGIDO: usar addStatus()
             newAnimeLoadResponse(title, url, TvType.Anime) {
                 this.posterUrl = poster
                 this.year = year
                 this.plot = synopsis
                 this.tags = genres
                 this.score = score
-                this.status = showStatus
+                
+                // CORREÇÃO: Usar addStatus() em vez de this.status
+                addStatus(showStatus)
                 
                 if (episodes.isNotEmpty()) {
                     addEpisodes(DubStatus.Subbed, episodes)
@@ -286,6 +288,6 @@ class Goyabu : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         println("🎬 GOYABU: loadLinks desabilitado temporariamente")
-        return false // Retorna false para indicar que não há links
+        return false
     }
 }
