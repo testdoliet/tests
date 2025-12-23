@@ -22,13 +22,17 @@ class AnimeFire : MainAPI() {
         
         private val loadingMutex = Mutex()
         
-        // LISTA COMPLETA DE TODAS AS CATEGORIAS
-        private val ALL_CATEGORIES = listOf(
+        // CATEGORIAS FIXAS - SEMPRE APARECEM
+        private val FIXED_CATEGORIES = listOf(
             "/em-lancamento" to "Lançamentos",
-            "/animes-atualizados" to "Atualizados",
             "/top-animes" to "Top Animes",
-            "/lista-de-animes-legendados" to "Legendados",
-            "/lista-de-animes-dublados" to "Dublados",
+            "/lista-de-animes-dublados" to "Animes Dublados",
+            "/lista-de-animes-legendados" to "Animes Legendados"
+        )
+        
+        // LISTA COMPLETA DE TODAS AS CATEGORIAS (EXCETO AS FIXAS)
+        private val ALL_RANDOM_CATEGORIES = listOf(
+            "/animes-atualizados" to "Atualizados",
             "/lista-de-filmes-legendados" to "Filmes Legendados",
             "/lista-de-filmes-dublados" to "Filmes Dublados",
             "/genero/acao" to "Ação",
@@ -58,31 +62,43 @@ class AnimeFire : MainAPI() {
             "/genero/vida-escolar" to "Vida Escolar"
         )
         
-        private var cachedTabs: List<Pair<String, String>>? = null
+        private var cachedRandomTabs: List<Pair<String, String>>? = null
         private var cacheTime: Long = 0
         private const val CACHE_DURATION = 300000L // 5 minutos
         
-        fun getRandomTabs(count: Int = 8): List<Pair<String, String>> {
+        /**
+         * Retorna as abas combinadas: 4 fixas + 8 aleatórias
+         */
+        fun getCombinedTabs(): List<Pair<String, String>> {
             val currentTime = System.currentTimeMillis()
             
-            if (cachedTabs != null && (currentTime - cacheTime) < CACHE_DURATION) {
-                return cachedTabs!!
+            // Se temos cache válido e recente, usá-lo
+            if (cachedRandomTabs != null && (currentTime - cacheTime) < CACHE_DURATION) {
+                return FIXED_CATEGORIES + cachedRandomTabs!!
             }
             
-            val randomTabs = ALL_CATEGORIES.shuffled().take(count)
-            cachedTabs = randomTabs
+            // Gerar novas abas aleatórias
+            val randomTabs = ALL_RANDOM_CATEGORIES
+                .shuffled()
+                .take(8) // Pegar 8 aleatórias
+                .distinctBy { it.first } // Garantir que não haja duplicatas
+            
+            // Armazenar em cache
+            cachedRandomTabs = randomTabs
             cacheTime = currentTime
             
-            return randomTabs
+            // Combinar: fixas + aleatórias
+            return FIXED_CATEGORIES + randomTabs
         }
     }
 
     init {
         println("🔥 ANIMEFIRE: Plugin inicializado")
+        println("🔥 ANIMEFIRE: Abas configuradas: 4 fixas + 8 aleatórias")
     }
 
     override val mainPage = mainPageOf(
-        *getRandomTabs().map { (path, name) -> 
+        *getCombinedTabs().map { (path, name) -> 
             "$mainUrl$path" to name 
         }.toTypedArray()
     )
@@ -415,6 +431,10 @@ class AnimeFire : MainAPI() {
                 println("📊 Aba: '${request.name}'")
                 println("📊 URL base: ${request.data}")
                 
+                // Verificar se é uma aba fixa
+                val isFixedTab = FIXED_CATEGORIES.any { it.second == request.name }
+                println("📊 É aba fixa? $isFixedTab")
+                
                 // PAGINAÇÃO
                 val basePath = request.data.removePrefix(mainUrl)
                 val sitePageNumber = page + 1
@@ -469,6 +489,7 @@ class AnimeFire : MainAPI() {
                 println("\n" + "=".repeat(70))
                 println("📊 RESULTADO PÁGINA $sitePageNumber:")
                 println("   • Aba: '${request.name}'")
+                println("   • É fixa? $isFixedTab")
                 println("   • Itens válidos: ${homeItems.size}")
                 println("   • Tem próxima página? $hasNextPage")
                 
@@ -825,61 +846,4 @@ class AnimeFire : MainAPI() {
         }
         
         // Ordenar por número do episódio
-        val sortedEpisodes = episodes.sortedBy { it.episode }
-        
-        println("\n📊 RESULTADO FINAL:")
-        println("   • Total de episódios extraídos: ${sortedEpisodes.size}")
-        if (sortedEpisodes.isNotEmpty()) {
-            println("   • Primeiro episódio: ${sortedEpisodes.first().episode} - '${sortedEpisodes.first().name}'")
-            println("   • Último episódio: ${sortedEpisodes.last().episode} - '${sortedEpisodes.last().name}'")
-        }
-        
-        return sortedEpisodes
-    }
-
-    // ============ EXTRACT EPISODE NUMBER - FUNCIONAL ============
-    private fun extractEpisodeNumberFuncional(text: String, href: String = ""): Int? {
-        // Tentar extrair do texto primeiro
-        val textPatterns = listOf(
-            Regex("""Epis[oó]dio\s*(\d+)""", RegexOption.IGNORE_CASE),
-            Regex("""Ep\.?\s*(\d+)""", RegexOption.IGNORE_CASE),
-            Regex("""\b(\d+)$""")
-        )
-        
-        for (pattern in textPatterns) {
-            val match = pattern.find(text)
-            if (match != null) {
-                return match.groupValues[1].toIntOrNull()
-            }
-        }
-        
-        // Tentar da URL
-        val urlPattern = Regex("""/animes/[^/]+/(\d+)$""")
-        val urlMatch = urlPattern.find(href)
-        if (urlMatch != null) {
-            return urlMatch.groupValues[1].toIntOrNull()
-        }
-        
-        return null
-    }
-
-    // ============ LOAD LINKS ============
-    override suspend fun loadLinks(
-        data: String,
-        isCasting: Boolean,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        println("\n" + "=".repeat(80))
-        println("🔥 ANIMEFIRE: Carregando links para $data")
-        println("=".repeat(80))
-        
-        return try {
-            // Como AnimeFireVideoExtractor é um object, chame diretamente
-            AnimeFireVideoExtractor.extractVideoLinks(data, mainUrl, name, callback)
-        } catch (e: Exception) {
-            println("❌ Erro no loadLinks: ${e.message}")
-            false
-        }
-    }
-}
+        val sortedEp
