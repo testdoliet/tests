@@ -397,8 +397,8 @@ class Goyabu : MainAPI() {
         val episodes = mutableListOf<Episode>()
         
         try {
-            // Tentar extrair JSON
-            val jsonRegex = Regex("""episodes\s*:\s*(\[.*?\])""", RegexOption.DOTALL)
+            // Tentar extrair JSON - simplificar regex sem DOTALL
+            val jsonRegex = Regex("""episodes\s*:\s*(\[[^\]]*?\])""")
             val jsonMatch = jsonRegex.find(scriptContent)
             
             if (jsonMatch != null) {
@@ -408,19 +408,21 @@ class Goyabu : MainAPI() {
                 return episodes
             }
             
-            // Tentar extrair HTML de episódios
-            val htmlRegex = Regex("""<div[^>]*class=["']episode-item["'][^>]*>.*?</div>""", RegexOption.DOTALL)
-            val htmlMatches = htmlRegex.findAll(scriptContent).toList()
+            // Tentar extrair HTML de episódios - simplificar regex
+            val htmlRegex = Regex("""<div[^>]*class=["']episode-item["'][^>]*>.*?</div>""")
+            val htmlMatches = htmlRegex.findAll(scriptContent)
+            val matchesList = htmlMatches.toList()
             
-            if (htmlMatches.isNotEmpty()) {
-                println("   🏗️ HTML de episódios em script: ${htmlMatches.size} matches")
+            if (matchesList.isNotEmpty()) {
+                println("   🏗️ HTML de episódios em script: ${matchesList.size} matches")
                 
-                htmlMatches.forEachIndexed { index, match ->
+                matchesList.forEachIndexed { index: Int, matchResult: MatchResult ->
                     try {
-                        val html = match.value
+                        val html = matchResult.value
                         // Criar elemento temporário
                         val tempDoc = org.jsoup.Jsoup.parse(html)
-                        extractEpisodesFromHTML(tempDoc, baseUrl)?.let { extracted ->
+                        val extracted = extractEpisodesFromHTML(tempDoc, baseUrl)
+                        if (extracted != null) {
                             episodes.addAll(extracted)
                         }
                     } catch (e: Exception) {
