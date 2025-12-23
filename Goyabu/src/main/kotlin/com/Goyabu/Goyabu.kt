@@ -111,7 +111,7 @@ class Goyabu : MainAPI() {
             
             // 3. ESTRATÉGIA SIMPLES: Procurar links de episódios
             println("\n🔍 PROCURANDO EPISÓDIOS NO HTML...")
-            val episodes = extractEpisodesSimply(document, url)
+            var episodes = extractEpisodesSimply(document, url)
             
             println("📺 EPISÓDIOS ENCONTRADOS: ${episodes.size}")
             
@@ -119,9 +119,10 @@ class Goyabu : MainAPI() {
             if (episodes.isEmpty()) {
                 println("\n🔍 BUSCA AGUÇADA...")
                 val aggressiveEpisodes = extractEpisodesAggressively(document, url)
+                // CORREÇÃO: Não usar addAll, criar nova lista
+                episodes = aggressiveEpisodes
                 if (aggressiveEpisodes.isNotEmpty()) {
                     println("✅ Encontrados ${aggressiveEpisodes.size} episódios na busca aguçada")
-                    episodes.addAll(aggressiveEpisodes)
                 }
             }
             
