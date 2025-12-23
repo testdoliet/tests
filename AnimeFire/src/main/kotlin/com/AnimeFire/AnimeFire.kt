@@ -731,8 +731,7 @@ class AnimeFire : MainAPI() {
             }
         }
     }
-
-    // ============ EXTRACT EPISODES - FUNCIONAL ============
+  // ============ EXTRACT EPISODES - FUNCIONAL ============
     private fun extractAllEpisodesFuncional(document: org.jsoup.nodes.Document, baseUrl: String): List<Episode> {
         println("\n🔍 EXTRACTING EPISODES")
         println("📊 URL base: $baseUrl")
@@ -810,7 +809,7 @@ class AnimeFire : MainAPI() {
                 }
                 
                 // Garantir que tenha pelo menos "Episódio X"
-                val epNum = extractEpisodeNumber(text, href) ?: (index + 1)
+                val epNum = extractEpisodeNumberFuncional(text, href) ?: (index + 1)
                 if (!text.contains(Regex("""Epis[oó]dio""", RegexOption.IGNORE_CASE))) {
                     text = "Episódio $epNum"
                 }
@@ -846,4 +845,61 @@ class AnimeFire : MainAPI() {
         }
         
         // Ordenar por número do episódio
-        val sortedEpisodes
+        val sortedEpisodes = episodes.sortedBy { it.episode }
+        
+        println("\n📊 RESULTADO FINAL:")
+        println("   • Total de episódios extraídos: ${sortedEpisodes.size}")
+        if (sortedEpisodes.isNotEmpty()) {
+            println("   • Primeiro episódio: ${sortedEpisodes.first().episode} - '${sortedEpisodes.first().name}'")
+            println("   • Último episódio: ${sortedEpisodes.last().episode} - '${sortedEpisodes.last().name}'")
+        }
+        
+        return sortedEpisodes
+    }
+
+    // ============ EXTRACT EPISODE NUMBER - FUNCIONAL ============
+    private fun extractEpisodeNumberFuncional(text: String, href: String = ""): Int? {
+        // Tentar extrair do texto primeiro
+        val textPatterns = listOf(
+            Regex("""Epis[oó]dio\s*(\d+)""", RegexOption.IGNORE_CASE),
+            Regex("""Ep\.?\s*(\d+)""", RegexOption.IGNORE_CASE),
+            Regex("""\b(\d+)$""")
+        )
+        
+        for (pattern in textPatterns) {
+            val match = pattern.find(text)
+            if (match != null) {
+                return match.groupValues[1].toIntOrNull()
+            }
+        }
+        
+        // Tentar da URL
+        val urlPattern = Regex("""/animes/[^/]+/(\d+)$""")
+        val urlMatch = urlPattern.find(href)
+        if (urlMatch != null) {
+            return urlMatch.groupValues[1].toIntOrNull()
+        }
+        
+        return null
+    }
+
+    // ============ LOAD LINKS ============
+    override suspend fun loadLinks(
+        data: String,
+        isCasting: Boolean,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        println("\n" + "=".repeat(80))
+        println("🔥 ANIMEFIRE: Carregando links para $data")
+        println("=".repeat(80))
+        
+        return try {
+            // Como AnimeFireVideoExtractor é um object, chame diretamente
+            AnimeFireVideoExtractor.extractVideoLinks(data, mainUrl, name, callback)
+        } catch (e: Exception) {
+            println("❌ Erro no loadLinks: ${e.message}")
+            false
+        }
+    }
+}
