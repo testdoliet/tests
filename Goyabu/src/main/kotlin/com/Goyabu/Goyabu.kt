@@ -223,51 +223,75 @@ class Goyabu : MainAPI() {
     }
     
     private fun extractEpisodes(document: org.jsoup.nodes.Document, baseUrl: String): List<Episode> {
-        val episodes = mutableListOf<Episode>()
-        
-        // Procurar por elementos de episódio
-        val episodeElements = document.select("#episodes-container .boxEP, .episodes-grid .boxEP, .boxEP")
-            .takeIf { it.isNotEmpty() }
-            ?: document.select("[href~=^/\\d+/$]").takeIf { it.isNotEmpty() }
-            ?: return emptyList()
-        
-        println("📊 ${episodeElements.size} elementos de episódio")
-        
-        episodeElements.forEachIndexed { index, element ->
-            try {
-                val href = element.attr("href").takeIf { it.isNotBlank() } ?: return@forEachIndexed
-                
-                // Número do episódio
-                val episodeNum = element.selectFirst(".ep-type b")?.text()
-                    ?.let { Regex("""(\d+)""").find(it)?.groupValues?.get(1)?.toIntOrNull() }
-                    ?: href.takeIf { it.matches(Regex("""^/\d+/$""")) }
-                        ?.replace(Regex("""[^0-9]"""), "")?.toIntOrNull()
-                    ?: (index + 1)
-                
-                // Título do episódio
-                val episodeTitle = element.selectFirst(".ep-type b, .title")?.text()?.trim()
-                    ?: "Episódio $episodeNum"
-                
-                // Thumbnail
-                val thumb = element.selectFirst(".coverImg")?.attr("style")?.let { style ->
-                    Regex("""url\(['"]?([^'"()]+)['"]?\)""").find(style)?.groupValues?.get(1)
-                }?.let { fixUrl(it) }
-                
-                episodes.add(newEpisode(fixUrl(href)) {
-                    this.name = episodeTitle
-                    this.episode = episodeNum
-                    this.season = 1
-                    this.posterUrl = thumb
-                })
-                
-            } catch (e: Exception) {
-                println("⚠️ Erro no episódio ${index + 1}: ${e.message}")
-            }
-        }
-        
-        return episodes.sortedBy { it.episode }
+    val episodes = mutableListOf<Episode>()
+    
+    // SELEÇÃO DIRETA baseada no seu HTML
+    val episodeItems = document.select("#episodes-container .episode-item")
+    
+    if (episodeItems.isEmpty()) {
+        println("❌ Nenhum .episode-item encontrado em #episodes-container")
+        // Fallback: tentar seleção direta
+        val boxEPs = document.select(".boxEP.grid-view")
+        println("📦 Fallback: ${boxEPs.size} .boxEP encontrados")
+    } else {
+        println("✅ ${episodeItems.size} .episode-item encontrados")
     }
-
+    
+    // Usar .episode-item OU .boxEP como fallback
+    val elementsToProcess = if (episodeItems.isNotEmpty()) {
+        episodeItems
+    } else {
+        document.select(".boxEP.grid-view")
+    }
+    
+    elementsToProcess.forEachIndexed { index, container ->
+        try {
+            // Dentro de cada container, buscar o link
+            val boxEP = if (container.className().contains("boxEP")) container else container.selectFirst(".boxEP")
+            val linkElement = boxEP?.selectFirst("a[href]") ?: return@forEachIndexed
+            
+            val href = linkElement.attr("href").trim()
+            if (href.isBlank()) return@forEachIndexed
+            
+            // NÚMERO DO EPISÓDIO (prioridade: data-episode-number > .ep-type > index)
+            var episodeNum = index + 1
+            
+            // 1. Tentar data-episode-number no .episode-item
+            container.attr("data-episode-number")?.toIntOrNull()?.let { episodeNum = it }
+            
+            // 2. Tentar do texto "Episódio X"
+            val epTypeElement = linkElement.selectFirst(".ep-type b")
+            epTypeElement?.text()?.trim()?.let { text ->
+                val regex = Regex("""\b(\d+)\b""")
+                val match = regex.find(text)
+                match?.groupValues?.get(1)?.toIntOrNull()?.let { episodeNum = it }
+            }
+            
+            // THUMBNAIL
+            val thumb = linkElement.selectFirst(".coverImg")?.attr("style")?.let { style ->
+                val regex = Regex("""url\(['"]?([^'"()]+)['"]?\)""")
+                regex.find(style)?.groupValues?.get(1)?.replace("&quot;", "")?.trim()
+            }?.takeIf { it.isNotBlank() }?.let { fixUrl(it) }
+            
+            // NOME DO EPISÓDIO
+            val episodeTitle = "Episódio $episodeNum"
+            
+            episodes.add(newEpisode(fixUrl(href)) {
+                this.name = episodeTitle
+                this.episode = episodeNum
+                this.season = 1
+                this.posterUrl = thumb
+            })
+            
+            println("✅ Ep $episodeNum: $href")
+            
+        } catch (e: Exception) {
+            println("⚠️ Erro no item ${index + 1}: ${e.message}")
+        }
+    }
+    
+    return episodes.sortedBy { it.episode }
+    }
     // ============ LOAD LINKS (desabilitado) ============
     override suspend fun loadLinks(
         data: String,
