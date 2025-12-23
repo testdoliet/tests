@@ -88,6 +88,121 @@ class AnimeFire : MainAPI() {
         }.toTypedArray()
     )
 
+    // ============ FUNÇÃO AUXILIAR PARA EXTRACTION DE POSTER ============
+    private fun extractPoster(element: Element, debugMode: Boolean = true): String? {
+        return try {
+            // TENTATIVAS EM ORDEM DE PRIORIDADE:
+            
+            // 1. META TAGS (og:image) - geralmente têm a melhor qualidade
+            val metaImage = element.selectFirst("meta[property='og:image']")?.attr("content")
+                ?.takeIf { it.isNotBlank() }
+                ?.let { fixUrl(it) }
+            
+            if (metaImage != null) {
+                if (debugMode) println("   ✅ Poster via META: ${metaImage.take(60)}...")
+                return metaImage
+            }
+            
+            // 2. Data-src (carregamento lazy)
+            val dataSrc = element.selectFirst("img[data-src]")?.attr("data-src")
+                ?.takeIf { it.isNotBlank() }
+                ?.let { fixUrl(it) }
+            
+            if (dataSrc != null) {
+                if (debugMode) println("   ✅ Poster via data-src: ${dataSrc.take(60)}...")
+                return dataSrc
+            }
+            
+            // 3. Src padrão
+            val srcImage = element.selectFirst("img[src]")?.attr("src")
+                ?.takeIf { it.isNotBlank() }
+                ?.let { fixUrl(it) }
+            
+            if (srcImage != null) {
+                if (debugMode) println("   ✅ Poster via src: ${srcImage.take(60)}...")
+                return srcImage
+            }
+            
+            // 4. Background image em divs
+            val style = element.attr("style")
+            if (style.contains("background-image")) {
+                val bgRegex = Regex("""url\(['"]?([^'"()]+)['"]?\)""")
+                val match = bgRegex.find(style)
+                match?.groupValues?.get(1)?.let { bgUrl ->
+                    val fixedBgUrl = fixUrl(bgUrl)
+                    if (debugMode) println("   ✅ Poster via background: ${fixedBgUrl.take(60)}...")
+                    return fixedBgUrl
+                }
+            }
+            
+            if (debugMode) println("   ⚠️ Nenhum poster encontrado no elemento")
+            null
+            
+        } catch (e: Exception) {
+            if (debugMode) println("   ❌ Erro ao extrair poster: ${e.message}")
+            null
+        }
+    }
+
+    // ============ FUNÇÃO AUXILIAR PARA POSTER NA PÁGINA DE DETALHES ============
+    private fun extractDetailPoster(document: org.jsoup.nodes.Document): String? {
+        return try {
+            // TENTATIVAS EM ORDEM:
+            
+            // 1. Meta og:image (melhor qualidade geralmente)
+            val metaImage = document.selectFirst("meta[property='og:image']")?.attr("content")
+                ?.takeIf { it.isNotBlank() }
+                ?.let { fixUrl(it) }
+            
+            if (metaImage != null) {
+                println("📊 Poster via META: ${metaImage.take(80)}...")
+                return metaImage
+            }
+            
+            // 2. Imagem do poster principal do anime
+            val posterSelectors = listOf(
+                ".sub_animepage_img img",
+                ".poster img", 
+                ".anime-poster img",
+                ".cover img",
+                "img.poster"
+            )
+            
+            for (selector in posterSelectors) {
+                document.selectFirst(selector)?.let { img ->
+                    val src = when {
+                        img.hasAttr("src") -> img.attr("src")
+                        img.hasAttr("data-src") -> img.attr("data-src")
+                        else -> null
+                    }
+                    
+                    src?.takeIf { it.isNotBlank() }?.let { 
+                        val fixedUrl = fixUrl(it)
+                        println("📊 Poster via seletor '$selector': ${fixedUrl.take(80)}...")
+                        return fixedUrl
+                    }
+                }
+            }
+            
+            // 3. Primeira imagem de anime na página
+            document.selectFirst("img[src*='/animes/'], img[src*='/img/']")
+                ?.attr("src")
+                ?.takeIf { it.isNotBlank() }
+                ?.let { 
+                    val fixedUrl = fixUrl(it)
+                    println("📊 Poster via fallback: ${fixedUrl.take(80)}...")
+                    return fixedUrl
+                }
+            
+            println("⚠️ Nenhum poster encontrado na página")
+            null
+            
+        } catch (e: Exception) {
+            println("❌ Erro ao extrair poster detalhado: ${e.message}")
+            null
+        }
+    }
+
     // ============ FUNÇÃO DE EXTRACTION ============
     private fun Element.toSearchResponse(debugMode: Boolean = true): AnimeSearchResponse? {
         val href = attr("href") ?: return null
@@ -154,19 +269,8 @@ class AnimeFire : MainAPI() {
         
         val isMovie = href.contains("/filmes/") || combinedTitle.contains("filme", ignoreCase = true)
         
-        // POSTER - AQUI É ONDE VAMOS MUDAR!
-        val sitePoster = try {
-            // MÉTODO 1: Primeiro tentar pelas meta tags (og:image)
-            selectFirst("meta[property='og:image']")?.attr("content")?.takeIf { it.isNotBlank() }?.let { fixUrl(it) }
-                ?:
-            // MÉTODO 2: Tentar pela tag img com data-src
-            selectFirst("img[data-src]")?.attr("data-src")?.takeIf { it.isNotBlank() }?.let { fixUrl(it) }
-                ?:
-            // MÉTODO 3: Tentar pela tag img com src
-            selectFirst("img[src]")?.attr("src")?.takeIf { it.isNotBlank() }?.let { fixUrl(it) }
-        } catch (e: Exception) {
-            null
-        }
+        // POSTER - USANDO FUNÇÃO AUXILIAR
+        val sitePoster = extractPoster(this, debugMode)
 
         if (debugMode) {
             println("\n🎯 ITEM FINAL:")
@@ -445,35 +549,13 @@ class AnimeFire : MainAPI() {
             
             println("📊 Título: $title")
             
-            // ============ POSTER (CORREÇÃO - IGUAL AO SUPERFLIX) ============
-            val poster = try {
-                // MÉTODO 1: Primeiro tentar pelas meta tags (og:image) - MAIS CONFIÁVEL
-                document.selectFirst("meta[property='og:image']")?.attr("content")
-                    ?.takeIf { it.isNotBlank() }
-                    ?.let { fixUrl(it) }
-                ?:
-                // MÉTODO 2: Imagem principal da página
-                document.selectFirst(".sub_animepage_img img, .poster img, .anime-poster img")?.let { img ->
-                    when {
-                        img.hasAttr("src") -> img.attr("src").takeIf { it.isNotBlank() }?.let { fixUrl(it) }
-                        img.hasAttr("data-src") -> img.attr("data-src").takeIf { it.isNotBlank() }?.let { fixUrl(it) }
-                        else -> null
-                    }
-                }
-                ?:
-                // MÉTODO 3: Qualquer imagem de anime
-                document.selectFirst("img[src*='/animes/'], img[src*='/img/animes/']")
-                    ?.attr("src")
-                    ?.takeIf { it.isNotBlank() }
-                    ?.let { fixUrl(it) }
-            } catch (e: Exception) {
-                println("⚠️ Erro ao extrair poster: ${e.message}")
-                null
-            }
+            // ============ POSTER (USANDO FUNÇÃO AUXILIAR) ============
+            val poster = extractDetailPoster(document)
             
-            println("📊 Poster encontrado: ${poster ?: "NÃO ENCONTRADO"}")
+            println("📊 Poster encontrado: ${if (poster != null) "SIM" else "NÃO"}")
             if (poster != null) {
                 println("   • URL: ${poster.take(100)}...")
+                println("   • Fonte: ${if (poster.contains(mainUrl)) "SITE" else "EXTERNO"}")
             }
             
             // ============ BANNER/BACKGROUND ============
@@ -577,6 +659,9 @@ class AnimeFire : MainAPI() {
                 this.tags = genres
                 this.score = score
                 
+                // Status do anime
+                this.status = showStatus
+                
                 // Adicionar estúdio (se disponível)
                 studio?.let { 
                     try {
@@ -602,7 +687,7 @@ class AnimeFire : MainAPI() {
             
             // ============ DEBUG FINAL ============
             println("\n" + "=".repeat(80))
-            println("📊 LOAD COMPLETO:")
+            println("🎨 RESULTADO FINAL DO LOAD:")
             println("   • Título: ${response.name}")
             println("   • Tipo: ${response.type}")
             println("   • Ano: ${response.year}")
@@ -610,8 +695,9 @@ class AnimeFire : MainAPI() {
             println("   • Status: $statusText")
             println("   • É filme? $isMovie")
             println("   • Episódios: ${episodes.size}")
-            println("   • Poster URL: ${poster?.take(50)}...")
-            println("   • Background URL: ${background?.take(50)}...")
+            println("   • Gêneros: ${genres.size}")
+            println("   • Poster: ${if (poster != null) "ENCONTRADO" else "NÃO ENCONTRADO"}")
+            println("   • CloudStream usará seu próprio fallback se necessário")
             println("=".repeat(80) + "\n")
             
             response
