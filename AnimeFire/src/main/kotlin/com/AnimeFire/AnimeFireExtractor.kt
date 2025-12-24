@@ -7,18 +7,16 @@ import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import org.json.JSONObject
 import org.jsoup.Jsoup
 
-// MUDAR O NOME DA CLASSE PARA AnimeFireVideoExtractor
 object AnimeFireVideoExtractor {
-    // Mapa de itag para qualidade
     private val itagQualityMap = mapOf(
-        18 to 360,   // 360p MP4
-        22 to 720,   // 720p MP4
-        37 to 1080,  // 1080p MP4
-        59 to 480,   // 480p MP4
-        43 to 360,   // 360p WebM
-        44 to 480,   // 480p WebM
-        45 to 720,   // 720p WebM
-        46 to 1080,  // 1080p WebM,
+        18 to 360,
+        22 to 720,
+        37 to 1080,
+        59 to 480,
+        43 to 360,
+        44 to 480,
+        45 to 720,
+        46 to 1080,
     )
     
     suspend fun extractVideoLinks(
@@ -27,11 +25,9 @@ object AnimeFireVideoExtractor {
         name: String,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // Decidir qual método usar baseado na página
         val pageResponse = app.get(url)
         val doc = Jsoup.parse(pageResponse.text)
         
-        // Verificar qual sistema está sendo usado
         val hasBloggerIframe = doc.selectFirst("iframe[src*='blogger.com/video.g']") != null
         
         return if (hasBloggerIframe) {
@@ -49,16 +45,13 @@ object AnimeFireVideoExtractor {
     ): Boolean {
         return try {
             val iframe = doc.selectFirst("iframe[src*='blogger.com/video.g']") ?: return false
-            
             val iframeUrl = iframe.attr("src")
             
-            // Acessar o iframe do Blogger
             val iframeResponse = app.get(iframeUrl, headers = mapOf(
                 "Referer" to originalUrl,
                 "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
             ))
             
-            // Extrair VIDEO_CONFIG do HTML
             extractFromBloggerHtml(iframeResponse.text, iframeUrl, name, callback)
             
         } catch (e: Exception) {
@@ -72,7 +65,6 @@ object AnimeFireVideoExtractor {
         name: String,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // Método 1: Buscar VIDEO_CONFIG
         val configPattern = """var\s+VIDEO_CONFIG\s*=\s*(\{.*?\})\s*;""".toRegex(RegexOption.DOT_MATCHES_ALL)
         val configMatch = configPattern.find(html)
         
@@ -115,7 +107,6 @@ object AnimeFireVideoExtractor {
             }
         }
         
-        // Método 2: Buscar URLs diretamente no HTML
         val videoPattern = """https?://[^"'\s<>]+googlevideo\.com/videoplayback[^"'\s<>]+""".toRegex()
         val matches = videoPattern.findAll(html).toList()
         
@@ -123,8 +114,6 @@ object AnimeFireVideoExtractor {
             var found = false
             for (match in matches) {
                 val videoUrl = match.value
-                
-                // Extrair itag da URL
                 val itagPattern = """[?&]itag=(\d+)""".toRegex()
                 val itagMatch = itagPattern.find(videoUrl)
                 val itag = itagMatch?.groupValues?.get(1)?.toIntOrNull() ?: 18
