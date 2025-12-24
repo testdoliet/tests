@@ -4,8 +4,6 @@ plugins {
 }
 
 android {
-     buildFeatures {
-    buildConfig = true
     namespace = "com.SuperFlix"
     compileSdk = 33
 
@@ -13,11 +11,18 @@ android {
         minSdk = 24
         targetSdk = 33
         
-        // TMDB API Credentials
-        buildConfigField("String", "TMDB_API_KEY", 
-            "\"${System.getenv("TMDB_API_KEY") ?: "dummy_api_key"}\"")
-        buildConfigField("String", "TMDB_ACCESS_TOKEN", 
-            "\"${System.getenv("TMDB_ACCESS_TOKEN") ?: "dummy_access_token"}\"")
+        val tmdbApiKey = project.findProperty("TMDB_API_KEY") as? String
+            ?: System.getenv("TMDB_API_KEY")
+            ?: getLocalProperty("TMDB_API_KEY")
+            ?: "dummy_api_key"
+        
+        val tmdbAccessToken = project.findProperty("TMDB_ACCESS_TOKEN") as? String
+            ?: System.getenv("TMDB_ACCESS_TOKEN")
+            ?: getLocalProperty("TMDB_ACCESS_TOKEN")
+            ?: "dummy_access_token"
+        
+        buildConfigField("String", "TMDB_API_KEY", "\"$tmdbApiKey\"")
+        buildConfigField("String", "TMDB_ACCESS_TOKEN", "\"$tmdbAccessToken\"")
     }
 
     buildTypes {
@@ -37,8 +42,20 @@ android {
     }
 }
 
+fun getLocalProperty(key: String): String? {
+    val localProperties = Properties()
+    val localPropertiesFile = project.rootProject.file("local.properties")
+    
+    return if (localPropertiesFile.exists()) {
+        localProperties.load(localPropertiesFile.inputStream())
+        localProperties.getProperty(key)
+    } else {
+        null
+    }
+}
+
 cloudstream {
-    version = 1  
+    version = 1
     description = "SuperFlix - Filmes e Séries em Português"
     language = "pt-br"
     authors = listOf("lawlietbr")
@@ -52,5 +69,4 @@ cloudstream {
 dependencies {
     val cloudstream by configurations
     cloudstream("com.lagradost:cloudstream3:pre-release")
-  }
 }
