@@ -111,7 +111,7 @@ object GoyabuBloggerExtractor {
             val iframes = doc.select(pattern)
             println("📊 Procurando padrão '$pattern': ${iframes.size} encontrados")
             
-            for ((index, iframe) in iframes.withIndex()) {
+            iframes.forEachIndexed { index, iframe ->
                 val src = iframe.attr("src").trim()
                 if (src.isNotBlank()) {
                     println("✅ Iframe encontrado (#${index + 1}): ${src.take(80)}...")
@@ -187,7 +187,7 @@ object GoyabuBloggerExtractor {
         return extractGooglevideoUrlsFromHtml(html, referer, name, callback)
     }
     
-    // Extrair vídeo da configuração JSON do Blogger
+    // Extrair vídeo da configuração JSON do Blogger (simplificado)
     private suspend fun extractFromBloggerConfig(
         jsonString: String,
         referer: String,
@@ -197,52 +197,8 @@ object GoyabuBloggerExtractor {
         println("🔍 Analisando configuração JSON do Blogger...")
         
         return try {
-            val json = Json.parseToJsonElement(jsonString).jsonObject
-            
-            var found = false
-            
-            // Extrair URLs de vídeo
-            val videoUrls = mutableListOf<String>()
-            
-            // Procura por streams
-            json["streams"]?.jsonObject?.let { streams ->
-                for ((itagStr, streamObj) in streams) {
-                    try {
-                        val videoUrl = streamObj.jsonObject["play_url"]?.jsonPrimitive?.content
-                        if (videoUrl != null) {
-                            videoUrls.add("$itagStr:$videoUrl")
-                        }
-                    } catch (e: Exception) {
-                        // Ignorar erro
-                    }
-                }
-            }
-            
-            // Procura por play_url direto
-            json["play_url"]?.jsonPrimitive?.content?.let { videoUrl ->
-                val itag = json["format_id"]?.jsonPrimitive?.content ?: "18"
-                videoUrls.add("$itag:$videoUrl")
-            }
-            
-            // Procura por sources
-            json["sources"]?.jsonPrimitive?.content?.let { sources ->
-                extractVideoUrlsFromString(sources, videoUrls)
-            }
-            
-            // Processar URLs encontradas
-            for (videoInfo in videoUrls) {
-                val parts = videoInfo.split(":", limit = 2)
-                if (parts.size == 2) {
-                    val itag = parts[0].toIntOrNull() ?: 18
-                    val videoUrl = parts[1]
-                    
-                    if (createBloggerExtractorLink(itag, videoUrl, referer, name, callback)) {
-                        found = true
-                    }
-                }
-            }
-            
-            found
+            // Método simplificado: Extrair URLs diretamente do JSON
+            extractVideoUrlsFromJsonString(jsonString, referer, name, callback)
             
         } catch (e: Exception) {
             println("❌ Erro ao parsear JSON: ${e.message}")
@@ -250,29 +206,78 @@ object GoyabuBloggerExtractor {
         }
     }
     
-    // Extrair URLs de vídeo de uma string
-    private fun extractVideoUrlsFromString(content: String, videoUrls: MutableList<String>) {
-        // Procurar por padrões de URL
-        val urlPatterns = listOf(
-            """https?://[^"'\s]*\.googlevideo\.com/[^"'\s]*""".toRegex(),
-            """https?://[^"'\s]*\.googleusercontent\.com/[^"'\s]*""".toRegex(),
-            """https?://[^"'\s]*\.blogspot\.com/[^"'\s]*""".toRegex(),
-            """https?://[^"'\s]*\.blogger\.com/[^"'\s]*""".toRegex()
-        )
+    // Extrair URLs de vídeo diretamente de uma string JSON
+    private suspend fun extractVideoUrlsFromJsonString(
+        jsonString: String,
+        referer: String,
+        name: String,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        println("🔍 Extraindo URLs do JSON...")
         
-        for (pattern in urlPatterns) {
-            val matches = pattern.findAll(content)
-            for (match in matches) {
-                val url = match.value
-                if (url.contains("videoplayback") || url.contains("video.g")) {
+        var found = false
+        
+        // Padrão 1: Procurar por "play_url": "URL"
+        val playUrlPattern = """"play_url"\s*:\s*"([^"]+)"""".toRegex()
+        val playUrlMatches = playUrlPattern.findAll(jsonString)
+        
+        playUrlMatches.forEach { match ->
+            val videoUrl = match.groupValues[1]
+            println("✅ play_url encontrado: ${videoUrl.take(80)}...")
+            
+            // Extrair itag da URL
+            val itagPattern = """[?&]itag=(\d+)""".toRegex()
+            val itagMatch = itagPattern.find(videoUrl)
+            val itag = itagMatch?.groupValues?.get(1)?.toIntOrNull() ?: 18
+            
+            if (createBloggerExtractorLink(itag, videoUrl, referer, name, callback)) {
+                found = true
+            }
+        }
+        
+        // Padrão 2: Procurar por "url": "URL" (alternativo)
+        if (!found) {
+            val urlPattern = """"url"\s*:\s*"([^"]+)"""".toRegex()
+            val urlMatches = urlPattern.findAll(jsonString)
+            
+            urlMatches.forEach { match ->
+                val videoUrl = match.groupValues[1]
+                if (videoUrl.contains("googlevideo") || videoUrl.contains("videoplayback")) {
+                    println("✅ url encontrado: ${videoUrl.take(80)}...")
+                    
                     // Extrair itag da URL
                     val itagPattern = """[?&]itag=(\d+)""".toRegex()
-                    val itagMatch = itagPattern.find(url)
-                    val itag = itagMatch?.groupValues?.get(1) ?: "18"
-                    videoUrls.add("$itag:$url")
+                    val itagMatch = itagPattern.find(videoUrl)
+                    val itag = itagMatch?.groupValues?.get(1)?.toIntOrNull() ?: 18
+                    
+                    if (createBloggerExtractorLink(itag, videoUrl, referer, name, callback)) {
+                        found = true
+                    }
                 }
             }
         }
+        
+        // Padrão 3: Procurar por URLs diretas no JSON
+        if (!found) {
+            val directUrlPattern = """https?://[^"'\s]*\.googlevideo\.com/[^"'\s]*""".toRegex()
+            val directMatches = directUrlPattern.findAll(jsonString)
+            
+            directMatches.forEach { match ->
+                val videoUrl = match.value
+                println("✅ URL direta encontrada no JSON: ${videoUrl.take(80)}...")
+                
+                // Extrair itag da URL
+                val itagPattern = """[?&]itag=(\d+)""".toRegex()
+                val itagMatch = itagPattern.find(videoUrl)
+                val itag = itagMatch?.groupValues?.get(1)?.toIntOrNull() ?: 18
+                
+                if (createBloggerExtractorLink(itag, videoUrl, referer, name, callback)) {
+                    found = true
+                }
+            }
+        }
+        
+        return found
     }
     
     // Extrair URLs do Google Video diretamente do HTML
@@ -291,7 +296,7 @@ object GoyabuBloggerExtractor {
             println("✅ ${matches.size} URLs do Google Video encontradas")
             
             var found = false
-            for (match in matches) {
+            matches.forEach { match ->
                 var videoUrl = match.value
                 
                 // Limpar URL
@@ -327,6 +332,7 @@ object GoyabuBloggerExtractor {
         val qualityLabel = getQualityLabel(quality)
         
         println("📹 Criando link: $qualityLabel (itag: $itag)")
+        println("📹 URL: ${videoUrl.take(100)}...")
         
         val extractorLink = newExtractorLink(
             source = "Goyabu Blogger",
@@ -364,7 +370,7 @@ object GoyabuBloggerExtractor {
         println("🔍 Procurando vídeos em JavaScript...")
         
         val scripts = doc.select("script")
-        for ((index, script) in scripts.withIndex()) {
+        scripts.forEachIndexed { index, script ->
             val scriptContent = script.html()
             
             // Procurar por URLs de vídeo
@@ -375,7 +381,7 @@ object GoyabuBloggerExtractor {
                 println("✅ ${matches.size} URLs encontradas no script #$index")
                 
                 var found = false
-                for (match in matches) {
+                matches.forEach { match ->
                     val url = match.value
                     if (url.contains("videoplayback") || url.contains("video.g")) {
                         val itagPattern = """[?&]itag=(\d+)""".toRegex()
@@ -407,7 +413,7 @@ object GoyabuBloggerExtractor {
         // Procurar em elementos com data-video ou similares
         val videoElements = doc.select("[data-video], [data-src*='video'], video source, [href*='.mp4'], [href*='.m3u8']")
         
-        for (element in videoElements) {
+        videoElements.forEach { element ->
             val videoUrl = element.attr("data-video") 
                 ?: element.attr("data-src") 
                 ?: element.attr("src") 
