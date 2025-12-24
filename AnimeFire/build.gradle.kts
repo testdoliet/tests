@@ -18,12 +18,6 @@ android {
         minSdk = 24
         targetSdk = 33
 
-        // Ler de múltiplas fontes, na ordem de prioridade:
-        // 1. Parâmetros do Gradle (-P)
-        // 2. Variáveis de ambiente
-        // 3. local.properties
-        // 4. Valor dummy como fallback
-        
         val tmdbApiKey = project.findProperty("TMDB_API_KEY") as? String
             ?: System.getenv("TMDB_API_KEY")
             ?: getLocalProperty("TMDB_API_KEY")
@@ -33,9 +27,6 @@ android {
             ?: System.getenv("TMDB_ACCESS_TOKEN")
             ?: getLocalProperty("TMDB_ACCESS_TOKEN")
             ?: "dummy_access_token"
-        
-        println("🔑 [BUILD] TMDB_API_KEY configurada: ${if (tmdbApiKey == "dummy_api_key") "USANDO DUMMY" else "✅ CONFIGURADA"}")
-        println("🔑 [BUILD] TMDB_ACCESS_TOKEN configurada: ${if (tmdbAccessToken == "dummy_access_token") "USANDO DUMMY" else "✅ CONFIGURADA"}")
         
         buildConfigField("String", "TMDB_API_KEY", "\"$tmdbApiKey\"")
         buildConfigField("String", "TMDB_ACCESS_TOKEN", "\"$tmdbAccessToken\"")
@@ -77,5 +68,5 @@ cloudstream {
     status = 1
     tvTypes = listOf("Animes")
     iconUrl = "https://animefire.io/img/icons/favicon-192x192.png"
-    isCrossPlatform = true 
+    isCrossPlatform = true
 }
