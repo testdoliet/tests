@@ -77,10 +77,9 @@ class Goyabu : MainAPI() {
             "(?i)\\s*\\|.*".toRegex() // Remove tudo depois de |
         )
         
-        // GÊNEROS ADULTOS/SUGESTIVOS PARA NSFW
-        private val EXPLICIT_GENRES = setOf("+18", "Hentai", "Adulto", "Erótico", "Yaoi", "Yuri")
-        private val SUGGESTIVE_GENRES = setOf("Ecchi", "Harém", "Harem", "Fanservice")
-        private const val ADULT_INDICATOR = "+18"
+        // GÊNEROS ADULTOS/SUGESTIVOS (para referência interna)
+        private val ADULT_GENRES = setOf("+18", "Hentai", "Adulto", "Erótico", "Yaoi", "Yuri")
+        private val SUGGESTIVE_GENRES = setOf("Ecchi", "Harém", "Harem")
     }
 
     init {
@@ -209,36 +208,21 @@ class Goyabu : MainAPI() {
         }
     }
 
-    // ============ FUNÇÃO PARA DETERMINAR NSFW ============
-    private fun determineContentRating(genres: List<String>): com.lagradost.cloudstream3.ContentRating {
-        println("🔍 Verificando NSFW para gêneros: $genres")
-        
+    // ============ FUNÇÃO PARA DETECTAR CONTEÚDO ADULTO (sem ContentRating) ============
+    private fun hasAdultContent(genres: List<String>): Boolean {
         val lowerGenres = genres.map { it.lowercase().trim() }
         
         // Verificar gêneros explícitos
-        val hasExplicit = EXPLICIT_GENRES.any { explicitGenre ->
+        val hasExplicit = ADULT_GENRES.any { explicitGenre ->
             lowerGenres.any { it == explicitGenre.lowercase() }
         }
         
-        // Verificar gêneros sugestivos
-        val hasSuggestive = SUGGESTIVE_GENRES.any { suggestiveGenre ->
-            lowerGenres.any { it == suggestiveGenre.lowercase() }
+        if (hasExplicit) {
+            println("🔞 CONTEÚDO ADULTO DETECTADO: $genres")
+            return true
         }
         
-        return when {
-            hasExplicit -> {
-                println("🔞 Classificação: EXPLICIT (conteúdo adulto)")
-                com.lagradost.cloudstream3.ContentRating.Explicit
-            }
-            hasSuggestive -> {
-                println("💋 Classificação: SUGGESTIVE (conteúdo sugestivo)")
-                com.lagradost.cloudstream3.ContentRating.Suggestive
-            }
-            else -> {
-                println("✅ Classificação: SAFE (para todas as idades)")
-                com.lagradost.cloudstream3.ContentRating.Safe
-            }
-        }
+        return false
     }
 
     // ============ FUNÇÃO PARA PROCESSAR SCORE (MULTIPLICAR POR 2) ============
@@ -302,16 +286,17 @@ class Goyabu : MainAPI() {
         
         if (cleanedTitle.isBlank()) return null
 
-        // Verificar se é conteúdo adulto
+        // Verificar se é conteúdo adulto (apenas para log)
         val genreElement = selectFirst(".genre-tag, .tag")
         val genres = genreElement?.text()?.split(",")?.map { it.trim() } ?: emptyList()
-        val contentRating = determineContentRating(genres)
+        if (hasAdultContent(genres)) {
+            println("⚠️ Anime adulto na lista: $cleanedTitle")
+        }
         
         return newAnimeSearchResponse(cleanedTitle, fixUrl(href)) {
             this.posterUrl = posterUrl
             this.type = TvType.Anime
             this.score = score
-            this.contentRating = contentRating
             
             // Aplicar regra das badges
             if (hasDubBadge) {
@@ -445,8 +430,11 @@ class Goyabu : MainAPI() {
             }
             println("🏷️ Gêneros: ${genres.size}")
             
-            // NSFW/CONTENT RATING
-            val contentRating = determineContentRating(genres)
+            // DETECTAR CONTEÚDO ADULTO (apenas para log)
+            val isAdultContent = hasAdultContent(genres)
+            if (isAdultContent) {
+                println("⚠️ AVISO: Este anime contém conteúdo adulto (+18)")
+            }
             
             // SCORE (com multiplicação ×2)
             val scoreElement = document.selectFirst(".rating-total, .rating-score")
@@ -484,7 +472,6 @@ class Goyabu : MainAPI() {
                 this.tags = genres
                 this.score = score
                 this.showStatus = status
-                this.contentRating = contentRating // ← NSFW aqui
                 
                 if (sortedEpisodes.isNotEmpty()) {
                     // CORREÇÃO: Só mostra badge DUB se for dublado, senão só LEG
@@ -851,85 +838,4 @@ class Goyabu : MainAPI() {
         return when {
             idOrPath.matches(Regex("""^\d+$""")) -> "$mainUrl/$idOrPath"
             idOrPath.startsWith("/") -> "$mainUrl$idOrPath"
-            idOrPath.startsWith("http") -> idOrPath
-            idOrPath.isNotBlank() -> fixUrl(idOrPath)
-            else -> "$mainUrl/$episodeNumber"
-        }
-    }
-
-    // ============ LOAD LINKS (AGORA COM SUPORTE AO BLOGGER) ============
-    override suspend fun loadLinks(
-        data: String,
-        isCasting: Boolean,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        println("\n🎬 GOYABU: Iniciando extração de links para: $data")
-        
-        return try {
-            // Usar o extrator específico do Blogger
-            val success = GoyabuBloggerExtractor.extractVideoLinks(data, "Goyabu", callback)
-            
-            if (success) {
-                println("✅ GOYABU: Extração concluída com sucesso!")
-                return true
-            } else {
-                println("⚠️ GOYABU: Extrator Blogger falhou, tentando métodos alternativos...")
-                
-                // Fallback: Tentar extrair diretamente da página
-                val response = app.get(data)
-                val html = response.text
-                
-                // Procurar por URLs de vídeo
-                val videoPatterns = listOf(
-                    """https?://[^"'\s<>]*\.(?:mp4|m3u8|mkv|webm|avi)[^"'\s<>]*""".toRegex(),
-                    """(https?://[^"'\s<>]*\.googlevideo\.com/[^"'\s<>]+)""".toRegex(),
-                    """src\s*:\s*['"](https?://[^"']+)['"]""".toRegex(),
-                    """url\s*:\s*['"](https?://[^"']+)['"]""".toRegex(),
-                    """file\s*:\s*['"](https?://[^"']+)['"]""".toRegex()
-                )
-                
-                var found = false
-                for (pattern in videoPatterns) {
-                    val matches = pattern.findAll(html).toList()
-                    if (matches.isNotEmpty()) {
-                        for (match in matches) {
-                            val videoUrl = match.groupValues[1].takeIf { it.startsWith("http") } ?: continue
-                            
-                            if (videoUrl.contains(".mp4") || videoUrl.contains(".m3u8") || videoUrl.contains("googlevideo")) {
-                                val extractorLink = newExtractorLink(
-                                    source = "Goyabu",
-                                    name = "Vídeo",
-                                    url = videoUrl,
-                                    type = ExtractorLinkType.VIDEO
-                                ) {
-                                    this.referer = data
-                                    this.quality = 720
-                                    this.headers = mapOf(
-                                        "Referer" to data,
-                                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-                                    )
-                                }
-                                
-                                callback(extractorLink)
-                                found = true
-                                println("✅ URL de vídeo encontrada: ${videoUrl.take(80)}...")
-                            }
-                        }
-                    }
-                }
-                
-                if (!found) {
-                    println("❌ GOYABU: Nenhum link de vídeo encontrado")
-                }
-                
-                found
-            }
-            
-        } catch (e: Exception) {
-            println("❌ GOYABU: Erro na extração de links: ${e.message}")
-            e.printStackTrace()
-            false
-        }
-    }
-}
+            idOrPath
