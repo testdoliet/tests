@@ -40,6 +40,47 @@ class Goyabu : MainAPI() {
             "/generos/guerra" to "Guerra",
             "/generos/gore" to "Gore"
         )
+        
+        // PALAVRAS PARA REMOVER DAS SINOPSES
+        private val SYNOPSIS_JUNK_PATTERNS = listOf(
+            Regex("""(?i)assistir.*?online"""),
+            Regex("""(?i)anime completo"""),
+            Regex("""(?i)todos os episodios"""),
+            Regex("""(?i)dublado.*?online"""),
+            Regex("""(?i)legendado.*?online"""),
+            Regex("""(?i)assista.*?gratis"""),
+            Regex("""(?i)veja.*?de graça"""),
+            Regex("""(?i)streaming.*?(online|gratis)"""),
+            Regex("""(?i)assistir anime"""),
+            Regex("""(?i)epis[oó]dio.*?dublado"""),
+            Regex("""(?i)baixar.*?(torrent|mega)"""),
+            Regex("""(?i)download.*?anime"""),
+            Regex("""Visite.*?site""", RegexOption.IGNORE_CASE),
+            Regex("""Confira.*?canal""", RegexOption.IGNORE_CASE),
+            Regex("""(?i)\bhd\b.*?(720p|1080p)"""),
+            Regex("""(?i)qualidade.*?(alta|hd)"""),
+            Regex("""(?i)sinopse.*?:""", RegexOption.IGNORE_CASE)
+        )
+        
+        // PALAVRAS PARA REMOVER DOS TÍTULOS
+        private val TITLE_CLEANUP_PATTERNS = listOf(
+            "(?i)\\s*\\(dublado\\)".toRegex(),
+            "(?i)\\s*\\(legendado\\)".toRegex(),
+            "(?i)\\s*\\(\\d{4}\\)".toRegex(), // Remove (2024)
+            "(?i)\\s*dublado\\s*$".toRegex(),
+            "(?i)\\s*legendado\\s*$".toRegex(),
+            "(?i)\\s*online\\s*$".toRegex(),
+            "(?i)\\s*assistir\\s*".toRegex(),
+            "(?i)\\s*anime\\s*$".toRegex(),
+            "(?i)\\s*-\\s*todos os epis[oó]dios".toRegex(),
+            "(?i)\\s*-\\s*completo".toRegex(),
+            "(?i)\\s*\\|.*".toRegex() // Remove tudo depois de |
+        )
+        
+        // GÊNEROS ADULTOS/SUGESTIVOS PARA NSFW
+        private val EXPLICIT_GENRES = setOf("+18", "Hentai", "Adulto", "Erótico", "Yaoi", "Yuri")
+        private val SUGGESTIVE_GENRES = setOf("Ecchi", "Harém", "Harem", "Fanservice")
+        private const val ADULT_INDICATOR = "+18"
     }
 
     init {
@@ -52,6 +93,63 @@ class Goyabu : MainAPI() {
         }.toTypedArray()
     )
 
+    // ============ FUNÇÕES DE LIMPEZA ============
+    
+    /**
+     * Limpa títulos removendo "(Dublado)", "(2024)", "Online", etc.
+     */
+    private fun cleanTitle(dirtyTitle: String): String {
+        var clean = dirtyTitle.trim()
+        
+        // Aplicar todos os padrões de limpeza
+        TITLE_CLEANUP_PATTERNS.forEach { pattern ->
+            clean = pattern.replace(clean, "")
+        }
+        
+        // Remover múltiplos espaços
+        clean = clean.replace(Regex("\\s+"), " ").trim()
+        
+        // Se ficar vazio, retorna o original
+        return if (clean.isBlank()) dirtyTitle else clean
+    }
+    
+    /**
+     * Limpa sinopses removendo propaganda e textos de SEO.
+     */
+    private fun cleanSynopsis(dirtySynopsis: String): String {
+        var clean = dirtySynopsis.trim()
+        
+        // Remover padrões de lixo
+        SYNOPSIS_JUNK_PATTERNS.forEach { pattern ->
+            clean = pattern.replace(clean, "")
+        }
+        
+        // Remover frases que começam com palavras-chave de SEO
+        val sentences = clean.split(".").map { it.trim() }
+        val filteredSentences = sentences.filter { sentence ->
+            !sentence.matches(Regex("(?i)^(assistir|veja|confira|visite|baixar|download|streaming|online|gratis|de graça).*"))
+        }
+        
+        clean = filteredSentences.joinToString(". ")
+        
+        // Remover múltiplos espaços e pontos
+        clean = clean.replace(Regex("\\s+"), " ")
+        clean = clean.replace(Regex("\\.\\s*\\.+"), ".")
+        clean = clean.trim()
+        
+        // Garantir que termine com ponto
+        if (clean.isNotEmpty() && !clean.endsWith(".") && !clean.endsWith("!") && !clean.endsWith("?")) {
+            clean += "."
+        }
+        
+        // Se ficou muito curta ou vazia, retorna mensagem padrão
+        return when {
+            clean.length < 20 -> "Sinopse não disponível."
+            clean == dirtySynopsis -> dirtySynopsis // Se não mudou nada
+            else -> clean
+        }
+    }
+    
     // ============ FUNÇÃO PARA EXTRAIR STATUS ============
     private fun extractGoyabuStatus(doc: org.jsoup.nodes.Document): ShowStatus? {
         return try {
@@ -111,6 +209,38 @@ class Goyabu : MainAPI() {
         }
     }
 
+    // ============ FUNÇÃO PARA DETERMINAR NSFW ============
+    private fun determineContentRating(genres: List<String>): ContentRating {
+        println("🔍 Verificando NSFW para gêneros: $genres")
+        
+        val lowerGenres = genres.map { it.lowercase().trim() }
+        
+        // Verificar gêneros explícitos
+        val hasExplicit = EXPLICIT_GENRES.any { explicitGenre ->
+            lowerGenres.any { it == explicitGenre.lowercase() }
+        }
+        
+        // Verificar gêneros sugestivos
+        val hasSuggestive = SUGGESTIVE_GENRES.any { suggestiveGenre ->
+            lowerGenres.any { it == suggestiveGenre.lowercase() }
+        }
+        
+        return when {
+            hasExplicit -> {
+                println("🔞 Classificação: EXPLICIT (conteúdo adulto)")
+                ContentRating.Explicit
+            }
+            hasSuggestive -> {
+                println("💋 Classificação: SUGGESTIVE (conteúdo sugestivo)")
+                ContentRating.Suggestive
+            }
+            else -> {
+                println("✅ Classificação: SAFE (para todas as idades)")
+                ContentRating.Safe
+            }
+        }
+    }
+
     // ============ FUNÇÃO PARA PROCESSAR SCORE (MULTIPLICAR POR 2) ============
     private fun parseScore(text: String?): Score? {
         if (text.isNullOrBlank()) {
@@ -147,9 +277,14 @@ class Goyabu : MainAPI() {
         val isAnimePage = href.contains("/anime/")
         if (!isAnimePage || isEpisodePage) return null
 
-        // TÍTULO
+        // TÍTULO (com limpeza)
         val titleElement = selectFirst(".title, .hidden-text")
         val rawTitle = titleElement?.text()?.trim() ?: return null
+        val cleanedTitle = cleanTitle(rawTitle)
+        
+        if (rawTitle != cleanedTitle) {
+            println("🧹 Título limpo: '$rawTitle' → '$cleanedTitle'")
+        }
         
         // THUMBNAIL
         val posterUrl = extractPosterUrl()
@@ -165,12 +300,18 @@ class Goyabu : MainAPI() {
         val hasDubBadge = selectFirst(".audio-box.dublado, .dublado") != null
         val showSub = !hasDubBadge  // Só mostra LEG se NÃO for dublado
         
-        if (rawTitle.isBlank()) return null
+        if (cleanedTitle.isBlank()) return null
 
-        return newAnimeSearchResponse(rawTitle, fixUrl(href)) {
+        // Verificar se é conteúdo adulto
+        val genreElement = selectFirst(".genre-tag, .tag")
+        val genres = genreElement?.text()?.split(",")?.map { it.trim() } ?: emptyList()
+        val contentRating = determineContentRating(genres)
+        
+        return newAnimeSearchResponse(cleanedTitle, fixUrl(href)) {
             this.posterUrl = posterUrl
             this.type = TvType.Anime
             this.score = score
+            this.contentRating = contentRating
             
             // Aplicar regra das badges
             if (hasDubBadge) {
@@ -259,8 +400,12 @@ class Goyabu : MainAPI() {
             // Carregar página
             val document = app.get(url, timeout = 30).document
             
-            // TÍTULO
-            val title = document.selectFirst("h1.text-hidden, h1")?.text()?.trim() ?: "Sem Título"
+            // TÍTULO (com limpeza)
+            val rawTitle = document.selectFirst("h1.text-hidden, h1")?.text()?.trim() ?: "Sem Título"
+            val title = cleanTitle(rawTitle)
+            if (rawTitle != title) {
+                println("🧹 Título limpo: '$rawTitle' → '$title'")
+            }
             println("📌 Título: $title")
             
             // POSTER
@@ -269,11 +414,18 @@ class Goyabu : MainAPI() {
                 ?.let { fixUrl(it) }
             println("🖼️ Poster: ${poster != null}")
             
-            // SINOPSE
-            val synopsis = document.selectFirst(".streamer-sinopse")?.text()?.trim()
+            // SINOPSE (com limpeza)
+            val rawSynopsis = document.selectFirst(".streamer-sinopse")?.text()?.trim()
                 ?.replace("ler mais", "")
                 ?.trim()
                 ?: "Sinopse não disponível."
+            
+            val synopsis = cleanSynopsis(rawSynopsis)
+            if (rawSynopsis != synopsis && synopsis != "Sinopse não disponível.") {
+                println("🧹 Sinopse limpa:")
+                println("   ANTES: ${rawSynopsis.take(100)}...")
+                println("   DEPOIS: ${synopsis.take(100)}...")
+            }
             println("📖 Sinopse (${synopsis.length} chars)")
             
             // ANO
@@ -293,13 +445,16 @@ class Goyabu : MainAPI() {
             }
             println("🏷️ Gêneros: ${genres.size}")
             
+            // NSFW/CONTENT RATING
+            val contentRating = determineContentRating(genres)
+            
             // SCORE (com multiplicação ×2)
             val scoreElement = document.selectFirst(".rating-total, .rating-score")
             val scoreText = scoreElement?.text()?.trim()
             val score = parseScore(scoreText)
             
             // DUBLADO/LEGENDADO (mesma lógica das badges)
-            val isDubbed = title.contains("dublado", ignoreCase = true) ||
+            val isDubbed = rawTitle.contains("dublado", ignoreCase = true) ||
                            document.selectFirst(".audio-box.dublado, .dublado") != null
             println("🎭 Dublado: $isDubbed")
             
@@ -329,6 +484,7 @@ class Goyabu : MainAPI() {
                 this.tags = genres
                 this.score = score
                 this.showStatus = status
+                this.contentRating = contentRating // ← NSFW aqui
                 
                 if (sortedEpisodes.isNotEmpty()) {
                     // CORREÇÃO: Só mostra badge DUB se for dublado, senão só LEG
