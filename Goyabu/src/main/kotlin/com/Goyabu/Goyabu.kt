@@ -52,6 +52,92 @@ class Goyabu : MainAPI() {
         }.toTypedArray()
     )
 
+    // ============ FUNÇÃO PARA EXTRAIR STATUS ============
+    private fun extractGoyabuStatus(doc: org.jsoup.nodes.Document): ShowStatus? {
+        return try {
+            println("🔍 Procurando status do anime...")
+            
+            // Procurar em vários locais possíveis
+            val statusSelectors = listOf(
+                "li.status",
+                ".status",
+                "[class*='status']",
+                ".streamer-info li:contains(Status)",
+                ".streamer-info-list li",
+                "li:contains('Completo')",
+                "li:contains('Lançamento')"
+            )
+            
+            var statusText = ""
+            
+            for (selector in statusSelectors) {
+                val element = doc.selectFirst(selector)
+                if (element != null) {
+                    statusText = element.text().trim().lowercase()
+                    println("✅ Status encontrado via '$selector': '$statusText'")
+                    break
+                }
+            }
+            
+            if (statusText.isEmpty()) {
+                // Fallback: procurar qualquer texto com "complet" ou "lançament"
+                doc.select("li, span, div").forEach { element ->
+                    val text = element.text().trim().lowercase()
+                    if (text.contains("complet") || text.contains("lançament")) {
+                        statusText = text
+                        println("✅ Status via fallback: '$statusText'")
+                        return@forEach
+                    }
+                }
+            }
+            
+            when {
+                statusText.contains("complet") -> {
+                    println("📊 Status: COMPLETED")
+                    ShowStatus.Completed
+                }
+                statusText.contains("lançament") -> {
+                    println("📊 Status: ONGOING")
+                    ShowStatus.Ongoing
+                }
+                else -> {
+                    println("📊 Status não reconhecido ou não encontrado")
+                    null
+                }
+            }
+        } catch (e: Exception) {
+            println("❌ Erro ao extrair status: ${e.message}")
+            null
+        }
+    }
+
+    // ============ FUNÇÃO PARA PROCESSAR SCORE (MULTIPLICAR POR 2) ============
+    private fun parseScore(text: String?): Score? {
+        if (text.isNullOrBlank()) {
+            println("📊 Score: Nenhum score encontrado")
+            return null
+        }
+        
+        try {
+            // Extrair número (pode ser decimal como "4.5")
+            val regex = Regex("""(\d+\.?\d*)""")
+            val match = regex.find(text)
+            
+            return match?.groupValues?.get(1)?.toFloatOrNull()?.let { rawScore ->
+                // Multiplicar por 2 (ex: site mostra 5, CloudStream deve mostrar 10)
+                val multipliedScore = rawScore * 2
+                println("📊 Score: $rawScore (site) → $multipliedScore (CloudStream)")
+                
+                // Limitar a 10.0 no máximo
+                val finalScore = multipliedScore.coerceAtMost(10.0f)
+                Score.from10(finalScore)
+            }
+        } catch (e: Exception) {
+            println("❌ Erro ao processar score '$text': ${e.message}")
+            return null
+        }
+    }
+
     // ============ EXTRACTION PARA LISTAGEM ============
     private fun Element.toSearchResponse(): AnimeSearchResponse? {
         val href = attr("href") ?: return null
@@ -68,22 +154,34 @@ class Goyabu : MainAPI() {
         // THUMBNAIL
         val posterUrl = extractPosterUrl()
         
-        // SCORE
+        // SCORE (com multiplicação ×2)
         val scoreElement = selectFirst(".rating-score-box, .rating")
         val scoreText = scoreElement?.text()?.trim()
         val score = parseScore(scoreText)
         
-        // DUBLADO (badge)
+        // CORREÇÃO DAS BADGES: 
+        // Se tem badge dublado → só badge DUB no CloudStream
+        // Se não tem badge dublado → só badge LEG no CloudStream
         val hasDubBadge = selectFirst(".audio-box.dublado, .dublado") != null
-        val hasSub = true
-
+        val showSub = !hasDubBadge  // Só mostra LEG se NÃO for dublado
+        
         if (rawTitle.isBlank()) return null
 
         return newAnimeSearchResponse(rawTitle, fixUrl(href)) {
             this.posterUrl = posterUrl
             this.type = TvType.Anime
             this.score = score
-            addDubStatus(dubExist = hasDubBadge, subExist = hasSub)
+            
+            // Aplicar regra das badges
+            if (hasDubBadge) {
+                // Tem dublado → só badge DUB
+                addDubStatus(dubExist = true, subExist = false)
+                println("🎭 Badge: DUB (dublado detectado)")
+            } else {
+                // Não tem dublado → só badge LEG
+                addDubStatus(dubExist = false, subExist = true)
+                println("🎭 Badge: LEG (apenas legendado)")
+            }
         }
     }
     
@@ -104,13 +202,6 @@ class Goyabu : MainAPI() {
             return fixUrl(url)
         }
         return null
-    }
-    
-    private fun parseScore(text: String?): Score? {
-        if (text.isNullOrBlank()) return null
-        val regex = Regex("""(\d+\.?\d*)""")
-        val match = regex.find(text)
-        return match?.groupValues?.get(1)?.toFloatOrNull()?.let { Score.from10(it) }
     }
 
     // ============ GET MAIN PAGE ============
@@ -190,6 +281,9 @@ class Goyabu : MainAPI() {
             val year = yearElement?.text()?.trim()?.toIntOrNull()
             println("📅 Ano: $year")
             
+            // STATUS DO ANIME
+            val status = extractGoyabuStatus(document)
+            
             // GÊNEROS
             val genres = mutableListOf<String>()
             document.select(".filter-btn.btn-style, a[href*='/generos/']").forEach { element ->
@@ -199,14 +293,14 @@ class Goyabu : MainAPI() {
             }
             println("🏷️ Gêneros: ${genres.size}")
             
-            // SCORE
+            // SCORE (com multiplicação ×2)
             val scoreElement = document.selectFirst(".rating-total, .rating-score")
             val scoreText = scoreElement?.text()?.trim()
             val score = parseScore(scoreText)
-            println("⭐ Score: $scoreText")
             
-            // DUBLADO/LEGENDADO
-            val isDubbed = title.contains("dublado", ignoreCase = true)
+            // DUBLADO/LEGENDADO (mesma lógica das badges)
+            val isDubbed = title.contains("dublado", ignoreCase = true) ||
+                           document.selectFirst(".audio-box.dublado, .dublado") != null
             println("🎭 Dublado: $isDubbed")
             
             // EPISÓDIOS
@@ -218,7 +312,6 @@ class Goyabu : MainAPI() {
                 val fallbackEpisodes = extractEpisodesFallback(document, url)
                 if (fallbackEpisodes.isNotEmpty()) {
                     println("✅ Encontrados ${fallbackEpisodes.size} episódios via fallback")
-                    // CORREÇÃO: Não usar addAll, usar operador +
                     episodes = episodes + fallbackEpisodes
                 }
             } else {
@@ -235,8 +328,10 @@ class Goyabu : MainAPI() {
                 this.plot = synopsis
                 this.tags = genres
                 this.score = score
+                this.showStatus = status
                 
                 if (sortedEpisodes.isNotEmpty()) {
+                    // CORREÇÃO: Só mostra badge DUB se for dublado, senão só LEG
                     val dubStatus = if (isDubbed) DubStatus.Dubbed else DubStatus.Subbed
                     addEpisodes(dubStatus, sortedEpisodes)
                     
