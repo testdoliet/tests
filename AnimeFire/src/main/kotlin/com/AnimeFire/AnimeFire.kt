@@ -22,7 +22,6 @@ class AnimeFire : MainAPI() {
         
         private val loadingMutex = Mutex()
         
-        // CATEGORIAS FIXAS - SEMPRE APARECEM
         private val FIXED_CATEGORIES = listOf(
             "/em-lancamento" to "Lançamentos",
             "/top-animes" to "Top Animes",
@@ -30,7 +29,6 @@ class AnimeFire : MainAPI() {
             "/lista-de-animes-legendados" to "Animes Legendados"
         )
         
-        // LISTA COMPLETA DE TODAS AS CATEGORIAS (EXCETO AS FIXAS)
         private val ALL_RANDOM_CATEGORIES = listOf(
             "/animes-atualizados" to "Atualizados",
             "/lista-de-filmes-legendados" to "Filmes Legendados",
@@ -64,37 +62,25 @@ class AnimeFire : MainAPI() {
         
         private var cachedRandomTabs: List<Pair<String, String>>? = null
         private var cacheTime: Long = 0
-        private const val CACHE_DURATION = 300000L // 5 minutos
+        private const val CACHE_DURATION = 300000L
         
-        /**
-         * Retorna as abas combinadas: 4 fixas + 8 aleatórias
-         */
         fun getCombinedTabs(): List<Pair<String, String>> {
             val currentTime = System.currentTimeMillis()
             
-            // Se temos cache válido e recente, usá-lo
             if (cachedRandomTabs != null && (currentTime - cacheTime) < CACHE_DURATION) {
                 return FIXED_CATEGORIES + cachedRandomTabs!!
             }
             
-            // Gerar novas abas aleatórias
             val randomTabs = ALL_RANDOM_CATEGORIES
                 .shuffled()
-                .take(8) // Pegar 8 aleatórias
-                .distinctBy { it.first } // Garantir que não haja duplicatas
+                .take(8)
+                .distinctBy { it.first }
             
-            // Armazenar em cache
             cachedRandomTabs = randomTabs
             cacheTime = currentTime
             
-            // Combinar: fixas + aleatórias
             return FIXED_CATEGORIES + randomTabs
         }
-    }
-
-    init {
-        println("🔥 ANIMEFIRE: Plugin inicializado")
-        println("🔥 ANIMEFIRE: Abas configuradas: 4 fixas + 8 aleatórias")
     }
 
     override val mainPage = mainPageOf(
@@ -103,78 +89,45 @@ class AnimeFire : MainAPI() {
         }.toTypedArray()
     )
 
-    // ============ FUNÇÃO AUXILIAR PARA EXTRACTION DE POSTER ============
-    private fun extractPoster(element: Element, debugMode: Boolean = true): String? {
+    private fun extractPoster(element: Element): String? {
         return try {
-            // TENTATIVAS EM ORDEM DE PRIORIDADE:
-            
-            // 1. META TAGS (og:image) - geralmente têm a melhor qualidade
             val metaImage = element.selectFirst("meta[property='og:image']")?.attr("content")
                 ?.takeIf { it.isNotBlank() }
                 ?.let { fixUrl(it) }
+            if (metaImage != null) return metaImage
             
-            if (metaImage != null) {
-                if (debugMode) println("   ✅ Poster via META: ${metaImage.take(60)}...")
-                return metaImage
-            }
-            
-            // 2. Data-src (carregamento lazy)
             val dataSrc = element.selectFirst("img[data-src]")?.attr("data-src")
                 ?.takeIf { it.isNotBlank() }
                 ?.let { fixUrl(it) }
+            if (dataSrc != null) return dataSrc
             
-            if (dataSrc != null) {
-                if (debugMode) println("   ✅ Poster via data-src: ${dataSrc.take(60)}...")
-                return dataSrc
-            }
-            
-            // 3. Src padrão
             val srcImage = element.selectFirst("img[src]")?.attr("src")
                 ?.takeIf { it.isNotBlank() }
                 ?.let { fixUrl(it) }
+            if (srcImage != null) return srcImage
             
-            if (srcImage != null) {
-                if (debugMode) println("   ✅ Poster via src: ${srcImage.take(60)}...")
-                return srcImage
-            }
-            
-            // 4. Background image em divs
             val style = element.attr("style")
             if (style.contains("background-image")) {
                 val bgRegex = Regex("""url\(['"]?([^'"()]+)['"]?\)""")
                 val match = bgRegex.find(style)
                 match?.groupValues?.get(1)?.let { bgUrl ->
-                    val fixedBgUrl = fixUrl(bgUrl)
-                    if (debugMode) println("   ✅ Poster via background: ${fixedBgUrl.take(60)}...")
-                    return fixedBgUrl
+                    return fixUrl(bgUrl)
                 }
             }
             
-            if (debugMode) println("   ⚠️ Nenhum poster encontrado no elemento")
             null
-            
         } catch (e: Exception) {
-            if (debugMode) println("   ❌ Erro ao extrair poster: ${e.message}")
             null
         }
     }
 
-    // ============ FUNÇÃO AUXILIAR PARA POSTER NA PÁGINA DE DETALHES ============
     private fun extractDetailPoster(document: org.jsoup.nodes.Document): String? {
         return try {
-            // TENTATIVAS EM ORDEM:
-            
-            // 1. Meta og:image (melhor qualidade geralmente)
             val metaImage = document.selectFirst("meta[property='og:image']")?.attr("content")
                 ?.takeIf { it.isNotBlank() }
                 ?.let { fixUrl(it) }
+            if (metaImage != null) return metaImage
             
-            if (metaImage != null) {
-                println("📊 Poster via META: ${metaImage.take(80)}...")
-                return metaImage
-            }
-            
-            // 2. Imagem do poster principal do anime
             val posterSelectors = listOf(
                 ".sub_animepage_img img",
                 ".poster img", 
@@ -192,44 +145,26 @@ class AnimeFire : MainAPI() {
                     }
                     
                     src?.takeIf { it.isNotBlank() }?.let { 
-                        val fixedUrl = fixUrl(it)
-                        println("📊 Poster via seletor '$selector': ${fixedUrl.take(80)}...")
-                        return fixedUrl
+                        return fixUrl(it)
                     }
                 }
             }
             
-            // 3. Primeira imagem de anime na página
             document.selectFirst("img[src*='/animes/'], img[src*='/img/']")
                 ?.attr("src")
                 ?.takeIf { it.isNotBlank() }
-                ?.let { 
-                    val fixedUrl = fixUrl(it)
-                    println("📊 Poster via fallback: ${fixedUrl.take(80)}...")
-                    return fixedUrl
-                }
+                ?.let { return fixUrl(it) }
             
-            println("⚠️ Nenhum poster encontrado na página")
             null
-            
         } catch (e: Exception) {
-            println("❌ Erro ao extrair poster detalhado: ${e.message}")
             null
         }
     }
 
-    // ============ FUNÇÃO DE EXTRACTION ============
-    private fun Element.toSearchResponse(debugMode: Boolean = true): AnimeSearchResponse? {
+    private fun Element.toSearchResponse(): AnimeSearchResponse? {
         val href = attr("href") ?: return null
         if (href.isBlank() || (!href.contains("/animes/") && !href.contains("/filmes/"))) return null
         
-        if (debugMode) {
-            println("\n" + "=".repeat(60))
-            println("🔍 DEBUG EXTRACTION")
-            println("=".repeat(60))
-        }
-        
-        // TÍTULO
         val titleElement = selectFirst("h3.animeTitle, .animeTitle, h3, .card-title") ?: return null
         val rawTitle = titleElement.text().trim()
         
@@ -238,22 +173,13 @@ class AnimeFire : MainAPI() {
         
         if (combinedTitle.isBlank()) return null
         
-        // AVALIAÇÃO
-        val scoreResult = extractScoreAdvanced(this, debugMode)
+        val scoreResult = extractScoreAdvanced(this)
         val scoreText = scoreResult.first
-        
-        if (debugMode) {
-            println("\n📊 AVALIAÇÃO:")
-            println("   • Texto: '$scoreText'")
-        }
-        
-        // PROCESSAR SCORE FINAL
         val score = when {
             scoreText == null || scoreText == "N/A" -> null
             else -> scoreText.toFloatOrNull()?.let { Score.from10(it) }
         }
         
-        // DUB/LEG
         val hasExplicitDub = combinedTitle.contains("dublado", ignoreCase = true)
         val hasExplicitLeg = combinedTitle.contains("legendado", ignoreCase = true)
         
@@ -279,40 +205,22 @@ class AnimeFire : MainAPI() {
             }
         }
         
-        // NOME LIMPO
         val cleanName = extractAnimeName(combinedTitle, selectFirst(".numEp")?.text())
-        
         val isMovie = href.contains("/filmes/") || combinedTitle.contains("filme", ignoreCase = true)
-        
-        // POSTER - USANDO FUNÇÃO AUXILIAR
-        val sitePoster = extractPoster(this, debugMode)
-
-        if (debugMode) {
-            println("\n🎯 ITEM FINAL:")
-            println("   • Nome: $cleanName")
-            println("   • URL: $href")
-            println("   • Score: ${score?.toString() ?: "null"}")
-            println("   • Dub: $finalHasDub, Leg: $finalHasLeg")
-            println("   • Poster: ${sitePoster?.take(80)}...")
-            println("=".repeat(60))
-        }
+        val sitePoster = extractPoster(this)
 
         return newAnimeSearchResponse(cleanName, fixUrl(href)) {
             this.posterUrl = sitePoster
             this.type = if (isMovie) TvType.Movie else TvType.Anime
-            
-            // AVALIAÇÃO (badge acima)
             this.score = score
             
-            // DUB/LEG (badge abaixo)
             if (finalHasDub || finalHasLeg) {
                 addDubStatus(dubExist = finalHasDub, subExist = finalHasLeg)
             }
         }
     }
 
-    // ============ EXTRACTION DE SCORE ============
-    private fun extractScoreAdvanced(element: Element, debugMode: Boolean = true): Pair<String?, String?> {
+    private fun extractScoreAdvanced(element: Element): Pair<String?, String?> {
         val selectors = listOf(
             ".horaUltimosEps" to "Seletor padrão .horaUltimosEps",
             ".rating" to "Seletor .rating",
@@ -328,27 +236,22 @@ class AnimeFire : MainAPI() {
             "b" to "Tag bold"
         )
 
-        // Buscar no próprio elemento
-        for ((selector, description) in selectors) {
+        for ((selector, _) in selectors) {
             val found = element.selectFirst(selector)?.text()?.trim()
             if (!found.isNullOrBlank() && isScoreLike(found)) {
-                if (debugMode) println("✅ Score: '$found' (via: $description)")
                 return found to selector
             }
         }
 
-        // Buscar no elemento pai
         element.parent()?.let { parent ->
-            for ((selector, description) in selectors) {
+            for ((selector, _) in selectors) {
                 val found = parent.selectFirst(selector)?.text()?.trim()
                 if (!found.isNullOrBlank() && isScoreLike(found)) {
-                    if (debugMode) println("✅ Score no pai: '$found'")
                     return found to "parent.$selector"
                 }
             }
         }
 
-        // Buscar via regex
         val html = element.outerHtml()
         val scoreRegexes = listOf(
             Regex("""(\d+\.\d+|\d+)\s*(?:★|/10|pontos)"""),
@@ -360,17 +263,14 @@ class AnimeFire : MainAPI() {
             if (match != null) {
                 val found = match.groupValues[1].trim()
                 if (isScoreLike(found)) {
-                    if (debugMode) println("✅ Score via regex: '$found'")
                     return found to "regex"
                 }
             }
         }
 
-        if (debugMode) println("❌ Nenhum score encontrado")
         return null to null
     }
 
-    // ============ IDENTIFICAR SCORE ============
     private fun isScoreLike(text: String): Boolean {
         return when {
             text.equals("N/A", ignoreCase = true) -> true
@@ -382,7 +282,6 @@ class AnimeFire : MainAPI() {
         }
     }
 
-    // ============ LIMPAR NOME ============
     private fun extractAnimeName(fullText: String, episodeText: String?): String {
         var cleanName = fullText
         
@@ -405,37 +304,24 @@ class AnimeFire : MainAPI() {
         return cleanName.trim().replace(Regex("\\s+"), " ")
     }
 
-    // ============ DETECTAR SE TEM PRÓXIMA PÁGINA ============
     private suspend fun detectHasNextPage(document: org.jsoup.nodes.Document, currentPageNum: Int): Boolean {
-        try {
+        return try {
             val hasElements = document.select("article, .card, .anime-item").isNotEmpty()
             if (!hasElements) return false
             
             val hasPagination = document.select(".pagination, .page-numbers, .paginacao").isNotEmpty()
             val hasNextLink = document.select("a:contains(Próxima), a:contains(›), a:contains(>), a[href*='/${currentPageNum + 1}']").isNotEmpty()
             
-            return hasElements && (hasPagination || hasNextLink)
-            
+            hasElements && (hasPagination || hasNextLink)
         } catch (e: Exception) {
-            return false
+            false
         }
     }
 
-    // ============ GET MAIN PAGE ============
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         return loadingMutex.withLock {
             try {
-                println("\n" + "=".repeat(70))
-                println("🔥 ANIMEFIRE: Carregando página $page")
-                println("=".repeat(70))
-                println("📊 Aba: '${request.name}'")
-                println("📊 URL base: ${request.data}")
-                
-                // Verificar se é uma aba fixa
                 val isFixedTab = FIXED_CATEGORIES.any { it.second == request.name }
-                println("📊 É aba fixa? $isFixedTab")
-                
-                // PAGINAÇÃO
                 val basePath = request.data.removePrefix(mainUrl)
                 val sitePageNumber = page + 1
                 
@@ -445,18 +331,7 @@ class AnimeFire : MainAPI() {
                     "$mainUrl$basePath/$sitePageNumber"
                 }
                 
-                println("📊 URL da página: $pageUrl")
-                println("-".repeat(70))
-                
-                kotlinx.coroutines.delay(200)
-                
                 val document = app.get(pageUrl, timeout = 25).document
-                
-                // VERIFICAR TODOS OS ELEMENTOS
-                val allElements = document.select("article, .card, .anime-item")
-                println("📊 Elementos container: ${allElements.size}")
-                
-                // PROCESSAR ITENS
                 val elements = document.select("""
                     article a,
                     .card a,
@@ -465,59 +340,32 @@ class AnimeFire : MainAPI() {
                     a[href*='/filmes/']
                 """).take(50)
                 
-                println("📊 Links encontrados: ${elements.size}")
-                
                 val homeItems = mutableListOf<SearchResponse>()
                 
-                elements.forEachIndexed { index, element ->
+                elements.forEach { element ->
                     try {
-                        // Debug apenas para os primeiros 2 itens
-                        val debugMode = index < 2
-                        val item = element.toSearchResponse(debugMode = debugMode)
+                        val item = element.toSearchResponse()
                         if (item != null) {
                             homeItems.add(item)
                         }
                     } catch (e: Exception) {
-                        // Ignorar erro
                     }
                 }
                 
-                // DETECTAR PRÓXIMA PÁGINA
                 val hasNextPage = detectHasNextPage(document, sitePageNumber)
                 
-                // RESULTADO
-                println("\n" + "=".repeat(70))
-                println("📊 RESULTADO PÁGINA $sitePageNumber:")
-                println("   • Aba: '${request.name}'")
-                println("   • É fixa? $isFixedTab")
-                println("   • Itens válidos: ${homeItems.size}")
-                println("   • Tem próxima página? $hasNextPage")
-                
-                if (homeItems.isNotEmpty()) {
-                    println("   • Primeiros itens:")
-                    homeItems.take(3).forEachIndexed { i, item ->
-                        println("     ${i + 1}. ${item.name}")
-                    }
-                }
-                println("=".repeat(70) + "\n")
-                
-                kotlinx.coroutines.delay(150)
-                
-                // Retornar com o MESMO nome da aba
                 newHomePageResponse(
-                    request.name, // Nome original
+                    request.name,
                     homeItems.distinctBy { it.url },
                     hasNext = hasNextPage
                 )
                 
             } catch (e: Exception) {
-                println("\n❌ ERRO na página $page: ${e.message}")
                 newHomePageResponse(request.name, emptyList(), false)
             }
         }
     }
 
-    // ============ SEARCH ============
     override suspend fun search(query: String): List<SearchResponse> {
         if (query.length < 2) return emptyList()
         
@@ -527,7 +375,7 @@ class AnimeFire : MainAPI() {
             val document = app.get(searchUrl, timeout = 15).document
             
             document.select("a[href*='/animes/'], a[href*='/filmes/']")
-                .mapNotNull { it.toSearchResponse(debugMode = false) }
+                .mapNotNull { it.toSearchResponse() }
                 .distinctBy { it.url }
                 .take(30)
                 
@@ -536,52 +384,29 @@ class AnimeFire : MainAPI() {
         }
     }
 
-    // ============ FUNÇÃO AUXILIAR PARA EXTRAIR TEXTO ============
     private fun extractTextAfterLabel(document: org.jsoup.nodes.Document, label: String): String? {
         return document.select("div.animeInfo:contains($label) span.spanAnimeInfo")
             .firstOrNull()?.text()?.trim()
     }
 
-    // ============ FUNÇÃO PARA EXTRAIR ANO CORRETO ============
     private fun extractYear(text: String?): Int? {
         if (text.isNullOrBlank()) return null
-        
-        // Extrair ano de datas como "Oct 8, 2025"
         val yearRegex = Regex("""(\d{4})""")
         val match = yearRegex.find(text)
         return match?.groupValues?.get(1)?.toIntOrNull()
     }
 
-    // ============ LOAD ============
     override suspend fun load(url: String): LoadResponse {
         return try {
-            println("\n" + "=".repeat(80))
-            println("🔥 ANIMEFIRE: Carregando anime")
-            println("=".repeat(80))
-            println("📊 URL: $url")
-            
             val document = app.get(url, timeout = 35).document
             
-            // ============ TÍTULO ============
             val title = document.selectFirst("h1.quicksand400")?.text()?.trim() 
                 ?: document.selectFirst("h1.animeTitle, h1")?.text()?.trim() 
                 ?: "Sem Título"
             
-            println("📊 Título: $title")
-            
-            // ============ POSTER (USANDO FUNÇÃO AUXILIAR) ============
             val poster = extractDetailPoster(document)
-            
-            println("📊 Poster encontrado: ${if (poster != null) "SIM" else "NÃO"}")
-            if (poster != null) {
-                println("   • URL: ${poster.take(100)}...")
-                println("   • Fonte: ${if (poster.contains(mainUrl)) "SITE" else "EXTERNO"}")
-            }
-            
-            // ============ BANNER/BACKGROUND ============
             val background = poster
             
-            // ============ SINOPSE ============
             val synopsis = document.selectFirst("div.divSinopse span.spanAnimeInfo")
                 ?.text()
                 ?.trim()
@@ -594,33 +419,20 @@ class AnimeFire : MainAPI() {
                 ?.trim()
                 ?: "Sinopse não disponível."
             
-            println("📊 Sinopse (primeiros 100 chars): ${synopsis.take(100)}...")
-            
-            // ============ ANO ============
             val yearText = extractTextAfterLabel(document, "Ano:")
             val year = extractYear(yearText)
-            println("📊 Ano: $year (texto: '$yearText')")
             
-            // ============ STATUS DO ANIME ============
             val statusElement = document.selectFirst("div.animeInfo:contains(Status do Anime:) span.spanAnimeInfo")
             val statusText = statusElement?.text()?.trim() ?: "Desconhecido"
-            println("📊 Status do Anime: '$statusText'")
-            
-            // USANDO A FUNÇÃO getStatus DO AnimeFireUtils
             val showStatus = getStatus(statusText)
-            println("📊 Status convertido via AnimeFireUtils: $showStatus")
             
-            // ============ GÊNEROS/TAGS ============
             val genres = mutableListOf<String>()
-            
-            // Extrair gêneros dos links
             document.select("div.animeInfo a[href*='/genero/']").forEach { element ->
                 element.text().trim().takeIf { it.isNotBlank() }?.let { 
                     genres.add(it) 
                 }
             }
             
-            // Se não encontrou pelos links, tentar extrair do texto
             if (genres.isEmpty()) {
                 document.select("div.animeInfo:contains(Gênero:) span.spanAnimeInfo")
                     .firstOrNull()
@@ -634,35 +446,20 @@ class AnimeFire : MainAPI() {
                     }
             }
             
-            println("📊 Gêneros: ${genres.joinToString(", ")}")
-            
-            // ============ ÁUDIO (DUB/LEG) ============
             val audioText = extractTextAfterLabel(document, "Áudio:")
             val hasDub = audioText?.contains("dublado", ignoreCase = true) ?: false
             val hasSub = audioText?.contains("legendado", ignoreCase = true) ?: true
             
-            println("📊 Áudio: $audioText (Dub: $hasDub, Leg: $hasSub)")
-            
-            // ============ ESTÚDIO ============
             val studio = extractTextAfterLabel(document, "Estúdios:")
-            println("📊 Estúdio: $studio")
             
-            // ============ SCORE ============
             val scoreText = document.selectFirst("#anime_score")?.text()?.trim()
             val score = scoreText?.toFloatOrNull()?.let { Score.from10(it) }
-            println("📊 Score: $scoreText -> ${score?.toString()}")
             
-            // ============ DETECTAR SE É FILME ============
             val isMovie = url.contains("/filmes/") || 
                          title.contains("filme", ignoreCase = true)
             
-            println("📊 É filme? $isMovie")
-            
-            // ============ EXTRAIR EPISÓDIOS - FUNCIONAL ============
             val episodes = extractAllEpisodesFuncional(document, url)
-            println("📊 Episódios extraídos: ${episodes.size}")
             
-            // ============ CRIAR LOAD RESPONSE ============
             val response = newAnimeLoadResponse(
                 title, 
                 url, 
@@ -675,74 +472,32 @@ class AnimeFire : MainAPI() {
                 this.tags = genres
                 this.score = score
                 
-                // Status do anime - CORREÇÃO: usando a forma correta do CloudStream 3
-                // Apenas armazenamos o status para debug, não tentamos setar na response
-                println("✅ Status detectado: $showStatus (armazenado para debug)")
-                
-                // Adicionar estúdio (se disponível) usando reflexão
                 studio?.let { 
                     try {
-                        // Usando reflexão para ser compatível com CloudStream 3
                         val studioField = this::class.members.find { it.name == "studio" }
-                        if (studioField != null) {
-                            studioField.call(this, it)
-                            println("✅ Estúdio adicionado: $it")
-                        } else {
-                            println("⚠️ Campo 'studio' não encontrado na classe")
-                        }
+                        studioField?.call(this, it)
                     } catch (e: Exception) {
-                        println("⚠️ Erro ao adicionar estúdio: ${e.message}")
                     }
                 }
                 
-                // ADICIONAR EPISÓDIOS CORRETAMENTE
                 if (episodes.isNotEmpty()) {
                     addEpisodes(DubStatus.Subbed, episodes)
-                    println("✅ Episódios adicionados via addEpisodes: ${episodes.size}")
-                } else {
-                    println("⚠️ Nenhum episódio para adicionar")
                 }
             }
-            
-            // ============ DEBUG FINAL ============
-            println("\n" + "=".repeat(80))
-            println("🎨 RESULTADO FINAL DO LOAD:")
-            println("   • Título: ${response.name}")
-            println("   • Tipo: ${response.type}")
-            println("   • Ano: ${response.year}")
-            println("   • Score: ${response.score?.toString()}")
-            println("   • Status do site: $statusText")
-            println("   • Status convertido: $showStatus (via AnimeFireUtils)")
-            println("   • É filme? $isMovie")
-            println("   • Episódios: ${episodes.size}")
-            println("   • Gêneros: ${genres.size}")
-            println("   • Poster: ${if (poster != null) "ENCONTRADO" else "NÃO ENCONTRADO"}")
-            println("   • CloudStream usará seu próprio fallback se necessário")
-            println("=".repeat(80) + "\n")
             
             response
             
         } catch (e: Exception) {
-            println("\n❌ ERRO no load: ${e.message}")
-            e.printStackTrace()
-            
             newAnimeLoadResponse("Erro ao carregar", url, TvType.Anime) {
-                this.plot = "Não foi possível carregar esta página. Erro: ${e.message}"
+                this.plot = "Não foi possível carregar esta página."
             }
         }
     }
-  // ============ EXTRACT EPISODES - FUNCIONAL ============
+
     private fun extractAllEpisodesFuncional(document: org.jsoup.nodes.Document, baseUrl: String): List<Episode> {
-        println("\n🔍 EXTRACTING EPISODES")
-        println("📊 URL base: $baseUrl")
-        
         val episodes = mutableListOf<Episode>()
-        
-        // Extrair nome do anime para remover dos títulos dos episódios
         val animeTitle = document.selectFirst("h1.quicksand400")?.text()?.trim() ?: ""
-        println("📊 Nome do anime para limpar: '$animeTitle'")
         
-        // TENTAR VÁRIOS SELETORES EM ORDEM
         val selectors = listOf(
             "div.div_video_list a.lEp.epT",
             "a.lEp.epT, a.lEp, .divListaEps a, [href*='/video/'], [href*='/episodio/']"
@@ -754,12 +509,10 @@ class AnimeFire : MainAPI() {
             val elements = document.select(selector)
             if (elements.isNotEmpty()) {
                 episodeElements = elements
-                println("✅ Encontrados com seletor: '$selector'")
                 break
             }
         }
         
-        // Se ainda não encontrou, buscar links específicos
         if (episodeElements == null || episodeElements.isEmpty()) {
             val allLinks = document.select("a[href]")
             val filteredElements = mutableListOf<org.jsoup.nodes.Element>()
@@ -774,14 +527,9 @@ class AnimeFire : MainAPI() {
             episodeElements = org.jsoup.select.Elements(filteredElements)
         }
         
-        println("📊 Elementos de episódio encontrados: ${episodeElements?.size ?: 0}")
-        
         if (episodeElements == null || episodeElements.isEmpty()) {
-            println("❌ NENHUM EPISÓDIO ENCONTRADO!")
             return emptyList()
         }
-        
-        println("✅ PROCESSANDO EPISÓDIOS...")
         
         episodeElements.forEachIndexed { index, element ->
             try {
@@ -789,35 +537,28 @@ class AnimeFire : MainAPI() {
                 var text = element.text().trim()
                 
                 if (href.isBlank() || text.isBlank()) {
-                    println("   ⚠️ Episódio ${index + 1}: href ou texto vazio")
                     return@forEachIndexed
                 }
                 
-                // LIMPAR NOME DO EPISÓDIO - REMOVER NOME DO ANIME
                 if (animeTitle.isNotBlank()) {
                     text = text.replace(animeTitle, "").trim()
                     text = text.replace(Regex("^\\s*-\\s*"), "").trim()
                 }
                 
-                // Se ainda tiver muito texto, tentar simplificar
                 if (text.length > 30) {
-                    // Tentar extrair apenas "Episódio X"
                     val epMatch = Regex("""Epis[oó]dio\s*\d+""", RegexOption.IGNORE_CASE).find(text)
                     if (epMatch != null) {
                         text = epMatch.value
                     }
                 }
                 
-                // Garantir que tenha pelo menos "Episódio X"
                 val epNum = extractEpisodeNumberFuncional(text, href) ?: (index + 1)
                 if (!text.contains(Regex("""Epis[oó]dio""", RegexOption.IGNORE_CASE))) {
                     text = "Episódio $epNum"
                 }
                 
-                // EXTRAIR NÚMERO DO EPISÓDIO
                 val episodeNumber = epNum
                 
-                // CORRIGIR URL
                 val fixedHref = when {
                     href.startsWith("//") -> "https:$href"
                     href.startsWith("/") -> "$mainUrl$href"
@@ -825,7 +566,6 @@ class AnimeFire : MainAPI() {
                     else -> href
                 }
                 
-                // CRIAR EPISÓDIO
                 val episode = newEpisode(fixedHref) {
                     this.name = text
                     this.episode = episodeNumber
@@ -834,32 +574,14 @@ class AnimeFire : MainAPI() {
                 
                 episodes.add(episode)
                 
-                // DEBUG: Mostrar apenas os primeiros 3
-                if (index < 3) {
-                    println("   ✅ Ep $episodeNumber: '$text'")
-                }
-                
             } catch (e: Exception) {
-                println("   ❌ Erro no episódio ${index + 1}: ${e.message}")
             }
         }
         
-        // Ordenar por número do episódio
-        val sortedEpisodes = episodes.sortedBy { it.episode }
-        
-        println("\n📊 RESULTADO FINAL:")
-        println("   • Total de episódios extraídos: ${sortedEpisodes.size}")
-        if (sortedEpisodes.isNotEmpty()) {
-            println("   • Primeiro episódio: ${sortedEpisodes.first().episode} - '${sortedEpisodes.first().name}'")
-            println("   • Último episódio: ${sortedEpisodes.last().episode} - '${sortedEpisodes.last().name}'")
-        }
-        
-        return sortedEpisodes
+        return episodes.sortedBy { it.episode }
     }
 
-    // ============ EXTRACT EPISODE NUMBER - FUNCIONAL ============
     private fun extractEpisodeNumberFuncional(text: String, href: String = ""): Int? {
-        // Tentar extrair do texto primeiro
         val textPatterns = listOf(
             Regex("""Epis[oó]dio\s*(\d+)""", RegexOption.IGNORE_CASE),
             Regex("""Ep\.?\s*(\d+)""", RegexOption.IGNORE_CASE),
@@ -873,7 +595,6 @@ class AnimeFire : MainAPI() {
             }
         }
         
-        // Tentar da URL
         val urlPattern = Regex("""/animes/[^/]+/(\d+)$""")
         val urlMatch = urlPattern.find(href)
         if (urlMatch != null) {
@@ -883,22 +604,15 @@ class AnimeFire : MainAPI() {
         return null
     }
 
-    // ============ LOAD LINKS ============
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        println("\n" + "=".repeat(80))
-        println("🔥 ANIMEFIRE: Carregando links para $data")
-        println("=".repeat(80))
-        
         return try {
-            // Como AnimeFireVideoExtractor é um object, chame diretamente
             AnimeFireVideoExtractor.extractVideoLinks(data, mainUrl, name, callback)
         } catch (e: Exception) {
-            println("❌ Erro no loadLinks: ${e.message}")
             false
         }
     }
