@@ -834,8 +834,89 @@ class Goyabu : MainAPI() {
         return null
     }
     
-    private fun buildEpisodeUrl(idOrPath: String, episodeNumber: Int): String {
+        private fun buildEpisodeUrl(idOrPath: String, episodeNumber: Int): String {
         return when {
             idOrPath.matches(Regex("""^\d+$""")) -> "$mainUrl/$idOrPath"
             idOrPath.startsWith("/") -> "$mainUrl$idOrPath"
-            idOrPath
+            idOrPath.startsWith("http") -> idOrPath
+            idOrPath.isNotBlank() -> fixUrl(idOrPath)
+            else -> "$mainUrl/$episodeNumber"
+        }
+    }
+
+    // ============ LOAD LINKS (AGORA COM SUPORTE AO BLOGGER) ============
+    override suspend fun loadLinks(
+        data: String,
+        isCasting: Boolean,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        println("\n🎬 GOYABU: Iniciando extração de links para: $data")
+        
+        return try {
+            // Usar o extrator específico do Blogger
+            val success = GoyabuBloggerExtractor.extractVideoLinks(data, "Goyabu", callback)
+            
+            if (success) {
+                println("✅ GOYABU: Extração concluída com sucesso!")
+                return true
+            } else {
+                println("⚠️ GOYABU: Extrator Blogger falhou, tentando métodos alternativos...")
+                
+                // Fallback: Tentar extrair diretamente da página
+                val response = app.get(data)
+                val html = response.text
+                
+                // Procurar por URLs de vídeo
+                val videoPatterns = listOf(
+                    """https?://[^"'\s<>]*\.(?:mp4|m3u8|mkv|webm|avi)[^"'\s<>]*""".toRegex(),
+                    """(https?://[^"'\s<>]*\.googlevideo\.com/[^"'\s<>]+)""".toRegex(),
+                    """src\s*:\s*['"](https?://[^"']+)['"]""".toRegex(),
+                    """url\s*:\s*['"](https?://[^"']+)['"]""".toRegex(),
+                    """file\s*:\s*['"](https?://[^"']+)['"]""".toRegex()
+                )
+                
+                var found = false
+                for (pattern in videoPatterns) {
+                    val matches = pattern.findAll(html).toList()
+                    if (matches.isNotEmpty()) {
+                        for (match in matches) {
+                            val videoUrl = match.groupValues[1].takeIf { it.startsWith("http") } ?: continue
+                            
+                            if (videoUrl.contains(".mp4") || videoUrl.contains(".m3u8") || videoUrl.contains("googlevideo")) {
+                                val extractorLink = newExtractorLink(
+                                    source = "Goyabu",
+                                    name = "Vídeo",
+                                    url = videoUrl,
+                                    type = ExtractorLinkType.VIDEO
+                                ) {
+                                    this.referer = data
+                                    this.quality = 720
+                                    this.headers = mapOf(
+                                        "Referer" to data,
+                                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                                    )
+                                }
+                                
+                                callback(extractorLink)
+                                found = true
+                                println("✅ URL de vídeo encontrada: ${videoUrl.take(80)}...")
+                            }
+                        }
+                    }
+                }
+                
+                if (!found) {
+                    println("❌ GOYABU: Nenhum link de vídeo encontrado")
+                }
+                
+                found
+            }
+            
+        } catch (e: Exception) {
+            println("❌ GOYABU: Erro na extração de links: ${e.message}")
+            e.printStackTrace()
+            false
+        }
+    }
+}
