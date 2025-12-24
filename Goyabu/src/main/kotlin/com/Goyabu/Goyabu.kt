@@ -210,7 +210,7 @@ class Goyabu : MainAPI() {
     }
 
     // ============ FUNÇÃO PARA DETERMINAR NSFW ============
-    private fun determineContentRating(genres: List<String>): ContentRating {
+    private fun determineContentRating(genres: List<String>): com.lagradost.cloudstream3.ContentRating {
         println("🔍 Verificando NSFW para gêneros: $genres")
         
         val lowerGenres = genres.map { it.lowercase().trim() }
@@ -228,15 +228,15 @@ class Goyabu : MainAPI() {
         return when {
             hasExplicit -> {
                 println("🔞 Classificação: EXPLICIT (conteúdo adulto)")
-                ContentRating.Explicit
+                com.lagradost.cloudstream3.ContentRating.Explicit
             }
             hasSuggestive -> {
                 println("💋 Classificação: SUGGESTIVE (conteúdo sugestivo)")
-                ContentRating.Suggestive
+                com.lagradost.cloudstream3.ContentRating.Suggestive
             }
             else -> {
                 println("✅ Classificação: SAFE (para todas as idades)")
-                ContentRating.Safe
+                com.lagradost.cloudstream3.ContentRating.Safe
             }
         }
     }
