@@ -5,6 +5,7 @@ import com.lagradost.cloudstream3.utils.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.jsoup.nodes.Element
+import com.Goyabu.GoyabuM3u8Extractor
 
 class Goyabu : MainAPI() {
     override var mainUrl = "https://goyabu.io"
