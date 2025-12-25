@@ -15,34 +15,28 @@ object GoyabuM3u8Extractor {
         println("🔍 GOYABU M3U8 EXTRACTOR: Analisando URL: $url")
         
         return try {
-            // 1. PRIMEIRO: Tentar com WebView com timeout maior
-            println("🔄 Iniciando WebView (30s) para interceptar JavaScript...")
+            // PRIMEIRA TENTATIVA: WebView para interceptar o iframe
+            println("🔄 Iniciando WebView para carregar JavaScript e interceptar iframe...")
             
-            // Interceptar várias possibilidades:
-            // - .m3u8
-            // - .mp4 (pode ser o arquivo antes do index.m3u8)
-            // - /index.m3u8
-            // - cdn- (geralmente usado por CDNs de vídeo)
-            // - stream/ (pasta comum para streams)
             val streamResolver = WebViewResolver(
-                interceptUrl = Regex("""(\.m3u8|\.mp4/index\.m3u8|/index\.m3u8|cdn-|stream/)"""),
+                interceptUrl = Regex("""(\.m3u8|anivideo\.net|cdn-s01\.mywallpaper)"""),
                 useOkhttp = false,
-                timeout = 30_000L // 30 segundos para o JavaScript carregar
+                timeout = 15_000L // 15 segundos deve ser suficiente
             )
 
             val response = app.get(url, interceptor = streamResolver)
             val interceptedUrl = response.url
             
-            println("📡 URL interceptada pelo WebView: $interceptedUrl")
+            println("📡 URL interceptada: $interceptedUrl")
             
-            // 2. VERIFICAR O QUE FOI INTERCEPTADO
+            // Se interceptou um M3U8 diretamente
             if (interceptedUrl.contains(".m3u8")) {
-                println("🎯 M3U8 interceptado via JavaScript: $interceptedUrl")
+                println("🎯 M3U8 interceptado: $interceptedUrl")
                 
                 val headers = mapOf(
                     "Referer" to url,
                     "Origin" to mainUrl,
-                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                    "User-Agent" to "Mozilla/5.0"
                 )
                 
                 M3u8Helper.generateM3u8(
@@ -52,104 +46,143 @@ object GoyabuM3u8Extractor {
                     headers = headers
                 ).forEach(callback)
                 
-                println("✅ GOYABU M3U8 EXTRACTOR: Links extraídos via JavaScript!")
                 return true
             }
             
-            // 3. SEGUNDA TENTATIVA: Analisar o HTML da página original
-            // Mesmo sendo carregado via JS, às vezes a URL está em algum script
-            println("⚠️ WebView não interceptou M3U8, analisando HTML...")
+            // SEGUNDA TENTATIVA: Analisar o HTML após o JavaScript carregar
+            println("⚠️ Tentando analisar HTML após JS...")
             val htmlResponse = app.get(url)
             val html = htmlResponse.text
             
-            // Procurar por padrões JavaScript que possam conter a URL
-            val jsPatterns = listOf(
-                // Procura em scripts JavaScript
-                """(https?://[^"'\s]+\.mp4/index\.m3u8)""".toRegex(),
-                """["'](https?://[^"']+\.mp4/index\.m3u8)["']""".toRegex(),
-                // Procura por variáveis JavaScript
-                """video(?:_?url|Url|URL)\s*[=:]\s*["']([^"']+)["']""".toRegex(),
-                """src\s*[=:]\s*["']([^"']+)["']""".toRegex(),
-                // Procura por URLs em objetos JSON
-                """["']url["']\s*:\s*["']([^"']+)["']""".toRegex(),
-                """["']source["']\s*:\s*["']([^"']+)["']""".toRegex(),
-                // Procura por iframes ou embeds
-                """<iframe[^>]+src=["']([^"']+)["'][^>]*>""".toRegex(),
-                """embed\s+src=["']([^"']+)["']""".toRegex()
+            // Padrões específicos para encontrar o iframe com id="player"
+            val playerPatterns = listOf(
+                // Procura exatamente pelo iframe com id="player"
+                """<iframe[^>]+id=["']player["'][^>]+src=["']([^"']+)["'][^>]*>""".toRegex(),
+                // Procura por iframe dentro de div com id="player-content"
+                """<div[^>]+id=["']player-content["'][^>]*>.*?<iframe[^>]+src=["']([^"']+)["'][^>]*>""".toRegex(RegexOption.DOT_MATCHES_ALL),
+                // Procura por qualquer iframe com anivideo.net
+                """<iframe[^>]+src=["'](https?://[^"']*anivideo\.net[^"']*)["'][^>]*>""".toRegex(),
+                // Procura pelo padrão da API
+                """src=["'](https?://api\.anivideo\.net/[^"']+)["']""".toRegex()
             )
             
-            for (pattern in jsPatterns) {
-                val matches = pattern.findAll(html).toList()
-                if (matches.isNotEmpty()) {
-                    for (match in matches) {
-                        val foundUrl = match.groupValues[1]
-                        println("🔍 URL encontrada no HTML/JS: $foundUrl")
-                        
-                        // Se encontrou um M3U8
-                        if (foundUrl.contains(".m3u8")) {
-                            println("🎯 M3U8 encontrado no JS: $foundUrl")
-                            
-                            val headers = mapOf(
-                                "Referer" to url,
-                                "Origin" to mainUrl,
-                                "User-Agent" to "Mozilla/5.0"
-                            )
-                            
-                            M3u8Helper.generateM3u8(
-                                name,
-                                foundUrl,
-                                mainUrl,
-                                headers = headers
-                            ).forEach(callback)
-                            
-                            return true
-                        }
-                        
-                        // Se encontrou uma URL que parece ser de player
-                        if (foundUrl.contains("cdn") || foundUrl.contains("stream")) {
-                            println("🔄 Fazendo requisição para URL suspeita: $foundUrl")
-                            try {
-                                val subResponse = app.get(foundUrl, referer = url)
-                                val subHtml = subResponse.text
-                                
-                                // Procurar M3U8 nesta subpágina
-                                val subM3u8Pattern = """(https?://[^"'\s]+\.m3u8)""".toRegex()
-                                val subMatch = subM3u8Pattern.find(subHtml)
-                                
-                                if (subMatch != null) {
-                                    val m3u8Url = subMatch.groupValues[1]
-                                    println("🎯 M3U8 encontrado na subpágina: $m3u8Url")
-                                    
-                                    val headers = mapOf(
-                                        "Referer" to foundUrl,
-                                        "Origin" to mainUrl,
-                                        "User-Agent" to "Mozilla/5.0"
-                                    )
-                                    
-                                    M3u8Helper.generateM3u8(
-                                        name,
-                                        m3u8Url,
-                                        mainUrl,
-                                        headers = headers
-                                    ).forEach(callback)
-                                    
-                                    return true
-                                }
-                            } catch (e: Exception) {
-                                println("⚠️ Erro ao acessar subpágina: ${e.message}")
-                            }
-                        }
-                    }
+            for (pattern in playerPatterns) {
+                val match = pattern.find(html)
+                if (match != null) {
+                    val iframeSrc = match.groupValues[1]
+                    println("🎯 Iframe encontrado: $iframeSrc")
+                    
+                    // Processar a URL do iframe
+                    return processIframeUrl(iframeSrc, url, mainUrl, name, callback)
                 }
             }
             
-            println("❌ GOYABU M3U8 EXTRACTOR: Não encontrou M3U8 no JavaScript")
+            // TERCEIRA TENTATIVA: Buscar em scripts JavaScript
+            println("⚠️ Buscando em scripts JavaScript...")
+            val scriptPattern = """(https?://api\.anivideo\.net/[^"'\s]+)""".toRegex()
+            val scriptMatches = scriptPattern.findAll(html).toList()
+            
+            for (scriptMatch in scriptMatches) {
+                val apiUrl = scriptMatch.groupValues[1]
+                if (apiUrl.contains("anivideo.net") && apiUrl.contains("m3u8")) {
+                    println("🎯 API URL encontrada no JS: $apiUrl")
+                    return processIframeUrl(apiUrl, url, mainUrl, name, callback)
+                }
+            }
+            
+            println("❌ GOYABU M3U8 EXTRACTOR: Não encontrou iframe do player")
             false
             
         } catch (e: Exception) {
             println("❌ GOYABU M3U8 EXTRACTOR: Erro: ${e.message}")
             e.printStackTrace()
             false
+        }
+    }
+    
+    private suspend fun processIframeUrl(
+        iframeUrl: String,
+        referer: String,
+        mainUrl: String,
+        name: String,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        println("🔗 Processando URL do iframe: $iframeUrl")
+        
+        return try {
+            // Se a URL já contém .m3u8 (pode ser direta ou via API)
+            if (iframeUrl.contains(".m3u8")) {
+                // Extrair o M3U8 real da URL da API
+                val m3u8Url = extractM3u8FromApiUrl(iframeUrl)
+                
+                println("🎯 M3U8 extraído: $m3u8Url")
+                
+                val headers = mapOf(
+                    "Referer" to referer,
+                    "Origin" to mainUrl,
+                    "User-Agent" to "Mozilla/5.0"
+                )
+                
+                M3u8Helper.generateM3u8(
+                    name,
+                    m3u8Url,
+                    mainUrl,
+                    headers = headers
+                ).forEach(callback)
+                
+                true
+            } else {
+                // Se não tem .m3u8, pode ser a URL da API que precisa ser resolvida
+                println("🔄 Fazendo requisição para API: $iframeUrl")
+                val apiResponse = app.get(iframeUrl, referer = referer)
+                val apiHtml = apiResponse.text
+                
+                // Procurar por M3U8 na resposta da API
+                val m3u8Pattern = """(https?://[^"'\s]+\.m3u8[^"'\s]*)""".toRegex()
+                val m3u8Match = m3u8Pattern.find(apiHtml)
+                
+                if (m3u8Match != null) {
+                    val m3u8Url = m3u8Match.groupValues[1]
+                    println("🎯 M3U8 encontrado na API: $m3u8Url")
+                    
+                    val headers = mapOf(
+                        "Referer" to iframeUrl,
+                        "Origin" to mainUrl,
+                        "User-Agent" to "Mozilla/5.0"
+                    )
+                    
+                    M3u8Helper.generateM3u8(
+                        name,
+                        m3u8Url,
+                        mainUrl,
+                        headers = headers
+                    ).forEach(callback)
+                    
+                    true
+                } else {
+                    println("❌ Não encontrou M3U8 na resposta da API")
+                    false
+                }
+            }
+        } catch (e: Exception) {
+            println("❌ Erro ao processar iframe: ${e.message}")
+            false
+        }
+    }
+    
+    private fun extractM3u8FromApiUrl(apiUrl: String): String {
+        // Exemplo: https://api.anivideo.net/videohls.php?d=https://cdn-s01.mywallpaper...net/stream/1/invencivel-3-dublado/01.mp4/index.m3u8&nocache1740152558
+        // Extrair o parâmetro d= que contém o M3U8 real
+        
+        val m3u8Pattern = """[?&]d=([^&]+)""".toRegex()
+        val match = m3u8Pattern.find(apiUrl)
+        
+        return if (match != null) {
+            val encodedUrl = match.groupValues[1]
+            java.net.URLDecoder.decode(encodedUrl, "UTF-8")
+        } else {
+            // Se não encontrar o parâmetro d=, retorna a URL como está
+            apiUrl
         }
     }
 }
