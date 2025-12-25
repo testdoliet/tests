@@ -1,14 +1,13 @@
 package com.SuperFlix
 
 import com.lagradost.cloudstream3.app
-import com.lagradost.cloudstream3.utils.ExtractorLink
-import com.lagradost.cloudstream3.utils.newExtractorLink
-import com.lagradost.cloudstream3.utils.ExtractorLinkType
-import com.lagradost.cloudstream3.utils.Qualities
+import com.lagradost.cloudstream3.utils.*
 import org.json.JSONObject
-import org.jsoup.Jsoup
 
-object SuperFlixYoutubeExtractor {
+class SuperFlixYoutubeExtractor : ExtractorApi() {
+    override val name = "SuperFlixYouTube"
+    override val mainUrl = "https://www.youtube.com"
+    
     private val itagQualityMap = mapOf(
         // Vídeos completos (áudio + vídeo)
         18 to Qualities.P360.value,   // MP4 360p
@@ -30,25 +29,25 @@ object SuperFlixYoutubeExtractor {
         315 to Qualities.P2160.value, // WebM 4K60
     )
 
-    suspend fun getUrl(
+    override suspend fun getUrl(
         url: String,
-        referer: String,
-        subtitleCallback: (com.lagradost.cloudstream3.SubtitleFile) -> Unit,
+        referer: String?,
+        subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         return try {
-            println("🎬 [SuperFlix] Processando trailer YouTube: $url")
+            println("🎬 [SuperFlix] YouTubeExtractor processando: $url")
             
             val videoId = extractYouTubeId(url) ?: return false
             println("📹 Video ID encontrado: $videoId")
             
             // Método 1: API do Invidious
-            if (extractWithInvidious(videoId, referer, callback)) {
+            if (extractWithInvidious(videoId, referer ?: mainUrl, callback)) {
                 return true
             }
             
             // Método 2: API pública
-            extractWithPublicAPI(videoId, referer, callback)
+            extractWithPublicAPI(videoId, referer ?: mainUrl, callback)
             
         } catch (e: Exception) {
             println("❌ YouTubeExtractor erro: ${e.message}")
@@ -116,7 +115,7 @@ object SuperFlixYoutubeExtractor {
                                 println("✅ Stream completo: $qualityText")
                                 
                                 val extractorLink = newExtractorLink(
-                                    source = "SuperFlixYouTube",
+                                    source = name,
                                     name = "YouTube ($qualityText)",
                                     url = videoUrl,
                                     type = ExtractorLinkType.VIDEO
@@ -160,7 +159,7 @@ object SuperFlixYoutubeExtractor {
                                     println("🎥 Stream adaptativo: $qualityText [$typeName]")
                                     
                                     val extractorLink = newExtractorLink(
-                                        source = "SuperFlixYouTube",
+                                        source = name,
                                         name = "YouTube ($qualityText) [$typeName]",
                                         url = videoUrl,
                                         type = ExtractorLinkType.VIDEO
@@ -228,7 +227,7 @@ object SuperFlixYoutubeExtractor {
                     println("✅ Link direto: $qualityText")
                     
                     val extractorLink = newExtractorLink(
-                        source = "SuperFlixYouTube",
+                        source = name,
                         name = "YouTube ($qualityText)",
                         url = videoUrl,
                         type = ExtractorLinkType.VIDEO
