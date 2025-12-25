@@ -124,7 +124,7 @@ object GoyabuM3u8Extractor {
         type: ExtractorLinkType,
         init: ExtractorLink.() -> Unit = {}
     ): ExtractorLink {
-        return ExtractorLink(
+        return newExtractorLink(
             source = source,
             name = name,
             url = url,
