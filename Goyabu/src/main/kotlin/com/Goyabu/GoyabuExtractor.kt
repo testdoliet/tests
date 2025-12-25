@@ -62,7 +62,10 @@ object GoyabuExtractor {
             val html = pageResponse.text
             val doc = Jsoup.parse(html)
             
-            // 🆕 PRIMEIRO: Procurar por links M3U8 diretamente (teste rápido)
+            // 🆕 LOG PARA DEBUG: Mostrar onde o link foi encontrado
+            println("🔍 ANALISANDO HTML da página...")
+            
+            // PRIMEIRO: Procurar por links M3U8 diretamente (teste rápido)
             println("🔍 GOYABU EXTRACTOR: Procurando links M3U8...")
             val m3u8Elements = doc.select("""
                 [src*=".m3u8"],
@@ -79,7 +82,9 @@ object GoyabuExtractor {
                     ?: element.attr("href")
                 
                 if (m3u8Url.isNotBlank() && isValidVideoUrl(m3u8Url)) {
-                    println("✅ Link M3U8 encontrado no HTML: ${m3u8Url.take(80)}...")
+                    println("✅ Link M3U8 encontrado em ELEMENTO HTML: ${element.tagName()}")
+                    println("   Atributos: ${element.attributes()}")
+                    println("   URL encontrada: ${m3u8Url.take(80)}...")
                     if (processVideoUrl(m3u8Url, url, name, callback)) {
                         return@extractVideoLinks true
                     }
@@ -94,7 +99,8 @@ object GoyabuExtractor {
             m3u8Matches.forEach { match ->
                 val m3u8Url = match.value
                 if (isValidVideoUrl(m3u8Url)) {
-                    println("✅ Link M3U8 encontrado no texto: ${m3u8Url.take(80)}...")
+                    println("✅ Link M3U8 encontrado no TEXTO da página")
+                    println("   URL encontrada: ${m3u8Url.take(80)}...")
                     if (processVideoUrl(m3u8Url, url, name, callback)) {
                         return@extractVideoLinks true
                     }
@@ -149,6 +155,20 @@ object GoyabuExtractor {
         scripts.forEachIndexed { index, script ->
             val scriptContent = script.html()
             
+            // 🆕 LOG PARA DEBUG: Verificar scripts que contêm anivideo
+            if (scriptContent.contains("anivideo") || scriptContent.contains("m3u8")) {
+                println("🎯 Script #$index CONTÉM 'anivideo' ou 'm3u8'")
+                println("   Tamanho: ${scriptContent.length} chars")
+                
+                // Mostrar linhas relevantes
+                val lines = scriptContent.split("\n")
+                lines.forEachIndexed { i, line ->
+                    if (line.contains("anivideo") || line.contains("m3u8") || line.contains("videohls")) {
+                        println("   Linha $i: ${line.trim().take(150)}...")
+                    }
+                }
+            }
+            
             // Padrões para encontrar URLs do Blogger/Google Video
             val patterns = listOf(
                 // Padrão 1: blogspot.com/video.g?token=...
@@ -165,7 +185,10 @@ object GoyabuExtractor {
                 """"(?:play_url|url|src|source)"\s*:\s*"([^"]+)"""".toRegex(),
                 // 🆕 Padrão 7: Links M3U8 em JavaScript
                 """"(?:m3u8_url|hls_url|stream_url)"\s*:\s*"([^"]+)"""".toRegex(),
-                """https?://[^"'\s]*\.m3u8[^"'\s]*""".toRegex()
+                """https?://[^"'\s]*\.m3u8[^"'\s]*""".toRegex(),
+                // 🆕 Padrão específico para STCode Player
+                """"(?:file|video|src)"\s*:\s*"([^"]*api\.anivideo[^"]+)"""".toRegex(),
+                """api\.anivideo\.net/videohls\.php[^"'\s]*""".toRegex()
             )
             
             for (pattern in patterns) {
@@ -179,6 +202,7 @@ object GoyabuExtractor {
                         val group = match.groupValues.getOrNull(1)
                         if (group != null) {
                             videoUrl = group
+                            println("📦 Extraído de JSON: $videoUrl")
                         }
                     }
                     
@@ -192,7 +216,8 @@ object GoyabuExtractor {
                     }
                     
                     if (isValidVideoUrl(videoUrl)) {
-                        println("✅ URL encontrada no script #$index: ${videoUrl.take(80)}...")
+                        println("✅ URL encontrada no SCRIPT #$index: ${videoUrl.take(80)}...")
+                        println("   Padrão usado: ${pattern.pattern.take(50)}...")
                         
                         if (processVideoUrl(videoUrl, originalUrl, name, callback)) {
                             found = true
@@ -216,7 +241,7 @@ object GoyabuExtractor {
         
         var found = false
         
-        // 🆕 Atualizado para incluir M3U8
+        // Atualizado para incluir M3U8
         val elements = doc.select("""
             [src*="googlevideo.com"],
             [data-src*="googlevideo.com"],
@@ -225,6 +250,8 @@ object GoyabuExtractor {
             [src*=".m3u8"],
             [data-src*=".m3u8"],
             [href*=".m3u8"],
+            [src*="anivideo.net"],
+            [data-src*="anivideo.net"],
             video source,
             [data-video],
             [data-player],
@@ -241,7 +268,9 @@ object GoyabuExtractor {
                 ?: element.attr("data-embed")
             
             if (videoUrl.isNotBlank() && isValidVideoUrl(videoUrl)) {
-                println("✅ URL direta encontrada: ${videoUrl.take(80)}...")
+                println("✅ URL DIRETA encontrada no ELEMENTO: ${element.tagName()}")
+                println("   URL: ${videoUrl.take(80)}...")
+                println("   Atributos: ${element.attributes()}")
                 
                 if (processVideoUrl(videoUrl, originalUrl, name, callback)) {
                     found = true
@@ -251,7 +280,7 @@ object GoyabuExtractor {
         
         // Procurar por texto que contenha URLs de vídeo
         val bodyText = doc.body()?.text() ?: ""
-        // 🆕 Atualizado para incluir M3U8
+        // Atualizado para incluir M3U8
         val videoPatterns = listOf(
             """https?://[^"'\s]*\.googlevideo\.com/[^"'\s]*""".toRegex(),
             """https?://[^"'\s]*\.m3u8[^"'\s]*""".toRegex(),
@@ -263,7 +292,9 @@ object GoyabuExtractor {
             matches.forEach { match ->
                 val videoUrl = match.value
                 if (isValidVideoUrl(videoUrl)) {
-                    println("✅ URL encontrada no texto: ${videoUrl.take(80)}...")
+                    println("✅ URL encontrada no TEXTO da página")
+                    println("   Padrão: ${pattern.pattern.take(30)}...")
+                    println("   URL: ${videoUrl.take(80)}...")
                     
                     if (processVideoUrl(videoUrl, originalUrl, name, callback)) {
                         found = true
@@ -292,7 +323,7 @@ object GoyabuExtractor {
             if (src.isNotBlank()) {
                 println("🔍 Iframe encontrado (#${index + 1}): ${src.take(80)}...")
                 
-                // 🆕 Verificar se é um iframe com conteúdo M3U8
+                // Verificar se é um iframe com conteúdo M3U8
                 if (src.contains("m3u8") || src.contains(".m3u8") || src.contains("anivideo.net")) {
                     println("✅ Iframe M3U8/anivideo encontrado")
                     if (processVideoUrl(src, originalUrl, name, callback)) {
@@ -373,7 +404,9 @@ object GoyabuExtractor {
                 ?: dataEmbed.takeIf { it.isNotBlank() }
             
             if (videoUrl != null && isValidVideoUrl(videoUrl)) {
-                println("✅ Dados embed encontrados: ${videoUrl.take(80)}...")
+                println("✅ Dados EMBED encontrados em DIV")
+                println("   URL: ${videoUrl.take(80)}...")
+                println("   Classe: ${div.className()}")
                 
                 if (processVideoUrl(videoUrl, originalUrl, name, callback)) {
                     found = true
@@ -382,7 +415,7 @@ object GoyabuExtractor {
             
             // Verificar também o conteúdo HTML da div
             val html = div.html()
-            // 🆕 Atualizado para incluir M3U8
+            // Atualizado para incluir M3U8
             val videoPatterns = listOf(
                 """https?://[^"'\s]*\.googlevideo\.com/[^"'\s]*""".toRegex(),
                 """https?://[^"'\s]*\.m3u8[^"'\s]*""".toRegex()
@@ -393,7 +426,8 @@ object GoyabuExtractor {
                 matches.forEach { match ->
                     val url = match.value
                     if (isValidVideoUrl(url)) {
-                        println("✅ URL encontrada em div embed: ${url.take(80)}...")
+                        println("✅ URL encontrada dentro de DIV embed")
+                        println("   URL: ${url.take(80)}...")
                         
                         if (processVideoUrl(url, originalUrl, name, callback)) {
                             found = true
@@ -406,7 +440,7 @@ object GoyabuExtractor {
         return found
     }
     
-    // 🆕 FUNÇÃO NOVA: Processar links M3U8/HLS
+    // 🆕 FUNÇÃO: Processar links M3U8/HLS (VERSÃO CORRIGIDA - ÚNICA)
     private suspend fun processM3U8Url(
         m3u8Url: String,
         referer: String,
@@ -416,19 +450,35 @@ object GoyabuExtractor {
         println("🔗 GOYABU EXTRACTOR: Processando link M3U8/HLS")
         
         return try {
-            // Decodificar URL se necessário
-            var finalUrl = m3u8Url
+            // CORREÇÃO 1: Limpar a URL de aspas e barras invertidas extras
+            var finalUrl = m3u8Url.trim()
+            
+            // Remover aspas e caracteres JSON indesejados
+            if (finalUrl.startsWith("\"url\":\"")) {
+                finalUrl = finalUrl.removePrefix("\"url\":\"")
+            }
+            if (finalUrl.startsWith("\"")) {
+                finalUrl = finalUrl.removePrefix("\"")
+            }
+            if (finalUrl.endsWith("\"")) {
+                finalUrl = finalUrl.removeSuffix("\"")
+            }
+            
+            // Remover barras invertidas de escape
+            finalUrl = finalUrl.replace("\\/", "/")
+            
+            println("🔧 URL após limpeza: ${finalUrl.take(100)}...")
             
             // Se for a URL do STCode Player com parâmetro 'd', extrair o link real
-            if (m3u8Url.contains("api.anivideo.net/videohls.php")) {
+            if (finalUrl.contains("api.anivideo.net/videohls.php")) {
                 val dParamRegex = """[?&]d=([^&]+)""".toRegex()
-                val match = dParamRegex.find(m3u8Url)
+                val match = dParamRegex.find(finalUrl)
                 
                 match?.let {
                     val encodedUrl = it.groupValues[1]
                     try {
                         finalUrl = java.net.URLDecoder.decode(encodedUrl, "UTF-8")
-                        println("✅ URL M3U8 extraída do parâmetro 'd': $finalUrl")
+                        println("✅ URL M3U8 extraída do parâmetro 'd': ${finalUrl.take(80)}...")
                     } catch (e: Exception) {
                         println("⚠️ Não foi possível decodificar URL, usando original")
                     }
@@ -437,39 +487,29 @@ object GoyabuExtractor {
             
             // Verificar se é realmente um link M3U8
             if (!finalUrl.contains(".m3u8") && !finalUrl.contains("m3u8")) {
-                println("❌ URL não é M3U8 válida: $finalUrl")
+                println("❌ URL não é M3U8 válida: ${finalUrl.take(50)}...")
                 return false
             }
             
-            // Para links M3U8, testamos se o link está acessível
-            try {
-                val testResponse = app.get(
-                    finalUrl,
-                    headers = mapOf("Referer" to referer),
-                    allowRedirects = true
-                )
-                
-                if (testResponse.code !in 200..299) {
-                    println("❌ Link M3U8 não acessível: Código ${testResponse.code}")
-                    // Mesmo assim, podemos tentar criar o link
-                }
-            } catch (e: Exception) {
-                println("⚠️ Não foi possível testar link M3U8: ${e.message}")
-                // Continuamos mesmo com erro de teste
+            // CORREÇÃO 2: Garantir que a URL começa com http:// ou https://
+            if (!finalUrl.startsWith("http://") && !finalUrl.startsWith("https://")) {
+                finalUrl = "https://$finalUrl"
             }
             
-            // Determinar qualidade
+            // 🆕 LOG PARA RASTREAR: Mostrar de onde veio o link
+            println("📌 Link M3U8 processado (URL limpa): ${finalUrl.take(80)}...")
+            
+            // Determinar qualidade REALISTA (não acreditar em "4K" do nome)
             val quality = determineM3U8Quality(finalUrl, name)
             val qualityLabel = getQualityLabel(quality)
             
             println("✅ Link M3U8 válido encontrado: $qualityLabel")
             
-            // CORREÇÃO AQUI: Usar ExtractorLinkType.M3U8 em vez de HLS
+            // Criar ExtractorLink para M3U8
             val extractorLink = newExtractorLink(
                 source = "Goyabu M3U8",
                 name = "$name ($qualityLabel) [HLS]",
-                url = finalUrl,
-                // CORREÇÃO: Tipo correto para streaming M3U8
+                url = finalUrl,  // URL limpa
                 type = ExtractorLinkType.M3U8
             ) {
                 this.referer = referer
@@ -492,7 +532,108 @@ object GoyabuExtractor {
     }
     
     // Processar uma URL de vídeo (ATUALIZADA para suportar M3U8)
-
+    private suspend fun processVideoUrl(
+        videoUrl: String,
+        referer: String,
+        name: String,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        println("🎯 PROCESS VIDEO URL: Analisando URL: ${videoUrl.take(80)}...")
+        
+        return try {
+            var url = videoUrl
+            
+            // 🆕 Limpar URL antes de qualquer processamento
+            url = cleanUrl(url)
+            println("🔍 URL após limpeza inicial: ${url.take(80)}...")
+            
+            // Limpar URL
+            if (url.contains("&amp;")) {
+                url = url.replace("&amp;", "&")
+            }
+            
+            // DECISÃO: Que tipo de link é este?
+            when {
+                // 1. É um link M3U8/HLS?
+                url.contains("m3u8") || url.contains(".m3u8") || url.contains("anivideo.net") -> {
+                    println("📦 Identificado como M3U8/HLS")
+                    return processM3U8Url(url, referer, name, callback)
+                }
+                
+                // 2. É um link do Blogger/Google Video?
+                url.contains("blogger.com/video.g") -> {
+                    println("📦 Identificado como Blogger/Google Video")
+                    return processBloggerIframe(url, referer, name, callback)
+                }
+                
+                // 3. É um link direto do Google Video?
+                url.contains("googlevideo.com") || url.contains("videoplayback") -> {
+                    println("📦 Identificado como Google Video direto")
+                    
+                    // Processamento original do Google Video
+                    val itag = extractItagFromUrl(url)
+                    val quality = itagQualityMap[itag] ?: 360
+                    val qualityLabel = getQualityLabel(quality)
+                    
+                    println("📹 Processando vídeo Google: $qualityLabel (itag: $itag)")
+                    
+                    val extractorLink = newExtractorLink(
+                        source = "Goyabu Blogger",
+                        name = "$name ($qualityLabel)",
+                        url = url,
+                        type = ExtractorLinkType.VIDEO
+                    ) {
+                        this.referer = referer
+                        this.quality = quality
+                        this.headers = mapOf(
+                            "Referer" to referer,
+                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                            "Origin" to "https://www.blogger.com",
+                            "Accept" to "*/*",
+                            "Accept-Language" to "pt-BR,pt;q=0.9,en;q=0.8"
+                        )
+                    }
+                    
+                    callback(extractorLink)
+                    return true
+                }
+                
+                else -> {
+                    println("❌ Tipo de URL não reconhecido: ${url.take(50)}...")
+                    return false
+                }
+            }
+            
+        } catch (e: Exception) {
+            println("❌ Erro ao processar URL: ${e.message}")
+            false
+        }
+    }
+    
+    // 🆕 FUNÇÃO AUXILIAR: Limpar URL
+    private fun cleanUrl(url: String): String {
+        var cleaned = url.trim()
+        
+        // Remover aspas extras
+        if (cleaned.startsWith("\"") && cleaned.endsWith("\"")) {
+            cleaned = cleaned.substring(1, cleaned.length - 1)
+        }
+        
+        // Remover prefixo JSON "url":
+        if (cleaned.startsWith("\"url\":\"")) {
+            cleaned = cleaned.substring(7)
+            if (cleaned.endsWith("\"")) {
+                cleaned = cleaned.substring(0, cleaned.length - 1)
+            }
+        }
+        
+        // Remover barras invertidas de escape
+        cleaned = cleaned.replace("\\/", "/")
+        
+        return cleaned
+    }
+    
+    // Processar iframe do Blogger
     private suspend fun processBloggerIframe(
         iframeUrl: String,
         referer: String,
@@ -553,125 +694,21 @@ object GoyabuExtractor {
             false
         }
     }
-// 🆕 FUNÇÃO NOVA: Processar links M3U8/HLS (VERSÃO CORRIGIDA)
-private suspend fun processM3U8Url(
-    m3u8Url: String,
-    referer: String,
-    name: String,
-    callback: (ExtractorLink) -> Unit
-): Boolean {
-    println("🔗 GOYABU EXTRACTOR: Processando link M3U8/HLS")
     
-    return try {
-        // CORREÇÃO 1: Limpar a URL de aspas e barras invertidas extras
-        var finalUrl = m3u8Url.trim()
-        
-        // Remover aspas e caracteres JSON indesejados
-        if (finalUrl.startsWith("\"url\":\"")) {
-            finalUrl = finalUrl.removePrefix("\"url\":\"")
-        }
-        if (finalUrl.startsWith("\"")) {
-            finalUrl = finalUrl.removePrefix("\"")
-        }
-        if (finalUrl.endsWith("\"")) {
-            finalUrl = finalUrl.removeSuffix("\"")
-        }
-        
-        // Remover barras invertidas de escape
-        finalUrl = finalUrl.replace("\\/", "/")
-        
-        println("🔧 URL após limpeza: $finalUrl")
-        
-        // Se for a URL do STCode Player com parâmetro 'd', extrair o link real
-        if (finalUrl.contains("api.anivideo.net/videohls.php")) {
-            val dParamRegex = """[?&]d=([^&]+)""".toRegex()
-            val match = dParamRegex.find(finalUrl)
-            
-            match?.let {
-                val encodedUrl = it.groupValues[1]
-                try {
-                    finalUrl = java.net.URLDecoder.decode(encodedUrl, "UTF-8")
-                    println("✅ URL M3U8 extraída do parâmetro 'd': $finalUrl")
-                } catch (e: Exception) {
-                    println("⚠️ Não foi possível decodificar URL, usando original")
-                }
-            }
-        }
-        
-        // Verificar se é realmente um link M3U8
-        if (!finalUrl.contains(".m3u8") && !finalUrl.contains("m3u8")) {
-            println("❌ URL não é M3U8 válida: $finalUrl")
-            return false
-        }
-        
-        // CORREÇÃO 2: Garantir que a URL começa com http:// ou https://
-        if (!finalUrl.startsWith("http://") && !finalUrl.startsWith("https://")) {
-            finalUrl = "https://$finalUrl"
-        }
-        
-        // Para links M3U8, testamos se o link está acessível
-        try {
-            val testResponse = app.get(
-                finalUrl,
-                headers = mapOf("Referer" to referer),
-                allowRedirects = true
-            )
-            
-            if (testResponse.code !in 200..299) {
-                println("⚠️ Link M3U8 retornou código: ${testResponse.code}")
-            }
-        } catch (e: Exception) {
-            println("⚠️ Não foi possível testar link M3U8: ${e.message}")
-            // Continuamos mesmo com erro de teste
-        }
-        
-        // Determinar qualidade
-        val quality = determineM3U8Quality(finalUrl, name)
-        val qualityLabel = getQualityLabel(quality)
-        
-        println("✅ Link M3U8 válido encontrado: $qualityLabel - $finalUrl")
-        
-        // Criar ExtractorLink para M3U8
-        val extractorLink = newExtractorLink(
-            source = "Goyabu M3U8",
-            name = "$name ($qualityLabel) [HLS]",
-            url = finalUrl,  // CORREÇÃO: URL limpa
-            type = ExtractorLinkType.M3U8
-        ) {
-            this.referer = referer
-            this.quality = quality
-            this.headers = mapOf(
-                "Referer" to referer,
-                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                "Accept" to "*/*",
-                "Accept-Language" to "pt-BR,pt;q=0.9,en;q=0.8"
-            )
-        }
-        
-        callback(extractorLink)
-        true
-        
-    } catch (e: Exception) {
-        println("❌ Erro ao processar M3U8: ${e.message}")
-        false
-    }
-}
-
-    
-    // 🆕 Determinar qualidade para M3U8
+    // 🆕 FUNÇÃO REALISTA para determinar qualidade
     private fun determineM3U8Quality(url: String, name: String): Int {
-        // Lógica para determinar qualidade baseado no nome ou URL
         val urlLower = url.lowercase()
-        val nameLower = name.lowercase()
         
+        // NUNCA assumir 4K em streaming web - quase sempre é marketing
         return when {
-            urlLower.contains("4k") || urlLower.contains("2160") || nameLower.contains("4k") -> 2160
-            urlLower.contains("1440") || urlLower.contains("qhd") -> 1440
-            urlLower.contains("1080") || urlLower.contains("fhd") || nameLower.contains("1080") -> 1080
-            urlLower.contains("720") || urlLower.contains("hd") || nameLower.contains("720") -> 720
-            urlLower.contains("480") -> 480
-            urlLower.contains("360") -> 360
-            else -> 720 // qualidade padrão para M3U8
+            urlLower.contains("1080p") || urlLower.contains("fhd") -> 1080
+            urlLower.contains("720p") || urlLower.contains("hd") -> 720
+            urlLower.contains("480p") -> 480
+            urlLower.contains("360p") -> 360
+            // Sites com "4k" no nome geralmente são 720p na prática
+            urlLower.contains("4k-image") || urlLower.contains("4k-wallpaper") -> 720
+            // Padrão conservador para M3U8
+            else -> 720
         }
     }
     
@@ -694,7 +731,7 @@ private suspend fun processM3U8Url(
     
     private fun getQualityLabel(quality: Int): String {
         return when {
-            quality >= 2160 -> "4K"
+            quality >= 2160 -> "4K*" // Asterisco para indicar suspeito
             quality >= 1440 -> "QHD"
             quality >= 1080 -> "FHD"
             quality >= 720 -> "HD"
