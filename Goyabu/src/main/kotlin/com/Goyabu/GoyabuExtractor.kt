@@ -6,7 +6,7 @@ import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import org.jsoup.Jsoup
 
-object GoyabuExtractor {
+object GoyabuBloggerExtractor {
     // Mapa de itag para qualidade
     private val itagQualityMap = mapOf(
         5 to 240,    // 240p FLV
@@ -481,5 +481,14 @@ object GoyabuExtractor {
             quality >= 360 -> "SD"
             else -> "SD"
         }
+    }
+    
+    // Função auxiliar para usar com lambda simples
+    suspend fun extractVideoLinksSimple(url: String, name: String): List<ExtractorLink> {
+        val links = mutableListOf<ExtractorLink>()
+        extractVideoLinks(url, name) { link ->
+            links.add(link)
+        }
+        return links
     }
 }
