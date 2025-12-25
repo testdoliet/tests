@@ -12,24 +12,15 @@ object SuperFlixYoutubeExtractor {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        return extractYouTubeLinks(url, referer, subtitleCallback, callback)
-    }
-
-    private suspend fun extractYouTubeLinks(
-        url: String,
-        referer: String,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
         return try {
             println("🎬 YouTubeExtractor processando: $url")
             
             // Extrair ID do vídeo
             val videoId = extractYouTubeId(url) ?: return false
             
-            // Tentar múltiplos métodos de extração
-            extractWithPiped(videoId, referer, subtitleCallback, callback) ||
-            extractWithInvidious(videoId, referer, subtitleCallback, callback) ||
+            // Usar Invidious API que fornece TODAS as qualidades
+            extractAllQualitiesFromInvidious(videoId, referer, subtitleCallback, callback) ||
+            extractAllQualitiesFromPiped(videoId, referer, subtitleCallback, callback) ||
             extractWithYouTubeEmbed(videoId, referer, callback)
             
         } catch (e: Exception) {
@@ -54,133 +45,238 @@ object SuperFlixYoutubeExtractor {
         return null
     }
 
-    private suspend fun extractWithPiped(
+    // NOVO MÉTODO: Extrair TODAS as qualidades do Invidious
+    private suspend fun extractAllQualitiesFromInvidious(
         videoId: String,
         referer: String,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         return try {
-            val pipedUrl = "https://piped.video/watch?v=$videoId"
-            println("🔗 Tentando Piped: $pipedUrl")
+            // Usar API do Invidious que retorna JSON com todas as qualidades
+            val apiUrl = "https://inv.riverside.rocks/api/v1/videos/$videoId"
+            println("🔗 Usando Invidious API: $apiUrl")
             
-            val document = app.get(pipedUrl).document
+            val response = app.get(apiUrl, timeout = 15000)
+            if (response.code != 200) {
+                println("❌ Invidious API falhou: ${response.code}")
+                return false
+            }
             
-            // Extrair links de vídeo do Piped
-            val videoElements = document.select("video[src], source[type^='video/']")
-            var found = false
+            val data = response.parsedSafe<JsonElement>() ?: return false
+            println("✅ Invidious API resposta recebida")
             
-            for (element in videoElements) {
-                val videoUrl = element.attr("src")
-                if (videoUrl.isNotBlank() && isDirectVideoUrl(videoUrl)) {
-                    val quality = extractQualityFromUrl(videoUrl)
+            var foundAny = false
+            
+            // Extrair formatos adaptativos (todos separados)
+            val adaptiveFormats = data.obj["adaptiveFormats"]?.array
+            adaptiveFormats?.forEach { format ->
+                try {
+                    val urlElement = format.obj["url"]?.string ?: return@forEach
+                    val bitrate = format.obj["bitrate"]?.int ?: 0
+                    val type = format.obj["type"]?.string ?: ""
+                    val qualityLabel = format.obj["qualityLabel"]?.string ?: ""
                     
-                    val host = try {
-                        URI(referer).host ?: "piped.video"
-                    } catch (e: Exception) {
-                        "piped.video"
+                    // Determinar se é vídeo ou áudio
+                    val isVideo = type.contains("video")
+                    val isAudio = type.contains("audio")
+                    
+                    if (isVideo) {
+                        val quality = extractQualityFromLabel(qualityLabel)
+                        println("🎥 Vídeo encontrado: ${quality}p (${qualityLabel}) - Bitrate: ${bitrate/1000}kbps")
+                        
+                        // Agora precisamos encontrar o áudio correspondente
+                        val audioFormat = findMatchingAudioFormat(adaptiveFormats, bitrate)
+                        
+                        if (audioFormat != null) {
+                            val audioUrl = audioFormat.obj["url"]?.string
+                            if (audioUrl != null) {
+                                // Para YouTube, normalmente usamos HLS que já mescla
+                                // Mas vamos retornar o link direto que o Cloudstream pode processar
+                                val videoUrlWithAudio = urlElement // O link já deve ter áudio
+                                
+                                val extractorLink = createExtractorLink(
+                                    source = "YouTube",
+                                    name = "Trailer YouTube (${quality}p)",
+                                    url = videoUrlWithAudio,
+                                    quality = quality,
+                                    referer = referer
+                                )
+                                
+                                callback(extractorLink)
+                                foundAny = true
+                            }
+                        }
                     }
-                    
-                    val headers = mapOf(
-                        "Referer" to referer,
-                        "User-Agent" to "Mozilla/5.0",
-                        "Origin" to "https://$host"
-                    )
-                    
-                    val extractorLink = newExtractorLink(
-                        source = "YouTube via Piped",
-                        name = "Trailer YouTube (${quality}p)",
-                        url = videoUrl,
-                        type = ExtractorLinkType.VIDEO
-                    ) {
-                        this.referer = referer
-                        this.quality = mapQualityToValue(quality)
-                        this.headers = headers
-                    }
-                    
-                    callback(extractorLink)
-                    found = true
-                    println("✅ Piped: Link encontrado (${quality}p)")
+                } catch (e: Exception) {
+                    println("⚠️ Erro processando formato: ${e.message}")
                 }
             }
             
-            // Extrair legendas se disponíveis
-            document.select("track[kind='subtitles']").forEach { track ->
-                val label = track.attr("label").ifBlank { track.attr("srclang") }
-                val src = track.attr("src")
-                
-                if (src.isNotBlank() && label.isNotBlank()) {
-                    subtitleCallback.invoke(
-                        SubtitleFile(
-                            label,
-                            src
+            // Se não encontrou formatos adaptativos, tenta formatos normais
+            if (!foundAny) {
+                val formatStreams = data.obj["formatStreams"]?.array
+                formatStreams?.forEach { stream ->
+                    try {
+                        val urlElement = stream.obj["url"]?.string ?: return@forEach
+                        val qualityLabel = stream.obj["qualityLabel"]?.string ?: ""
+                        val bitrate = stream.obj["bitrate"]?.int ?: 0
+                        
+                        val quality = extractQualityFromLabel(qualityLabel)
+                        println("📹 Stream encontrado: ${quality}p (${qualityLabel})")
+                        
+                        val extractorLink = createExtractorLink(
+                            source = "YouTube",
+                            name = "Trailer YouTube (${quality}p)",
+                            url = urlElement,
+                            quality = quality,
+                            referer = referer
                         )
-                    )
-                    println("📝 Piped: Legenda encontrada ($label)")
+                        
+                        callback(extractorLink)
+                        foundAny = true
+                    } catch (e: Exception) {
+                        println("⚠️ Erro processando stream: ${e.message}")
+                    }
                 }
             }
             
-            found
+            // Extrair legendas
+            val captions = data.obj["captions"]?.array
+            captions?.forEach { caption ->
+                try {
+                    val label = caption.obj["label"]?.string ?: caption.obj["language"]?.string ?: "Unknown"
+                    val url = caption.obj["url"]?.string
+                    
+                    if (url != null) {
+                        subtitleCallback.invoke(
+                            SubtitleFile(label, url)
+                        )
+                        println("📝 Legenda encontrada: $label")
+                    }
+                } catch (e: Exception) {
+                    // Ignora erro em legendas
+                }
+            }
+            
+            if (foundAny) {
+                println("✅ Invidious: ${foundAny} qualidades encontradas")
+            }
+            
+            foundAny
         } catch (e: Exception) {
-            println("❌ Piped falhou: ${e.message}")
+            println("❌ Invidious API erro: ${e.message}")
             false
         }
     }
 
-    private suspend fun extractWithInvidious(
+    // Método para extrair de Piped (fallback)
+    private suspend fun extractAllQualitiesFromPiped(
         videoId: String,
         referer: String,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         return try {
-            val invidiousUrl = "https://inv.riverside.rocks/watch?v=$videoId"
-            println("🔗 Tentando Invidious: $invidiousUrl")
+            // Piped também tem API JSON
+            val apiUrl = "https://pipedapi.kavin.rocks/streams/$videoId"
+            println("🔗 Usando Piped API: $apiUrl")
             
-            val document = app.get(invidiousUrl).document
+            val response = app.get(apiUrl, timeout = 15000)
+            if (response.code != 200) return false
             
-            // Procurar por links de vídeo no Invidious
-            val videoSources = document.select("source[src*='googlevideo.com']")
-            var found = false
+            val data = response.parsedSafe<JsonElement>() ?: return false
             
-            for (source in videoSources) {
-                val videoUrl = source.attr("src")
-                if (videoUrl.isNotBlank() && videoUrl.contains("videoplayback")) {
-                    val quality = extractQualityFromUrl(videoUrl)
+            var foundAny = false
+            
+            // Vídeos com áudio incluído
+            val videoStreams = data.obj["videoStreams"]?.array
+            videoStreams?.forEach { stream ->
+                try {
+                    val url = stream.obj["url"]?.string ?: return@forEach
+                    val quality = stream.obj["quality"]?.string ?: ""
+                    val bitrate = stream.obj["bitrate"]?.int ?: 0
+                    val format = stream.obj["format"]?.string ?: ""
                     
-                    val host = try {
-                        URI(referer).host ?: "inv.riverside.rocks"
-                    } catch (e: Exception) {
-                        "inv.riverside.rocks"
-                    }
+                    val qualityNum = extractQualityFromString(quality)
+                    println("🎥 Piped Stream: ${qualityNum}p - $format - ${bitrate/1000}kbps")
                     
-                    val headers = mapOf(
-                        "Referer" to referer,
-                        "User-Agent" to "Mozilla/5.0",
-                        "Origin" to "https://$host"
+                    val extractorLink = createExtractorLink(
+                        source = "YouTube via Piped",
+                        name = "Trailer YouTube (${qualityNum}p)",
+                        url = url,
+                        quality = qualityNum,
+                        referer = referer
                     )
                     
-                    val extractorLink = newExtractorLink(
-                        source = "YouTube via Invidious",
-                        name = "Trailer YouTube (${quality}p)",
-                        url = videoUrl,
-                        type = ExtractorLinkType.VIDEO
-                    ) {
-                        this.referer = referer
-                        this.quality = mapQualityToValue(quality)
-                        this.headers = headers
-                    }
-                    
                     callback(extractorLink)
-                    found = true
-                    println("✅ Invidious: Link encontrado (${quality}p)")
+                    foundAny = true
+                } catch (e: Exception) {
+                    println("⚠️ Erro processando stream Piped: ${e.message}")
                 }
             }
             
-            found
+            foundAny
         } catch (e: Exception) {
-            println("❌ Invidious falhou: ${e.message}")
+            println("❌ Piped API erro: ${e.message}")
             false
+        }
+    }
+
+    private fun findMatchingAudioFormat(formats: JsonElement.Array, videoBitrate: Int): JsonElement.Obj? {
+        return formats.firstOrNull { format ->
+            val type = format.obj["type"]?.string ?: ""
+            val bitrate = format.obj["bitrate"]?.int ?: 0
+            type.contains("audio") && bitrate > 64000 // Áudio de boa qualidade
+        }
+    }
+
+    private fun extractQualityFromLabel(label: String): Int {
+        return when {
+            label.contains("144") -> 144
+            label.contains("240") -> 240
+            label.contains("360") -> 360
+            label.contains("480") -> 480
+            label.contains("720") -> 720
+            label.contains("1080") -> 1080
+            label.contains("1440") -> 1440
+            label.contains("2160") || label.contains("4K") -> 2160
+            else -> 720
+        }
+    }
+
+    private fun extractQualityFromString(str: String): Int {
+        return Regex("(\\d+)").find(str)?.groupValues?.get(1)?.toIntOrNull() ?: 720
+    }
+
+    private fun createExtractorLink(
+        source: String,
+        name: String,
+        url: String,
+        quality: Int,
+        referer: String
+    ): ExtractorLink {
+        val host = try {
+            URI(referer).host ?: "www.youtube.com"
+        } catch (e: Exception) {
+            "www.youtube.com"
+        }
+        
+        val headers = mapOf(
+            "Referer" to referer,
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Origin" to "https://$host"
+        )
+        
+        return newExtractorLink(
+            source = source,
+            name = name,
+            url = url,
+            type = ExtractorLinkType.VIDEO
+        ) {
+            this.referer = referer
+            this.quality = mapQualityToValue(quality)
+            this.headers = headers
         }
     }
 
@@ -191,68 +287,18 @@ object SuperFlixYoutubeExtractor {
     ): Boolean {
         // Fallback: usar embed do YouTube
         val embedUrl = "https://www.youtube-nocookie.com/embed/$videoId?autoplay=1&rel=0"
-        println("🔗 Usando YouTube Embed: $embedUrl")
+        println("🔗 Fallback para YouTube Embed")
         
-        val host = try {
-            URI(referer).host ?: "www.youtube-nocookie.com"
-        } catch (e: Exception) {
-            "www.youtube-nocookie.com"
-        }
-        
-        val headers = mapOf(
-            "Referer" to referer,
-            "User-Agent" to "Mozilla/5.0",
-            "Origin" to "https://$host"
-        )
-        
-        val extractorLink = newExtractorLink(
+        val extractorLink = createExtractorLink(
             source = "YouTube Embed",
-            name = "Trailer YouTube (Embed)",
+            name = "Trailer YouTube (720p)",
             url = embedUrl,
-            type = ExtractorLinkType.VIDEO
-        ) {
-            this.referer = referer
-            this.quality = Qualities.P720.value
-            this.headers = headers
-        }
+            quality = 720,
+            referer = referer
+        )
         
         callback(extractorLink)
-        println("✅ YouTube Embed: Link criado")
         return true
-    }
-
-    private fun isDirectVideoUrl(url: String): Boolean {
-        return url.endsWith(".mp4") || 
-               url.contains("googlevideo.com/videoplayback") ||
-               url.contains("video/mp4") ||
-               url.contains(".m3u8")
-    }
-
-    private fun extractQualityFromUrl(url: String): Int {
-        val qualityPatterns = listOf(
-            Regex("/(\\d+)p/"),
-            Regex("itag=(\\d+)"),
-            Regex("quality=(\\d+)"),
-            Regex("/(\\d+)/index\\.m3u8")
-        )
-        
-        for (pattern in qualityPatterns) {
-            pattern.find(url)?.let {
-                val qualityStr = it.groupValues[1]
-                return qualityStr.toIntOrNull() ?: 720
-            }
-        }
-        
-        // Tenta deduzir pela URL
-        return when {
-            url.contains("1080") -> 1080
-            url.contains("720") -> 720
-            url.contains("480") -> 480
-            url.contains("360") -> 360
-            url.contains("240") -> 240
-            url.contains("144") -> 144
-            else -> 720
-        }
     }
 
     private fun mapQualityToValue(quality: Int): Int {
