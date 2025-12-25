@@ -19,9 +19,7 @@ object GoyabuM3u8Extractor {
             val streamResolver = WebViewResolver(
                 interceptUrl = Regex("""\.m3u8"""),
                 useOkhttp = false,
-                timeout = 10_000L, // Reduzir timeout para 10 segundos
-                enableJs = true,
-                enableDomStorage = true
+                timeout = 10_000L // Reduzir timeout para 10 segundos
             )
 
             println("🔄 Iniciando WebView para interceptar M3U8...")
@@ -94,6 +92,7 @@ object GoyabuM3u8Extractor {
             
         } catch (e: Exception) {
             println("❌ GOYABU M3U8 EXTRACTOR: Erro: ${e.message}")
+            e.printStackTrace()
             false
         }
     }
