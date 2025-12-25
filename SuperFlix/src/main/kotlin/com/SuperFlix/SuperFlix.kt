@@ -248,7 +248,7 @@ class SuperFlix : MainAPI() {
         }
     }
 
-    private fun getHighQualityTrailer(videos: List<TMDBVideo>?): String? {
+    getOptimizedYouTubeTrailer(videos: List<TMDBVideo>?): String? {
         if (videos.isNullOrEmpty()) return null
 
         return videos.mapNotNull { video ->
@@ -266,9 +266,12 @@ class SuperFlix : MainAPI() {
         }
         ?.sortedByDescending { it.second }
         ?.firstOrNull()
-        ?.let { (key, _, _) -> "https://www.youtube.com/watch?v=$key" }
+        ?.let { (key, _, _) -> 
+            // Retorna URL do YouTube que será processada pelo extractor separado
+            "https://www.youtube.com/watch?v=$key"
+        }
     }
-
+ 
     private suspend fun extractEpisodesFromSite(
         document: org.jsoup.nodes.Document,
         url: String,
@@ -580,12 +583,27 @@ class SuperFlix : MainAPI() {
     }
 
     override suspend fun loadLinks(
-        data: String,
-        isCasting: Boolean,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        return SuperFlixExtractor.extractVideoLinks(data, mainUrl, name, callback)
+    data: String,
+    isCasting: Boolean,
+    subtitleCallback: (SubtitleFile) -> Unit,
+    callback: (ExtractorLink) -> Unit
+): Boolean {
+    // Verifica se é um trailer do YouTube
+    if (data.contains("youtube.com/watch") || data.contains("youtu.be/")) {
+        println("🎬 Detectado trailer do YouTube: $data")
+        return YouTubeTrailerExtractor().getUrl(data, mainUrl, subtitleCallback, callback)
+    }
+    
+    // Verifica se é um link do Piped/Invidious (também usado para trailers)
+    if (data.contains("piped.video") || data.contains("yewtu.be") || 
+        data.contains("inv.riverside.rocks")) {
+        println("🎬 Detectado link alternativo do YouTube: $data")
+        return YouTubeTrailerExtractor().getUrl(data, mainUrl, subtitleCallback, callback)
+    }
+    
+    // Caso contrário, usa o extractor normal do SuperFlix para conteúdo do site
+    println("📺 Usando SuperFlixExtractor para: $data")
+    return SuperFlixExtractor.extractVideoLinks(data, mainUrl, name, callback)
     }
 
     private data class TMDBInfo(
