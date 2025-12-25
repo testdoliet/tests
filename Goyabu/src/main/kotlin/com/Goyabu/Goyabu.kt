@@ -845,8 +845,6 @@ class Goyabu : MainAPI() {
         }
     }
 
-
-// ============ LOAD LINKS ============
 override suspend fun loadLinks(
     data: String,
     isCasting: Boolean,
@@ -855,35 +853,11 @@ override suspend fun loadLinks(
 ): Boolean {
     println("\n🎬 GOYABU loadLinks: URL recebida: $data")
     
-    return try {
-        // USAR APENAS O GOYABU M3U8 EXTRACTOR
-        val success = GoyabuM3u8Extractor.extractVideoLinks(
-            data, 
-            "https://goyabu.io", 
-            "Goyabu", 
-            callback
-        )
-        
-        if (success) {
-            println("✅ GOYABU: Links extraídos com sucesso!")
-            return true
-        }
-        
-        // Se falhar, tentar o Blogger como fallback
-        println("⚠️ GOYABU: M3U8 falhou, tentando Blogger...")
-        val bloggerSuccess = GoyabuBloggerExtractor.extractVideoLinks(data, "Goyabu", callback)
-        
-        if (bloggerSuccess) {
-            println("✅ GOYABU: Blogger encontrou links!")
-            return true
-        }
-        
-        println("❌ GOYABU: Todos os métodos falharam")
-        false
-        
-    } catch (e: Exception) {
-        println("❌ GOYABU: Erro fatal: ${e.message}")
-        false
-    }
-  }
+    // USAR APENAS O UNIFIED EXTRACTOR
+    return GoyabuExtractor.extractVideoLinks(
+        data, 
+        "https://goyabu.io", 
+        "Goyabu", 
+        callback
+    )
 }
