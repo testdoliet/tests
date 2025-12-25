@@ -492,75 +492,7 @@ object GoyabuExtractor {
     }
     
     // Processar uma URL de vídeo (ATUALIZADA para suportar M3U8)
-    private suspend fun processVideoUrl(
-        videoUrl: String,
-        referer: String,
-        name: String,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        return try {
-            var url = videoUrl
-            
-            // Limpar URL
-            if (url.contains("&amp;")) {
-                url = url.replace("&amp;", "&")
-            }
-            
-            // DECISÃO: Que tipo de link é este?
-            when {
-                // 1. É um link M3U8/HLS? (NOVO!)
-                url.contains("m3u8") || url.contains(".m3u8") || url.contains("anivideo.net") -> {
-                    return processM3U8Url(url, referer, name, callback)
-                }
-                
-                // 2. É um link do Blogger/Google Video?
-                url.contains("blogger.com/video.g") -> {
-                    return processBloggerIframe(url, referer, name, callback)
-                }
-                
-                // 3. É um link direto do Google Video?
-                url.contains("googlevideo.com") || url.contains("videoplayback") -> {
-                    // Processamento original do Google Video
-                    val itag = extractItagFromUrl(url)
-                    val quality = itagQualityMap[itag] ?: 360
-                    val qualityLabel = getQualityLabel(quality)
-                    
-                    println("📹 Processando vídeo Google: $qualityLabel (itag: $itag)")
-                    
-                    val extractorLink = newExtractorLink(
-                        source = "Goyabu Blogger",
-                        name = "$name ($qualityLabel)",
-                        url = url,
-                        type = ExtractorLinkType.VIDEO
-                    ) {
-                        this.referer = referer
-                        this.quality = quality
-                        this.headers = mapOf(
-                            "Referer" to referer,
-                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                            "Origin" to "https://www.blogger.com",
-                            "Accept" to "*/*",
-                            "Accept-Language" to "pt-BR,pt;q=0.9,en;q=0.8"
-                        )
-                    }
-                    
-                    callback(extractorLink)
-                    return true
-                }
-                
-                else -> {
-                    println("❌ Tipo de URL não reconhecido: ${url.take(50)}...")
-                    return false
-                }
-            }
-            
-        } catch (e: Exception) {
-            println("❌ Erro ao processar URL: ${e.message}")
-            false
-        }
-    }
-    
-    // Processar iframe do Blogger
+
     private suspend fun processBloggerIframe(
         iframeUrl: String,
         referer: String,
