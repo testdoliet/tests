@@ -96,7 +96,7 @@ object GoyabuExtractor {
 
         // Se não tiver d=, faz get na API (raramente necessário hoje)
         val apiResponse = app.get(apiUrl, headers = mapOf("Referer" to referer))
-        val m3u8Match = Regex("""(https?://[^\s"']+\.m3u8)""".toRegex(RegexOption.IGNORE_CASE))
+        val m3u8Match = Regex("""(https?://[^\s"']+\.m3u8)""", RegexOption.IGNORE_CASE)
             .find(apiResponse.text)
         if (m3u8Match != null) {
             val m3u8Url = m3u8Match.groupValues[1]
