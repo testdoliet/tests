@@ -590,7 +590,7 @@ class SuperFlix : MainAPI() {
     ): Boolean {
         // Verifica se é um trailer do YouTube
         if (data.contains("youtube.com/watch") || data.contains("youtu.be/")) {
-            return SuperFlixYouTubeTrailerExtractor().getUrl(data, mainUrl, subtitleCallback, callback)
+            return SuperFlixYouTubeExtractor().getUrl(data, mainUrl, subtitleCallback, callback)
         }
         
         // Verifica se é um link do Piped/Invidious (também usado para trailers)
