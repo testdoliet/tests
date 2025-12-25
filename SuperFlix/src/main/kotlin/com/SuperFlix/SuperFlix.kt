@@ -582,26 +582,29 @@ class SuperFlix : MainAPI() {
         return videoLink?.attr("href")
     }
 
-    override suspend fun loadLinks(
-        data: String,
-        isCasting: Boolean,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        // Verifica se é um trailer do YouTube
-        if (data.contains("youtube.com/watch") || data.contains("youtu.be/")) {
-            return SuperFlixYouTubeExtractor().getUrl(data, mainUrl, subtitleCallback, callback)
-        }
-        
-        // Verifica se é um link do Piped/Invidious (também usado para trailers)
-        if (data.contains("piped.video") || data.contains("yewtu.be") || 
-            data.contains("inv.riverside.rocks")) {
-            return SuperFlixYoutubeExtractor().getUrl(data, mainUrl, subtitleCallback, callback)
-        }
-        
-        // Caso contrário, usa o extractor normal do SuperFlix para conteúdo do site
-        return SuperFlixExtractor.extractVideoLinks(data, mainUrl, name, callback)
+override suspend fun loadLinks(
+    data: String,
+    isCasting: Boolean,
+    subtitleCallback: (SubtitleFile) -> Unit,
+    callback: (ExtractorLink) -> Unit
+): Boolean {
+    // Verifica se é um trailer do YouTube
+    if (data.contains("youtube.com/watch") || data.contains("youtu.be/")) {
+        println("🎬 Detectado trailer do YouTube")
+        return SuperFlixYoutubeExtractor.getUrl(data, mainUrl, subtitleCallback, callback)
     }
+    
+    // Verifica se é um link do Piped/Invidious (também usado para trailers)
+    if (data.contains("piped.video") || data.contains("yewtu.be") || 
+        data.contains("inv.riverside.rocks")) {
+        println("🎬 Detectado link alternativo do YouTube")
+        return SuperFlixYoutubeExtractor.getUrl(data, mainUrl, subtitleCallback, callback)
+    }
+    
+    // Caso contrário, usa o extractor normal do SuperFlix para conteúdo do site
+    println("📺 Usando SuperFlixExtractor para conteúdo do site")
+    return SuperFlixExtractor.extractVideoLinks(data, mainUrl, name, callback)
+}
 
     private data class TMDBInfo(
         val id: Int,
