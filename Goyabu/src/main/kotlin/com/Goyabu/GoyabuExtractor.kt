@@ -464,13 +464,13 @@ object GoyabuExtractor {
             
             println("✅ Link M3U8 válido encontrado: $qualityLabel")
             
-            // Criar ExtractorLink para M3U8
+            // CORREÇÃO AQUI: Usar ExtractorLinkType.M3U8 em vez de HLS
             val extractorLink = newExtractorLink(
                 source = "Goyabu M3U8",
                 name = "$name ($qualityLabel) [HLS]",
                 url = finalUrl,
-                // Tipo HLS para streaming
-                type = ExtractorLinkType.HLS
+                // CORREÇÃO: Tipo correto para streaming M3U8
+                type = ExtractorLinkType.M3U8
             ) {
                 this.referer = referer
                 this.quality = quality
