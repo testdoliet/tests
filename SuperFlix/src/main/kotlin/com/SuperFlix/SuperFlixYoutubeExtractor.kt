@@ -3,340 +3,260 @@ package com.SuperFlix
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.app
+import java.net.URI
 
-class SuperFlixExtractor : Extractor() {
-    override val name = "SuperFlix"
-    override val mainUrl = "https://superflix21.lol"
-
-    override suspend fun getUrl(
+object SuperFlixYoutubeExtractor {
+    suspend fun extractYouTubeLinks(
         url: String,
-        referer: String?,
+        referer: String,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         return try {
-            println("🔍 SuperFlixExtractor processando URL: $url")
+            println("🎬 YouTubeExtractor processando: $url")
             
-            val response = app.get(url, referer = referer)
-            val document = response.document
+            // Extrair ID do vídeo
+            val videoId = extractYouTubeId(url) ?: return false
             
-            // Método 1: Procurar por iframes
-            val iframeLinks = extractIframeLinks(document, referer ?: mainUrl, callback)
-            if (iframeLinks) {
-                println("✅ SuperFlixExtractor: Links encontrados via iframe")
-                return true
-            }
-            
-            // Método 2: Procurar por players embutidos
-            val embedLinks = extractEmbedLinks(document, referer ?: mainUrl, callback)
-            if (embedLinks) {
-                println("✅ SuperFlixExtractor: Links encontrados via embed")
-                return true
-            }
-            
-            // Método 3: Procurar por scripts com URLs de vídeo
-            val scriptLinks = extractScriptLinks(document, referer ?: mainUrl, callback)
-            if (scriptLinks) {
-                println("✅ SuperFlixExtractor: Links encontrados via scripts")
-                return true
-            }
-            
-            // Método 4: Procurar por links diretos
-            val directLinks = extractDirectLinks(document, referer ?: mainUrl, callback)
-            if (directLinks) {
-                println("✅ SuperFlixExtractor: Links encontrados via links diretos")
-                return true
-            }
-            
-            println("❌ SuperFlixExtractor: Nenhum link encontrado")
-            false
+            // Tentar múltiplos métodos de extração
+            extractWithPiped(videoId, referer, subtitleCallback, callback) ||
+            extractWithInvidious(videoId, referer, subtitleCallback, callback) ||
+            extractWithYouTubeEmbed(videoId, referer, callback)
             
         } catch (e: Exception) {
-            println("❌ SuperFlixExtractor erro: ${e.message}")
+            println("❌ YouTubeExtractor erro: ${e.message}")
             false
         }
     }
 
-    private suspend fun extractIframeLinks(
-        document: org.jsoup.nodes.Document,
-        referer: String,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        var found = false
-        
-        val iframes = document.select("iframe[src]")
-        for (iframe in iframes) {
-            val src = iframe.attr("src")
-            if (src.isNotBlank()) {
-                val fixedSrc = fixUrl(src)
-                println("📺 Encontrado iframe: $fixedSrc")
-                
-                // Verificar se é um player conhecido
-                when {
-                    src.contains("fembed") -> {
-                        val extractorLink = newExtractorLink(
-                            source = "Fembed",
-                            name = "Fembed Player",
-                            url = fixedSrc,
-                            type = ExtractorLinkType.VIDEO
-                        ) {
-                            this.referer = referer
-                            this.quality = Qualities.P720.value
-                        }
-                        callback(extractorLink)
-                        found = true
-                    }
-                    src.contains("filemoon") -> {
-                        val extractorLink = newExtractorLink(
-                            source = "Filemoon",
-                            name = "Filemoon Player",
-                            url = fixedSrc,
-                            type = ExtractorLinkType.VIDEO
-                        ) {
-                            this.referer = referer
-                            this.quality = Qualities.P720.value
-                        }
-                        callback(extractorLink)
-                        found = true
-                    }
-                    src.contains("player") || src.contains("embed") -> {
-                        val extractorLink = newExtractorLink(
-                            source = "Embed Player",
-                            name = "Player",
-                            url = fixedSrc,
-                            type = ExtractorLinkType.VIDEO
-                        ) {
-                            this.referer = referer
-                            this.quality = Qualities.P720.value
-                        }
-                        callback(extractorLink)
-                        found = true
-                    }
-                }
-            }
-        }
-        
-        return found
-    }
-
-    private suspend fun extractEmbedLinks(
-        document: org.jsoup.nodes.Document,
-        referer: String,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        var found = false
-        
-        // Procurar por players embutidos
-        val videoPlayers = document.select("""
-            video[src],
-            video source[src],
-            .video-player[data-url],
-            .player[data-src],
-            [class*='player'][data-url],
-            [class*='video'][data-src]
-        """.trimIndent())
-        
-        for (player in videoPlayers) {
-            val videoUrl = player.attr("src") ?: 
-                          player.attr("data-url") ?: 
-                          player.attr("data-src")
-            
-            if (videoUrl.isNotBlank()) {
-                val fixedUrl = fixUrl(videoUrl)
-                println("🎥 Encontrado vídeo: $fixedUrl")
-                
-                // Extrair qualidade se disponível
-                val quality = extractQualityFromElement(player)
-                
-                val extractorLink = newExtractorLink(
-                    source = "SuperFlix Direct",
-                    name = "Vídeo (${quality}p)",
-                    url = fixedUrl,
-                    type = ExtractorLinkType.VIDEO
-                ) {
-                    this.referer = referer
-                    this.quality = when (quality) {
-                        1080 -> Qualities.P1080.value
-                        720 -> Qualities.P720.value
-                        480 -> Qualities.P480.value
-                        360 -> Qualities.P360.value
-                        else -> Qualities.Unknown.value
-                    }
-                }
-                callback(extractorLink)
-                found = true
-            }
-        }
-        
-        return found
-    }
-
-    private suspend fun extractScriptLinks(
-        document: org.jsoup.nodes.Document,
-        referer: String,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        var found = false
-        
-        val scripts = document.select("script")
-        val videoPatterns = listOf(
-            Regex("""src\s*[:=]\s*['"]([^'"]*\.m3u8[^'"]*)['"]"""),
-            Regex("""file\s*[:=]\s*['"]([^'"]*\.mp4[^'"]*)['"]"""),
-            Regex("""url\s*[:=]\s*['"]([^'"]*\.m3u8[^'"]*)['"]"""),
-            Regex("""(https?://[^'"]*\.m3u8[^'"]*)"""),
-            Regex("""(https?://[^'"]*\.mp4[^'"]*)""")
+    private fun extractYouTubeId(url: String): String? {
+        val patterns = listOf(
+            "youtube\\.com/watch\\?v=([a-zA-Z0-9_-]{11})",
+            "youtu\\.be/([a-zA-Z0-9_-]{11})",
+            "youtube\\.com/embed/([a-zA-Z0-9_-]{11})",
+            "v=([a-zA-Z0-9_-]{11})"
         )
         
-        for (script in scripts) {
-            val scriptContent = script.html()
-            
-            for (pattern in videoPatterns) {
-                val matches = pattern.findAll(scriptContent)
-                matches.forEach { match ->
-                    val videoUrl = match.groupValues[1]
-                    if (videoUrl.isNotBlank() && !videoUrl.contains("google") && !videoUrl.contains("analytics")) {
-                        val fixedUrl = fixUrl(videoUrl)
-                        println("📜 Encontrado vídeo em script: $fixedUrl")
-                        
-                        // Determinar qualidade pela URL
-                        val quality = when {
-                            fixedUrl.contains("1080") -> 1080
-                            fixedUrl.contains("720") -> 720
-                            fixedUrl.contains("480") -> 480
-                            fixedUrl.contains("360") -> 360
-                            else -> 720
-                        }
-                        
-                        val isM3u8 = fixedUrl.contains(".m3u8")
-                        
-                        val extractorLink = newExtractorLink(
-                            source = "SuperFlix Script",
-                            name = "Vídeo (${quality}p)${if (isM3u8) " [HLS]" else ""}",
-                            url = fixedUrl,
-                            type = if (isM3u8) ExtractorLinkType.HLS else ExtractorLinkType.VIDEO
-                        ) {
-                            this.referer = referer
-                            this.quality = when (quality) {
-                                1080 -> Qualities.P1080.value
-                                720 -> Qualities.P720.value
-                                480 -> Qualities.P480.value
-                                360 -> Qualities.P360.value
-                                else -> Qualities.Unknown.value
-                            }
-                        }
-                        callback(extractorLink)
-                        found = true
-                    }
-                }
+        for (pattern in patterns) {
+            Regex(pattern, RegexOption.IGNORE_CASE).find(url)?.let {
+                return it.groupValues[1]
             }
         }
-        
-        return found
+        return null
     }
 
-    private suspend fun extractDirectLinks(
-        document: org.jsoup.nodes.Document,
+    private suspend fun extractWithPiped(
+        videoId: String,
+        referer: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        return try {
+            val pipedUrl = "https://piped.video/watch?v=$videoId"
+            println("🔗 Tentando Piped: $pipedUrl")
+            
+            val document = app.get(pipedUrl).document
+            
+            // Extrair links de vídeo do Piped
+            val videoElements = document.select("video[src], source[type^='video/']")
+            var found = false
+            
+            for (element in videoElements) {
+                val videoUrl = element.attr("src")
+                if (videoUrl.isNotBlank() && isDirectVideoUrl(videoUrl)) {
+                    val quality = extractQualityFromUrl(videoUrl)
+                    
+                    val host = try {
+                        URI(referer).host ?: "piped.video"
+                    } catch (e: Exception) {
+                        "piped.video"
+                    }
+                    
+                    val headers = mapOf(
+                        "Referer" to referer,
+                        "User-Agent" to "Mozilla/5.0",
+                        "Origin" to "https://$host"
+                    )
+                    
+                    val extractorLink = newExtractorLink(
+                        source = "YouTube via Piped",
+                        name = "Trailer YouTube (${quality}p)",
+                        url = videoUrl,
+                        type = ExtractorLinkType.VIDEO
+                    ) {
+                        this.referer = referer
+                        this.quality = mapQualityToValue(quality)
+                        this.headers = headers
+                    }
+                    
+                    callback(extractorLink)
+                    found = true
+                    println("✅ Piped: Link encontrado (${quality}p)")
+                }
+            }
+            
+            // Extrair legendas se disponíveis
+            document.select("track[kind='subtitles']").forEach { track ->
+                val label = track.attr("label").ifBlank { track.attr("srclang") }
+                val src = track.attr("src")
+                
+                if (src.isNotBlank() && label.isNotBlank()) {
+                    subtitleCallback.invoke(
+                        SubtitleFile(
+                            label,
+                            src
+                        )
+                    )
+                    println("📝 Piped: Legenda encontrada ($label)")
+                }
+            }
+            
+            found
+        } catch (e: Exception) {
+            println("❌ Piped falhou: ${e.message}")
+            false
+        }
+    }
+
+    private suspend fun extractWithInvidious(
+        videoId: String,
+        referer: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        return try {
+            val invidiousUrl = "https://inv.riverside.rocks/watch?v=$videoId"
+            println("🔗 Tentando Invidious: $invidiousUrl")
+            
+            val document = app.get(invidiousUrl).document
+            
+            // Procurar por links de vídeo no Invidious
+            val videoSources = document.select("source[src*='googlevideo.com']")
+            var found = false
+            
+            for (source in videoSources) {
+                val videoUrl = source.attr("src")
+                if (videoUrl.isNotBlank() && videoUrl.contains("videoplayback")) {
+                    val quality = extractQualityFromUrl(videoUrl)
+                    
+                    val host = try {
+                        URI(referer).host ?: "inv.riverside.rocks"
+                    } catch (e: Exception) {
+                        "inv.riverside.rocks"
+                    }
+                    
+                    val headers = mapOf(
+                        "Referer" to referer,
+                        "User-Agent" to "Mozilla/5.0",
+                        "Origin" to "https://$host"
+                    )
+                    
+                    val extractorLink = newExtractorLink(
+                        source = "YouTube via Invidious",
+                        name = "Trailer YouTube (${quality}p)",
+                        url = videoUrl,
+                        type = ExtractorLinkType.VIDEO
+                    ) {
+                        this.referer = referer
+                        this.quality = mapQualityToValue(quality)
+                        this.headers = headers
+                    }
+                    
+                    callback(extractorLink)
+                    found = true
+                    println("✅ Invidious: Link encontrado (${quality}p)")
+                }
+            }
+            
+            found
+        } catch (e: Exception) {
+            println("❌ Invidious falhou: ${e.message}")
+            false
+        }
+    }
+
+    private suspend fun extractWithYouTubeEmbed(
+        videoId: String,
         referer: String,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        var found = false
+        // Fallback: usar embed do YouTube
+        val embedUrl = "https://www.youtube-nocookie.com/embed/$videoId?autoplay=1&rel=0"
+        println("🔗 Usando YouTube Embed: $embedUrl")
         
-        // Procurar por links diretos
-        val directLinks = document.select("""
-            a[href*='.m3u8'],
-            a[href*='.mp4'],
-            a[href*='videoplayback'],
-            [data-video-src],
-            [data-file]
-        """.trimIndent())
+        val host = try {
+            URI(referer).host ?: "www.youtube-nocookie.com"
+        } catch (e: Exception) {
+            "www.youtube-nocookie.com"
+        }
         
-        for (link in directLinks) {
-            val videoUrl = link.attr("href") ?: 
-                          link.attr("data-video-src") ?: 
-                          link.attr("data-file")
-            
-            if (videoUrl.isNotBlank()) {
-                val fixedUrl = fixUrl(videoUrl)
-                println("🔗 Encontrado link direto: $fixedUrl")
-                
-                // Determinar qualidade
-                val quality = when {
-                    fixedUrl.contains("1080") -> 1080
-                    fixedUrl.contains("720") -> 720
-                    fixedUrl.contains("480") -> 480
-                    fixedUrl.contains("360") -> 360
-                    else -> 720
-                }
-                
-                val isM3u8 = fixedUrl.contains(".m3u8")
-                
-                val extractorLink = newExtractorLink(
-                    source = "SuperFlix Direct Link",
-                    name = "Vídeo (${quality}p)${if (isM3u8) " [HLS]" else ""}",
-                    url = fixedUrl,
-                    type = if (isM3u8) ExtractorLinkType.HLS else ExtractorLinkType.VIDEO
-                ) {
-                    this.referer = referer
-                    this.quality = when (quality) {
-                        1080 -> Qualities.P1080.value
-                        720 -> Qualities.P720.value
-                        480 -> Qualities.P480.value
-                        360 -> Qualities.P360.value
-                        else -> Qualities.Unknown.value
-                    }
-                }
-                callback(extractorLink)
-                found = true
+        val headers = mapOf(
+            "Referer" to referer,
+            "User-Agent" to "Mozilla/5.0",
+            "Origin" to "https://$host"
+        )
+        
+        val extractorLink = newExtractorLink(
+            source = "YouTube Embed",
+            name = "Trailer YouTube (Embed)",
+            url = embedUrl,
+            type = ExtractorLinkType.VIDEO
+        ) {
+            this.referer = referer
+            this.quality = Qualities.P720.value
+            this.headers = headers
+        }
+        
+        callback(extractorLink)
+        println("✅ YouTube Embed: Link criado")
+        return true
+    }
+
+    private fun isDirectVideoUrl(url: String): Boolean {
+        return url.endsWith(".mp4") || 
+               url.contains("googlevideo.com/videoplayback") ||
+               url.contains("video/mp4") ||
+               url.contains(".m3u8")
+    }
+
+    private fun extractQualityFromUrl(url: String): Int {
+        val qualityPatterns = listOf(
+            Regex("/(\\d+)p/"),
+            Regex("itag=(\\d+)"),
+            Regex("quality=(\\d+)"),
+            Regex("/(\\d+)/index\\.m3u8")
+        )
+        
+        for (pattern in qualityPatterns) {
+            pattern.find(url)?.let {
+                val qualityStr = it.groupValues[1]
+                return qualityStr.toIntOrNull() ?: 720
             }
         }
         
-        return found
+        // Tenta deduzir pela URL
+        return when {
+            url.contains("1080") -> 1080
+            url.contains("720") -> 720
+            url.contains("480") -> 480
+            url.contains("360") -> 360
+            url.contains("240") -> 240
+            url.contains("144") -> 144
+            else -> 720
+        }
     }
 
-    private fun extractQualityFromElement(element: org.jsoup.nodes.Element): Int {
-        // Tentar extrair qualidade do elemento
-        val qualityText = element.attr("data-quality") ?: 
-                         element.attr("quality") ?: 
-                         element.attr("res") ?: 
-                         element.attr("data-res")
-        
-        if (qualityText.isNotBlank()) {
-            val qualityMatch = Regex("""(\d+)""").find(qualityText)
-            qualityMatch?.let {
-                return it.groupValues[1].toIntOrNull() ?: 720
-            }
-        }
-        
-        // Tentar extrair do texto do elemento
-        val textQuality = Regex("""(\d+)p""", RegexOption.IGNORE_CASE).find(element.text())
-        textQuality?.let {
-            return it.groupValues[1].toIntOrNull() ?: 720
-        }
-        
-        return 720
-    }
-
-    private fun fixUrl(url: String): String {
-        return if (url.startsWith("http")) {
-            url
-        } else if (url.startsWith("//")) {
-            "https:$url"
-        } else if (url.startsWith("/")) {
-            "https://superflix21.lol$url"
-        } else {
-            "https://superflix21.lol/$url"
-        }
-    }
-    
-    // Função companion para compatibilidade com código antigo
-    companion object {
-        suspend fun extractVideoLinks(
-            url: String,
-            mainUrl: String,
-            sourceName: String,
-            callback: (ExtractorLink) -> Unit
-        ): Boolean {
-            return SuperFlixExtractor().getUrl(url, mainUrl, {}, callback)
+    private fun mapQualityToValue(quality: Int): Int {
+        return when (quality) {
+            144 -> Qualities.P144.value
+            240 -> Qualities.P240.value
+            360 -> Qualities.P360.value
+            480 -> Qualities.P480.value
+            720 -> Qualities.P720.value
+            1080 -> Qualities.P1080.value
+            1440 -> Qualities.P1440.value
+            2160 -> Qualities.P2160.value
+            else -> Qualities.Unknown.value
         }
     }
 }
