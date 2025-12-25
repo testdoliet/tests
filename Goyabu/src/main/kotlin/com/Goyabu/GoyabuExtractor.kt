@@ -6,7 +6,7 @@ import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import org.jsoup.Jsoup
 
-object GoyabuBloggerExtractor {
+object GoyabuExtractor {
     // Mapa de itag para qualidade
     private val itagQualityMap = mapOf(
         5 to 240,    // 240p FLV
