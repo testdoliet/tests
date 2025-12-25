@@ -5,14 +5,14 @@ import com.lagradost.cloudstream3.plugins.Plugin
 import android.content.Context
 
 @CloudstreamPlugin
-class SuperFlixPlugin : Plugin() {
+class SuperFlixProvider : Plugin() {
     override fun load(context: Context) {
         // Registra o provider principal
         registerMainAPI(SuperFlix())
         
-        // REGISTRA O EXTRACTOR DE YOUTUBE
-        registerExtractorAPI(SuperFlixYoutubeExtractor)
+        // REGISTRA O EXTRACTOR (agora é uma classe que extende ExtractorApi)
+        registerExtractorAPI(SuperFlixYoutubeExtractor())
         
-        println("✅ SuperFlix Plugin carregado com YouTube Extractor")
+        println("✅ SuperFlix Provider carregado com YouTube Extractor")
     }
 }
