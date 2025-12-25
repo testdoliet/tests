@@ -170,7 +170,7 @@ class SuperFlix : MainAPI() {
                 } else null
             }
 
-            val youtubeTrailer = getHighQualityTrailer(details.videos?.results)
+            val youtubeTrailer = getOptimizedYouTubeTrailer(details.videos?.results)
 
             val seasonsEpisodes = if (isTv) {
                 getTMDBAllSeasons(result.id)
@@ -248,7 +248,7 @@ class SuperFlix : MainAPI() {
         }
     }
 
-    getOptimizedYouTubeTrailer(videos: List<TMDBVideo>?): String? {
+    private fun getOptimizedYouTubeTrailer(videos: List<TMDBVideo>?): String? {
         if (videos.isNullOrEmpty()) return null
 
         return videos.mapNotNull { video ->
@@ -271,7 +271,7 @@ class SuperFlix : MainAPI() {
             "https://www.youtube.com/watch?v=$key"
         }
     }
- 
+
     private suspend fun extractEpisodesFromSite(
         document: org.jsoup.nodes.Document,
         url: String,
@@ -297,7 +297,7 @@ class SuperFlix : MainAPI() {
                         this.name = "Episódio $epNumber"
                         this.season = seasonNumber
                         this.episode = epNumber
-                        
+
                         element.selectFirst(".ep-desc, .description")?.text()?.trim()?.let { desc ->
                             if (desc.isNotBlank()) {
                                 this.description = desc
@@ -353,7 +353,7 @@ class SuperFlix : MainAPI() {
                 null
             }
         }
-        
+
         return recommendations
     }
 
@@ -379,7 +379,7 @@ class SuperFlix : MainAPI() {
 
         return if (isAnime || isSerie) {
             val type = if (isAnime) TvType.Anime else TvType.TvSeries
-            
+
             val episodes = extractEpisodesFromSite(document, url, isAnime, isSerie)
 
             newTvSeriesLoadResponse(title, url, type, episodes) {
@@ -391,7 +391,7 @@ class SuperFlix : MainAPI() {
             }
         } else {
             val playerUrl = findPlayerUrl(document)
-            
+
             newMovieLoadResponse(title, url, TvType.Movie, playerUrl ?: url) {
                 this.posterUrl = poster
                 this.year = year
@@ -572,38 +572,35 @@ class SuperFlix : MainAPI() {
         if (playButton != null) {
             return playButton.attr("data-url")
         }
-        
+
         val iframe = document.selectFirst("iframe[src*='fembed'], iframe[src*='filemoon'], iframe[src*='player'], iframe[src*='embed']")
         if (iframe != null) {
             return iframe.attr("src")
         }
-        
+
         val videoLink = document.selectFirst("a[href*='.m3u8'], a[href*='.mp4'], a[href*='watch']")
         return videoLink?.attr("href")
     }
 
     override suspend fun loadLinks(
-    data: String,
-    isCasting: Boolean,
-    subtitleCallback: (SubtitleFile) -> Unit,
-    callback: (ExtractorLink) -> Unit
-): Boolean {
-    // Verifica se é um trailer do YouTube
-    if (data.contains("youtube.com/watch") || data.contains("youtu.be/")) {
-        println("🎬 Detectado trailer do YouTube: $data")
-        return YouTubeTrailerExtractor().getUrl(data, mainUrl, subtitleCallback, callback)
-    }
-    
-    // Verifica se é um link do Piped/Invidious (também usado para trailers)
-    if (data.contains("piped.video") || data.contains("yewtu.be") || 
-        data.contains("inv.riverside.rocks")) {
-        println("🎬 Detectado link alternativo do YouTube: $data")
-        return YouTubeTrailerExtractor().getUrl(data, mainUrl, subtitleCallback, callback)
-    }
-    
-    // Caso contrário, usa o extractor normal do SuperFlix para conteúdo do site
-    println("📺 Usando SuperFlixExtractor para: $data")
-    return SuperFlixExtractor.extractVideoLinks(data, mainUrl, name, callback)
+        data: String,
+        isCasting: Boolean,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        // Verifica se é um trailer do YouTube
+        if (data.contains("youtube.com/watch") || data.contains("youtu.be/")) {
+            return YouTubeTrailerExtractor().getUrl(data, mainUrl, subtitleCallback, callback)
+        }
+        
+        // Verifica se é um link do Piped/Invidious (também usado para trailers)
+        if (data.contains("piped.video") || data.contains("yewtu.be") || 
+            data.contains("inv.riverside.rocks")) {
+            return YouTubeTrailerExtractor().getUrl(data, mainUrl, subtitleCallback, callback)
+        }
+        
+        // Caso contrário, usa o extractor normal do SuperFlix para conteúdo do site
+        return SuperFlixExtractor.extractVideoLinks(data, mainUrl, name, callback)
     }
 
     private data class TMDBInfo(
