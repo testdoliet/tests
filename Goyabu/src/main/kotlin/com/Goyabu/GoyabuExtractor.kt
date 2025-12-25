@@ -16,7 +16,7 @@ object GoyabuExtractor {
         244 to 480,  247 to 720,  248 to 1080
     )
     
-    // FUNÇÃO PRINCIPAL - apenas uma versão
+    // FUNÇÃO PRINCIPAL
     suspend fun extractVideoLinks(
         url: String,
         name: String,
@@ -67,7 +67,7 @@ object GoyabuExtractor {
     }
     
     // ==================== MÉTODO 1: JW Player (Direct MP4) ====================
-    private fun extractJwPlayerUrls(
+    private suspend fun extractJwPlayerUrls(
         doc: org.jsoup.nodes.Document,
         referer: String,
         name: String,
@@ -127,7 +127,7 @@ object GoyabuExtractor {
                 !url.contains("m3u8"))
     }
     
-    private fun processDirectVideoUrl(
+    private suspend fun processDirectVideoUrl(
         videoUrl: String,
         referer: String,
         name: String,
