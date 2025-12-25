@@ -50,7 +50,7 @@ object GoyabuExtractor {
             val streamResolver = WebViewResolver(
                 interceptUrl = Regex("""(anivideo\.net|videohls\.php|\.m3u8)"""),
                 useOkhttp = false,
-                timeout = 60_000L
+                timeout = 20_000L
             )
 
             println("🌐 Iniciando WebView (60s timeout)...")
