@@ -7,17 +7,12 @@ import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import org.jsoup.Jsoup
 
 object GoyabuExtractor {
-    // Mapa de itag para qualidade
+    // Mapa de itag para qualidade (APENAS para Blogger/Google Video)
     private val itagQualityMap = mapOf(
-        5 to 240,    // 240p FLV
         18 to 360,   // 360p MP4
         22 to 720,   // 720p MP4
         37 to 1080,  // 1080p MP4
         59 to 480,   // 480p MP4
-        43 to 360,   // 360p WebM
-        44 to 480,   // 480p WebM
-        45 to 720,   // 720p WebM
-        46 to 1080,  // 1080p WebM
         133 to 240,  // 240p MP4
         134 to 360,  // 360p MP4
         135 to 480,  // 480p MP4
@@ -29,8 +24,6 @@ object GoyabuExtractor {
         244 to 480,  // 480p WebM
         247 to 720,  // 720p WebM
         248 to 1080, // 1080p WebM
-        271 to 1440, // 1440p WebM
-        313 to 2160, // 4K WebM
     )
     
     suspend fun extractVideoLinks(
@@ -38,23 +31,15 @@ object GoyabuExtractor {
         name: String,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        println("🎬 GOYABU EXTRACTOR: Iniciando extração para: $url")
+        println("🎬 GOYABU EXTRACTOR: Buscando vídeos em: $url")
         
         return try {
-            // Carregar a página do episódio com headers completos
             val pageResponse = app.get(
                 url,
                 headers = mapOf(
                     "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                    "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-                    "Accept-Language" to "pt-BR,pt;q=0.9,en;q=0.8",
                     "Referer" to "https://goyabu.io/",
-                    "DNT" to "1",
-                    "Connection" to "keep-alive",
-                    "Upgrade-Insecure-Requests" to "1",
-                    "Sec-Fetch-Dest" to "document",
-                    "Sec-Fetch-Mode" to "navigate",
-                    "Sec-Fetch-Site" to "same-origin"
+                    "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
                 ),
                 timeout = 30
             )
@@ -62,151 +47,191 @@ object GoyabuExtractor {
             val html = pageResponse.text
             val doc = Jsoup.parse(html)
             
-            // 🆕 LOG PARA DEBUG: Mostrar onde o link foi encontrado
-            println("🔍 ANALISANDO HTML da página...")
-            
-            // PRIMEIRO: Procurar por links M3U8 diretamente (teste rápido)
-            println("🔍 GOYABU EXTRACTOR: Procurando links M3U8...")
-            val m3u8Elements = doc.select("""
-                [src*=".m3u8"],
-                [data-src*=".m3u8"],
-                [href*=".m3u8"],
-                source[src*=".m3u8"],
-                [src*="m3u8"],
-                [data-src*="m3u8"]
-            """.trimIndent())
-            
-            m3u8Elements.forEach { element ->
-                val m3u8Url = element.attr("src") 
-                    ?: element.attr("data-src") 
-                    ?: element.attr("href")
-                
-                if (m3u8Url.isNotBlank() && isValidVideoUrl(m3u8Url)) {
-                    println("✅ Link M3U8 encontrado em ELEMENTO HTML: ${element.tagName()}")
-                    println("   Atributos: ${element.attributes()}")
-                    println("   URL encontrada: ${m3u8Url.take(80)}...")
-                    if (processVideoUrl(m3u8Url, url, name, callback)) {
-                        return@extractVideoLinks true
-                    }
-                }
-            }
-            
-            // Procurar por texto M3U8 no HTML
-            val bodyText = doc.body()?.text() ?: ""
-            val m3u8Pattern = """https?://[^"'\s]*\.m3u8[^"'\s]*""".toRegex()
-            val m3u8Matches = m3u8Pattern.findAll(bodyText)
-            
-            m3u8Matches.forEach { match ->
-                val m3u8Url = match.value
-                if (isValidVideoUrl(m3u8Url)) {
-                    println("✅ Link M3U8 encontrado no TEXTO da página")
-                    println("   URL encontrada: ${m3u8Url.take(80)}...")
-                    if (processVideoUrl(m3u8Url, url, name, callback)) {
-                        return@extractVideoLinks true
-                    }
-                }
-            }
-            
-            // MÉTODO 1: Procurar por iframes dinâmicos no JavaScript
-            if (extractFromJavaScript(doc, url, name, callback)) {
-                println("✅ GOYABU EXTRACTOR: Vídeo via JavaScript encontrado")
+            // 🔍 PRIMEIRO: Procurar M3U8 (STCode Player) - mais comum agora
+            println("1️⃣ Buscando M3U8 (STCode Player)...")
+            if (extractM3U8Urls(doc, url, name, callback)) {
+                println("✅ M3U8 encontrado!")
                 return true
             }
             
-            // MÉTODO 2: Procurar por URLs de vídeo diretas no HTML
-            if (extractDirectVideoUrls(doc, url, name, callback)) {
-                println("✅ GOYABU EXTRACTOR: Vídeo direto encontrado")
+            // 🔍 SEGUNDO: Procurar Blogger/Google Video
+            println("2️⃣ Buscando Blogger/Google Video...")
+            if (extractBloggerUrls(doc, url, name, callback)) {
+                println("✅ Blogger encontrado!")
                 return true
             }
             
-            // MÉTODO 3: Procurar por iframes estáticos
-            if (extractStaticIframes(doc, url, name, callback)) {
-                println("✅ GOYABU EXTRACTOR: Iframe estático encontrado")
-                return true
-            }
-            
-            // MÉTODO 4: Procurar por dados embed em divs
-            if (extractEmbeddedData(doc, url, name, callback)) {
-                println("✅ GOYABU EXTRACTOR: Dados embed encontrados")
-                return true
-            }
-            
-            println("❌ GOYABU EXTRACTOR: Nenhum vídeo encontrado")
+            println("❌ Nenhum vídeo encontrado")
             false
             
         } catch (e: Exception) {
-            println("❌ GOYABU EXTRACTOR: Erro na extração: ${e.message}")
+            println("❌ Erro na extração: ${e.message}")
             false
         }
     }
     
-    // MÉTODO 1: Extrair de JavaScript (onde o iframe é carregado dinamicamente)
-    private suspend fun extractFromJavaScript(
+    // ==================== MÉTODO 1: M3U8 (STCode Player) ====================
+    private suspend fun extractM3U8Urls(
         doc: org.jsoup.nodes.Document,
         originalUrl: String,
         name: String,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        println("🔍 GOYABU EXTRACTOR: Procurando vídeos em JavaScript...")
-        
+        // Buscar em scripts JavaScript
         val scripts = doc.select("script")
         var found = false
         
-        scripts.forEachIndexed { index, script ->
+        scripts.forEach { script ->
             val scriptContent = script.html()
             
-            // 🆕 LOG PARA DEBUG: Verificar scripts que contêm anivideo
-            if (scriptContent.contains("anivideo") || scriptContent.contains("m3u8")) {
-                println("🎯 Script #$index CONTÉM 'anivideo' ou 'm3u8'")
-                println("   Tamanho: ${scriptContent.length} chars")
-                
-                // Mostrar linhas relevantes
-                val lines = scriptContent.split("\n")
-                lines.forEachIndexed { i, line ->
-                    if (line.contains("anivideo") || line.contains("m3u8") || line.contains("videohls")) {
-                        println("   Linha $i: ${line.trim().take(150)}...")
-                    }
-                }
-            }
-            
-            // Padrões para encontrar URLs do Blogger/Google Video
+            // Padrões específicos para STCode Player/anivideo
             val patterns = listOf(
-                // Padrão 1: blogspot.com/video.g?token=...
-                """https?://[^"'\s]*blogger\.com/video\.g\?[^"'\s]*""".toRegex(),
-                // Padrão 2: video.g?token=...
-                """video\.g\?[^"'\s]*token=[^"'\s]*""".toRegex(),
-                // Padrão 3: googlevideo.com/videoplayback
-                """https?://[^"'\s]*\.googlevideo\.com/[^"'\s]*videoplayback[^"'\s]*""".toRegex(),
-                // Padrão 4: URLs do Google Video com itag
-                """https?://[^"'\s]*\.googlevideo\.com/[^"'\s]*itag=\d+[^"'\s]*""".toRegex(),
-                // Padrão 5: Data do iframe (data-src, data-url, etc)
-                """(?:src|data-src|data-url|url)\s*[:=]\s*['"](https?://[^"']+)['"]""".toRegex(),
-                // Padrão 6: URLs em configurações JSON
-                """"(?:play_url|url|src|source)"\s*:\s*"([^"]+)"""".toRegex(),
-                // 🆕 Padrão 7: Links M3U8 em JavaScript
-                """"(?:m3u8_url|hls_url|stream_url)"\s*:\s*"([^"]+)"""".toRegex(),
+                """api\.anivideo\.net/videohls\.php[^"'\s]*""".toRegex(),
                 """https?://[^"'\s]*\.m3u8[^"'\s]*""".toRegex(),
-                // 🆕 Padrão específico para STCode Player
-                """"(?:file|video|src)"\s*:\s*"([^"]*api\.anivideo[^"]+)"""".toRegex(),
-                """api\.anivideo\.net/videohls\.php[^"'\s]*""".toRegex()
+                """"(?:file|video|src|url)"\s*:\s*"([^"']*api\.anivideo[^"']+)"""".toRegex()
             )
             
             for (pattern in patterns) {
                 val matches = pattern.findAll(scriptContent)
-                
                 matches.forEach { match ->
                     var videoUrl = match.value
                     
-                    // Se for um padrão de chave-valor JSON, extrair o valor
+                    // Extrair de JSON se necessário
                     if (pattern.pattern.contains("""["']\s*:\s*["']""")) {
                         val group = match.groupValues.getOrNull(1)
-                        if (group != null) {
-                            videoUrl = group
-                            println("📦 Extraído de JSON: $videoUrl")
-                        }
+                        if (group != null) videoUrl = group
                     }
                     
-                    // Se for um caminho relativo, transformar em URL completa
+                    if (isM3U8Url(videoUrl)) {
+                        println("📦 M3U8 encontrado em script")
+                        if (processM3U8Url(videoUrl, originalUrl, name, callback)) {
+                            found = true
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Buscar em elementos HTML
+        val elements = doc.select("""
+            [src*=".m3u8"],
+            [data-src*=".m3u8"],
+            [href*=".m3u8"]
+        """.trimIndent())
+        
+        elements.forEach { element ->
+            val m3u8Url = element.attr("src") 
+                ?: element.attr("data-src") 
+                ?: element.attr("href")
+            
+            if (m3u8Url.isNotBlank() && isM3U8Url(m3u8Url)) {
+                println("📦 M3U8 encontrado em elemento HTML")
+                if (processM3U8Url(m3u8Url, originalUrl, name, callback)) {
+                    found = true
+                }
+            }
+        }
+        
+        return found
+    }
+    
+    private suspend fun processM3U8Url(
+        m3u8Url: String,
+        referer: String,
+        name: String,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        try {
+            var url = cleanUrl(m3u8Url)
+            println("🔧 URL limpa: ${url.take(80)}...")
+            
+            // Extrair M3U8 real do STCode Player
+            if (url.contains("api.anivideo.net/videohls.php")) {
+                val dParamRegex = """[?&]d=([^&]+)""".toRegex()
+                val match = dParamRegex.find(url)
+                
+                match?.let {
+                    val encodedUrl = it.groupValues[1]
+                    try {
+                        url = java.net.URLDecoder.decode(encodedUrl, "UTF-8")
+                        println("✅ M3U8 extraído do parâmetro 'd'")
+                    } catch (e: Exception) {
+                        println("⚠️ Não foi possível decodificar URL")
+                    }
+                }
+            }
+            
+            if (!url.contains(".m3u8") && !url.contains("m3u8")) {
+                return false
+            }
+            
+            val quality = determineM3U8Quality(url)
+            val qualityLabel = getQualityLabel(quality)
+            
+            println("✅ Criando link M3U8: $qualityLabel")
+            
+            val extractorLink = newExtractorLink(
+                source = "Goyabu",
+                name = "$name ($qualityLabel) [HLS]",
+                url = url,
+                type = ExtractorLinkType.M3U8
+            ) {
+                this.referer = referer
+                this.quality = quality
+                this.headers = mapOf(
+                    "Referer" to referer,
+                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                )
+            }
+            
+            callback(extractorLink)
+            return true
+            
+        } catch (e: Exception) {
+            println("❌ Erro ao processar M3U8: ${e.message}")
+            return false
+        }
+    }
+    
+    // ==================== MÉTODO 2: Blogger/Google Video ====================
+    private suspend fun extractBloggerUrls(
+        doc: org.jsoup.nodes.Document,
+        originalUrl: String,
+        name: String,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        var found = false
+        
+        // 1. Buscar iframes do Blogger
+        val iframes = doc.select("iframe[src*='blogger.com'], iframe[src*='video.g']")
+        iframes.forEach { iframe ->
+            val src = iframe.attr("src").trim()
+            if (src.isNotBlank() && (src.contains("blogger.com") || src.contains("video.g"))) {
+                println("📺 Iframe do Blogger encontrado")
+                if (processBloggerIframe(src, originalUrl, name, callback)) {
+                    found = true
+                }
+            }
+        }
+        
+        // 2. Buscar em scripts JavaScript
+        val scripts = doc.select("script")
+        scripts.forEach { script ->
+            val scriptContent = script.html()
+            
+            val patterns = listOf(
+                """https?://[^"'\s]*blogger\.com/video\.g\?[^"'\s]*""".toRegex(),
+                """video\.g\?[^"'\s]*token=[^"'\s]*""".toRegex(),
+                """https?://[^"'\s]*\.googlevideo\.com/[^"'\s]*videoplayback[^"'\s]*""".toRegex(),
+                """https?://[^"'\s]*\.googlevideo\.com/[^"'\s]*itag=\d+[^"'\s]*""".toRegex()
+            )
+            
+            for (pattern in patterns) {
+                val matches = pattern.findAll(scriptContent)
+                matches.forEach { match ->
+                    var videoUrl = match.value
+                    
+                    // Converter URL relativa para absoluta
                     if (videoUrl.startsWith("//")) {
                         videoUrl = "https:$videoUrl"
                     } else if (videoUrl.startsWith("/") || videoUrl.startsWith("./")) {
@@ -215,11 +240,9 @@ object GoyabuExtractor {
                         videoUrl = "https://www.blogger.com/$videoUrl"
                     }
                     
-                    if (isValidVideoUrl(videoUrl)) {
-                        println("✅ URL encontrada no SCRIPT #$index: ${videoUrl.take(80)}...")
-                        println("   Padrão usado: ${pattern.pattern.take(50)}...")
-                        
-                        if (processVideoUrl(videoUrl, originalUrl, name, callback)) {
+                    if (isBloggerUrl(videoUrl)) {
+                        println("📺 URL do Blogger encontrada em script")
+                        if (processBloggerVideoUrl(videoUrl, originalUrl, name, callback)) {
                             found = true
                         }
                     }
@@ -230,417 +253,13 @@ object GoyabuExtractor {
         return found
     }
     
-    // MÉTODO 2: Extrair URLs diretas de vídeo
-    private suspend fun extractDirectVideoUrls(
-        doc: org.jsoup.nodes.Document,
-        originalUrl: String,
-        name: String,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        println("🔍 GOYABU EXTRACTOR: Procurando URLs diretas...")
-        
-        var found = false
-        
-        // Atualizado para incluir M3U8
-        val elements = doc.select("""
-            [src*="googlevideo.com"],
-            [data-src*="googlevideo.com"],
-            [data-url*="googlevideo.com"],
-            [href*="googlevideo.com"],
-            [src*=".m3u8"],
-            [data-src*=".m3u8"],
-            [href*=".m3u8"],
-            [src*="anivideo.net"],
-            [data-src*="anivideo.net"],
-            video source,
-            [data-video],
-            [data-player],
-            [data-embed]
-        """.trimIndent())
-        
-        elements.forEach { element ->
-            val videoUrl = element.attr("src")
-                ?: element.attr("data-src")
-                ?: element.attr("data-url")
-                ?: element.attr("href")
-                ?: element.attr("data-video")
-                ?: element.attr("data-player")
-                ?: element.attr("data-embed")
-            
-            if (videoUrl.isNotBlank() && isValidVideoUrl(videoUrl)) {
-                println("✅ URL DIRETA encontrada no ELEMENTO: ${element.tagName()}")
-                println("   URL: ${videoUrl.take(80)}...")
-                println("   Atributos: ${element.attributes()}")
-                
-                if (processVideoUrl(videoUrl, originalUrl, name, callback)) {
-                    found = true
-                }
-            }
-        }
-        
-        // Procurar por texto que contenha URLs de vídeo
-        val bodyText = doc.body()?.text() ?: ""
-        // Atualizado para incluir M3U8
-        val videoPatterns = listOf(
-            """https?://[^"'\s]*\.googlevideo\.com/[^"'\s]*""".toRegex(),
-            """https?://[^"'\s]*\.m3u8[^"'\s]*""".toRegex(),
-            """api\.anivideo\.net[^"'\s]*""".toRegex()
-        )
-        
-        videoPatterns.forEach { pattern ->
-            val matches = pattern.findAll(bodyText)
-            matches.forEach { match ->
-                val videoUrl = match.value
-                if (isValidVideoUrl(videoUrl)) {
-                    println("✅ URL encontrada no TEXTO da página")
-                    println("   Padrão: ${pattern.pattern.take(30)}...")
-                    println("   URL: ${videoUrl.take(80)}...")
-                    
-                    if (processVideoUrl(videoUrl, originalUrl, name, callback)) {
-                        found = true
-                    }
-                }
-            }
-        }
-        
-        return found
-    }
-    
-    // MÉTODO 3: Extrair iframes estáticos
-    private suspend fun extractStaticIframes(
-        doc: org.jsoup.nodes.Document,
-        originalUrl: String,
-        name: String,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        println("🔍 GOYABU EXTRACTOR: Procurando iframes estáticos...")
-        
-        val iframes = doc.select("iframe")
-        var found = false
-        
-        iframes.forEachIndexed { index, iframe ->
-            val src = iframe.attr("src").trim()
-            if (src.isNotBlank()) {
-                println("🔍 Iframe encontrado (#${index + 1}): ${src.take(80)}...")
-                
-                // Verificar se é um iframe com conteúdo M3U8
-                if (src.contains("m3u8") || src.contains(".m3u8") || src.contains("anivideo.net")) {
-                    println("✅ Iframe M3U8/anivideo encontrado")
-                    if (processVideoUrl(src, originalUrl, name, callback)) {
-                        found = true
-                    }
-                }
-                // Se for um iframe do Blogger
-                else if (src.contains("blogger.com") || src.contains("video.g")) {
-                    println("✅ Iframe do Blogger encontrado")
-                    
-                    // Acessar o iframe e extrair vídeos
-                    val iframeResponse = try {
-                        app.get(
-                            src,
-                            headers = mapOf(
-                                "Referer" to originalUrl,
-                                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-                            )
-                        )
-                    } catch (e: Exception) {
-                        println("❌ Erro ao acessar iframe: ${e.message}")
-                        return@forEachIndexed
-                    }
-                    
-                    val iframeHtml = iframeResponse.text
-                    val iframeDoc = Jsoup.parse(iframeHtml)
-                    
-                    // Extrair URLs de vídeo do iframe
-                    if (extractDirectVideoUrls(iframeDoc, src, name, callback)) {
-                        found = true
-                    }
-                    
-                    // Procurar no JavaScript do iframe
-                    if (extractFromJavaScript(iframeDoc, src, name, callback)) {
-                        found = true
-                    }
-                }
-            }
-        }
-        
-        return found
-    }
-    
-    // MÉTODO 4: Extrair dados embed de divs
-    private suspend fun extractEmbeddedData(
-        doc: org.jsoup.nodes.Document,
-        originalUrl: String,
-        name: String,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        println("🔍 GOYABU EXTRACTOR: Procurando dados embed...")
-        
-        // Procurar por divs que possam conter dados de vídeo
-        val embedDivs = doc.select("""
-            div[data-player],
-            div[data-video],
-            div[data-embed],
-            div[id*="player"],
-            div[class*="player"],
-            div[id*="video"],
-            div[class*="video"],
-            #player,
-            #video-player,
-            .video-player,
-            .player-container
-        """.trimIndent())
-        
-        var found = false
-        
-        embedDivs.forEach { div ->
-            // Extrair dados do atributo data-*
-            val dataVideo = div.attr("data-video")
-            val dataPlayer = div.attr("data-player")
-            val dataEmbed = div.attr("data-embed")
-            
-            val videoUrl = dataVideo.takeIf { it.isNotBlank() }
-                ?: dataPlayer.takeIf { it.isNotBlank() }
-                ?: dataEmbed.takeIf { it.isNotBlank() }
-            
-            if (videoUrl != null && isValidVideoUrl(videoUrl)) {
-                println("✅ Dados EMBED encontrados em DIV")
-                println("   URL: ${videoUrl.take(80)}...")
-                println("   Classe: ${div.className()}")
-                
-                if (processVideoUrl(videoUrl, originalUrl, name, callback)) {
-                    found = true
-                }
-            }
-            
-            // Verificar também o conteúdo HTML da div
-            val html = div.html()
-            // Atualizado para incluir M3U8
-            val videoPatterns = listOf(
-                """https?://[^"'\s]*\.googlevideo\.com/[^"'\s]*""".toRegex(),
-                """https?://[^"'\s]*\.m3u8[^"'\s]*""".toRegex()
-            )
-            
-            videoPatterns.forEach { pattern ->
-                val matches = pattern.findAll(html)
-                matches.forEach { match ->
-                    val url = match.value
-                    if (isValidVideoUrl(url)) {
-                        println("✅ URL encontrada dentro de DIV embed")
-                        println("   URL: ${url.take(80)}...")
-                        
-                        if (processVideoUrl(url, originalUrl, name, callback)) {
-                            found = true
-                        }
-                    }
-                }
-            }
-        }
-        
-        return found
-    }
-    
-    // 🆕 FUNÇÃO: Processar links M3U8/HLS (VERSÃO CORRIGIDA - ÚNICA)
-    private suspend fun processM3U8Url(
-        m3u8Url: String,
-        referer: String,
-        name: String,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        println("🔗 GOYABU EXTRACTOR: Processando link M3U8/HLS")
-        
-        return try {
-            // CORREÇÃO 1: Limpar a URL de aspas e barras invertidas extras
-            var finalUrl = m3u8Url.trim()
-            
-            // Remover aspas e caracteres JSON indesejados
-            if (finalUrl.startsWith("\"url\":\"")) {
-                finalUrl = finalUrl.removePrefix("\"url\":\"")
-            }
-            if (finalUrl.startsWith("\"")) {
-                finalUrl = finalUrl.removePrefix("\"")
-            }
-            if (finalUrl.endsWith("\"")) {
-                finalUrl = finalUrl.removeSuffix("\"")
-            }
-            
-            // Remover barras invertidas de escape
-            finalUrl = finalUrl.replace("\\/", "/")
-            
-            println("🔧 URL após limpeza: ${finalUrl.take(100)}...")
-            
-            // Se for a URL do STCode Player com parâmetro 'd', extrair o link real
-            if (finalUrl.contains("api.anivideo.net/videohls.php")) {
-                val dParamRegex = """[?&]d=([^&]+)""".toRegex()
-                val match = dParamRegex.find(finalUrl)
-                
-                match?.let {
-                    val encodedUrl = it.groupValues[1]
-                    try {
-                        finalUrl = java.net.URLDecoder.decode(encodedUrl, "UTF-8")
-                        println("✅ URL M3U8 extraída do parâmetro 'd': ${finalUrl.take(80)}...")
-                    } catch (e: Exception) {
-                        println("⚠️ Não foi possível decodificar URL, usando original")
-                    }
-                }
-            }
-            
-            // Verificar se é realmente um link M3U8
-            if (!finalUrl.contains(".m3u8") && !finalUrl.contains("m3u8")) {
-                println("❌ URL não é M3U8 válida: ${finalUrl.take(50)}...")
-                return false
-            }
-            
-            // CORREÇÃO 2: Garantir que a URL começa com http:// ou https://
-            if (!finalUrl.startsWith("http://") && !finalUrl.startsWith("https://")) {
-                finalUrl = "https://$finalUrl"
-            }
-            
-            // 🆕 LOG PARA RASTREAR: Mostrar de onde veio o link
-            println("📌 Link M3U8 processado (URL limpa): ${finalUrl.take(80)}...")
-            
-            // Determinar qualidade REALISTA (não acreditar em "4K" do nome)
-            val quality = determineM3U8Quality(finalUrl, name)
-            val qualityLabel = getQualityLabel(quality)
-            
-            println("✅ Link M3U8 válido encontrado: $qualityLabel")
-            
-            // Criar ExtractorLink para M3U8
-            val extractorLink = newExtractorLink(
-                source = "Goyabu M3U8",
-                name = "$name ($qualityLabel) [HLS]",
-                url = finalUrl,  // URL limpa
-                type = ExtractorLinkType.M3U8
-            ) {
-                this.referer = referer
-                this.quality = quality
-                this.headers = mapOf(
-                    "Referer" to referer,
-                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                    "Accept" to "*/*",
-                    "Accept-Language" to "pt-BR,pt;q=0.9,en;q=0.8"
-                )
-            }
-            
-            callback(extractorLink)
-            true
-            
-        } catch (e: Exception) {
-            println("❌ Erro ao processar M3U8: ${e.message}")
-            false
-        }
-    }
-    
-    // Processar uma URL de vídeo (ATUALIZADA para suportar M3U8)
-    private suspend fun processVideoUrl(
-        videoUrl: String,
-        referer: String,
-        name: String,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        println("🎯 PROCESS VIDEO URL: Analisando URL: ${videoUrl.take(80)}...")
-        
-        return try {
-            var url = videoUrl
-            
-            // 🆕 Limpar URL antes de qualquer processamento
-            url = cleanUrl(url)
-            println("🔍 URL após limpeza inicial: ${url.take(80)}...")
-            
-            // Limpar URL
-            if (url.contains("&amp;")) {
-                url = url.replace("&amp;", "&")
-            }
-            
-            // DECISÃO: Que tipo de link é este?
-            when {
-                // 1. É um link M3U8/HLS?
-                url.contains("m3u8") || url.contains(".m3u8") || url.contains("anivideo.net") -> {
-                    println("📦 Identificado como M3U8/HLS")
-                    return processM3U8Url(url, referer, name, callback)
-                }
-                
-                // 2. É um link do Blogger/Google Video?
-                url.contains("blogger.com/video.g") -> {
-                    println("📦 Identificado como Blogger/Google Video")
-                    return processBloggerIframe(url, referer, name, callback)
-                }
-                
-                // 3. É um link direto do Google Video?
-                url.contains("googlevideo.com") || url.contains("videoplayback") -> {
-                    println("📦 Identificado como Google Video direto")
-                    
-                    // Processamento original do Google Video
-                    val itag = extractItagFromUrl(url)
-                    val quality = itagQualityMap[itag] ?: 360
-                    val qualityLabel = getQualityLabel(quality)
-                    
-                    println("📹 Processando vídeo Google: $qualityLabel (itag: $itag)")
-                    
-                    val extractorLink = newExtractorLink(
-                        source = "Goyabu Blogger",
-                        name = "$name ($qualityLabel)",
-                        url = url,
-                        type = ExtractorLinkType.VIDEO
-                    ) {
-                        this.referer = referer
-                        this.quality = quality
-                        this.headers = mapOf(
-                            "Referer" to referer,
-                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                            "Origin" to "https://www.blogger.com",
-                            "Accept" to "*/*",
-                            "Accept-Language" to "pt-BR,pt;q=0.9,en;q=0.8"
-                        )
-                    }
-                    
-                    callback(extractorLink)
-                    return true
-                }
-                
-                else -> {
-                    println("❌ Tipo de URL não reconhecido: ${url.take(50)}...")
-                    return false
-                }
-            }
-            
-        } catch (e: Exception) {
-            println("❌ Erro ao processar URL: ${e.message}")
-            false
-        }
-    }
-    
-    // 🆕 FUNÇÃO AUXILIAR: Limpar URL
-    private fun cleanUrl(url: String): String {
-        var cleaned = url.trim()
-        
-        // Remover aspas extras
-        if (cleaned.startsWith("\"") && cleaned.endsWith("\"")) {
-            cleaned = cleaned.substring(1, cleaned.length - 1)
-        }
-        
-        // Remover prefixo JSON "url":
-        if (cleaned.startsWith("\"url\":\"")) {
-            cleaned = cleaned.substring(7)
-            if (cleaned.endsWith("\"")) {
-                cleaned = cleaned.substring(0, cleaned.length - 1)
-            }
-        }
-        
-        // Remover barras invertidas de escape
-        cleaned = cleaned.replace("\\/", "/")
-        
-        return cleaned
-    }
-    
-    // Processar iframe do Blogger
     private suspend fun processBloggerIframe(
         iframeUrl: String,
         referer: String,
         name: String,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        println("🔍 Processando iframe do Blogger: ${iframeUrl.take(80)}...")
+        println("🔍 Acessando iframe do Blogger: ${iframeUrl.take(80)}...")
         
         return try {
             val response = app.get(
@@ -653,19 +272,19 @@ object GoyabuExtractor {
             
             val html = response.text
             
-            // Procurar por URLs do Google Video no iframe
+            // Procurar URLs do Google Video no iframe
             val videoPattern = """https?://[^"'\s]*\.googlevideo\.com/[^"'\s]*""".toRegex()
             val matches = videoPattern.findAll(html)
             
             var found = false
             matches.forEach { match ->
                 val videoUrl = match.value
-                if (isValidVideoUrl(videoUrl)) {
+                if (isBloggerUrl(videoUrl)) {
                     val itag = extractItagFromUrl(videoUrl)
                     val quality = itagQualityMap[itag] ?: 360
                     val qualityLabel = getQualityLabel(quality)
                     
-                    println("📹 Vídeo do iframe: $qualityLabel")
+                    println("📹 Vídeo do Blogger: $qualityLabel (itag: $itag)")
                     
                     val extractorLink = newExtractorLink(
                         source = "Goyabu Blogger",
@@ -690,58 +309,125 @@ object GoyabuExtractor {
             found
             
         } catch (e: Exception) {
-            println("❌ Erro ao processar iframe: ${e.message}")
+            println("❌ Erro ao acessar iframe: ${e.message}")
             false
         }
     }
     
-    // 🆕 FUNÇÃO REALISTA para determinar qualidade
-    private fun determineM3U8Quality(url: String, name: String): Int {
-        val urlLower = url.lowercase()
-        
-        // NUNCA assumir 4K em streaming web - quase sempre é marketing
-        return when {
-            urlLower.contains("1080p") || urlLower.contains("fhd") -> 1080
-            urlLower.contains("720p") || urlLower.contains("hd") -> 720
-            urlLower.contains("480p") -> 480
-            urlLower.contains("360p") -> 360
-            // Sites com "4k" no nome geralmente são 720p na prática
-            urlLower.contains("4k-image") || urlLower.contains("4k-wallpaper") -> 720
-            // Padrão conservador para M3U8
-            else -> 720
+    private suspend fun processBloggerVideoUrl(
+        videoUrl: String,
+        referer: String,
+        name: String,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        return try {
+            var url = videoUrl
+            
+            // Se for iframe do Blogger, processar
+            if (url.contains("blogger.com/video.g")) {
+                return processBloggerIframe(url, referer, name, callback)
+            }
+            
+            // Se for link direto do Google Video
+            if (url.contains("googlevideo.com")) {
+                val itag = extractItagFromUrl(url)
+                val quality = itagQualityMap[itag] ?: 360
+                val qualityLabel = getQualityLabel(quality)
+                
+                println("📹 Vídeo Google direto: $qualityLabel (itag: $itag)")
+                
+                val extractorLink = newExtractorLink(
+                    source = "Goyabu Blogger",
+                    name = "$name ($qualityLabel)",
+                    url = url,
+                    type = ExtractorLinkType.VIDEO
+                ) {
+                    this.referer = referer
+                    this.quality = quality
+                    this.headers = mapOf(
+                        "Referer" to referer,
+                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                        "Origin" to "https://www.blogger.com"
+                    )
+                }
+                
+                callback(extractorLink)
+                return true
+            }
+            
+            false
+            
+        } catch (e: Exception) {
+            println("❌ Erro ao processar Blogger: ${e.message}")
+            false
         }
     }
     
-    // Verificar se é uma URL de vídeo válida (ATUALIZADA para M3U8)
-    private fun isValidVideoUrl(url: String): Boolean {
-        return url.contains("googlevideo.com") || 
-               url.contains("blogger.com/video.g") || 
-               url.contains("videoplayback") ||
-               url.contains("m3u8") ||
-               url.contains(".m3u8") ||
-               url.contains("anivideo.net")
+    // ==================== FUNÇÕES AUXILIARES ====================
+    private fun cleanUrl(url: String): String {
+        var cleaned = url.trim()
+        
+        // Remover aspas e JSON extras
+        if (cleaned.startsWith("\"url\":\"")) {
+            cleaned = cleaned.removePrefix("\"url\":\"")
+        }
+        if (cleaned.startsWith("\"")) {
+            cleaned = cleaned.removePrefix("\"")
+        }
+        if (cleaned.endsWith("\"")) {
+            cleaned = cleaned.removeSuffix("\"")
+        }
+        
+        // Remover barras invertidas
+        cleaned = cleaned.replace("\\/", "/")
+        
+        return cleaned
     }
     
-    // Extrair itag da URL
+    private fun determineM3U8Quality(url: String): Int {
+        val urlLower = url.lowercase()
+        
+        // Detecção realista para M3U8
+        return when {
+            urlLower.contains("1080") || urlLower.contains("fhd") -> 1080
+            urlLower.contains("720") || urlLower.contains("hd") -> 720
+            urlLower.contains("480") -> 480
+            urlLower.contains("360") -> 360
+            else -> 720 // Padrão para M3U8
+        }
+    }
+    
+    private fun getQualityLabel(quality: Int): String {
+        return when {
+            quality >= 2160 -> "4K"
+            quality >= 1440 -> "QHD"
+            quality >= 1080 -> "FHD"
+            quality >= 720 -> "HD"
+            quality >= 480 -> "SD"
+            else -> "SD"
+        }
+    }
+    
     private fun extractItagFromUrl(url: String): Int {
         val itagPattern = """[?&]itag=(\d+)""".toRegex()
         val match = itagPattern.find(url)
         return match?.groupValues?.get(1)?.toIntOrNull() ?: 18
     }
     
-    private fun getQualityLabel(quality: Int): String {
-        return when {
-            quality >= 2160 -> "4K*" // Asterisco para indicar suspeito
-            quality >= 1440 -> "QHD"
-            quality >= 1080 -> "FHD"
-            quality >= 720 -> "HD"
-            quality >= 480 -> "SD"
-            quality >= 360 -> "SD"
-            else -> "SD"
-        }
+    private fun isM3U8Url(url: String): Boolean {
+        return url.contains("m3u8") ||
+               url.contains(".m3u8") ||
+               url.contains("anivideo.net")
     }
     
-    // Função auxiliar para usar com lambda simples
+    private fun isBloggerUrl(url: String): Boolean {
+        return url.contains("googlevideo.com") ||
+               url.contains("blogger.com") ||
+               url.contains("video.g") ||
+               url.contains("videoplayback")
+    }
+    
+    // Função auxiliar para uso simples
     suspend fun extractVideoLinksSimple(url: String, name: String): List<ExtractorLink> {
         val links = mutableListOf<ExtractorLink>()
         extractVideoLinks(url, name) { link ->
