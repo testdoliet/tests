@@ -8,7 +8,6 @@ import com.lagradost.cloudstream3.app
 import org.jsoup.nodes.Element
 import com.fasterxml.jackson.annotation.JsonProperty
 import java.text.SimpleDateFormat
-import java.util.*
 
 class SuperFlix : MainAPI() {
     override var mainUrl = "https://superflix21.lol"
@@ -21,14 +20,6 @@ class SuperFlix : MainAPI() {
 
     private val TMDB_PROXY_URL = "https://lawliet.euluan1912.workers.dev"
     private val tmdbImageUrl = "https://image.tmdb.org/t/p"
-
-    // URLs alternativas para extração de trailers do YouTube
-    private val YOUTUBE_PROXY_SERVICES = listOf(
-        "https://pipedapi.kavin.rocks",
-        "https://inv.riverside.rocks",
-        "https://yt.lemnoslife.com",
-        "https://yewtu.be"
-    )
 
     override val mainPage = mainPageOf(
         "$mainUrl/lancamentos" to "Lançamentos",
@@ -260,7 +251,7 @@ class SuperFlix : MainAPI() {
     private fun getHighQualityTrailer(videos: List<TMDBVideo>?): String? {
         if (videos.isNullOrEmpty()) return null
 
-        val trailer = videos.mapNotNull { video ->
+        return videos.mapNotNull { video ->
             when {
                 video.site == "YouTube" && video.type == "Trailer" && video.official == true ->
                     Triple(video.key, 10, "YouTube Trailer Oficial")
@@ -275,12 +266,7 @@ class SuperFlix : MainAPI() {
         }
         ?.sortedByDescending { it.second }
         ?.firstOrNull()
-        ?.let { (key, _, _) -> 
-            // Retorna URL que pode ser processada pelo extractor customizado
-            "https://www.youtube.com/watch?v=$key"
-        }
-
-        return trailer
+        ?.let { (key, _, _) -> "https://www.youtube.com/watch?v=$key" }
     }
 
     private suspend fun extractEpisodesFromSite(
@@ -308,7 +294,7 @@ class SuperFlix : MainAPI() {
                         this.name = "Episódio $epNumber"
                         this.season = seasonNumber
                         this.episode = epNumber
-
+                        
                         element.selectFirst(".ep-desc, .description")?.text()?.trim()?.let { desc ->
                             if (desc.isNotBlank()) {
                                 this.description = desc
@@ -364,7 +350,7 @@ class SuperFlix : MainAPI() {
                 null
             }
         }
-
+        
         return recommendations
     }
 
@@ -390,7 +376,7 @@ class SuperFlix : MainAPI() {
 
         return if (isAnime || isSerie) {
             val type = if (isAnime) TvType.Anime else TvType.TvSeries
-
+            
             val episodes = extractEpisodesFromSite(document, url, isAnime, isSerie)
 
             newTvSeriesLoadResponse(title, url, type, episodes) {
@@ -402,7 +388,7 @@ class SuperFlix : MainAPI() {
             }
         } else {
             val playerUrl = findPlayerUrl(document)
-
+            
             newMovieLoadResponse(title, url, TvType.Movie, playerUrl ?: url) {
                 this.posterUrl = poster
                 this.year = year
@@ -583,12 +569,12 @@ class SuperFlix : MainAPI() {
         if (playButton != null) {
             return playButton.attr("data-url")
         }
-
+        
         val iframe = document.selectFirst("iframe[src*='fembed'], iframe[src*='filemoon'], iframe[src*='player'], iframe[src*='embed']")
         if (iframe != null) {
             return iframe.attr("src")
         }
-
+        
         val videoLink = document.selectFirst("a[href*='.m3u8'], a[href*='.mp4'], a[href*='watch']")
         return videoLink?.attr("href")
     }
@@ -599,178 +585,7 @@ class SuperFlix : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // Verifica se é um trailer do YouTube
-        if (data.contains("youtube.com/watch") || data.contains("youtu.be/")) {
-            return extractYouTubeLinks(data, subtitleCallback, callback)
-        }
-        
-        // Caso contrário, usa o extractor normal do SuperFlix
         return SuperFlixExtractor.extractVideoLinks(data, mainUrl, name, callback)
-    }
-
-    private suspend fun extractYouTubeLinks(
-        url: String,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        try {
-            val videoId = extractYouTubeId(url) ?: return false
-            
-            // Tentar diferentes métodos de extração
-            return try {
-                // Método 1: Usar Piped API
-                extractFromPipedAPI(videoId, subtitleCallback, callback)
-            } catch (e: Exception) {
-                // Método 2: Usar Invidious API
-                try {
-                    extractFromInvidiousAPI(videoId, subtitleCallback, callback)
-                } catch (e: Exception) {
-                    // Método 3: Fallback para embed simples
-                    callback.invoke(
-                        ExtractorLink(
-                            name = "YouTube Trailer",
-                            source = "YouTube",
-                            url = "https://www.youtube.com/embed/$videoId?autoplay=1",
-                            quality = Qualities.Unknown.value,
-                            headers = mapOf(
-                                "User-Agent" to "Mozilla/5.0",
-                                "Referer" to "https://www.youtube.com/"
-                            ),
-                            isM3u8 = false
-                        )
-                    )
-                    true
-                }
-            }
-        } catch (e: Exception) {
-            return false
-        }
-    }
-
-    private fun extractYouTubeId(url: String): String? {
-        val patterns = listOf(
-            "youtube\\.com/watch\\?v=([a-zA-Z0-9_-]{11})",
-            "youtu\\.be/([a-zA-Z0-9_-]{11})",
-            "youtube\\.com/embed/([a-zA-Z0-9_-]{11})",
-            "v=([a-zA-Z0-9_-]{11})"
-        )
-        
-        for (pattern in patterns) {
-            Regex(pattern, RegexOption.IGNORE_CASE).find(url)?.let {
-                return it.groupValues[1]
-            }
-        }
-        return null
-    }
-
-    private suspend fun extractFromPipedAPI(
-        videoId: String,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        val apiUrl = "https://pipedapi.kavin.rocks/streams/$videoId"
-        val response = app.get(apiUrl, timeout = 15000)
-        
-        if (response.code != 200) return false
-        
-        val data = response.parsedSafe<JsonElement>() ?: return false
-        
-        // Extrair vídeos com áudio incluído
-        val videoStreams = data.obj["videoStreams"]?.array ?: return false
-        
-        for (stream in videoStreams) {
-            val url = stream.obj["url"]?.string ?: continue
-            val quality = stream.obj["quality"]?.string ?: continue
-            val mimeType = stream.obj["mimeType"]?.string ?: ""
-            
-            // Verificar se tem áudio incluído
-            if (mimeType.contains("video/mp4") || mimeType.contains("video/webm")) {
-                callback.invoke(
-                    ExtractorLink(
-                        name = "YouTube ($quality)",
-                        source = "YouTube",
-                        url = url,
-                        quality = parseYouTubeQuality(quality),
-                        headers = mapOf(
-                            "User-Agent" to "Mozilla/5.0",
-                            "Referer" to "https://www.youtube.com/"
-                        )
-                    )
-                )
-            }
-        }
-        
-        // Extrair legendas
-        val subtitles = data.obj["subtitles"]?.array
-        subtitles?.forEach { sub ->
-            val label = sub.obj["name"]?.string ?: sub.obj["code"]?.string ?: "Unknown"
-            val url = sub.obj["url"]?.string
-            val autoGenerated = sub.obj["autoGenerated"]?.bool == true
-            
-            if (url != null && !autoGenerated) {
-                subtitleCallback.invoke(
-                    SubtitleFile(
-                        label,
-                        url
-                    )
-                )
-            }
-        }
-        
-        return true
-    }
-
-    private suspend fun extractFromInvidiousAPI(
-        videoId: String,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        val apiUrl = "https://inv.riverside.rocks/api/v1/videos/$videoId"
-        val response = app.get(apiUrl, timeout = 15000)
-        
-        if (response.code != 200) return false
-        
-        val data = response.parsedSafe<JsonElement>() ?: return false
-        
-        // Extrair formatos mesclados
-        val formatStreams = data.obj["formatStreams"]?.array ?: return false
-        
-        for (format in formatStreams) {
-            val url = format.obj["url"]?.string ?: continue
-            val quality = format.obj["quality"]?.string ?: continue
-            val type = format.obj["type"]?.string ?: ""
-            
-            if (type.contains("video/mp4") || type.contains("video/webm")) {
-                callback.invoke(
-                    ExtractorLink(
-                        name = "YouTube ($quality)",
-                        source = "YouTube",
-                        url = url,
-                        quality = parseYouTubeQuality(quality),
-                        headers = mapOf(
-                            "User-Agent" to "Mozilla/5.0",
-                            "Referer" to "https://www.youtube.com/"
-                        )
-                    )
-                )
-            }
-        }
-        
-        return true
-    }
-
-    private fun parseYouTubeQuality(qualityStr: String): Int {
-        return when {
-            qualityStr.contains("144") -> Qualities.P144.value
-            qualityStr.contains("240") -> Qualities.P240.value
-            qualityStr.contains("360") -> Qualities.P360.value
-            qualityStr.contains("480") -> Qualities.P480.value
-            qualityStr.contains("720") -> Qualities.P720.value
-            qualityStr.contains("1080") -> Qualities.P1080.value
-            qualityStr.contains("1440") -> Qualities.P1440.value
-            qualityStr.contains("2160") || qualityStr.contains("4K") -> Qualities.P2160.value
-            else -> Qualities.Unknown.value
-        }
     }
 
     private data class TMDBInfo(
@@ -856,20 +671,4 @@ class SuperFlix : MainAPI() {
         @JsonProperty("type") val type: String,
         @JsonProperty("official") val official: Boolean? = false
     )
-}
-
-// Extractor para o SuperFlix (separado)
-class SuperFlixExtractor {
-    companion object {
-        suspend fun extractVideoLinks(
-            data: String,
-            mainUrl: String,
-            sourceName: String,
-            callback: (ExtractorLink) -> Unit
-        ): Boolean {
-            // Sua lógica de extração existente aqui
-            // ...
-            return true
-        }
-    }
 }
