@@ -621,6 +621,110 @@ object GoyabuExtractor {
             false
         }
     }
+// 🆕 FUNÇÃO NOVA: Processar links M3U8/HLS (VERSÃO CORRIGIDA)
+private suspend fun processM3U8Url(
+    m3u8Url: String,
+    referer: String,
+    name: String,
+    callback: (ExtractorLink) -> Unit
+): Boolean {
+    println("🔗 GOYABU EXTRACTOR: Processando link M3U8/HLS")
+    
+    return try {
+        // CORREÇÃO 1: Limpar a URL de aspas e barras invertidas extras
+        var finalUrl = m3u8Url.trim()
+        
+        // Remover aspas e caracteres JSON indesejados
+        if (finalUrl.startsWith("\"url\":\"")) {
+            finalUrl = finalUrl.removePrefix("\"url\":\"")
+        }
+        if (finalUrl.startsWith("\"")) {
+            finalUrl = finalUrl.removePrefix("\"")
+        }
+        if (finalUrl.endsWith("\"")) {
+            finalUrl = finalUrl.removeSuffix("\"")
+        }
+        
+        // Remover barras invertidas de escape
+        finalUrl = finalUrl.replace("\\/", "/")
+        
+        println("🔧 URL após limpeza: $finalUrl")
+        
+        // Se for a URL do STCode Player com parâmetro 'd', extrair o link real
+        if (finalUrl.contains("api.anivideo.net/videohls.php")) {
+            val dParamRegex = """[?&]d=([^&]+)""".toRegex()
+            val match = dParamRegex.find(finalUrl)
+            
+            match?.let {
+                val encodedUrl = it.groupValues[1]
+                try {
+                    finalUrl = java.net.URLDecoder.decode(encodedUrl, "UTF-8")
+                    println("✅ URL M3U8 extraída do parâmetro 'd': $finalUrl")
+                } catch (e: Exception) {
+                    println("⚠️ Não foi possível decodificar URL, usando original")
+                }
+            }
+        }
+        
+        // Verificar se é realmente um link M3U8
+        if (!finalUrl.contains(".m3u8") && !finalUrl.contains("m3u8")) {
+            println("❌ URL não é M3U8 válida: $finalUrl")
+            return false
+        }
+        
+        // CORREÇÃO 2: Garantir que a URL começa com http:// ou https://
+        if (!finalUrl.startsWith("http://") && !finalUrl.startsWith("https://")) {
+            finalUrl = "https://$finalUrl"
+        }
+        
+        // Para links M3U8, testamos se o link está acessível
+        try {
+            val testResponse = app.get(
+                finalUrl,
+                headers = mapOf("Referer" to referer),
+                allowRedirects = true
+            )
+            
+            if (testResponse.code !in 200..299) {
+                println("⚠️ Link M3U8 retornou código: ${testResponse.code}")
+            }
+        } catch (e: Exception) {
+            println("⚠️ Não foi possível testar link M3U8: ${e.message}")
+            // Continuamos mesmo com erro de teste
+        }
+        
+        // Determinar qualidade
+        val quality = determineM3U8Quality(finalUrl, name)
+        val qualityLabel = getQualityLabel(quality)
+        
+        println("✅ Link M3U8 válido encontrado: $qualityLabel - $finalUrl")
+        
+        // Criar ExtractorLink para M3U8
+        val extractorLink = newExtractorLink(
+            source = "Goyabu M3U8",
+            name = "$name ($qualityLabel) [HLS]",
+            url = finalUrl,  // CORREÇÃO: URL limpa
+            type = ExtractorLinkType.M3U8
+        ) {
+            this.referer = referer
+            this.quality = quality
+            this.headers = mapOf(
+                "Referer" to referer,
+                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Accept" to "*/*",
+                "Accept-Language" to "pt-BR,pt;q=0.9,en;q=0.8"
+            )
+        }
+        
+        callback(extractorLink)
+        true
+        
+    } catch (e: Exception) {
+        println("❌ Erro ao processar M3U8: ${e.message}")
+        false
+    }
+}
+
     
     // 🆕 Determinar qualidade para M3U8
     private fun determineM3U8Quality(url: String, name: String): Int {
