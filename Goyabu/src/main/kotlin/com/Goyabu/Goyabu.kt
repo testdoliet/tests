@@ -19,8 +19,9 @@ class Goyabu : MainAPI() {
         private const val SEARCH_PATH = "/?s="
         private val loadingMutex = Mutex()
         
-        // LISTA COMPLETA DE GÊNEROS (REMOVENDO +18 E ADICIONANDO LANÇAMENTOS)
+        // LISTA COMPLETA DE GÊNEROS
         private val ALL_GENRES = listOf(
+            "/generos/18" to "+18",
             "/generos/china" to "China",
             "/generos/aventura" to "Aventura",
             "/generos/artes-marciais" to "Artes Marciais",
@@ -39,10 +40,6 @@ class Goyabu : MainAPI() {
             "/generos/guerra" to "Guerra",
             "/generos/gore" to "Gore"
         )
-        
-        // ABA LANÇAMENTOS
-        private const val LANCAMENTOS_PATH = "/"
-        private const val LANCAMENTOS_NAME = "Lançamentos"
         
         // PALAVRAS PARA REMOVER DAS SINOPSES
         private val SYNOPSIS_JUNK_PATTERNS = listOf(
@@ -86,121 +83,14 @@ class Goyabu : MainAPI() {
     }
 
     init {
-        println("🎬 GOYABU: Plugin inicializado - ${ALL_GENRES.size} gêneros + Lançamentos")
+        println("🎬 GOYABU: Plugin inicializado - ${ALL_GENRES.size} gêneros")
     }
 
     override val mainPage = mainPageOf(
-        LANCAMENTOS_PATH to LANCAMENTOS_NAME,  // PRIMEIRO: Lançamentos
         *ALL_GENRES.map { (path, name) -> 
             "$mainUrl$path" to name 
         }.toTypedArray()
     )
-
-    // ============ FUNÇÃO PARA EXTRAIR EPISÓDIOS DE LANÇAMENTOS ============
-    /**
-     * Função específica para extrair episódios da seção "Lançamentos"
-     * Usa os seletores que você identificou: .episodes-grid > article.boxEP.grid-view
-     */
-    private fun extractLancamentos(doc: org.jsoup.nodes.Document): List<AnimeSearchResponse> {
-        val results = mutableListOf<AnimeSearchResponse>()
-        
-        println("🔍 Procurando seção 'Lançamentos'...")
-        
-        // 1. Primeiro, encontrar a seção "Lançamentos" pelo título
-        val lancamentosSection = doc.selectFirst("div.headTitle.title-button.title-destaque:has(span:contains(Lançamentos))")
-        
-        if (lancamentosSection == null) {
-            println("❌ Seção 'Lançamentos' não encontrada pelo título")
-            return results
-        }
-        
-        println("✅ Seção 'Lançamentos' encontrada!")
-        
-        // 2. Encontrar o container de episódios (provavelmente próximo ao título)
-        var episodesContainer = lancamentosSection.nextElementSibling()
-        var attempts = 0
-        
-        // Procurar pelo container .episodes-grid
-        while (episodesContainer != null && attempts < 5) {
-            if (episodesContainer.hasClass("episodes-grid")) {
-                println("✅ Container .episodes-grid encontrado!")
-                break
-            }
-            episodesContainer = episodesContainer.nextElementSibling()
-            attempts++
-        }
-        
-        // Fallback: procurar em qualquer lugar do documento
-        if (episodesContainer == null || !episodesContainer.hasClass("episodes-grid")) {
-            episodesContainer = doc.selectFirst(".episodes-grid")
-            if (episodesContainer != null) {
-                println("⚠️ Container .episodes-grid encontrado via fallback")
-            } else {
-                println("❌ Container .episodes-grid não encontrado")
-                return results
-            }
-        }
-        
-        // 3. Extrair os episódios
-        val episodeElements = episodesContainer.select("article.boxEP.grid-view")
-        println("📊 ${episodeElements.size} episódios encontrados na seção Lançamentos")
-        
-        episodeElements.forEachIndexed { index, episode ->
-            try {
-                val linkElement = episode.selectFirst("a[href]")
-                val href = linkElement?.attr("href")?.trim()
-                
-                if (href.isNullOrBlank()) {
-                    println("⚠️ Episódio ${index + 1}: Sem link")
-                    return@forEachIndexed
-                }
-                
-                // Verificar se é um link de episódio (números na URL)
-                val isEpisodeUrl = href.matches(Regex("""^/\d+/$"""))
-                if (!isEpisodeUrl) {
-                    println("⚠️ Episódio ${index + 1}: URL não é de episódio ($href)")
-                    return@forEachIndexed
-                }
-                
-                // Extrair título do episódio
-                val titleElement = linkElement.selectFirst(".title, .ep-type b, .name")
-                val rawTitle = titleElement?.text()?.trim() ?: "Episódio ${index + 1}"
-                
-                // Limpar título
-                val cleanedTitle = cleanTitle(rawTitle)
-                
-                // Extrair thumbnail
-                val thumb = linkElement.selectFirst(".coverImg")?.attr("style")?.let { style ->
-                    val regex = Regex("""url\(['"]?([^'"()]+)['"]?\)""")
-                    regex.find(style)?.groupValues?.get(1)?.replace("&quot;", "")?.trim()
-                }?.takeIf { it.isNotBlank() }?.let { fixUrl(it) }
-                
-                // Verificar se é dublado
-                val isDubbed = linkElement.selectFirst(".audio-box.dublado, .dublado") != null
-                
-                // Criar resposta
-                results.add(newAnimeSearchResponse(cleanedTitle, fixUrl(href)) {
-                    this.posterUrl = thumb
-                    this.type = TvType.Anime
-                    
-                    // Episódios são sempre legendados ou dublados individualmente
-                    addDubStatus(dubExist = isDubbed, subExist = !isDubbed)
-                    
-                    // Marcar como episódio (não série completa)
-                    this.isMovie = false
-                })
-                
-                if (index < 3) { // Log dos primeiros 3 para debug
-                    println("   📺 Lançamento ${index + 1}: $cleanedTitle -> $href ${if (isDubbed) "(DUB)" else "(LEG)"}")
-                }
-                
-            } catch (e: Exception) {
-                println("❌ Erro ao processar episódio ${index + 1}: ${e.message}")
-            }
-        }
-        
-        return results
-    }
 
     // ============ FUNÇÕES DE LIMPEZA ============
     
@@ -318,7 +208,7 @@ class Goyabu : MainAPI() {
         }
     }
 
-    // ============ FUNÇÃO PARA DETECTAR CONTEÚDO ADULTO ============
+    // ============ FUNÇÃO PARA DETECTAR CONTEÚDO ADULTO (sem ContentRating) ============
     private fun hasAdultContent(genres: List<String>): Boolean {
         val lowerGenres = genres.map { it.lowercase().trim() }
         
@@ -362,7 +252,7 @@ class Goyabu : MainAPI() {
         }
     }
 
-    // ============ EXTRACTION PARA LISTAGEM (ANIMES/SÉRIES) ============
+    // ============ EXTRACTION PARA LISTAGEM ============
     private fun Element.toSearchResponse(): AnimeSearchResponse? {
         val href = attr("href") ?: return null
         
@@ -445,25 +335,6 @@ class Goyabu : MainAPI() {
         return loadingMutex.withLock {
             try {
                 println("🎬 GOYABU: '${request.name}' - Página $page")
-                
-                // CASO ESPECIAL: Se for a aba "Lançamentos"
-                if (request.name == LANCAMENTOS_NAME) {
-                    println("🚀 Processando seção LANÇAMENTOS...")
-                    val document = app.get(mainUrl, timeout = 20).document
-                    
-                    // Usar a função específica para extrair lançamentos
-                    val lancamentosItems = extractLancamentos(document)
-                    
-                    // Limitar a 20 itens para não sobrecarregar
-                    val limitedItems = lancamentosItems.take(20)
-                    
-                    println("✅ Lançamentos: ${limitedItems.size} episódios encontrados")
-                    
-                    // Lançamentos não tem paginação (só mostra os mais recentes)
-                    return newHomePageResponse(request.name, limitedItems, hasNextPage = false)
-                }
-                
-                // CASO NORMAL: Gêneros
                 val url = if (page > 1) "${request.data}page/$page/" else request.data
                 val document = app.get(url, timeout = 20).document
                 
@@ -800,4 +671,280 @@ class Goyabu : MainAPI() {
                         this.season = 1
                     })
                     
-                    println("   🔗 Link direto Ep $episodeNum
+                    println("   🔗 Link direto Ep $episodeNum: $href")
+                } catch (e: Exception) {
+                    println("   ⚠️ Erro no link ${index + 1}: ${e.message}")
+                }
+            }
+        }
+        
+        println("   📊 Total de episódios via fallback: ${episodes.size}")
+        return episodes
+    }
+    
+    private fun extractEpisodeFromBoxEP(boxEP: Element, index: Int, episodes: MutableList<Episode>) {
+        val linkElement = boxEP.selectFirst("a[href]") ?: return
+        val href = linkElement.attr("href").trim()
+        if (href.isBlank()) return
+        
+        // NÚMERO DO EPISÓDIO
+        var episodeNum = index + 1
+        
+        // 1. Tentar do texto "Episódio X"
+        val epTypeElement = linkElement.selectFirst(".ep-type b")
+        epTypeElement?.text()?.trim()?.let { text ->
+            val regex = Regex("""Epis[oó]dio\s+(\d+)""", RegexOption.IGNORE_CASE)
+            val match = regex.find(text)
+            match?.groupValues?.get(1)?.toIntOrNull()?.let { episodeNum = it }
+        }
+        
+        // 2. Tentar data-episode-number
+        boxEP.parent()?.attr("data-episode-number")?.toIntOrNull()?.let { episodeNum = it }
+        
+        // 3. Tentar da URL
+        episodeNum = extractEpisodeNumberFromHref(href, episodeNum)
+        
+        // THUMBNAIL
+        val thumb = linkElement.selectFirst(".coverImg")?.attr("style")?.let { style ->
+            val regex = Regex("""url\(['"]?([^'"()]+)['"]?\)""")
+            regex.find(style)?.groupValues?.get(1)?.replace("&quot;", "")?.trim()
+        }?.takeIf { it.isNotBlank() }?.let { fixUrl(it) }
+        
+        // NOME DO EPISÓDIO
+        val episodeTitle = epTypeElement?.text()?.trim() ?: "Episódio $episodeNum"
+        
+        episodes.add(newEpisode(fixUrl(href)) {
+            this.name = episodeTitle
+            this.episode = episodeNum
+            this.season = 1
+            this.posterUrl = thumb
+        })
+        
+        println("   ✅ Ep $episodeNum: $episodeTitle -> $href")
+    }
+    
+    // ============ FUNÇÕES AUXILIARES ============
+    private fun extractEpisodeNumberFromHref(href: String, default: Int): Int {
+        // Tentar extrair número da URL
+        val regex1 = Regex("""/(\d+)/?$""")
+        val regex2 = Regex("""/episodio[-_]?(\d+)/?$""", RegexOption.IGNORE_CASE)
+        
+        regex1.find(href)?.groupValues?.get(1)?.toIntOrNull()?.let { return it }
+        regex2.find(href)?.groupValues?.get(1)?.toIntOrNull()?.let { return it }
+        
+        return default
+    }
+    
+    private fun extractArrayContent(scriptContent: String, arrayName: String): String {
+        // Encontrar o início do array
+        val startIndex = scriptContent.indexOf("$arrayName = [")
+        if (startIndex == -1) return ""
+        
+        var braceCount = 0
+        var inString = false
+        var escapeNext = false
+        var i = startIndex + arrayName.length + 3 // Pular "allEpisodes = ["
+        
+        while (i < scriptContent.length) {
+            val char = scriptContent[i]
+            
+            when {
+                escapeNext -> {
+                    escapeNext = false
+                }
+                char == '\\' -> {
+                    escapeNext = true
+                }
+                char == '"' -> {
+                    inString = !inString
+                }
+                !inString && char == '[' -> {
+                    braceCount++
+                }
+                !inString && char == ']' -> {
+                    braceCount--
+                    if (braceCount == 0) {
+                        return scriptContent.substring(startIndex + arrayName.length + 3, i)
+                    }
+                }
+            }
+            i++
+        }
+        
+        return ""
+    }
+    
+    private fun extractJsonObjects(jsonArray: String): List<String> {
+        val objects = mutableListOf<String>()
+        var depth = 0
+        var currentObject = StringBuilder()
+        var inString = false
+        var escapeNext = false
+        
+        for (char in jsonArray) {
+            when {
+                escapeNext -> {
+                    currentObject.append(char)
+                    escapeNext = false
+                }
+                char == '\\' -> {
+                    currentObject.append(char)
+                    escapeNext = true
+                }
+                char == '"' -> {
+                    currentObject.append(char)
+                    inString = !inString
+                }
+                !inString && char == '{' -> {
+                    if (depth == 0) {
+                        currentObject = StringBuilder("{")
+                    } else {
+                        currentObject.append(char)
+                    }
+                    depth++
+                }
+                !inString && char == '}' -> {
+                    depth--
+                    currentObject.append(char)
+                    if (depth == 0) {
+                        objects.add(currentObject.toString())
+                    }
+                }
+                else -> {
+                    if (depth > 0) currentObject.append(char)
+                }
+            }
+        }
+        
+        return objects
+    }
+    
+    private fun extractValueFromJson(json: String, vararg keys: String): String? {
+        for (key in keys) {
+            // Padrão: "key": "value"
+            val pattern1 = Regex(""""$key"\s*:\s*"([^"]*)"""")
+            val match1 = pattern1.find(json)
+            if (match1 != null) return match1.groupValues.getOrNull(1)
+            
+            // Padrão: "key": number
+            val pattern2 = Regex(""""$key"\s*:\s*(\d+)""")
+            val match2 = pattern2.find(json)
+            if (match2 != null) return match2.groupValues.getOrNull(1)
+        }
+        return null
+    }
+    
+        private fun buildEpisodeUrl(idOrPath: String, episodeNumber: Int): String {
+        return when {
+            idOrPath.matches(Regex("""^\d+$""")) -> "$mainUrl/$idOrPath"
+            idOrPath.startsWith("/") -> "$mainUrl$idOrPath"
+            idOrPath.startsWith("http") -> idOrPath
+            idOrPath.isNotBlank() -> fixUrl(idOrPath)
+            else -> "$mainUrl/$episodeNumber"
+        }
+    }
+
+    // ============ LOAD LINKS (AGORA COM SUPORTE AO BLOGGER) ============
+        // ============ LOAD LINKS (COM SUPORTE AO SUPERFLIX EXTRACTOR) ============
+    override suspend fun loadLinks(
+        data: String,
+        isCasting: Boolean,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        println("\n🎬 GOYABU: Iniciando extração de links para: $data")
+        
+        return try {
+            // PRIMEIRO: Tentar com o extrator SuperFlix (para M3U8)
+            val success = GoyabuM3u8Extractor.extractVideoLinks(data, "https://goyabu.io", "Goyabu", callback)
+            
+            if (success) {
+                println("✅ GOYABU: SuperFlixExtractor encontrou links M3U8!")
+                return true
+            } else {
+                println("⚠️ GOYABU: SuperFlixExtractor não encontrou links, tentando Blogger...")
+                
+                // SEGUNDO: Tentar com o extrator Blogger
+                val bloggerSuccess = GoyabuBloggerExtractor.extractVideoLinks(data, "Goyabu", callback)
+                
+                if (bloggerSuccess) {
+                    println("✅ GOYABU: BloggerExtractor encontrou links!")
+                    return true
+                } else {
+                    println("⚠️ GOYABU: Ambos extractors falharam, tentando métodos diretos...")
+                    
+                    // TERCEIRO: Fallback - tentar extrair diretamente da página
+                    val response = app.get(data)
+                    val html = response.text
+                    
+                    // Padrões para procurar URLs de vídeo
+                    val videoPatterns = listOf(
+                        """["'](https?://[^"']*\.(?:m3u8|mp4|mkv|webm|avi)[^"']*)["']""".toRegex(),
+                        """(https?://[^"'\s<>]*\.googlevideo\.com/[^"'\s<>]+)""".toRegex(),
+                        """src\s*:\s*['"](https?://[^"']+)['"]""".toRegex(),
+                        """url\s*:\s*['"](https?://[^"']+)['"]""".toRegex(),
+                        """file\s*:\s*['"](https?://[^"']+)['"]""".toRegex()
+                    )
+                    
+                    var found = false
+                    for (pattern in videoPatterns) {
+                        val matches = pattern.findAll(html).toList()
+                        if (matches.isNotEmpty()) {
+                            for (match in matches) {
+                                val videoUrl = match.groupValues[1].takeIf { it.startsWith("http") } ?: continue
+                                
+                                // Verificar se é um vídeo válido
+                                if (videoUrl.contains(".m3u8") || 
+                                    videoUrl.contains(".mp4") || 
+                                    videoUrl.contains("googlevideo")) {
+                                    
+                                    val linkName = when {
+                                        videoUrl.contains(".m3u8") -> "Vídeo M3U8"
+                                        videoUrl.contains(".mp4") -> "Vídeo MP4"
+                                        else -> "Vídeo"
+                                    }
+                                    
+                                    val extractorLink = newExtractorLink(
+                                        source = "Goyabu",
+                                        name = linkName,
+                                        url = videoUrl,
+                                        type = ExtractorLinkType.VIDEO
+                                    ) {
+                                        this.referer = data
+                                        this.quality = when {
+                                            videoUrl.contains("1080") -> 1080
+                                            videoUrl.contains("720") -> 720
+                                            videoUrl.contains("480") -> 480
+                                            videoUrl.contains("360") -> 360
+                                            else -> 720
+                                        }
+                                        this.headers = mapOf(
+                                            "Referer" to data,
+                                            "Origin" to "https://goyabu.io",
+                                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                                        )
+                                    }
+                                    
+                                    callback(extractorLink)
+                                    found = true
+                                    println("✅ URL de vídeo encontrada: ${videoUrl.take(80)}...")
+                                }
+                            }
+                        }
+                    }
+                    
+                    if (!found) {
+                        println("❌ GOYABU: Nenhum link de vídeo encontrado após todos os métodos")
+                    }
+                    
+                    found
+                }
+            }
+            
+        } catch (e: Exception) {
+            println("❌ GOYABU: Erro na extração de links: ${e.message}")
+            e.printStackTrace()
+            false
+        }
+    }
+                                 }
