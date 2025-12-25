@@ -6,7 +6,7 @@ import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.M3u8Helper
 import kotlinx.coroutines.delay
 
-object GoyabuPlayerExtractor {
+object GoyabuM3u8Extractor {
     suspend fun extractVideoLinks(
         url: String,
         mainUrl: String,
