@@ -4,8 +4,9 @@ import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.M3u8Helper
 import org.jsoup.Jsoup
+import com.lagradost.cloudstream3.utils.newExtractorLink
 
-object GoyabuJwPlayerExtractor {
+object GoyabuExtractor {
     suspend fun extractVideoLinks(
         url: String,
         mainUrl: String,
@@ -353,7 +354,7 @@ object GoyabuJwPlayerExtractor {
             else if (videoUrl.contains(".mp4")) {
                 println("✅ MP4 direto encontrado: $videoUrl")
                 callback.invoke(
-                    ExtractorLink(
+                    newExtractorLink(
                         "Goyabu",
                         "Goyabu MP4",
                         videoUrl,
