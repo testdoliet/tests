@@ -17,21 +17,21 @@ object GoyabuExtractor {
         println("🎬 GOYABU EXTRACTOR: Iniciando extração para: $url")
         
         return try {
-            // ESTRATÉGIA 1: WebView com foco TOTAL no padrão específico
-            println("🔧 Estratégia 1: WebView focado no padrão anivideo...")
-            val webViewSuccess = tryWebViewStrategy(url, mainUrl, name, callback)
+            // ESTRATÉGIA 1: WebView que SIMULA CLIQUE
+            println("🔧 Estratégia 1: WebView com simulação de clique...")
+            val webViewSuccess = tryWebViewWithClick(url, mainUrl, name, callback)
             
             if (webViewSuccess) {
-                println("✅ GOYABU: WebView encontrou o iframe!")
+                println("✅ GOYABU: WebView com clique funcionou!")
                 return true
             }
             
-            // ESTRATÉGIA 2: Simular comportamento do navegador
-            println("🔧 Estratégia 2: Simulação de navegador...")
-            val simulationSuccess = tryBrowserSimulation(url, mainUrl, name, callback)
+            // ESTRATÉGIA 2: Requisição POST que simula clique
+            println("🔧 Estratégia 2: Requisição POST simulando clique...")
+            val postSuccess = tryPostRequest(url, mainUrl, name, callback)
             
-            if (simulationSuccess) {
-                println("✅ GOYABU: Simulação encontrou o iframe!")
+            if (postSuccess) {
+                println("✅ GOYABU: POST simulando clique funcionou!")
                 return true
             }
             
@@ -44,116 +44,202 @@ object GoyabuExtractor {
         }
     }
     
-    // ============ ESTRATÉGIA 1: WebView Focado ============
-    private suspend fun tryWebViewStrategy(
+    // ============ ESTRATÉGIA 1: WebView com JavaScript para clicar ============
+    private suspend fun tryWebViewWithClick(
         url: String,
         mainUrl: String,
         name: String,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         return try {
-            // WebView com timeout MAIOR e foco EXCLUSIVO no padrão específico
+            // WebView que executa JavaScript para clicar no player
             val streamResolver = WebViewResolver(
                 interceptUrl = Regex("""(anivideo\.net/videohls\.php|videohls\.php\?d=)"""),
                 useOkhttp = false,
-                timeout = 45_000L // 45 segundos - tempo suficiente pro JS rodar
+                timeout = 30_000L,
+                onPageLoaded = { webView ->
+                    // DEPOIS que a página carregar, executar JavaScript para clicar
+                    println("🖱️ Executando JavaScript para simular clique...")
+                    
+                    // Script que tenta clicar em vários elementos possíveis
+                    val clickScript = """
+                        // Tentar clicar em vários elementos possíveis
+                        function simulateClick() {
+                            // 1. Tentar elemento com id="player"
+                            var player = document.getElementById('player');
+                            if (player) {
+                                player.click();
+                                console.log('✅ Clicado no elemento #player');
+                                return true;
+                            }
+                            
+                            // 2. Tentar elemento com classe contendo "player"
+                            var playerElements = document.querySelectorAll('[class*="player"], [class*="Player"]');
+                            for (var i = 0; i < playerElements.length; i++) {
+                                if (playerElements[i].offsetWidth > 0 && playerElements[i].offsetHeight > 0) {
+                                    playerElements[i].click();
+                                    console.log('✅ Clicado em elemento player: ' + playerElements[i].className);
+                                    return true;
+                                }
+                            }
+                            
+                            // 3. Tentar botão de play
+                            var playButtons = document.querySelectorAll('[class*="play"], [class*="Play"], button, [onclick*="play"]');
+                            for (var i = 0; i < playButtons.length; i++) {
+                                if (playButtons[i].offsetWidth > 0 && playButtons[i].offsetHeight > 0) {
+                                    playButtons[i].click();
+                                    console.log('✅ Clicado em botão play');
+                                    return true;
+                                }
+                            }
+                            
+                            // 4. Tentar clicar na div principal do player
+                            var mainDivs = document.querySelectorAll('div');
+                            for (var i = 0; i < mainDivs.length; i++) {
+                                var style = window.getComputedStyle(mainDivs[i]);
+                                if (style.display !== 'none' && 
+                                    mainDivs[i].offsetWidth > 300 && 
+                                    mainDivs[i].offsetHeight > 200) {
+                                    mainDivs[i].click();
+                                    console.log('✅ Clicado em div grande');
+                                    return true;
+                                }
+                            }
+                            
+                            console.log('❌ Nenhum elemento encontrado para clicar');
+                            return false;
+                        }
+                        
+                        // Executar depois de um delay
+                        setTimeout(simulateClick, 2000);
+                        
+                        // Executar novamente depois de mais tempo
+                        setTimeout(simulateClick, 5000);
+                    """.trimIndent()
+                    
+                    webView.evaluateJavascript(clickScript, null)
+                }
             )
             
-            println("🌐 WebView iniciado (45s timeout, foco no padrão)...")
+            println("🌐 WebView iniciado com simulação de clique...")
             val response = app.get(url, interceptor = streamResolver)
             val interceptedUrl = response.url
             
-            println("📡 URL interceptada pelo WebView: $interceptedUrl")
+            println("📡 URL interceptada após clique: $interceptedUrl")
             
-            // Se interceptou a URL da API, processar
             if (interceptedUrl.contains("anivideo.net") && interceptedUrl.contains("videohls.php")) {
-                println("🎯 EXATO! URL da API interceptada: $interceptedUrl")
+                println("🎯 API interceptada APÓS clique!")
                 return extractAndProcessM3u8FromApi(interceptedUrl, url, mainUrl, name, callback)
             }
             
             false
         } catch (e: Exception) {
-            println("⚠️ WebView falhou: ${e.message}")
+            println("⚠️ WebView com clique falhou: ${e.message}")
             false
         }
     }
     
-    // ============ ESTRATÉGIA 2: Simulação de Navegador ============
-    private suspend fun tryBrowserSimulation(
+    // ============ ESTRATÉGIA 2: Requisição POST que simula ação do usuário ============
+    private suspend fun tryPostRequest(
         url: String,
         mainUrl: String,
         name: String,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         return try {
-            // PRIMEIRA ETAPA: Carregar página com headers de navegador real
-            println("🖥️ Simulando navegador real...")
-            val response = app.get(url, headers = getRealBrowserHeaders())
-            val html = response.text
+            println("📨 Enviando requisições para simular ação do usuário...")
             
-            // SEGUNDA ETAPA: Analisar o HTML após o JS ter rodado (se houver)
-            val doc = Jsoup.parse(html)
+            // PRIMEIRO: Obter a página inicial
+            val initialResponse = app.get(url, headers = getRealBrowserHeaders())
+            val initialHtml = initialResponse.text
+            val doc = Jsoup.parse(initialHtml)
             
-            // BUSCA DIRETA: Procurar exatamente o iframe com o padrão específico
-            println("🔍 Buscando iframe com padrão exato...")
+            // Procurar por elementos que podem acionar o player
+            val possibleTriggers = listOf(
+                // Botões/links que podem carregar o player
+                "button[data-player]", "a[data-player]", "[data-action='play']",
+                "[onclick*='player']", "[onclick*='loadPlayer']", "[onclick*='video']",
+                "#load-player", ".load-player", ".player-trigger"
+            )
             
-            // Padrão 1: iframe com src contendo anivideo.net/videohls.php
-            val iframes = doc.select("iframe[src]")
-            println("📊 ${iframes.size} iframes encontrados na página")
+            var found = false
             
-            for (iframe in iframes) {
-                val src = iframe.attr("src")
-                println("🔗 Iframe src: ${src.take(100)}...")
-                
-                if (src.contains("anivideo.net/videohls.php") && src.contains("?d=")) {
-                    println("🎯 IFrame encontrado! Processando...")
-                    return extractAndProcessM3u8FromApi(src, url, mainUrl, name, callback)
+            for (selector in possibleTriggers) {
+                val elements = doc.select(selector)
+                for (element in elements) {
+                    val dataUrl = element.attr("data-url")
+                    val onclick = element.attr("onclick")
+                    val href = element.attr("href")
+                    
+                    println("🔍 Elemento encontrado: $selector")
+                    
+                    // Tentar extrair URL do onclick
+                    if (onclick.isNotBlank()) {
+                        val urlPattern = Regex("""['"](https?://[^'"]+)['"]""")
+                        val match = urlPattern.find(onclick)
+                        if (match != null) {
+                            val extractedUrl = match.groupValues[1]
+                            println("🎯 URL extraída do onclick: $extractedUrl")
+                            if (extractedUrl.contains("anivideo.net")) {
+                                return extractAndProcessM3u8FromApi(extractedUrl, url, mainUrl, name, callback)
+                            }
+                        }
+                    }
+                    
+                    // Se tem data-url
+                    if (dataUrl.isNotBlank() && dataUrl.contains("anivideo.net")) {
+                        println("🎯 data-url encontrada: $dataUrl")
+                        return extractAndProcessM3u8FromApi(dataUrl, url, mainUrl, name, callback)
+                    }
                 }
             }
             
-            // Padrão 2: Procurar em scripts que podem ter injetado o iframe
-            println("🔍 Procurando em scripts JS...")
-            val scripts = doc.select("script:not([src])")
+            // Se não encontrou elementos específicos, tentar requisição AJAX comum
+            println("🔍 Tentando requisições AJAX comuns...")
             
-            for (script in scripts) {
-                val scriptContent = script.html()
-                
-                // Procurar pela URL exata no JS
-                val apiPattern = Regex("""https?://api\.anivideo\.net/videohls\.php\?d=[^"'\s]+""")
-                val matches = apiPattern.findAll(scriptContent).toList()
-                
-                for (match in matches) {
-                    val apiUrl = match.value
-                    println("🎯 URL encontrada no JS: $apiUrl")
-                    return extractAndProcessM3u8FromApi(apiUrl, url, mainUrl, name, callback)
-                }
-                
-                // Procurar por partes da URL
-                if (scriptContent.contains("anivideo.net") && scriptContent.contains("videohls.php")) {
-                    println("⚠️ Padrão encontrado no JS, tentando extrair...")
+            val ajaxUrls = listOf(
+                "$url?ajax=true",
+                "$url&ajax=true",
+                "$url?action=load_player",
+                "$url&action=load_player",
+                "$url?player=load",
+                "$url&player=load"
+            )
+            
+            for (ajaxUrl in ajaxUrls) {
+                try {
+                    println("📡 Tentando AJAX: $ajaxUrl")
+                    val ajaxResponse = app.get(ajaxUrl, headers = mapOf(
+                        "X-Requested-With" to "XMLHttpRequest",
+                        "Referer" to url,
+                        "User-Agent" to "Mozilla/5.0"
+                    ))
                     
-                    // Tentar extrair URL mais complexa
-                    val complexPattern = Regex("""["'](https?://[^"']*anivideo\.net[^"']*)["']""")
-                    val complexMatches = complexPattern.findAll(scriptContent).toList()
+                    val ajaxText = ajaxResponse.text
                     
-                    for (complexMatch in complexMatches) {
-                        val possibleUrl = complexMatch.groupValues[1]
-                        if (possibleUrl.contains("videohls.php") && possibleUrl.contains("?d=")) {
-                            println("🎯 URL extraída do JS: $possibleUrl")
-                            return extractAndProcessM3u8FromApi(possibleUrl, url, mainUrl, name, callback)
-                        }
+                    // Procurar URL da API na resposta AJAX
+                    val apiPattern = Regex("""https?://api\.anivideo\.net/videohls\.php\?d=[^"'\s]+""")
+                    val match = apiPattern.find(ajaxText)
+                    
+                    if (match != null) {
+                        val apiUrl = match.value
+                        println("🎯 API encontrada na resposta AJAX!")
+                        return extractAndProcessM3u8FromApi(apiUrl, url, mainUrl, name, callback)
                     }
+                } catch (e: Exception) {
+                    // Continuar tentando outras URLs
+                    continue
                 }
             }
             
             false
         } catch (e: Exception) {
-            println("❌ Erro na simulação: ${e.message}")
+            println("❌ Erro nas requisições POST: ${e.message}")
             false
         }
     }
     
-    // ============ FUNÇÃO PRINCIPAL DE EXTRAÇÃO ============
+    // ============ FUNÇÃO DE EXTRAÇÃO DO M3U8 (mantida igual) ============
     private suspend fun extractAndProcessM3u8FromApi(
         apiUrl: String,
         referer: String,
@@ -164,7 +250,7 @@ object GoyabuExtractor {
         println("🔗 Extraindo M3U8 da API: ${apiUrl.take(100)}...")
         
         return try {
-            // ETAPA 1: Extrair parâmetro d= da URL
+            // Extrair parâmetro d=
             val dParamRegex = Regex("""[?&]d=([^&]+)""")
             val match = dParamRegex.find(apiUrl)
             
@@ -173,19 +259,13 @@ object GoyabuExtractor {
                 val m3u8Url = URLDecoder.decode(encodedM3u8, "UTF-8")
                 
                 println("✅ M3U8 decodificado: $m3u8Url")
-                println("📊 Comprimento do URL: ${m3u8Url.length} caracteres")
                 
-                // Verificar se é um URL válido
                 if (m3u8Url.startsWith("http") && m3u8Url.contains(".m3u8")) {
                     return processM3u8Stream(m3u8Url, referer, mainUrl, name, callback)
-                } else {
-                    println("⚠️ URL decodificado não parece ser M3U8 válido")
                 }
-            } else {
-                println("⚠️ Não encontrou parâmetro d= na URL da API")
             }
             
-            // ETAPA 2: Se não conseguiu extrair do parâmetro, fazer requisição à API
+            // Fallback: requisição direta
             println("🔄 Fazendo requisição direta à API...")
             val apiResponse = app.get(apiUrl, headers = mapOf(
                 "Referer" to referer,
@@ -193,9 +273,6 @@ object GoyabuExtractor {
             ))
             
             val apiContent = apiResponse.text
-            println("📄 Conteúdo da API: ${apiContent.take(500)}...")
-            
-            // Procurar M3U8 na resposta
             val m3u8Pattern = Regex("""(https?://[^\s"']+\.m3u8[^\s"']*)""", RegexOption.IGNORE_CASE)
             val m3u8Match = m3u8Pattern.find(apiContent)
             
@@ -228,10 +305,9 @@ object GoyabuExtractor {
             val headers = mapOf(
                 "Referer" to referer,
                 "Origin" to mainUrl,
-                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                "User-Agent" to "Mozilla/5.0"
             )
             
-            println("📡 Gerando links M3U8...")
             M3u8Helper.generateM3u8(
                 name,
                 m3u8Url,
@@ -251,18 +327,12 @@ object GoyabuExtractor {
     // ============ HEADERS DE NAVEGADOR REAL ============
     private fun getRealBrowserHeaders(): Map<String, String> {
         return mapOf(
-            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-            "Accept-Language" to "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
-            "Accept-Encoding" to "gzip, deflate, br",
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            "Accept-Language" to "pt-BR,pt;q=0.9,en;q=0.8",
             "DNT" to "1",
             "Connection" to "keep-alive",
-            "Upgrade-Insecure-Requests" to "1",
-            "Sec-Fetch-Dest" to "document",
-            "Sec-Fetch-Mode" to "navigate",
-            "Sec-Fetch-Site" to "none",
-            "Sec-Fetch-User" to "?1",
-            "Cache-Control" to "max-age=0"
+            "Upgrade-Insecure-Requests" to "1"
         )
     }
 }
