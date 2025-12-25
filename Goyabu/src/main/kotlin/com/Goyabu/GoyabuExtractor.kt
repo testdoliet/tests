@@ -3,73 +3,180 @@ package com.Goyabu
 import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.M3u8Helper
-import com.lagradost.cloudstream3.utils.Qualities
 import org.jsoup.Jsoup
-import java.net.URLDecoder
 
-object GoyabuDirectExtractor {
+object GoyabuJwPlayerExtractor {
     suspend fun extractVideoLinks(
         url: String,
         mainUrl: String,
         name: String,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        println("🎬 GOYABU DIRECT EXTRACTOR: Iniciando extração para: $url")
+        println("🎬 GOYABU JWPLAYER EXTRACTOR: Iniciando extração para: $url")
         
         return try {
-            // Estratégia 1: Buscar iframe direto
-            println("🔍 Estratégia 1: Buscando iframe direto...")
-            val iframeUrl = findIframeUrl(url)
-            if (iframeUrl != null) {
-                println("✅ Iframe encontrado: $iframeUrl")
-                if (extractFromIframe(iframeUrl, url, mainUrl, name, callback)) {
-                    return true
-                }
+            // Estratégia 1: Extrair configuração do JWPlayer
+            println("🔍 Estratégia 1: Buscando configuração do JWPlayer...")
+            val jwConfig = extractJwPlayerConfig(url)
+            if (jwConfig != null) {
+                println("✅ Configuração JWPlayer encontrada")
+                return processJwPlayerConfig(jwConfig, url, mainUrl, name, callback)
             }
             
-            // Estratégia 2: Buscar M3U8 na página
-            println("🔍 Estratégia 2: Buscando M3U8 na página...")
-            val pageM3u8 = findM3u8InPage(url)
-            if (pageM3u8 != null) {
-                println("✅ M3U8 encontrado na página: $pageM3u8")
-                return processM3u8(pageM3u8, url, mainUrl, name, callback)
+            // Estratégia 2: Buscar iframe do JWPlayer
+            println("🔍 Estratégia 2: Buscando iframe JWPlayer...")
+            val jwIframe = findJwPlayerIframe(url)
+            if (jwIframe != null) {
+                println("✅ Iframe JWPlayer encontrado: $jwIframe")
+                return extractFromJwIframe(jwIframe, url, mainUrl, name, callback)
             }
             
-            // Estratégia 3: Buscar via API direta
-            println("🔍 Estratégia 3: Tentando API direta...")
-            if (tryDirectApi(url, mainUrl, name, callback)) {
-                return true
+            // Estratégia 3: Buscar em scripts JWPlayer
+            println("🔍 Estratégia 3: Analisando scripts JWPlayer...")
+            val jwScriptUrl = findJwPlayerInScripts(url)
+            if (jwScriptUrl != null) {
+                println("✅ URL JWPlayer em script: $jwScriptUrl")
+                return processJwUrl(jwScriptUrl, url, mainUrl, name, callback)
             }
             
-            // Estratégia 4: Buscar em scripts
-            println("🔍 Estratégia 4: Analisando scripts da página...")
-            val scriptUrl = findVideoInScripts(url)
-            if (scriptUrl != null) {
-                println("✅ URL encontrada em script: $scriptUrl")
-                return processM3u8(scriptUrl, url, mainUrl, name, callback)
+            // Estratégia 4: Buscar setupplayer
+            println("🔍 Estratégia 4: Buscando player.setup()...")
+            val setupUrl = findPlayerSetup(url)
+            if (setupUrl != null) {
+                println("✅ player.setup() encontrado: $setupUrl")
+                return processJwUrl(setupUrl, url, mainUrl, name, callback)
             }
             
-            println("❌ Nenhuma estratégia funcionou")
+            println("❌ JWPlayer não encontrado")
             false
             
         } catch (e: Exception) {
-            println("❌ GOYABU DIRECT EXTRACTOR: Erro: ${e.message}")
+            println("❌ GOYABU JWPLAYER EXTRACTOR: Erro: ${e.message}")
             false
         }
     }
     
-    // ============ ENCONTRAR IFRAME ============
-    private suspend fun findIframeUrl(pageUrl: String): String? {
+    // ============ EXTRAIR CONFIGURAÇÃO JWPLAYER ============
+    private suspend fun extractJwPlayerConfig(pageUrl: String): String? {
+        return try {
+            val response = app.get(pageUrl, headers = getHeaders())
+            val html = response.text
+            
+            // Padrões para configuração do JWPlayer
+            val patterns = listOf(
+                // player.setup({ ... })
+                """player\.setup\s*\(\s*(\{.*?"file".*?\})\s*\)""".toRegex(RegexOption.DOT_MATCHES_ALL),
+                // jwplayer().setup({ ... })
+                """jwplayer\([^)]*\)\.setup\s*\(\s*(\{.*?"file".*?\})\s*\)""".toRegex(RegexOption.DOT_MATCHES_ALL),
+                // var player = jwplayer({ ... })
+                """var\s+\w+\s*=\s*jwplayer\([^)]*\)\.setup\s*\(\s*(\{.*?"file".*?\})\s*\)""".toRegex(RegexOption.DOT_MATCHES_ALL),
+                // Configuração em objeto
+                """var\s+\w+\s*=\s*(\{.*?"file".*?\})""".toRegex(RegexOption.DOT_MATCHES_ALL),
+                // Em scripts específicos
+                """<script[^>]*>.*?jwplayer.*?setup.*?(\{.*?"file".*?\}).*?</script>""".toRegex(RegexOption.DOT_MATCHES_ALL)
+            )
+            
+            for (pattern in patterns) {
+                val match = pattern.find(html)
+                if (match != null && match.groupValues.size > 1) {
+                    val config = match.groupValues[1]
+                    println("🎯 Configuração JWPlayer encontrada: ${config.take(200)}...")
+                    return config
+                }
+            }
+            
+            null
+        } catch (e: Exception) {
+            println("⚠️ Erro ao buscar JWPlayer config: ${e.message}")
+            null
+        }
+    }
+    
+    // ============ PROCESSAR CONFIGURAÇÃO JWPLAYER ============
+    private fun processJwPlayerConfig(
+        config: String,
+        referer: String,
+        mainUrl: String,
+        name: String,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        println("🔧 Processando configuração JWPlayer...")
+        
+        try {
+            // Extrair URL do arquivo
+            val filePatterns = listOf(
+                """"file"\s*:\s*"([^"]+)"""".toRegex(),
+                """"file"\s*:\s*'([^']+)'""".toRegex(),
+                """"file"\s*:\s*\["([^"]+)"""".toRegex(),
+                """sources\s*:\s*\[\s*\{[^}]+"file"\s*:\s*"([^"]+)"""".toRegex()
+            )
+            
+            for (pattern in filePatterns) {
+                val match = pattern.find(config)
+                if (match != null && match.groupValues.size > 1) {
+                    val fileUrl = match.groupValues[1]
+                    println("🎯 URL do arquivo encontrada: $fileUrl")
+                    
+                    // Verificar se é M3U8
+                    if (fileUrl.contains(".m3u8") || fileUrl.contains(".mp4")) {
+                        return processVideoUrl(fileUrl, referer, mainUrl, name, callback)
+                    }
+                }
+            }
+            
+            // Extrair múltiplas fontes
+            val sourcesPattern = """"sources"\s*:\s*\[(.*?)\]""".toRegex(RegexOption.DOT_MATCHES_ALL)
+            val sourcesMatch = sourcesPattern.find(config)
+            
+            if (sourcesMatch != null && sourcesMatch.groupValues.size > 1) {
+                val sourcesContent = sourcesMatch.groupValues[1]
+                println("🎯 Fontes encontradas: $sourcesContent")
+                
+                // Extrair URLs das fontes
+                val urlPattern = """"file"\s*:\s*"([^"]+)"""".toRegex()
+                val urlMatches = urlPattern.findAll(sourcesContent)
+                
+                for (urlMatch in urlMatches) {
+                    if (urlMatch.groupValues.size > 1) {
+                        val videoUrl = urlMatch.groupValues[1]
+                        println("🎯 URL de fonte: $videoUrl")
+                        
+                        if (videoUrl.contains(".m3u8") || videoUrl.contains(".mp4")) {
+                            return processVideoUrl(videoUrl, referer, mainUrl, name, callback)
+                        }
+                    }
+                }
+            }
+            
+            // Extrair tracks (legendas)
+            val tracksPattern = """"tracks"\s*:\s*\[(.*?)\]""".toRegex(RegexOption.DOT_MATCHES_ALL)
+            val tracksMatch = tracksPattern.find(config)
+            
+            if (tracksMatch != null) {
+                println("📝 Legendas encontradas na configuração")
+            }
+            
+            return false
+            
+        } catch (e: Exception) {
+            println("❌ Erro ao processar configuração: ${e.message}")
+            return false
+        }
+    }
+    
+    // ============ ENCONTRAR IFRAME JWPLAYER ============
+    private suspend fun findJwPlayerIframe(pageUrl: String): String? {
         return try {
             val response = app.get(pageUrl, headers = getHeaders())
             val doc = Jsoup.parse(response.text)
             
-            // Procurar iframes
+            // Procurar iframes do JWPlayer
             val iframes = doc.select("iframe[src]")
             for (iframe in iframes) {
                 val src = iframe.attr("src")
-                if (src.isNotEmpty() && (src.contains("anivideo") || src.contains("cdn") || src.contains("stream"))) {
-                    println("🎯 Iframe encontrado: $src")
+                if (src.contains("jwplayer") || src.contains("jwplatform") || 
+                    src.contains("anivideo") || src.contains("stream")) {
+                    println("🎯 Iframe JWPlayer encontrado: $src")
                     return src
                 }
             }
@@ -81,71 +188,67 @@ object GoyabuDirectExtractor {
         }
     }
     
-    // ============ EXTRAIR DE IFRAME ============
-    private suspend fun extractFromIframe(
+    // ============ EXTRAIR DE IFRAME JWPLAYER ============
+    private suspend fun extractFromJwIframe(
         iframeUrl: String,
         referer: String,
         mainUrl: String,
         name: String,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        println("🔗 Processando iframe: $iframeUrl")
+        println("🔗 Processando iframe JWPlayer: $iframeUrl")
         
         return try {
-            // Se for URL da anivideo, extrair parâmetros
-            if (iframeUrl.contains("anivideo")) {
-                // Extrair parâmetro d
-                val dParam = extractDParam(iframeUrl)
-                if (dParam != null) {
-                    println("🔑 Parâmetro d encontrado: ${dParam.take(100)}...")
-                    val decoded = URLDecoder.decode(dParam, "UTF-8")
-                    println("🔓 Decodificado: ${decoded.take(100)}...")
-                    
-                    if (decoded.contains(".m3u8")) {
-                        return processM3u8(decoded, iframeUrl, mainUrl, name, callback)
-                    }
-                }
-                
-                // Fazer requisição ao iframe
-                val iframeResponse = app.get(iframeUrl, headers = getHeaders(referer))
-                val iframeContent = iframeResponse.text
-                
-                // Procurar M3U8 no iframe
-                val patterns = listOf(
-                    """src:\s*["'](https?://[^"']+\.m3u8)["']""".toRegex(),
-                    """file:\s*["'](https?://[^"']+\.m3u8)["']""".toRegex(),
-                    """["'](https?://[^"']+\.m3u8)["']""".toRegex(),
-                    """(https?://[^\s"']+\.m3u8)""".toRegex()
-                )
-                
-                for (pattern in patterns) {
-                    val match = pattern.find(iframeContent)
-                    if (match != null) {
-                        val m3u8Url = match.groupValues.getOrNull(1) ?: match.value
-                        println("🎯 M3U8 no iframe: $m3u8Url")
-                        return processM3u8(m3u8Url, iframeUrl, mainUrl, name, callback)
-                    }
-                }
+            val response = app.get(iframeUrl, headers = getHeaders(referer))
+            val html = response.text
+            
+            // Procurar configuração do JWPlayer no iframe
+            val config = extractJwPlayerConfigFromHtml(html)
+            if (config != null) {
+                println("✅ Configuração encontrada no iframe")
+                return processJwPlayerConfig(config, iframeUrl, mainUrl, name, callback)
+            }
+            
+            // Procurar URL direta
+            val directUrl = findDirectVideoUrl(html)
+            if (directUrl != null) {
+                println("✅ URL direta no iframe: $directUrl")
+                return processVideoUrl(directUrl, iframeUrl, mainUrl, name, callback)
             }
             
             false
+            
         } catch (e: Exception) {
             println("❌ Erro no iframe: ${e.message}")
             false
         }
     }
     
-    // ============ EXTRAIR PARÂMETRO D ============
-    private fun extractDParam(url: String): String? {
+    // ============ EXTRAIR CONFIGURAÇÃO DE HTML ============
+    private fun extractJwPlayerConfigFromHtml(html: String): String? {
+        // Padrão para configuração completa
+        val pattern = """jwplayer\([^)]*\)\.setup\s*\(\s*(\{.*?\})\s*\)""".toRegex(RegexOption.DOT_MATCHES_ALL)
+        val match = pattern.find(html)
+        
+        if (match != null && match.groupValues.size > 1) {
+            return match.groupValues[1]
+        }
+        
+        return null
+    }
+    
+    // ============ ENCONTRAR URL DIRETA ============
+    private fun findDirectVideoUrl(html: String): String? {
         val patterns = listOf(
-            """[?&]d=([^&]+)""".toRegex(),
-            """["']d["']\s*:\s*["']([^"']+)["']""".toRegex(),
-            """data-d\s*=\s*["']([^"']+)["']""".toRegex()
+            """"file"\s*:\s*"([^"]+\.m3u8)"""".toRegex(),
+            """"file"\s*:\s*"([^"]+\.mp4)"""".toRegex(),
+            """src\s*=\s*["']([^"']+\.m3u8)["']""".toRegex(),
+            """<source[^>]+src=["']([^"']+\.m3u8)["']""".toRegex()
         )
         
         for (pattern in patterns) {
-            val match = pattern.find(url)
-            if (match != null) {
+            val match = pattern.find(html)
+            if (match != null && match.groupValues.size > 1) {
                 return match.groupValues[1]
             }
         }
@@ -153,158 +256,30 @@ object GoyabuDirectExtractor {
         return null
     }
     
-    // ============ BUSCAR M3U8 NA PÁGINA ============
-    private suspend fun findM3u8InPage(pageUrl: String): String? {
+    // ============ BUSCAR JWPLAYER EM SCRIPTS ============
+    private suspend fun findJwPlayerInScripts(pageUrl: String): String? {
         return try {
             val response = app.get(pageUrl, headers = getHeaders())
             val html = response.text
             
-            // Padrões para M3U8
+            // Procurar por URLs do JWPlayer em scripts
             val patterns = listOf(
-                // Padrão específico do CDN
-                """(https?://cdn-s01[^"'\s]+\.m3u8)""".toRegex(),
-                // Padrão em scripts
-                """["']file["']\s*:\s*["'](https?://[^"']+\.m3u8)["']""".toRegex(),
-                """["']src["']\s*:\s*["'](https?://[^"']+\.m3u8)["']""".toRegex(),
-                // Padrão geral
-                """(https?://[^"'\s]+\.mp4/index\.m3u8)""".toRegex(),
-                """(https?://[^"'\s]+\.m3u8[^"'\s]*)""".toRegex()
+                // player.setup({ file: "URL" })
+                """player\.setup\s*\(\s*\{[^}]*"file"\s*:\s*"([^"]+)"""".toRegex(RegexOption.DOT_MATCHES_ALL),
+                // jwplayer().setup({ file: "URL" })
+                """jwplayer\([^)]*\)\.setup\s*\(\s*\{[^}]*"file"\s*:\s*"([^"]+)"""".toRegex(RegexOption.DOT_MATCHES_ALL),
+                // file: "URL"
+                """"file"\s*:\s*"([^"]+\.m3u8)"""".toRegex(),
+                // URL em variável
+                """var\s+\w+\s*=\s*["']([^"']+\.m3u8)["']""".toRegex()
             )
             
             for (pattern in patterns) {
-                val matches = pattern.findAll(html)
-                for (match in matches) {
-                    var url = match.value
-                    if (match.groupValues.size > 1) {
-                        url = match.groupValues[1]
-                    }
-                    
-                    if (url.isNotEmpty()) {
-                        println("🎯 M3U8 encontrado com padrão: ${url.take(100)}...")
-                        return url
-                    }
-                }
-            }
-            
-            null
-        } catch (e: Exception) {
-            println("⚠️ Erro ao buscar M3U8: ${e.message}")
-            null
-        }
-    }
-    
-    // ============ TENTAR API DIRETA ============
-    private suspend fun tryDirectApi(
-        pageUrl: String,
-        mainUrl: String,
-        name: String,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        return try {
-            // Extrair ID da URL
-            val idPattern = Regex("""/(\d+)/?$""")
-            val idMatch = idPattern.find(pageUrl)
-            
-            if (idMatch != null) {
-                val episodeId = idMatch.groupValues[1]
-                println("📌 ID do episódio: $episodeId")
-                
-                // Tentar diferentes APIs
-                val apiUrls = listOf(
-                    "https://api.anivideo.net/videohls.php?id=$episodeId&nocache=${System.currentTimeMillis()}",
-                    "https://api.anivideo.net/videohls.php?id=$episodeId",
-                    "https://api.anivideo.net/video.php?id=$episodeId",
-                    "https://api.anivideo.net/play.php?id=$episodeId"
-                )
-                
-                for (apiUrl in apiUrls) {
-                    println("🔗 Testando API: $apiUrl")
-                    
-                    try {
-                        val apiResponse = app.get(apiUrl, headers = getApiHeaders(pageUrl))
-                        val content = apiResponse.text
-                        
-                        // Verificar se é M3U8
-                        if (content.contains("#EXTM3U")) {
-                            println("✅ API retornou M3U8")
-                            return processM3u8(apiUrl, pageUrl, mainUrl, name, callback)
-                        }
-                        
-                        // Procurar M3U8 na resposta
-                        val m3u8Pattern = Regex("""(https?://[^\s"']+\.m3u8[^\s"']*)""")
-                        val m3u8Match = m3u8Pattern.find(content)
-                        
-                        if (m3u8Match != null) {
-                            val m3u8Url = m3u8Match.value
-                            println("✅ M3U8 na resposta: $m3u8Url")
-                            return processM3u8(m3u8Url, apiUrl, mainUrl, name, callback)
-                        }
-                        
-                        // Verificar se tem URL codificada
-                        if (content.contains("d=")) {
-                            val encodedPattern = Regex("""d=([^&\s]+)""")
-                            val encodedMatch = encodedPattern.find(content)
-                            
-                            if (encodedMatch != null) {
-                                val encoded = encodedMatch.groupValues[1]
-                                val decoded = URLDecoder.decode(encoded, "UTF-8")
-                                println("🔓 URL decodificada: ${decoded.take(100)}...")
-                                
-                                if (decoded.contains(".m3u8")) {
-                                    return processM3u8(decoded, apiUrl, mainUrl, name, callback)
-                                }
-                            }
-                        }
-                        
-                    } catch (e: Exception) {
-                        println("⚠️ API falhou: ${e.message}")
-                        continue
-                    }
-                }
-            }
-            
-            false
-        } catch (e: Exception) {
-            println("❌ Erro na API direta: ${e.message}")
-            false
-        }
-    }
-    
-    // ============ BUSCAR EM SCRIPTS ============
-    private suspend fun findVideoInScripts(pageUrl: String): String? {
-        return try {
-            val response = app.get(pageUrl, headers = getHeaders())
-            val html = response.text
-            
-            // Extrair scripts
-            val scriptPattern = Regex("""<script[^>]*>(.*?)</script>""", RegexOption.DOT_MATTERS_ALL)
-            val scripts = scriptPattern.findAll(html)
-            
-            for (script in scripts) {
-                val scriptContent = script.groupValues[1]
-                
-                // Procurar URLs de vídeo em scripts
-                val videoPatterns = listOf(
-                    """["']file["']\s*:\s*["'](https?://[^"']+)["']""".toRegex(),
-                    """["']src["']\s*:\s*["'](https?://[^"']+)["']""".toRegex(),
-                    """["']url["']\s*:\s*["'](https?://[^"']+)["']""".toRegex(),
-                    """(https?://[^"'\s]+\.m3u8[^"'\s]*)""".toRegex(),
-                    """player\.setup\([^)]*["'](https?://[^"']+)["']""".toRegex()
-                )
-                
-                for (pattern in videoPatterns) {
-                    val match = pattern.find(scriptContent)
-                    if (match != null) {
-                        var url = match.value
-                        if (match.groupValues.size > 1) {
-                            url = match.groupValues[1]
-                        }
-                        
-                        if (url.contains("m3u8")) {
-                            println("🎯 URL em script: ${url.take(100)}...")
-                            return url
-                        }
-                    }
+                val match = pattern.find(html)
+                if (match != null && match.groupValues.size > 1) {
+                    val url = match.groupValues[1]
+                    println("🎯 URL JWPlayer em script: $url")
+                    return url
                 }
             }
             
@@ -315,8 +290,90 @@ object GoyabuDirectExtractor {
         }
     }
     
+    // ============ ENCONTRAR PLAYER.SETUP ============
+    private suspend fun findPlayerSetup(pageUrl: String): String? {
+        return try {
+            val response = app.get(pageUrl, headers = getHeaders())
+            val html = response.text
+            
+            // Padrão mais específico para player.setup
+            val pattern = """player\.setup\s*\(\s*\{[^}]*"file"\s*:\s*"([^"]+)"""".toRegex(RegexOption.DOT_MATCHES_ALL)
+            val match = pattern.find(html)
+            
+            if (match != null && match.groupValues.size > 1) {
+                return match.groupValues[1]
+            }
+            
+            null
+        } catch (e: Exception) {
+            println("⚠️ Erro ao buscar player.setup: ${e.message}")
+            null
+        }
+    }
+    
+    // ============ PROCESSAR URL JWPLAYER ============
+    private fun processJwUrl(
+        jwUrl: String,
+        referer: String,
+        mainUrl: String,
+        name: String,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        println("🔗 Processando URL JWPlayer: $jwUrl")
+        
+        // Se a URL já é um M3U8 ou MP4, processar diretamente
+        if (jwUrl.contains(".m3u8") || jwUrl.contains(".mp4")) {
+            return processVideoUrl(jwUrl, referer, mainUrl, name, callback)
+        }
+        
+        // Se for uma configuração JSON
+        if (jwUrl.startsWith("{") || jwUrl.contains("file")) {
+            return processJwPlayerConfig(jwUrl, referer, mainUrl, name, callback)
+        }
+        
+        return false
+    }
+    
+    // ============ PROCESSAR URL DE VÍDEO ============
+    private fun processVideoUrl(
+        videoUrl: String,
+        referer: String,
+        mainUrl: String,
+        name: String,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        println("🔗 Processando URL de vídeo: ${videoUrl.take(150)}...")
+        
+        return try {
+            // Se for M3U8
+            if (videoUrl.contains(".m3u8")) {
+                processM3u8(videoUrl, referer, mainUrl, name, callback)
+            } 
+            // Se for MP4 direto
+            else if (videoUrl.contains(".mp4")) {
+                println("✅ MP4 direto encontrado: $videoUrl")
+                callback.invoke(
+                    ExtractorLink(
+                        "Goyabu",
+                        "Goyabu MP4",
+                        videoUrl,
+                        referer,
+                        Qualities.Unknown.value,
+                        false
+                    )
+                )
+                true
+            } else {
+                false
+            }
+        } catch (e: Exception) {
+            println("❌ Erro ao processar URL: ${e.message}")
+            false
+        }
+    }
+    
     // ============ PROCESSAR M3U8 ============
-    private suspend fun processM3u8(
+    private fun processM3u8(
         m3u8Url: String,
         referer: String,
         mainUrl: String,
@@ -325,36 +382,9 @@ object GoyabuDirectExtractor {
     ): Boolean {
         println("🔗 Processando M3U8: ${m3u8Url.take(150)}...")
         
-        return try {
-            // Verificar se a URL é válida
-            if (!m3u8Url.startsWith("http")) {
-                println("❌ URL inválida: $m3u8Url")
-                return false
-            }
-            
-            // Fazer requisição para verificar
+        try {
             val headers = getM3u8Headers(referer)
-            val response = app.get(m3u8Url, headers = headers)
-            val content = response.text
             
-            if (!content.contains("#EXTM3U")) {
-                println("❌ Não é M3U8 válido")
-                
-                // Tentar extrair M3U8 da resposta
-                val extractedM3u8 = extractM3u8FromContent(content)
-                if (extractedM3u8 != null) {
-                    println("🔄 Extraindo M3U8 da resposta: ${extractedM3u8.take(100)}...")
-                    return processM3u8(extractedM3u8, m3u8Url, mainUrl, name, callback)
-                }
-                
-                return false
-            }
-            
-            println("✅ M3U8 válido encontrado!")
-            println("📄 Cabeçalhos: ${response.headers}")
-            println("📄 Primeiros 500 chars: ${content.take(500)}...")
-            
-            // Gerar links com M3u8Helper
             M3u8Helper.generateM3u8(
                 name,
                 m3u8Url,
@@ -363,35 +393,12 @@ object GoyabuDirectExtractor {
             ).forEach(callback)
             
             println("✅ M3U8 processado com sucesso!")
-            true
+            return true
             
         } catch (e: Exception) {
             println("❌ Erro ao processar M3U8: ${e.message}")
-            false
+            return false
         }
-    }
-    
-    // ============ EXTRAIR M3U8 DO CONTEÚDO ============
-    private fun extractM3u8FromContent(content: String): String? {
-        val patterns = listOf(
-            """(https?://[^\s"']+\.m3u8[^\s"']*)""".toRegex(),
-            """["'](https?://[^"']+\.m3u8)["']""".toRegex(),
-            """file:\s*["'](https?://[^"']+\.m3u8)["']""".toRegex(),
-            """src:\s*["'](https?://[^"']+\.m3u8)["']""".toRegex()
-        )
-        
-        for (pattern in patterns) {
-            val match = pattern.find(content)
-            if (match != null) {
-                var url = match.value
-                if (match.groupValues.size > 1) {
-                    url = match.groupValues[1]
-                }
-                return url
-            }
-        }
-        
-        return null
     }
     
     // ============ HEADERS ============
@@ -401,20 +408,7 @@ object GoyabuDirectExtractor {
             "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
             "Accept-Language" to "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
             "Referer" to (referer ?: "https://goyabu.io/"),
-            "DNT" to "1",
-            "Connection" to "keep-alive"
-        )
-    }
-    
-    private fun getApiHeaders(referer: String): Map<String, String> {
-        return mapOf(
-            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            "Accept" to "*/*",
-            "Accept-Language" to "pt-BR,pt;q=0.9,en;q=0.8",
-            "Referer" to referer,
-            "Origin" to "https://goyabu.io",
-            "Sec-Fetch-Dest" to "empty",
-            "Sec-Fetch-Mode" to "cors"
+            "DNT" to "1"
         )
     }
     
@@ -424,9 +418,7 @@ object GoyabuDirectExtractor {
             "Accept" to "*/*",
             "Accept-Language" to "pt-BR,pt;q=0.9,en;q=0.8",
             "Referer" to referer,
-            "Origin" to "https://goyabu.io",
-            "Sec-Fetch-Dest" to "empty",
-            "Sec-Fetch-Mode" to "cors"
+            "Origin" to "https://goyabu.io"
         )
     }
 }
