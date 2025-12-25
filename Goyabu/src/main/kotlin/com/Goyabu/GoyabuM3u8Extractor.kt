@@ -6,7 +6,7 @@ import com.lagradost.cloudstream3.network.WebViewResolver
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.M3u8Helper
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
-import com.lagradost.cloudstream3.utils.newExtractorLink
+
 object GoyabuM3u8Extractor {
     suspend fun extractVideoLinks(
         url: String,
@@ -74,29 +74,33 @@ object GoyabuM3u8Extractor {
                 val m3u8Content = m3u8Response.text
                 
                 if (m3u8Content.contains("#EXTM3U")) {
-                    // Verificar se é um master playlist com múltiplas qualidades
-                    if (m3u8Content.contains("#EXT-X-STREAM-INF")) {
-                        M3u8Helper.generateM3u8(
-                            name,
-                            m3u8Url,
-                            mainUrl,
-                            headers = headers
-                        ).forEach(callback)
-                    } else {
-                        // Se for um M3U8 simples, criar link direto
-                        val extractorLink = newExtractorLink(
-                            source = name,
-                            name = "Vídeo M3U8",
-                            url = m3u8Url,
-                            referer = url,
-                            quality = 720,
-                            headers = headers,
-                            type = ExtractorLinkType.HLS
-                        )
-                        callback(extractorLink)
-                    }
+                    // Usar M3u8Helper para gerar os links
+                    M3u8Helper.generateM3u8(
+                        name,
+                        m3u8Url,
+                        mainUrl,
+                        headers = headers
+                    ).forEach(callback)
                     
                     println("✅ GOYABU M3U8 EXTRACTOR: Links extraídos com sucesso!")
+                    return true
+                } else {
+                    // Se não for um M3U8 válido, criar link manualmente
+                    println("⚠️ M3U8 não contém #EXTM3U, criando link manualmente")
+                    
+                    val extractorLink = newExtractorLink(
+                        source = name,
+                        name = "Vídeo M3U8",
+                        url = m3u8Url,
+                        type = ExtractorLinkType.VIDEO
+                    ) {
+                        this.referer = url
+                        this.quality = 720
+                        this.headers = headers
+                    }
+                    
+                    callback(extractorLink)
+                    println("✅ GOYABU M3U8 EXTRACTOR: Link manual criado")
                     return true
                 }
             }
@@ -109,5 +113,21 @@ object GoyabuM3u8Extractor {
             e.printStackTrace()
             false
         }
+    }
+    
+    // Função auxiliar para criar ExtractorLink
+    private fun newExtractorLink(
+        source: String,
+        name: String,
+        url: String,
+        type: ExtractorLinkType,
+        init: ExtractorLink.() -> Unit = {}
+    ): ExtractorLink {
+        return ExtractorLink(
+            source = source,
+            name = name,
+            url = url,
+            type = type
+        ).apply(init)
     }
 }
