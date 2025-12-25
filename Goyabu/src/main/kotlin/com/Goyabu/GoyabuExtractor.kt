@@ -49,6 +49,7 @@ object GoyabuExtractor {
         return try {
             val streamResolver = WebViewResolver(
                 interceptUrl = Regex("""(anivideo\.net|videohls\.php|\.m3u8)"""),
+                useOkhttp = false,
                 timeout = 60_000L
             )
 
@@ -95,7 +96,8 @@ object GoyabuExtractor {
 
         // Se não tiver d=, faz get na API (raramente necessário hoje)
         val apiResponse = app.get(apiUrl, headers = mapOf("Referer" to referer))
-        val m3u8Match = Regex("""(https?://[^\s"']+\.m3u8)""").find(apiResponse.text)
+        val m3u8Match = Regex("""(https?://[^\s"']+\.m3u8)""".toRegex(RegexOption.IGNORE_CASE))
+            .find(apiResponse.text)
         if (m3u8Match != null) {
             val m3u8Url = m3u8Match.groupValues[1]
             println("✅ M3U8 encontrado na resposta da API: $m3u8Url")
@@ -120,9 +122,9 @@ object GoyabuExtractor {
             )
 
             M3u8Helper.generateM3u8(
-                sourceName = name,
-                streamUrl = m3u8Url,
-                referer = mainUrl,
+                name,  // source
+                m3u8Url,  // url
+                mainUrl,  // referer
                 headers = headers
             ).forEach(callback)
 
