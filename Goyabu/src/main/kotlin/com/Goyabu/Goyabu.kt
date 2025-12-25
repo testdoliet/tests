@@ -844,107 +844,44 @@ class Goyabu : MainAPI() {
         }
     }
 
-    // ============ LOAD LINKS (AGORA COM SUPORTE AO BLOGGER) ============
-        // ============ LOAD LINKS (COM SUPORTE AO SUPERFLIX EXTRACTOR) ============
-    override suspend fun loadLinks(
-        data: String,
-        isCasting: Boolean,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        println("\n🎬 GOYABU: Iniciando extração de links para: $data")
+
+// ============ LOAD LINKS ============
+override suspend fun loadLinks(
+    data: String,
+    isCasting: Boolean,
+    subtitleCallback: (SubtitleFile) -> Unit,
+    callback: (ExtractorLink) -> Unit
+): Boolean {
+    println("\n🎬 GOYABU loadLinks: URL recebida: $data")
+    
+    return try {
+        // USAR APENAS O GOYABU M3U8 EXTRACTOR
+        val success = GoyabuM3u8Extractor.extractVideoLinks(
+            data, 
+            "https://goyabu.io", 
+            "Goyabu", 
+            callback
+        )
         
-        return try {
-            // PRIMEIRO: Tentar com o extrator SuperFlix (para M3U8)
-            val success = GoyabuM3u8Extractor.extractVideoLinks(data, "https://goyabu.io", "Goyabu", callback)
-            
-            if (success) {
-                println("✅ GOYABU: SuperFlixExtractor encontrou links M3U8!")
-                return true
-            } else {
-                println("⚠️ GOYABU: SuperFlixExtractor não encontrou links, tentando Blogger...")
-                
-                // SEGUNDO: Tentar com o extrator Blogger
-                val bloggerSuccess = GoyabuBloggerExtractor.extractVideoLinks(data, "Goyabu", callback)
-                
-                if (bloggerSuccess) {
-                    println("✅ GOYABU: BloggerExtractor encontrou links!")
-                    return true
-                } else {
-                    println("⚠️ GOYABU: Ambos extractors falharam, tentando métodos diretos...")
-                    
-                    // TERCEIRO: Fallback - tentar extrair diretamente da página
-                    val response = app.get(data)
-                    val html = response.text
-                    
-                    // Padrões para procurar URLs de vídeo
-                    val videoPatterns = listOf(
-                        """["'](https?://[^"']*\.(?:m3u8|mp4|mkv|webm|avi)[^"']*)["']""".toRegex(),
-                        """(https?://[^"'\s<>]*\.googlevideo\.com/[^"'\s<>]+)""".toRegex(),
-                        """src\s*:\s*['"](https?://[^"']+)['"]""".toRegex(),
-                        """url\s*:\s*['"](https?://[^"']+)['"]""".toRegex(),
-                        """file\s*:\s*['"](https?://[^"']+)['"]""".toRegex()
-                    )
-                    
-                    var found = false
-                    for (pattern in videoPatterns) {
-                        val matches = pattern.findAll(html).toList()
-                        if (matches.isNotEmpty()) {
-                            for (match in matches) {
-                                val videoUrl = match.groupValues[1].takeIf { it.startsWith("http") } ?: continue
-                                
-                                // Verificar se é um vídeo válido
-                                if (videoUrl.contains(".m3u8") || 
-                                    videoUrl.contains(".mp4") || 
-                                    videoUrl.contains("googlevideo")) {
-                                    
-                                    val linkName = when {
-                                        videoUrl.contains(".m3u8") -> "Vídeo M3U8"
-                                        videoUrl.contains(".mp4") -> "Vídeo MP4"
-                                        else -> "Vídeo"
-                                    }
-                                    
-                                    val extractorLink = newExtractorLink(
-                                        source = "Goyabu",
-                                        name = linkName,
-                                        url = videoUrl,
-                                        type = ExtractorLinkType.VIDEO
-                                    ) {
-                                        this.referer = data
-                                        this.quality = when {
-                                            videoUrl.contains("1080") -> 1080
-                                            videoUrl.contains("720") -> 720
-                                            videoUrl.contains("480") -> 480
-                                            videoUrl.contains("360") -> 360
-                                            else -> 720
-                                        }
-                                        this.headers = mapOf(
-                                            "Referer" to data,
-                                            "Origin" to "https://goyabu.io",
-                                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-                                        )
-                                    }
-                                    
-                                    callback(extractorLink)
-                                    found = true
-                                    println("✅ URL de vídeo encontrada: ${videoUrl.take(80)}...")
-                                }
-                            }
-                        }
-                    }
-                    
-                    if (!found) {
-                        println("❌ GOYABU: Nenhum link de vídeo encontrado após todos os métodos")
-                    }
-                    
-                    found
-                }
-            }
-            
-        } catch (e: Exception) {
-            println("❌ GOYABU: Erro na extração de links: ${e.message}")
-            e.printStackTrace()
-            false
+        if (success) {
+            println("✅ GOYABU: Links extraídos com sucesso!")
+            return true
         }
+        
+        // Se falhar, tentar o Blogger como fallback
+        println("⚠️ GOYABU: M3U8 falhou, tentando Blogger...")
+        val bloggerSuccess = GoyabuBloggerExtractor.extractVideoLinks(data, "Goyabu", callback)
+        
+        if (bloggerSuccess) {
+            println("✅ GOYABU: Blogger encontrou links!")
+            return true
+        }
+        
+        println("❌ GOYABU: Todos os métodos falharam")
+        false
+        
+    } catch (e: Exception) {
+        println("❌ GOYABU: Erro fatal: ${e.message}")
+        false
     }
-                                 }
+}
