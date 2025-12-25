@@ -18,11 +18,6 @@ class SuperFlix : MainAPI() {
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries, TvType.Anime)
     override val usesWebView = true
 
-    override fun registerExtractors() {
-        // Registra o extractor de YouTube para trailers
-        println("✅ Registrando SuperFlixYoutubeExtractor...")
-        registerExtractor(SuperFlixYoutubeExtractor)
-    }
     private val TMDB_PROXY_URL = "https://lawliet.euluan1912.workers.dev"
     private val tmdbImageUrl = "https://image.tmdb.org/t/p"
 
