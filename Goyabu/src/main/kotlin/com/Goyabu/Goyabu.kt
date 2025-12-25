@@ -844,7 +844,6 @@ class Goyabu : MainAPI() {
         }
     }
 
-
 override suspend fun loadLinks(
     data: String,
     isCasting: Boolean,
@@ -853,12 +852,10 @@ override suspend fun loadLinks(
 ): Boolean {
     println("\n🎬 GOYABU loadLinks: URL recebida: $data")
     
-    // USAR APENAS ESTE EXTRACTOR FOCADO
+    // VERSÃO SIMPLES: usar um nome fixo
     return GoyabuExtractor.extractVideoLinks(
-        data, 
-        "https://goyabu.io", 
-        "Goyabu", 
-        callback
+        url = data,
+        name = "Vídeo Goyabu",  // Nome simples
+        callback = callback
     )
-  }
 }
