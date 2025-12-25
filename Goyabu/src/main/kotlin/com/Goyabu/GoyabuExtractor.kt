@@ -362,6 +362,104 @@ object GoyabuExtractor {
             false
         }
     }
+// ==================== MÉTODO 3: JW Player (Direct MP4/Google Video) ====================
+private fun extractJwPlayerUrls(
+    doc: org.jsoup.nodes.Document,
+    referer: String,
+    name: String,
+    callback: (ExtractorLink) -> Unit
+): Boolean {
+    var found = false
+
+    // Buscar o elemento específico do JW Player que você identificou
+    val jwVideoElement = doc.selectFirst(".jw-video.jw-reset[src]")
+    jwVideoElement?.attr("src")?.let { videoUrl ->
+        if (isDirectVideoUrl(videoUrl)) {
+            println("📦 JW Player (Direct MP4) encontrado!")
+            if (processDirectVideoUrl(videoUrl, referer, name, callback)) {
+                found = true
+            }
+        }
+    }
+
+    // Busca alternativa: qualquer tag <video> com src contendo "googlevideo.com"
+    if (!found) {
+        doc.select("video[src*='googlevideo.com']").forEach { element ->
+            val src = element.attr("src")
+            if (src.isNotBlank() && isDirectVideoUrl(src)) {
+                println("📦 <video> tag com link direto encontrado")
+                if (processDirectVideoUrl(src, referer, name, callback)) {
+                    found = true
+                }
+            }
+        }
+    }
+
+    // Busca em scripts para URLs do Google Video (fallback)
+    if (!found) {
+        val scripts = doc.select("script")
+        val directVideoPattern = Regex("""https?://[^"'\s]*\.googlevideo\.com/[^"'\s]*videoplayback[^"'\s]*""")
+        
+        scripts.forEach { script ->
+            val matches = directVideoPattern.findAll(script.html())
+            matches.forEach { match ->
+                val url = match.value
+                if (isDirectVideoUrl(url) && !url.contains("m3u8")) { // Garante que não é HLS
+                    println("📦 Link direto (googlevideo.com) encontrado em script")
+                    if (processDirectVideoUrl(url, referer, name, callback)) {
+                        found = true
+                    }
+                }
+            }
+        }
+    }
+
+    return found
+}
+
+private fun isDirectVideoUrl(url: String): Boolean {
+    return (url.contains("googlevideo.com") && 
+            url.contains("videoplayback") && 
+            !url.contains("m3u8"))
+}
+
+private fun processDirectVideoUrl(
+    videoUrl: String,
+    referer: String,
+    name: String,
+    callback: (ExtractorLink) -> Unit
+): Boolean {
+    return try {
+        // Extrair qualidade do parâmetro 'itag' na URL
+        val itag = extractItagFromUrl(videoUrl)
+        // Usar o mesmo mapa de qualidade do método Blogger
+        val quality = itagQualityMap[itag] ?: 720 
+        val qualityLabel = getQualityLabel(quality)
+
+        println("✅ Criando link direto MP4: $qualityLabel (itag: $itag)")
+
+        val extractorLink = newExtractorLink(
+            source = "Goyabu JWPlayer",
+            name = "$name ($qualityLabel) [MP4]",
+            url = videoUrl,
+            type = ExtractorLinkType.VIDEO // Tipo VIDEO para MP4 direto
+        ) {
+            this.referer = referer
+            this.quality = quality
+            this.headers = mapOf(
+                "Referer" to referer,
+                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Origin" to URI(referer).host?.let { "https://$it" } ?: "https://goyabu.io"
+            )
+        }
+
+        callback(extractorLink)
+        true
+    } catch (e: Exception) {
+        println("❌ Erro ao processar link direto: ${e.message}")
+        false
+    }
+}
     
     // ==================== FUNÇÕES AUXILIARES ====================
     private fun cleanUrl(url: String): String {
@@ -428,11 +526,54 @@ object GoyabuExtractor {
     }
     
     // Função auxiliar para uso simples
-    suspend fun extractVideoLinksSimple(url: String, name: String): List<ExtractorLink> {
-        val links = mutableListOf<ExtractorLink>()
-        extractVideoLinks(url, name) { link ->
-            links.add(link)
+    suspend fun extractVideoLinks(
+    url: String,
+    name: String,
+    callback: (ExtractorLink) -> Unit
+): Boolean {
+    println("🎬 GOYABU EXTRACTOR: Buscando vídeos em: $url")
+    
+    return try {
+        val pageResponse = app.get(
+            url,
+            headers = mapOf(
+                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Referer" to "https://goyabu.io/",
+                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
+            ),
+            timeout = 30
+        )
+        
+        val html = pageResponse.text
+        val doc = Jsoup.parse(html)
+        
+        // 🔍 ORDEM DE BUSCA OTIMIZADA:
+        // 1. PRIMEIRO: JW Player com links MP4 diretos (qualidade FHD)
+        println("1️⃣ Buscando JW Player (MP4 Direto)...")
+        if (extractJwPlayerUrls(doc, url, name, callback)) {
+            println("✅ JW Player (MP4) encontrado!")
+            return true
         }
-        return links
+        
+        // 2. SEGUNDO: M3U8 (STCode Player/HLS)
+        println("2️⃣ Buscando M3U8 (STCode Player)...")
+        if (extractM3U8Urls(doc, url, name, callback)) {
+            println("✅ M3U8 encontrado!")
+            return true
+        }
+        
+        // 3. TERCEIRO: Blogger/Google Video (fallback)
+        println("3️⃣ Buscando Blogger/Google Video...")
+        if (extractBloggerUrls(doc, url, name, callback)) {
+            println("✅ Blogger encontrado!")
+            return true
+        }
+        
+        println("❌ Nenhum vídeo encontrado")
+        false
+        
+    } catch (e: Exception) {
+        println("❌ Erro na extração: ${e.message}")
+        false
     }
 }
