@@ -884,4 +884,5 @@ override suspend fun loadLinks(
         println("❌ GOYABU: Erro fatal: ${e.message}")
         false
     }
+  }
 }
