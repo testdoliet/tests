@@ -8,6 +8,9 @@ class SuperFlixYoutubeExtractor : ExtractorApi() {
     override val name = "SuperFlixYouTube"
     override val mainUrl = "https://www.youtube.com"
     
+    // MÉTODO OBRIGATÓRIO: Define se precisa de referer
+    override val requiresReferer = false
+    
     private val itagQualityMap = mapOf(
         // Vídeos completos (áudio + vídeo)
         18 to Qualities.P360.value,   // MP4 360p
@@ -29,6 +32,7 @@ class SuperFlixYoutubeExtractor : ExtractorApi() {
         315 to Qualities.P2160.value, // WebM 4K60
     )
 
+    // MÉTODO OBRIGATÓRIO 1: Esta é a assinatura correta
     override suspend fun getUrl(
         url: String,
         referer: String?,
@@ -42,7 +46,7 @@ class SuperFlixYoutubeExtractor : ExtractorApi() {
             println("📹 Video ID encontrado: $videoId")
             
             // Método 1: API do Invidious
-            if (extractWithInvidious(videoId, referer ?: mainUrl, callback)) {
+            if (extractWithInvidious(videoId, referer ?: mainUrl, subtitleCallback, callback)) {
                 return true
             }
             
@@ -53,6 +57,17 @@ class SuperFlixYoutubeExtractor : ExtractorApi() {
             println("❌ YouTubeExtractor erro: ${e.message}")
             false
         }
+    }
+    
+    // MÉTODO OBRIGATÓRIO 2: Alternativo (retorna lista)
+    override suspend fun getUrl(url: String, referer: String?): List<ExtractorLink>? {
+        val links = mutableListOf<ExtractorLink>()
+        
+        getUrl(url, referer, {}, { link ->
+            links.add(link)
+        })
+        
+        return if (links.isNotEmpty()) links else null
     }
     
     private fun extractYouTubeId(url: String): String? {
@@ -74,6 +89,7 @@ class SuperFlixYoutubeExtractor : ExtractorApi() {
     private suspend fun extractWithInvidious(
         videoId: String,
         referer: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val instances = listOf(
@@ -94,6 +110,9 @@ class SuperFlixYoutubeExtractor : ExtractorApi() {
                 val jsonObj = JSONObject(json)
                 
                 var foundStreams = false
+                
+                // Extrair legendas primeiro
+                extractSubtitlesFromInvidious(jsonObj, subtitleCallback)
                 
                 // formatStreams (streams completos)
                 if (jsonObj.has("formatStreams")) {
@@ -193,6 +212,29 @@ class SuperFlixYoutubeExtractor : ExtractorApi() {
         }
         
         return false
+    }
+    
+    private fun extractSubtitlesFromInvidious(
+        jsonObj: JSONObject,
+        subtitleCallback: (SubtitleFile) -> Unit
+    ) {
+        try {
+            if (jsonObj.has("captions")) {
+                val captions = jsonObj.getJSONArray("captions")
+                for (i in 0 until captions.length()) {
+                    val caption = captions.getJSONObject(i)
+                    val label = caption.optString("label", "")
+                    val url = caption.optString("url", "")
+                    
+                    if (label.isNotBlank() && url.isNotBlank()) {
+                        println("📝 Legenda: $label")
+                        subtitleCallback(SubtitleFile(label, url))
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            // Ignorar erros de legendas
+        }
     }
     
     private suspend fun extractWithPublicAPI(
