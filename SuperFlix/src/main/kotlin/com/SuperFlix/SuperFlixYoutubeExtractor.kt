@@ -6,7 +6,16 @@ import com.lagradost.cloudstream3.app
 import java.net.URI
 
 object SuperFlixYoutubeExtractor {
-    suspend fun extractYouTubeLinks(
+    suspend fun getUrl(
+        url: String,
+        referer: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        return extractYouTubeLinks(url, referer, subtitleCallback, callback)
+    }
+
+    private suspend fun extractYouTubeLinks(
         url: String,
         referer: String,
         subtitleCallback: (SubtitleFile) -> Unit,
