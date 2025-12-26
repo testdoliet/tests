@@ -122,23 +122,23 @@ class SuperFlixYoutubeExtractor : ExtractorApi() {
             val jsonText = response.text
             println("✅ Resposta API recebida (${jsonText.length} chars)")
             
-            // 3. Parsear resposta JSON (igual ao original)
-            val jsonObject = org.json.JSONObject(jsonText)
-            val streamingData = jsonObject.optJSONObject("streamingData")
+            // 3. Parsear resposta JSON usando Jackson (mais simples)
+            val rootNode = mapper.readTree(jsonText)
+            val streamingData = rootNode.path("streamingData")
             
-            if (streamingData == null) {
+            if (streamingData.isMissingNode) {
                 println("❌ streamingData não encontrado na resposta")
                 return false
             }
             
             // 4. BUSCAR HLS PRIMEIRO (igual ao original)
-            val hlsUrl = streamingData.optString("hlsManifestUrl", null)
+            val hlsUrl = streamingData.path("hlsManifestUrl").asText(null)
             
             if (hlsUrl != null && hlsUrl.isNotBlank()) {
                 println("🎯 URL HLS encontrada: ${hlsUrl.take(80)}...")
                 
-                // Usar M3u8Helper2 EXATAMENTE como o original faz!
-                extractHLSviaM3u8Helper(hlsUrl, callback)
+                // Extrair qualidades do HLS manualmente
+                extractQualitiesFromHLSManual(hlsUrl, callback)
                 return true
             }
             
@@ -152,40 +152,9 @@ class SuperFlixYoutubeExtractor : ExtractorApi() {
         }
     }
     
-    // 🔥 **MÉTODO PRINCIPAL: Extrair HLS via M3u8Helper2 (igual ao original)**
-    private suspend fun extractHLSviaM3u8Helper(hlsUrl: String, callback: (ExtractorLink) -> Unit) {
-        try {
-            println("🔄 Processando HLS com M3u8Helper2...")
-            
-            // Usar EXATAMENTE a mesma abordagem do extrator original
-            val m3u8Helper = M3u8Helper2()
-            val links = m3u8Helper.generateM3u8(
-                name = "YouTube",
-                url = hlsUrl,
-                referer = mainUrl,
-                quality = null,
-                headers = null,
-                subtitleCallback = {}
-            )
-            
-            // Chamar callback para cada link gerado
-            links.forEach { link ->
-                println("✅ Qualidade encontrada: ${link.name}")
-                callback(link)
-            }
-            
-            println("✨ ${links.size} qualidades extraídas via HLS!")
-            
-        } catch (e: Exception) {
-            println("❌ Erro no M3u8Helper2: ${e.message}")
-            // Fallback para parse manual
-            extractQualitiesFromHLSManual(hlsUrl, callback)
-        }
-    }
-    
-    // 🔧 **Fallback para parse manual de HLS**
+    // 🔧 **Parse manual de HLS (alternativa)**
     private suspend fun extractQualitiesFromHLSManual(hlsUrl: String, callback: (ExtractorLink) -> Unit) {
-        println("🎬 Parseando HLS manualmente (fallback)...")
+        println("🎬 Parseando HLS manualmente...")
         
         try {
             val response = app.get(hlsUrl, headers = headers, timeout = 15000)
@@ -228,9 +197,9 @@ class SuperFlixYoutubeExtractor : ExtractorApi() {
                             else -> "360p"
                         }
                         
-                        println("✅ Criando link: $qualityName")
+                        println("✅ Criando link HLS: $qualityName")
                         
-                        // Criar link direto (sem usar M3u8Helper2)
+                        // Criar link M3U8
                         val extractorLink = newExtractorLink(
                             source = name,
                             name = "YouTube ($qualityName)",
@@ -260,29 +229,29 @@ class SuperFlixYoutubeExtractor : ExtractorApi() {
     }
     
     // 🔧 **Fallback para formatos adaptativos (quando não tem HLS)**
-    private suspend fun extractAdaptiveFormatsFallback(streamingData: org.json.JSONObject, callback: (ExtractorLink) -> Unit) {
-        try {
-            val adaptiveFormats = streamingData.optJSONArray("adaptiveFormats")
+    private suspend fun extractAdaptiveFormatsFallback(streamingData: JsonNode, callback: (ExtractorLink) -> Unit): Boolean {
+        return try {
+            val adaptiveFormats = streamingData.path("adaptiveFormats")
             
-            if (adaptiveFormats == null || adaptiveFormats.length() == 0) {
+            if (!adaptiveFormats.isArray || adaptiveFormats.size() == 0) {
                 println("❌ Nenhum adaptiveFormat encontrado")
-                return
+                return false
             }
             
-            println("📊 Total de formatos adaptativos: ${adaptiveFormats.length()}")
+            println("📊 Total de formatos adaptativos: ${adaptiveFormats.size()}")
             
             // Buscar formatos COM áudio primeiro
             var foundCount = 0
             
-            for (i in 0 until adaptiveFormats.length()) {
-                val format = adaptiveFormats.getJSONObject(i)
-                val itag = format.optInt("itag", -1)
-                val url = format.optString("url", null)
-                val qualityLabel = format.optString("qualityLabel", "")
-                val mimeType = format.optString("mimeType", "").lowercase()
+            for (i in 0 until adaptiveFormats.size()) {
+                val format = adaptiveFormats.get(i)
+                val itag = format.path("itag").asInt(-1)
+                val url = format.path("url").asText(null)
+                val qualityLabel = format.path("qualityLabel").asText("")
+                val mimeType = format.path("mimeType").asText("").lowercase()
                 
                 // Verificar se é formato COM áudio
-                val hasAudio = format.has("audioQuality") || 
+                val hasAudio = !format.path("audioQuality").isMissingNode || 
                               mimeType.contains("audio") ||
                               itag in listOf(22, 37, 46, 18, 43, 45)
                 
@@ -316,12 +285,12 @@ class SuperFlixYoutubeExtractor : ExtractorApi() {
             
             // Se não encontrou formatos com áudio, usar formatos simples
             if (foundCount == 0) {
-                val formats = streamingData.optJSONArray("formats")
-                if (formats != null && formats.length() > 0) {
-                    for (i in 0 until formats.length()) {
-                        val format = formats.getJSONObject(i)
-                        val itag = format.optInt("itag", -1)
-                        val url = format.optString("url", null)
+                val formats = streamingData.path("formats")
+                if (formats.isArray && formats.size() > 0) {
+                    for (i in 0 until formats.size()) {
+                        val format = formats.get(i)
+                        val itag = format.path("itag").asInt(-1)
+                        val url = format.path("url").asText(null)
                         
                         if (url != null && (itag == 18 || itag == 22 || itag == 37)) {
                             val quality = when (itag) {
@@ -343,8 +312,11 @@ class SuperFlixYoutubeExtractor : ExtractorApi() {
                 }
             }
             
+            foundCount > 0
+            
         } catch (e: Exception) {
             println("❌ Erro em extractAdaptiveFormatsFallback: ${e.message}")
+            false
         }
     }
     
@@ -362,7 +334,7 @@ class SuperFlixYoutubeExtractor : ExtractorApi() {
                 source = name,
                 name = "YouTube ($qualityText)",
                 url = videoUrl,
-                type = ExtractorLinkType.VIDEO
+                type = if (videoUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
             ) {
                 this.referer = mainUrl
                 this.quality = quality
