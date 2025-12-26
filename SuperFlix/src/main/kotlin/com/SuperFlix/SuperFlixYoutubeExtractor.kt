@@ -160,6 +160,104 @@ class SuperFlixYoutubeExtractor : ExtractorApi() {
         }
     }
     
+    // 🎬 **Extrair qualidades do HLS manualmente**
+    private suspend fun extractQualitiesFromHLSManual(hlsUrl: String, callback: (ExtractorLink) -> Unit) {
+        println("🎬 Parseando HLS manualmente...")
+        
+        try {
+            val response = app.get(hlsUrl, headers = headers, timeout = 15000)
+            if (response.code != 200) {
+                println("❌ Falha ao baixar HLS: ${response.code}")
+                return
+            }
+            
+            val m3u8Content = response.text
+            val lines = m3u8Content.lines()
+            
+            var currentQuality = ""
+            var currentBandwidth = 0
+            
+            for (line in lines) {
+                when {
+                    line.startsWith("#EXT-X-STREAM-INF:") -> {
+                        currentQuality = extractQualityFromM3u8Line(line)
+                        currentBandwidth = extractBandwidthFromM3u8Line(line)
+                        println("📊 Encontrada qualidade: $currentQuality (${currentBandwidth/1000}Kbps)")
+                    }
+                    !line.startsWith("#") && line.isNotBlank() && currentQuality.isNotBlank() -> {
+                        val streamUrl = if (line.startsWith("http")) line else resolveRelativeUrl(hlsUrl, line)
+                        
+                        val qualityValue = when {
+                            currentQuality.contains("2160") || currentBandwidth > 8000000 -> Qualities.P2160.value
+                            currentQuality.contains("1440") || currentBandwidth > 5000000 -> Qualities.P1440.value
+                            currentQuality.contains("1080") || currentBandwidth > 2500000 -> Qualities.P1080.value
+                            currentQuality.contains("720") || currentBandwidth > 1000000 -> Qualities.P720.value
+                            currentQuality.contains("480") || currentBandwidth > 500000 -> Qualities.P480.value
+                            else -> Qualities.P360.value
+                        }
+                        
+                        val qualityName = when (qualityValue) {
+                            Qualities.P2160.value -> "4K"
+                            Qualities.P1440.value -> "1440p"
+                            Qualities.P1080.value -> "1080p"
+                            Qualities.P720.value -> "720p"
+                            Qualities.P480.value -> "480p"
+                            else -> "360p"
+                        }
+                        
+                        println("✅ Criando link HLS: $qualityName")
+                        
+                        // Criar link M3U8
+                        val extractorLink = newExtractorLink(
+                            source = name,
+                            name = "YouTube ($qualityName)",
+                            url = streamUrl,
+                            type = ExtractorLinkType.M3U8
+                        ) {
+                            this.referer = mainUrl
+                            this.quality = qualityValue
+                            this.headers = mapOf(
+                                "Referer" to mainUrl,
+                                "User-Agent" to userAgent,
+                                "Origin" to mainUrl
+                            )
+                        }
+                        
+                        callback(extractorLink)
+                        currentQuality = ""
+                    }
+                }
+            }
+            
+            println("✨ Qualidades HLS extraídas manualmente!")
+            
+        } catch (e: Exception) {
+            println("❌ Erro parseando HLS manualmente: ${e.message}")
+        }
+    }
+    
+    // 🔧 **Funções auxiliares para HLS**
+    private fun extractQualityFromM3u8Line(line: String): String {
+        val pattern = Pattern.compile("RESOLUTION=(\\d+x\\d+)")
+        val matcher = pattern.matcher(line)
+        return if (matcher.find()) matcher.group(1) else "unknown"
+    }
+    
+    private fun extractBandwidthFromM3u8Line(line: String): Int {
+        val pattern = Pattern.compile("BANDWIDTH=(\\d+)")
+        val matcher = pattern.matcher(line)
+        return if (matcher.find()) matcher.group(1).toIntOrNull() ?: 0 else 0
+    }
+    
+    private fun resolveRelativeUrl(baseUrl: String, relativePath: String): String {
+        return if (relativePath.startsWith("http")) {
+            relativePath
+        } else {
+            val base = baseUrl.substringBeforeLast("/")
+            "$base/$relativePath"
+        }
+    }
+    
     // 🔍 **ANALISAR FORMATOS ADAPTATIVOS DETALHADAMENTE**
     private suspend fun extractAdaptiveFormatsDetailed(streamingData: JsonNode, callback: (ExtractorLink) -> Unit): Boolean {
         return try {
@@ -380,9 +478,6 @@ class SuperFlixYoutubeExtractor : ExtractorApi() {
                 
                 val html = response.text
                 println("✅ Página baixada (${html.length} chars)")
-                
-                // Salvar HTML para debug (opcional)
-                // saveHtmlForDebug(html, videoId)
                 
                 // MÉTODO 1: Usar regex IDÊNTICO ao original
                 val pattern = Regex("ytcfg\\.set\\(\\s*(\\{.*?\\})\\s*\\)\\s*;", RegexOption.DOT_MATCHES_ALL)
