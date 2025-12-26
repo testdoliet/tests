@@ -23,11 +23,11 @@ class YouTubeTrailerExtractor : ExtractorApi() {
         try {
             println("🔍 YouTube Extractor processando: $url")
 
-            // Extrai o videoId
+            // Extrai o videoId de qualquer formato YouTube
             val videoId = Regex("(?:youtube\\.com/(?:watch\\?v=|embed/)|youtu\\.be/)([A-Za-z0-9_-]{11})")
                 .find(url)?.groupValues?.get(1) ?: return
 
-            // Baixa a página do vídeo pra pegar ytcfg
+            // Baixa a página do vídeo para pegar o ytcfg (contém a API key)
             val pageResponse = app.get("https://www.youtube.com/watch?v=$videoId")
             val html = pageResponse.text
 
@@ -37,8 +37,10 @@ class YouTubeTrailerExtractor : ExtractorApi() {
             val cfg = JSONObject(ytCfgJson)
             val apiKey = cfg.optString("INNERTUBE_API_KEY").takeIf { it.isNotEmpty() } ?: return
 
-            // POST na API player
+            // Monta a URL da API player
             val apiUrl = "https://www.youtube.com/youtubei/v1/player?key=$apiKey"
+
+            // Corpo JSON da requisição (simulando cliente WEB)
             val jsonBody = """
             {
                 "context": {
@@ -54,12 +56,19 @@ class YouTubeTrailerExtractor : ExtractorApi() {
             }
             """.trimIndent()
 
-            val headers = mapOf("Content-Type" to "application/json")
-            
+            // Headers para indicar que estamos enviando JSON
+            val requestHeaders = mapOf(
+                "Content-Type" to "application/json",
+                "User-Agent" to userAgent
+            )
+
+            // POST com json = (parâmetro correto para body JSON)
             val response = app.post(
-                apiUrl,
+                url = apiUrl,
+                headers = requestHeaders,
                 json = jsonBody
             )
+
             if (!response.isSuccessful) {
                 println("❌ Erro na API player: ${response.code}")
                 return
@@ -68,27 +77,29 @@ class YouTubeTrailerExtractor : ExtractorApi() {
             val playerJson = JSONObject(response.text)
             val streamingData = playerJson.optJSONObject("streamingData") ?: return
             val hlsUrl = streamingData.optString("hlsManifestUrl")
+
             if (hlsUrl.isBlank()) {
-                println("❌ Nenhum HLS encontrado")
+                println("❌ Nenhum HLS encontrado na resposta")
                 return
             }
 
-            println("✅ Encontrado HLS: $hlsUrl")
+            println("✅ HLS encontrado: $hlsUrl")
 
-            val headers = mapOf(
+            // Headers para o player M3U8 (compatível com o seu exemplo que compila)
+            val streamHeaders = mapOf(
                 "User-Agent" to userAgent,
                 "Referer" to "https://www.youtube.com/",
                 "Origin" to "https://www.youtube.com"
             )
 
             M3u8Helper.generateM3u8(
-                name,
-                hlsUrl,
-                mainUrl,
-                headers = headers
+                source = name,
+                streamUrl = hlsUrl,
+                referer = mainUrl,
+                headers = streamHeaders
             ).forEach(callback)
 
-            println("✅ Links M3U8 enviados ao player")
+            println("✅ Links M3U8 enviados ao player com sucesso")
 
         } catch (e: Exception) {
             println("❌ Erro no YouTube Extractor: ${e.message}")
