@@ -5,7 +5,6 @@ import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.M3u8Helper
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.app
-import com.lagradost.cloudstream3.utils.Qualities
 import org.json.JSONObject
 
 class YouTubeTrailerExtractor : ExtractorApi() {
@@ -17,8 +16,8 @@ class YouTubeTrailerExtractor : ExtractorApi() {
 
     override suspend fun getUrl(
         url: String,
-        referer: String? = null,
-        subtitleCallback: (SubtitleFile) -> Unit = {},
+        referer: String?,
+        subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
         try {
@@ -76,18 +75,20 @@ class YouTubeTrailerExtractor : ExtractorApi() {
             val hlsUrl = streamingData.optString("hlsManifestUrl")
             if (hlsUrl.isBlank()) return
 
-            // EXATAMENTE COMO NO EXEMPLO QUE FUNCIONA
+            // CORREÇÃO: Passando os parâmetros na ordem correta
             val headers = mapOf(
                 "Referer" to "https://www.youtube.com/",
                 "Origin" to "https://www.youtube.com",
                 "User-Agent" to userAgent
             )
 
+            // EXATAMENTE como no exemplo funcional:
+            // generateM3u8(name, intercepted, mainUrl, headers = headers)
             M3u8Helper.generateM3u8(
-                name,
-                hlsUrl,
-                mainUrl,
-                headers = headers
+                name,           // String
+                hlsUrl,         // String (intercepted URL)
+                mainUrl,        // String
+                headers = headers  // Map<String, String>? (parâmetro nomeado)
             ).forEach(callback)
 
         } catch (e: Exception) {
