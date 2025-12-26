@@ -3,7 +3,7 @@ package com.SuperFlix
 import com.lagradost.cloudstream3.utils.ExtractorApi
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.M3u8Helper
-import com.lagradost.cloudstream3.utils.SubtitleFile  // ← IMPORT NECESSÁRIO
+import com.lagradost.cloudstream3.utils.SubtitleFile
 import com.lagradost.cloudstream3.app
 import org.json.JSONObject
 
@@ -25,15 +25,12 @@ class YouTubeTrailerExtractor : ExtractorApi() {
         callback: (ExtractorLink) -> Unit
     ) {
         try {
-            // Extrai o videoId
             val videoId = Regex("(?:youtube\\.com/(?:watch\\?v=|embed/)|youtu\\.be/)([A-Za-z0-9_-]{11})")
                 .find(url)?.groupValues?.get(1) ?: return
 
-            // Baixa a página do vídeo
             val pageResponse = app.get("https://www.youtube.com/watch?v=$videoId", headers = headers)
             val html = pageResponse.text
 
-            // Extrai ytcfg.set({...})
             val ytCfgJson = Regex("ytcfg\\.set\\(\\s*(\\{.*?\\})\\s*\\);")
                 .find(html)?.groupValues?.get(1) ?: return
 
@@ -42,7 +39,6 @@ class YouTubeTrailerExtractor : ExtractorApi() {
             val clientVersion = cfg.optString("INNERTUBE_CLIENT_VERSION", "2.20241226.01.00")
             val visitorData = cfg.optString("VISITOR_DATA", "")
 
-            // POST na API player
             val apiUrl = "https://www.youtube.com/youtubei/v1/player?key=$apiKey"
 
             val jsonBody = """
@@ -72,17 +68,15 @@ class YouTubeTrailerExtractor : ExtractorApi() {
             val playerJson = JSONObject(response.text)
             val streamingData = playerJson.optJSONObject("streamingData") ?: return
             val hlsUrl = streamingData.optString("hlsManifestUrl")
+            if (hlsUrl.isBlank()) return
 
-            if (hlsUrl.isNotEmpty()) {
-                M3u8Helper.generateM3u8(
-                    source = name,
-                    streamUrl = hlsUrl,
-                    referer = "https://www.youtube.com/",
-                    headers = headers  // ← AQUI É MAP, NÃO STRING!
-                ).forEach { link ->
-                    callback(link)
-                }
-            }
+            M3u8Helper.generateM3u8(
+                source = name,
+                streamUrl = hlsUrl,
+                referer = "https://www.youtube.com/",
+                headers = headers
+            ).forEach(callback)
+
         } catch (e: Exception) {
             e.printStackTrace()
         }
