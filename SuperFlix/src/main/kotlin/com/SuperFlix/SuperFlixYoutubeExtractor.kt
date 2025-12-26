@@ -10,22 +10,58 @@ import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.net.URLDecoder
+import java.net.URLEncoder
 import java.util.regex.Pattern
+import javax.crypto.Cipher
+import javax.crypto.spec.SecretKeySpec
+import java.util.Base64
 
-class SuperFlixYoutubeExtractor : ExtractorApi() {
-    override val name = "SuperFlixYouTube"
+class SuperFlixYoutubeDLPExtractor : ExtractorApi() {
+    override val name = "SuperFlixYoutubeDLP"
     override val mainUrl = "https://www.youtube.com"
     override val requiresReferer = false
     
-    private val userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    private val userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
     private val mapper = jacksonObjectMapper()
     
-    // Headers para requests
-    private val headers = mapOf(
+    // Cabeçalhos que simulam o yt-dlp
+    private val youtubeHeaders = mapOf(
         "User-Agent" to userAgent,
-        "Accept-Language" to "en-US,en;q=0.9",
         "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-        "Accept-Encoding" to "gzip, deflate, br"
+        "Accept-Language" to "en-US,en;q=0.5",
+        "Accept-Encoding" to "gzip, deflate, br",
+        "DNT" to "1",
+        "Connection" to "keep-alive",
+        "Upgrade-Insecure-Requests" to "1",
+        "Sec-Fetch-Dest" to "document",
+        "Sec-Fetch-Mode" to "navigate",
+        "Sec-Fetch-Site" to "none",
+        "Sec-Fetch-User" to "?1"
+    )
+    
+    // Mapeamento de itags para qualidade (baseado no yt-dlp)
+    private val itagToQuality = mapOf(
+        // Vídeo MP4
+        18 to Qualities.P360.value,    // 360p
+        22 to Qualities.P720.value,    // 720p
+        37 to Qualities.P1080.value,   // 1080p
+        38 to Qualities.P1440.value,   // 1440p
+        399 to Qualities.P1080.value,  // 1080p HDR
+        398 to Qualities.P720.value,   // 720p HDR
+        397 to Qualities.P480.value,   // 480p HDR
+        396 to Qualities.P360.value,   // 360p HDR
+        395 to Qualities.P240.value,   // 240p HDR
+        // WebM
+        43 to Qualities.P360.value,    // 360p WebM
+        44 to Qualities.P480.value,    // 480p WebM
+        45 to Qualities.P720.value,    // 720p WebM
+        46 to Qualities.P1080.value,   // 1080p WebM
+        // Áudio
+        140 to 0,  // Áudio AAC 128k
+        141 to 0,  // Áudio AAC 256k
+        251 to 0,  // Áudio Opus 160k
+        250 to 0,  // Áudio Opus 70k
+        249 to 0,  // Áudio Opus 50k
     )
 
     override suspend fun getUrl(
@@ -34,590 +70,410 @@ class SuperFlixYoutubeExtractor : ExtractorApi() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
-        println("🎬 [SuperFlix] YouTubeExtractor - BUSCANDO QUALIDADES ALTAS")
+        println("🎬 [SuperFlixYoutubeDLP] Iniciando extração como yt-dlp")
         
         try {
             val videoId = extractYouTubeId(url) ?: run {
-                println("❌ Video ID não encontrado")
+                println("❌ ID do vídeo não encontrado")
                 return
             }
             
             println("📹 Video ID: $videoId")
             
-            // Seguir a mesma abordagem do YoutubeExtractor original
-            extractViaAPI(videoId, callback)
+            // Primeiro tentar método direto como yt-dlp
+            if (extractDirectUrls(videoId, callback)) {
+                println("✅ Método direto funcionou!")
+                return
+            }
+            
+            // Fallback para método via player
+            println("🔄 Tentando método via player...")
+            extractViaPlayer(videoId, callback)
             
         } catch (e: Exception) {
-            println("❌ Erro geral no extrator: ${e.message}")
+            println("❌ Erro no extrator: ${e.message}")
             e.printStackTrace()
         }
     }
-
-    // 🔥 **MÉTODO IDÊNTICO AO ORIGINAL: Usar HLS via API**
-    private suspend fun extractViaAPI(videoId: String, callback: (ExtractorLink) -> Unit): Boolean {
+    
+    // 🎯 MÉTODO DIRETO - Igual ao yt-dlp
+    private suspend fun extractDirectUrls(videoId: String, callback: (ExtractorLink) -> Unit): Boolean {
         return try {
-            println("🔗 Tentando API interna do YouTube...")
+            println("🔍 Buscando informações diretas como yt-dlp...")
             
-            // 1. Pegar configuração (igual ao original)
-            val config = getYouTubeConfig(videoId) ?: run {
-                println("❌ Não consegui pegar configuração da página")
+            // 1. Obter página inicial
+            val watchUrl = "https://www.youtube.com/watch?v=$videoId"
+            val html = app.get(watchUrl, headers = youtubeHeaders).text
+            println("📄 Página inicial obtida (${html.length} chars)")
+            
+            // 2. Extrair player_response
+            val playerResponse = extractPlayerResponse(html)
+            if (playerResponse == null) {
+                println("❌ player_response não encontrado")
                 return false
             }
             
-            val apiKey = config["INNERTUBE_API_KEY"] ?: run {
-                println("❌ API Key não encontrada")
-                return false
-            }
+            println("✅ player_response extraído (${playerResponse.length} chars)")
             
-            val clientVersion = config["INNERTUBE_CLIENT_VERSION"] ?: "2.20241220.00.00"
-            val visitorData = config["VISITOR_DATA"] ?: ""
-            
-            println("✅ Config obtida: API Key=${apiKey.take(10)}..., Version=$clientVersion")
-            
-            // 2. Chamar API do YouTube (igual ao original)
-            val apiUrl = "https://www.youtube.com/youtubei/v1/player?key=$apiKey"
-            println("📡 Chamando API: $apiUrl")
-            
-            val requestBody = """
-            {
-                "context": {
-                    "client": {
-                        "hl": "en",
-                        "gl": "US",
-                        "clientName": "WEB",
-                        "clientVersion": "$clientVersion",
-                        "visitorData": "$visitorData",
-                        "platform": "DESKTOP",
-                        "userAgent": "$userAgent"
-                    }
-                },
-                "videoId": "$videoId",
-                "playbackContext": {
-                    "contentPlaybackContext": {
-                        "html5Preference": "HTML5_PREF_WANTS"
-                    }
-                }
-            }
-            """.trimIndent()
-            
-            val jsonMediaType = "application/json; charset=utf-8".toMediaType()
-            
-            val response = app.post(
-                apiUrl,
-                headers = mapOf(
-                    "User-Agent" to userAgent,
-                    "Accept-Language" to "en-US,en;q=0.5",
-                    "Content-Type" to "application/json",
-                    "Origin" to "https://www.youtube.com",
-                    "Referer" to "https://www.youtube.com"
-                ),
-                requestBody = requestBody.toRequestBody(jsonMediaType),
-                timeout = 20000
-            )
-            
-            if (response.code != 200) {
-                println("❌ API retornou status ${response.code}")
-                return false
-            }
-            
-            val jsonText = response.text
-            println("✅ Resposta API recebida (${jsonText.length} chars)")
-            
-            // 3. Parsear resposta JSON usando Jackson
-            val rootNode = mapper.readTree(jsonText)
-            val streamingData = rootNode.path("streamingData")
+            // 3. Parsear JSON
+            val json = mapper.readTree(playerResponse)
+            val streamingData = json.path("streamingData")
             
             if (streamingData.isMissingNode) {
-                println("❌ streamingData não encontrado na resposta")
+                println("❌ streamingData não encontrado")
                 return false
             }
             
-            // 4. BUSCAR HLS PRIMEIRO (igual ao original) - CORREÇÃO IMPORTANTE!
-            val hlsUrl = streamingData.path("hlsManifestUrl").asText(null)
-            
-            if (hlsUrl != null && hlsUrl.isNotBlank()) {
-                println("🎯 URL HLS encontrada: ${hlsUrl.take(80)}...")
-                
-                // Extrair qualidades do HLS manualmente
-                extractQualitiesFromHLSManual(hlsUrl, callback)
-                return true
-            } else {
-                println("⚠️ HLS não disponível neste vídeo")
-            }
-            
-            // 5. Tentar formatos simples COM URL DECODIFICADA
-            println("🔄 Buscando formatos simples com URL...")
-            val success = extractFormatsWithUrl(streamingData, callback)
+            // 4. Extrair URLs de formato adaptativo (como yt-dlp faz)
+            val success = extractAdaptiveFormats(streamingData, callback)
             
             if (!success) {
-                println("🔍 Buscando formatos adaptativos com URLs criptografadas...")
-                extractAdaptiveFormatsWithCipher(streamingData, callback)
+                // Tentar formatos regulares
+                extractRegularFormats(streamingData, callback)
             }
             
             success
             
         } catch (e: Exception) {
-            println("❌ Erro na API: ${e.message}")
+            println("❌ Erro no método direto: ${e.message}")
             false
         }
     }
     
-    // 🎯 **Buscar formatos COM URL (não criptografados)**
-    private suspend fun extractFormatsWithUrl(streamingData: JsonNode, callback: (ExtractorLink) -> Unit): Boolean {
-        return try {
-            val formats = streamingData.path("formats")
+    // 🔧 Extrair player_response da página
+    private fun extractPlayerResponse(html: String): String? {
+        // Pattern 1: var ytInitialPlayerResponse = {...};
+        val pattern1 = """var ytInitialPlayerResponse\s*=\s*(\{.*?\});"""
+        val regex1 = Regex(pattern1, RegexOption.DOT_MATCHES_ALL)
+        
+        val match1 = regex1.find(html)
+        if (match1 != null) {
+            println("✅ player_response encontrado via pattern1")
+            return match1.groupValues[1]
+        }
+        
+        // Pattern 2: ytInitialPlayerResponse = {...}
+        val pattern2 = """ytInitialPlayerResponse\s*=\s*(\{.*?\})"""
+        val regex2 = Regex(pattern2, RegexOption.DOT_MATCHES_ALL)
+        
+        val match2 = regex2.find(html)
+        if (match2 != null) {
+            println("✅ player_response encontrado via pattern2")
+            return match2.groupValues[1]
+        }
+        
+        // Pattern 3: window["ytInitialPlayerResponse"] = {...}
+        val pattern3 = """window\["ytInitialPlayerResponse"\]\s*=\s*(\{.*?\})"""
+        val regex3 = Regex(pattern3, RegexOption.DOT_MATCHES_ALL)
+        
+        val match3 = regex3.find(html)
+        if (match3 != null) {
+            println("✅ player_response encontrado via pattern3")
+            return match3.groupValues[1]
+        }
+        
+        return null
+    }
+    
+    // 📦 Extrair formatos adaptativos (como o yt-dlp faz)
+    private suspend fun extractAdaptiveFormats(streamingData: JsonNode, callback: (ExtractorLink) -> Unit): Boolean {
+        try {
+            val adaptiveFormats = streamingData.path("adaptiveFormats")
             
-            if (!formats.isArray || formats.size() == 0) {
-                println("❌ Nenhum formato simples encontrado")
+            if (!adaptiveFormats.isArray || adaptiveFormats.size() == 0) {
+                println("❌ Nenhum formato adaptativo encontrado")
                 return false
             }
             
-            println("📦 Formatos simples encontrados: ${formats.size()}")
+            println("🔍 Analisando ${adaptiveFormats.size()} formatos adaptativos")
             
-            var foundCount = 0
+            var videoFound = false
+            var audioFound = false
             
-            for (i in 0 until formats.size()) {
-                val format = formats.get(i)
+            for (i in 0 until adaptiveFormats.size()) {
+                val format = adaptiveFormats.get(i)
                 val itag = format.path("itag").asInt(-1)
-                val url = format.path("url").asText(null)
-                val cipher = format.path("cipher").asText(null)
-                val signatureCipher = format.path("signatureCipher").asText(null)
-                val qualityLabel = format.path("qualityLabel").asText("")
                 
-                // Verificar se tem URL direta ou precisa decodificar
-                val finalUrl = when {
-                    url != null -> {
-                        println("✅ URL direta encontrada para itag=$itag")
-                        url
-                    }
-                    cipher != null -> {
-                        println("🔐 URL criptografada (cipher) para itag=$itag")
-                        decodeCipher(cipher)
-                    }
-                    signatureCipher != null -> {
-                        println("🔐 URL criptografada (signatureCipher) para itag=$itag")
-                        decodeSignatureCipher(signatureCipher)
-                    }
-                    else -> null
-                }
-                
-                if (finalUrl != null) {
-                    println("🎯 Formato encontrado: itag=$itag ($qualityLabel)")
+                // Verificar se é um formato que queremos
+                if (itag in setOf(399, 398, 397, 396, 395,  # Vídeo HDR
+                                  22, 37, 38, 18,           # Vídeo normal
+                                  251, 250, 249,            # Áudio Opus
+                                  140, 141)) {              # Áudio AAC
                     
-                    val quality = when {
-                        qualityLabel.contains("2160") || qualityLabel.contains("4K") -> Qualities.P2160.value
-                        qualityLabel.contains("1440") -> Qualities.P1440.value
-                        qualityLabel.contains("1080") -> Qualities.P1080.value
-                        qualityLabel.contains("720") || itag == 22 -> Qualities.P720.value
-                        qualityLabel.contains("480") -> Qualities.P480.value
-                        else -> Qualities.P360.value
+                    val url = format.path("url").asText(null)
+                    val cipher = format.path("cipher").asText(null)
+                    val signatureCipher = format.path("signatureCipher").asText(null)
+                    val mimeType = format.path("mimeType").asText("")
+                    val bitrate = format.path("bitrate").asLong(0)
+                    
+                    var finalUrl: String? = null
+                    
+                    when {
+                        url != null -> {
+                            finalUrl = url
+                        }
+                        cipher != null -> {
+                            finalUrl = extractUrlFromCipher(cipher)
+                        }
+                        signatureCipher != null -> {
+                            finalUrl = extractUrlFromCipher(signatureCipher)
+                        }
                     }
                     
-                    val qualityName = when (quality) {
-                        Qualities.P2160.value -> "4K"
-                        Qualities.P1440.value -> "1440p"
-                        Qualities.P1080.value -> "1080p"
-                        Qualities.P720.value -> "720p"
-                        Qualities.P480.value -> "480p"
-                        else -> "360p"
+                    if (finalUrl != null) {
+                        val quality = itagToQuality[itag] ?: Qualities.P360.value
+                        val qualityName = getQualityName(itag, mimeType, bitrate)
+                        
+                        println("✅ Formato encontrado: itag=$itag $qualityName")
+                        
+                        // Determinar tipo de conteúdo
+                        val isVideo = mimeType.contains("video/")
+                        val isAudio = mimeType.contains("audio/")
+                        
+                        val linkType = if (isAudio) ExtractorLinkType.AUDIO else ExtractorLinkType.VIDEO
+                        
+                        val extractorLink = newExtractorLink(
+                            source = name,
+                            name = "YouTube $qualityName",
+                            url = finalUrl,
+                            type = linkType
+                        ) {
+                            this.referer = mainUrl
+                            this.quality = quality
+                            this.headers = youtubeHeaders
+                        }
+                        
+                        callback(extractorLink)
+                        
+                        if (isVideo) videoFound = true
+                        if (isAudio) audioFound = true
+                        
+                        // Parar após encontrar alguns formatos
+                        if (videoFound && audioFound) break
                     }
-                    
-                    createExtractorLink(finalUrl, quality, qualityName, callback)
-                    foundCount++
-                    
-                    if (foundCount >= 3) break
                 }
             }
             
-            println("✨ Encontrados $foundCount formatos com URL")
-            foundCount > 0
+            return videoFound || audioFound
             
         } catch (e: Exception) {
-            println("❌ Erro em extractFormatsWithUrl: ${e.message}")
-            false
+            println("❌ Erro em extractAdaptiveFormats: ${e.message}")
+            return false
         }
     }
     
-    // 🔐 **Decodificar cipher URLs**
-    private fun decodeCipher(cipher: String): String? {
+    // 🎵 Extrair formatos regulares
+    private suspend fun extractRegularFormats(streamingData: JsonNode, callback: (ExtractorLink) -> Unit) {
+        try {
+            val formats = streamingData.path("formats")
+            
+            if (!formats.isArray || formats.size() == 0) {
+                return
+            }
+            
+            println("📦 Analisando ${formats.size()} formatos regulares")
+            
+            for (i in 0 until minOf(5, formats.size())) {
+                val format = formats.get(i)
+                val itag = format.path("itag").asInt(-1)
+                val url = format.path("url").asText(null)
+                val mimeType = format.path("mimeType").asText("")
+                val qualityLabel = format.path("qualityLabel").asText("")
+                
+                if (url != null && itag > 0) {
+                    val quality = when {
+                        qualityLabel.contains("1080") -> Qualities.P1080.value
+                        qualityLabel.contains("720") -> Qualities.P720.value
+                        qualityLabel.contains("480") -> Qualities.P480.value
+                        qualityLabel.contains("360") -> Qualities.P360.value
+                        else -> itagToQuality[itag] ?: Qualities.P360.value
+                    }
+                    
+                    val qualityName = if (qualityLabel.isNotBlank()) qualityLabel else getQualityName(itag, mimeType, 0)
+                    
+                    println("✅ Formato regular: itag=$itag $qualityName")
+                    
+                    val extractorLink = newExtractorLink(
+                        source = name,
+                        name = "YouTube $qualityName",
+                        url = url,
+                        type = ExtractorLinkType.VIDEO
+                    ) {
+                        this.referer = mainUrl
+                        this.quality = quality
+                        this.headers = youtubeHeaders
+                    }
+                    
+                    callback(extractorLink)
+                }
+            }
+            
+        } catch (e: Exception) {
+            println("⚠️ Erro em extractRegularFormats: ${e.message}")
+        }
+    }
+    
+    // 🔐 Extrair URL do cipher
+    private fun extractUrlFromCipher(cipher: String): String? {
         return try {
-            // cipher é uma string URL-encoded com parâmetros
             val decoded = URLDecoder.decode(cipher, "UTF-8")
             
-            // Extrair o parâmetro 'url' do cipher
-            val urlPattern = Pattern.compile("url=([^&]+)")
-            val matcher = urlPattern.matcher(decoded)
+            // Procurar parâmetro url
+            val params = decoded.split("&")
+            var url: String? = null
+            var signature: String? = null
+            var signatureParam: String? = null
             
-            if (matcher.find()) {
-                val encodedUrl = matcher.group(1)
-                URLDecoder.decode(encodedUrl, "UTF-8")
-            } else {
-                null
+            for (param in params) {
+                when {
+                    param.startsWith("url=") -> {
+                        url = param.substring(4)
+                    }
+                    param.startsWith("s=") -> {
+                        signature = param.substring(2)
+                    }
+                    param.startsWith("sp=") -> {
+                        signatureParam = param.substring(3)
+                    }
+                }
             }
+            
+            if (url == null) return null
+            
+            var finalUrl = URLDecoder.decode(url, "UTF-8")
+            
+            // Adicionar signature se existir
+            if (signature != null) {
+                val decodedSignature = URLDecoder.decode(signature, "UTF-8")
+                val paramName = signatureParam ?: "signature"
+                finalUrl += "&$paramName=$decodedSignature"
+            }
+            
+            finalUrl
+            
         } catch (e: Exception) {
             println("❌ Erro decodificando cipher: ${e.message}")
             null
         }
     }
     
-    // 🔐 **Decodificar signatureCipher URLs**
-    private fun decodeSignatureCipher(signatureCipher: String): String? {
-        return try {
-            // signatureCipher é similar ao cipher
-            val decoded = URLDecoder.decode(signatureCipher, "UTF-8")
+    // 🎮 Método alternativo via player (fallback)
+    private suspend fun extractViaPlayer(videoId: String, callback: (ExtractorLink) -> Unit) {
+        try {
+            println("🎮 Usando método via player...")
             
-            // Extrair o parâmetro 'url' do signatureCipher
-            val urlPattern = Pattern.compile("url=([^&]+)")
-            val matcher = urlPattern.matcher(decoded)
+            // URL do embed (às vezes funciona melhor)
+            val embedUrl = "https://www.youtube.com/embed/$videoId"
+            val embedHtml = app.get(embedUrl, headers = youtubeHeaders).text
             
-            if (matcher.find()) {
-                val encodedUrl = matcher.group(1)
-                URLDecoder.decode(encodedUrl, "UTF-8")
-            } else {
-                null
+            // Extrair configurações
+            val config = extractConfigFromEmbed(embedHtml)
+            
+            if (config != null) {
+                val playerUrl = config["PLAYER_JS_URL"] ?: return
+                val sts = config["STS"] ?: ""
+                
+                println("🎯 Player JS URL: $playerUrl")
+                
+                // Tentar obter URLs do player
+                extractFromPlayerJS(videoId, playerUrl, sts, callback)
             }
+            
         } catch (e: Exception) {
-            println("❌ Erro decodificando signatureCipher: ${e.message}")
+            println("❌ Erro no método via player: ${e.message}")
+        }
+    }
+    
+    // 🔧 Extrair configuração do embed
+    private fun extractConfigFromEmbed(html: String): Map<String, String>? {
+        val patterns = listOf(
+            """PLAYER_JS_URL"\s*:\s*"([^"]+)"""",
+            """"sts"\s*:\s*(\d+)"""
+        )
+        
+        var playerUrl: String? = null
+        var sts: String? = null
+        
+        for (pattern in patterns) {
+            val regex = Regex(pattern)
+            val match = regex.find(html)
+            
+            if (match != null) {
+                when {
+                    pattern.contains("PLAYER_JS_URL") -> playerUrl = match.groupValues[1]
+                    pattern.contains("sts") -> sts = match.groupValues[1]
+                }
+            }
+        }
+        
+        return if (playerUrl != null) {
+            mapOf("PLAYER_JS_URL" to playerUrl, "STS" to (sts ?: ""))
+        } else {
             null
         }
     }
     
-    // 🔍 **Buscar formatos adaptativos com cipher**
-    private suspend fun extractAdaptiveFormatsWithCipher(streamingData: JsonNode, callback: (ExtractorLink) -> Unit) {
+    // 🔧 Extrair do player JS
+    private suspend fun extractFromPlayerJS(videoId: String, playerUrl: String, sts: String, callback: (ExtractorLink) -> Unit) {
         try {
-            val adaptiveFormats = streamingData.path("adaptiveFormats")
-            
-            if (!adaptiveFormats.isArray || adaptiveFormats.size() == 0) {
-                println("❌ Nenhum adaptiveFormat encontrado")
-                return
-            }
-            
-            println("🔍 Analisando ${adaptiveFormats.size()} formatos adaptativos...")
-            
-            for (i in 0 until minOf(10, adaptiveFormats.size())) {
-                val format = adaptiveFormats.get(i)
-                val itag = format.path("itag").asInt(-1)
-                val cipher = format.path("cipher").asText(null)
-                val signatureCipher = format.path("signatureCipher").asText(null)
-                val qualityLabel = format.path("qualityLabel").asText("Sem label")
-                val mimeType = format.path("mimeType").asText("")
-                
-                if (cipher != null || signatureCipher != null) {
-                    println("🔐 Formato criptografado: itag=$itag ($qualityLabel) - $mimeType")
-                    
-                    // Tentar decodificar
-                    val url = if (cipher != null) decodeCipher(cipher) else decodeSignatureCipher(signatureCipher!!)
-                    
-                    if (url != null) {
-                        println("✅ URL decodificada para itag=$itag")
-                        
-                        val quality = when {
-                            qualityLabel.contains("2160") || qualityLabel.contains("4K") -> Qualities.P2160.value
-                            qualityLabel.contains("1440") -> Qualities.P1440.value
-                            qualityLabel.contains("1080") -> Qualities.P1080.value
-                            qualityLabel.contains("720") -> Qualities.P720.value
-                            qualityLabel.contains("480") -> Qualities.P480.value
-                            else -> Qualities.P360.value
-                        }
-                        
-                        val qualityName = when (quality) {
-                            Qualities.P2160.value -> "4K"
-                            Qualities.P1440.value -> "1440p"
-                            Qualities.P1080.value -> "1080p"
-                            Qualities.P720.value -> "720p"
-                            Qualities.P480.value -> "480p"
-                            else -> "360p"
-                        }
-                        
-                        createExtractorLink(url, quality, "$qualityName (adaptativo)", callback)
-                    }
-                }
-            }
+            // Este é um método simplificado
+            // Em um extrator real, você precisaria implementar a lógica completa de decodificação
+            println("⚠️ Método player JS requer implementação completa")
             
         } catch (e: Exception) {
-            println("❌ Erro em extractAdaptiveFormatsWithCipher: ${e.message}")
+            println("❌ Erro no player JS: ${e.message}")
         }
     }
     
-    // 🎬 **Extrair qualidades do HLS manualmente**
-    private suspend fun extractQualitiesFromHLSManual(hlsUrl: String, callback: (ExtractorLink) -> Unit) {
-        println("🎬 Parseando HLS manualmente...")
-        
-        try {
-            val response = app.get(hlsUrl, headers = headers, timeout = 15000)
-            if (response.code != 200) {
-                println("❌ Falha ao baixar HLS: ${response.code}")
-                return
-            }
+    // 🏷️ Obter nome da qualidade baseado no itag
+    private fun getQualityName(itag: Int, mimeType: String, bitrate: Long): String {
+        return when (itag) {
+            // Vídeo HDR
+            399 -> "1080p HDR"
+            398 -> "720p HDR"
+            397 -> "480p HDR"
+            396 -> "360p HDR"
+            395 -> "240p HDR"
             
-            val m3u8Content = response.text
-            val lines = m3u8Content.lines()
+            // Vídeo MP4
+            18 -> "360p"
+            22 -> "720p"
+            37 -> "1080p"
+            38 -> "1440p"
             
-            var currentQuality = ""
-            var currentBandwidth = 0
+            // Vídeo WebM
+            43 -> "360p WebM"
+            44 -> "480p WebM"
+            45 -> "720p WebM"
+            46 -> "1080p WebM"
             
-            for (line in lines) {
-                when {
-                    line.startsWith("#EXT-X-STREAM-INF:") -> {
-                        currentQuality = extractQualityFromM3u8Line(line)
-                        currentBandwidth = extractBandwidthFromM3u8Line(line)
-                        println("📊 Encontrada qualidade: $currentQuality (${currentBandwidth/1000}Kbps)")
-                    }
-                    !line.startsWith("#") && line.isNotBlank() && currentQuality.isNotBlank() -> {
-                        val streamUrl = if (line.startsWith("http")) line else resolveRelativeUrl(hlsUrl, line)
-                        
-                        val qualityValue = when {
-                            currentQuality.contains("2160") || currentBandwidth > 8000000 -> Qualities.P2160.value
-                            currentQuality.contains("1440") || currentBandwidth > 5000000 -> Qualities.P1440.value
-                            currentQuality.contains("1080") || currentBandwidth > 2500000 -> Qualities.P1080.value
-                            currentQuality.contains("720") || currentBandwidth > 1000000 -> Qualities.P720.value
-                            currentQuality.contains("480") || currentBandwidth > 500000 -> Qualities.P480.value
-                            else -> Qualities.P360.value
-                        }
-                        
-                        val qualityName = when (qualityValue) {
-                            Qualities.P2160.value -> "4K"
-                            Qualities.P1440.value -> "1440p"
-                            Qualities.P1080.value -> "1080p"
-                            Qualities.P720.value -> "720p"
-                            Qualities.P480.value -> "480p"
-                            else -> "360p"
-                        }
-                        
-                        println("✅ Criando link HLS: $qualityName")
-                        
-                        // Criar link M3U8
-                        val extractorLink = newExtractorLink(
-                            source = name,
-                            name = "YouTube ($qualityName)",
-                            url = streamUrl,
-                            type = ExtractorLinkType.M3U8
-                        ) {
-                            this.referer = mainUrl
-                            this.quality = qualityValue
-                            this.headers = getYouTubeHeaders()
-                        }
-                        
-                        callback(extractorLink)
-                        currentQuality = ""
-                    }
-                }
-            }
+            // Áudio
+            140 -> "AAC 128k"
+            141 -> "AAC 256k"
+            251 -> "Opus 160k"
+            250 -> "Opus 70k"
+            249 -> "Opus 50k"
             
-            println("✨ Qualidades HLS extraídas manualmente!")
-            
-        } catch (e: Exception) {
-            println("❌ Erro parseando HLS manualmente: ${e.message}")
-        }
-    }
-    
-    // 🔧 **Headers específicos para YouTube (evita erro 403)**
-    private fun getYouTubeHeaders(): Map<String, String> {
-        return mapOf(
-            "User-Agent" to userAgent,
-            "Accept" to "*/*",
-            "Accept-Language" to "en-US,en;q=0.9",
-            "Accept-Encoding" to "gzip, deflate, br",
-            "Referer" to "https://www.youtube.com/",
-            "Origin" to "https://www.youtube.com",
-            "Connection" to "keep-alive",
-            "Sec-Fetch-Dest" to "video",
-            "Sec-Fetch-Mode" to "no-cors",
-            "Sec-Fetch-Site" to "same-site"
-        )
-    }
-    
-    // 🔧 **Funções auxiliares para HLS**
-    private fun extractQualityFromM3u8Line(line: String): String {
-        val pattern = Pattern.compile("RESOLUTION=(\\d+x\\d+)")
-        val matcher = pattern.matcher(line)
-        return if (matcher.find()) matcher.group(1) else "unknown"
-    }
-    
-    private fun extractBandwidthFromM3u8Line(line: String): Int {
-        val pattern = Pattern.compile("BANDWIDTH=(\\d+)")
-        val matcher = pattern.matcher(line)
-        return if (matcher.find()) matcher.group(1).toIntOrNull() ?: 0 else 0
-    }
-    
-    private fun resolveRelativeUrl(baseUrl: String, relativePath: String): String {
-        return if (relativePath.startsWith("http")) {
-            relativePath
-        } else {
-            val base = baseUrl.substringBeforeLast("/")
-            "$base/$relativePath"
-        }
-    }
-    
-    // 🔧 **Criar ExtractorLink COM HEADERS CORRETOS**
-    private suspend fun createExtractorLink(
-        videoUrl: String,
-        quality: Int,
-        qualityText: String,
-        callback: (ExtractorLink) -> Unit
-    ) {
-        try {
-            println("🔗 Criando link: $qualityText")
-            
-            val extractorLink = newExtractorLink(
-                source = name,
-                name = "YouTube ($qualityText)",
-                url = videoUrl,
-                type = if (videoUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-            ) {
-                this.referer = mainUrl
-                this.quality = quality
-                this.headers = getYouTubeHeaders()
-            }
-            
-            callback(extractorLink)
-            println("✨ Link $qualityText criado com sucesso!")
-            
-        } catch (e: Exception) {
-            println("❌ Erro criando link: ${e.message}")
-        }
-    }
-    
-    // 🔑 **Obter configuração do YouTube - VERSÃO CORRIGIDA**
-    private suspend fun getYouTubeConfig(videoId: String): Map<String, String>? {
-        return withContext(Dispatchers.IO) {
-            try {
-                val url = "https://www.youtube.com/watch?v=$videoId"
-                println("📄 Baixando página do YouTube: $url")
-                
-                // Headers mais completos
-                val requestHeaders = mapOf(
-                    "User-Agent" to userAgent,
-                    "Accept-Language" to "en-US,en;q=0.9",
-                    "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-                    "Accept-Encoding" to "gzip, deflate, br",
-                    "DNT" to "1",
-                    "Connection" to "keep-alive",
-                    "Upgrade-Insecure-Requests" to "1",
-                    "Sec-Fetch-Dest" to "document",
-                    "Sec-Fetch-Mode" to "navigate",
-                    "Sec-Fetch-Site" to "none",
-                    "Sec-Fetch-User" to "?1"
-                )
-                
-                val response = app.get(url, headers = requestHeaders, timeout = 20000)
-                if (response.code != 200) {
-                    println("❌ Página retornou status ${response.code}")
-                    return@withContext null
-                }
-                
-                val html = response.text
-                println("✅ Página baixada (${html.length} chars)")
-                
-                // MÉTODO 1: Usar regex IDÊNTICO ao original
-                val pattern = Regex("ytcfg\\.set\\(\\s*(\\{.*?\\})\\s*\\)\\s*;", RegexOption.DOT_MATCHES_ALL)
-                val match = pattern.find(html)
-                
-                if (match != null) {
-                    val jsonStr = match.groupValues[1]
-                    println("✅ ytcfg encontrado (${jsonStr.length} chars)")
-                    
-                    try {
-                        val jsonObject = org.json.JSONObject(jsonStr)
-                        
-                        val apiKey = jsonObject.optString("INNERTUBE_API_KEY", null)
-                        val clientVersion = jsonObject.optString("INNERTUBE_CLIENT_VERSION", "2.20241220.00.00")
-                        val visitorData = jsonObject.optString("VISITOR_DATA", "")
-                        
-                        if (apiKey != null && apiKey.isNotBlank()) {
-                            println("🔑 Config extraída via ytcfg")
-                            return@withContext mapOf(
-                                "INNERTUBE_API_KEY" to apiKey,
-                                "INNERTUBE_CLIENT_VERSION" to clientVersion,
-                                "VISITOR_DATA" to visitorData
-                            )
-                        }
-                    } catch (e: Exception) {
-                        println("⚠️ Erro parseando ytcfg JSON: ${e.message}")
-                    }
+            else -> {
+                if (mimeType.contains("video/")) {
+                    "Video ${bitrate / 1000}k"
+                } else if (mimeType.contains("audio/")) {
+                    "Audio ${bitrate / 1000}k"
                 } else {
-                    println("⚠️ ytcfg.set() não encontrado, tentando alternativas...")
+                    "Unknown"
                 }
-                
-                // MÉTODO 4: API keys fixas de fallback (que sabemos que funciona)
-                println("🔄 Usando fallback keys...")
-                
-                val fallbackKeys = listOf(
-                    "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8",
-                    "AIzaSyA8eiZmM1FaDVjRy-df2KTyQ_vz_yYM39w",
-                    "AIzaSyC-6qtuR3pKcDL6mK0vHhYHhpT9qRyd0cQ",
-                    "AIzaSyBUPetSUoZL5F8GhO8zB2K5J_Hwr0kRQoc"
-                )
-                
-                // Testar cada API key
-                for (key in fallbackKeys) {
-                    println("🔑 Testando fallback key: ${key.take(10)}...")
-                    if (testApiKey(key, videoId)) {
-                        println("✅ Fallback key funcionou!")
-                        return@withContext mapOf(
-                            "INNERTUBE_API_KEY" to key,
-                            "INNERTUBE_CLIENT_VERSION" to "2.20241220.00.00",
-                            "VISITOR_DATA" to ""
-                        )
-                    }
-                }
-                
-                println("❌ Nenhuma API key válida encontrada")
-                null
-                
-            } catch (e: Exception) {
-                println("❌ Erro em getYouTubeConfig: ${e.message}")
-                null
             }
         }
     }
     
-    // 🔧 **Testar API key**
-    private suspend fun testApiKey(apiKey: String, videoId: String): Boolean {
-        return try {
-            val testUrl = "https://www.youtube.com/youtubei/v1/player?key=$apiKey"
-            val requestBody = """
-            {
-                "context": {
-                    "client": {
-                        "hl": "en",
-                        "gl": "US",
-                        "clientName": "WEB",
-                        "clientVersion": "2.20241220.00.00",
-                        "platform": "DESKTOP",
-                        "userAgent": "$userAgent"
-                    }
-                },
-                "videoId": "$videoId"
-            }
-            """.trimIndent()
-            
-            val jsonMediaType = "application/json; charset=utf-8".toMediaType()
-            
-            val response = app.post(
-                testUrl,
-                headers = mapOf(
-                    "User-Agent" to userAgent,
-                    "Content-Type" to "application/json",
-                    "Origin" to "https://www.youtube.com"
-                ),
-                requestBody = requestBody.toRequestBody(jsonMediaType),
-                timeout = 10000
-            )
-            
-            response.code == 200
-        } catch (e: Exception) {
-            false
-        }
-    }
-    
-    // 🔧 **Extrair videoId**
+    // 🔧 Extrair ID do YouTube
     private fun extractYouTubeId(url: String): String? {
         val patterns = listOf(
             """v=([a-zA-Z0-9_-]{11})""",
             """youtu\.be/([a-zA-Z0-9_-]{11})""",
             """/embed/([a-zA-Z0-9_-]{11})""",
-            """/v/([a-zA-Z0-9_-]{11})"""
+            """/v/([a-zA-Z0-9_-]{11})""",
+            """watch/([a-zA-Z0-9_-]{11})"""
         )
         
         for (pattern in patterns) {
