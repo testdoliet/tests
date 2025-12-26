@@ -185,7 +185,7 @@ class SuperFlixYoutubeExtractor : ExtractorApi() {
         }
     }
     
-    // 🔧 **Extrair adaptiveFormats (método principal)**
+    // 🔧 **Extrair adaptiveFormats (método principal) - CORRIGIDO**
     private suspend fun extractAdaptiveFormats(streamingData: JsonNode, callback: (ExtractorLink) -> Unit): Boolean {
         return try {
             val adaptiveFormats = streamingData.path("adaptiveFormats")
@@ -201,7 +201,7 @@ class SuperFlixYoutubeExtractor : ExtractorApi() {
             val audioFormats = mutableListOf<JsonNode>()
             
             for (i in 0 until adaptiveFormats.size()) {
-                val format = adaptiveFormats[i]
+                val format = adaptiveFormats.get(i)  // Use .get() em vez de []
                 val mimeType = format.path("mimeType").asText("").lowercase()
                 
                 if (mimeType.contains("video/")) {
@@ -211,13 +211,13 @@ class SuperFlixYoutubeExtractor : ExtractorApi() {
                 }
             }
             
-            println("🎬 Formatos de vídeo: ${videoFormats.size()}")
-            println("🎵 Formatos de áudio: ${audioFormats.size()}")
+            println("🎬 Formatos de vídeo: ${videoFormats.size}")
+            println("🎵 Formatos de áudio: ${audioFormats.size}")
             
             // DEBUG: Mostrar alguns formatos
-            if (videoFormats.size() > 0) {
+            if (videoFormats.size > 0) {
                 println("📋 Primeiros formatos de vídeo:")
-                for (i in 0 until minOf(5, videoFormats.size())) {
+                for (i in 0 until minOf(5, videoFormats.size)) {
                     val format = videoFormats[i]
                     val itag = format.path("itag").asInt(-1)
                     val qualityLabel = format.path("qualityLabel").asText("Sem label")
@@ -322,19 +322,16 @@ class SuperFlixYoutubeExtractor : ExtractorApi() {
         }
     }
     
-    // 🔧 **Extrair formatos combinados (áudio + vídeo)**
+    // 🔧 **Extrair formatos combinados (áudio + vídeo) - CORRIGIDO**
     private suspend fun extractCombinedFormats(rootNode: JsonNode, callback: (ExtractorLink) -> Unit) {
         try {
-            // Tentar pegar streamingData de outros lugares
-            val streamingData = rootNode.path("streamingData")
-            
             // Procurar por "formats" (formats simples com áudio)
             val formats = rootNode.path("streamingData").path("formats")
             if (formats.isArray && formats.size() > 0) {
                 println("📦 Encontrados ${formats.size()} formatos combinados")
                 
                 for (i in 0 until formats.size()) {
-                    val format = formats[i]
+                    val format = formats.get(i)  // Use .get() em vez de []
                     val itag = format.path("itag").asInt(-1)
                     val url = format.path("url").asText(null)
                     val qualityLabel = format.path("qualityLabel").asText("")
