@@ -21,70 +21,49 @@ class YouTubeTrailerExtractor : ExtractorApi() {
         callback: (ExtractorLink) -> Unit
     ) {
         try {
-            val videoId = Regex("(?:youtube\\.com/(?:watch\\?v=|embed/)|youtu\\.be/)([A-Za-z0-9_-]{11})")
-                .find(url)?.groupValues?.get(1) ?: return
+            val videoId = Regex("""v=([A-Za-z0-9_-]{11})""").find(url)?.groupValues?.get(1) 
+                ?: Regex("""youtu\.be/([A-Za-z0-9_-]{11})""").find(url)?.groupValues?.get(1) 
+                ?: return
 
-            // COMO NO EXEMPLO FUNCIONAL: app.get(url, headers = headers)
-            val pageResponse = app.get(
-                "https://www.youtube.com/watch?v=$videoId",
-                headers = mapOf(
-                    "User-Agent" to userAgent,
-                    "Accept-Language" to "en-US,en;q=0.9"
-                )
-            )
-            
-            val html = pageResponse.text
+            println("🔍 YouTube Extractor: $videoId")
 
-            val ytCfgJson = Regex("ytcfg\\.set\\(\\s*(\\{.*?\\})\\s*\\);")
-                .find(html)?.groupValues?.get(1) ?: return
+            // 1. Buscar página do vídeo
+            val page = app.get(
+                url = "https://www.youtube.com/watch?v=$videoId",
+                headers = mapOf("User-Agent" to userAgent)
+            ).text
 
+            // 2. Extrair configurações
+            val ytCfgJson = Regex("""ytcfg\.set\((\{.*?\})\);""").find(page)?.groupValues?.get(1) ?: return
             val cfg = JSONObject(ytCfgJson)
-            val apiKey = cfg.optString("INNERTUBE_API_KEY").takeIf { it.isNotEmpty() } ?: return
-            val clientVersion = cfg.optString("INNERTUBE_CLIENT_VERSION", "2.20241226.01.00")
-            val visitorData = cfg.optString("VISITOR_DATA", "")
+            val apiKey = cfg.optString("INNERTUBE_API_KEY").ifBlank { return }
 
+            // 3. Fazer requisição para API do YouTube
             val apiUrl = "https://www.youtube.com/youtubei/v1/player?key=$apiKey"
+            val jsonBody = """{"videoId":"$videoId","context":{"client":{"hl":"en","gl":"US","clientName":"WEB","clientVersion":"2.20241226.01.00"}}}"""
 
-            val jsonBody = """
-            {
-                "context": {
-                    "client": {
-                        "hl": "en",
-                        "gl": "US",
-                        "clientName": "WEB",
-                        "clientVersion": "$clientVersion",
-                        "visitorData": "$visitorData",
-                        "userAgent": "$userAgent"
-                    }
-                },
-                "videoId": "$videoId",
-                "playbackContext": {
-                    "contentPlaybackContext": {
-                        "html5Preference": "HTML5_PREF_WANTS"
-                    }
-                }
-            }
-            """.trimIndent()
-
-            // CORREÇÃO: Formato correto do app.post como no exemplo funcional
+            // FORMA CORRETA baseada no exemplo que funciona
             val response = app.post(
-                apiUrl,
-                data = jsonBody,
+                url = apiUrl,
+                data = jsonBody.toByteArray(),  // ← CORREÇÃO AQUI: usar toByteArray()
                 headers = mapOf(
                     "User-Agent" to userAgent,
                     "Content-Type" to "application/json",
                     "Accept" to "*/*"
                 )
             )
-            
+
             if (!response.isSuccessful) return
 
+            // 4. Extrair URL M3U8
             val playerJson = JSONObject(response.text)
-            val streamingData = playerJson.optJSONObject("streamingData") ?: return
-            val hlsUrl = streamingData.optString("hlsManifestUrl")
+            val hlsUrl = playerJson.optJSONObject("streamingData")?.optString("hlsManifestUrl") ?: return
+
             if (hlsUrl.isBlank()) return
 
-            // EXATAMENTE como no exemplo funcional
+            println("✅ Encontrado stream M3U8: $hlsUrl")
+
+            // 5. Gerar links M3U8 - EXATAMENTE como no exemplo funcional
             val headers = mapOf(
                 "Referer" to "https://www.youtube.com/",
                 "Origin" to "https://www.youtube.com",
@@ -92,14 +71,14 @@ class YouTubeTrailerExtractor : ExtractorApi() {
             )
 
             M3u8Helper.generateM3u8(
-                name,
-                hlsUrl,
-                mainUrl,
-                headers = headers
+                name,      // String - nome do extrator
+                hlsUrl,    // String - URL do M3U8
+                mainUrl,   // String - URL principal
+                headers = headers  // Map<String, String> - headers (parâmetro nomeado)
             ).forEach(callback)
 
         } catch (e: Exception) {
-            e.printStackTrace()
+            println("❌ Erro YouTube Extractor: ${e.message}")
         }
     }
 }
