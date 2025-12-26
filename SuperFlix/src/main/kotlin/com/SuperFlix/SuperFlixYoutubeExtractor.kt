@@ -2,11 +2,10 @@ package com.SuperFlix
 
 import com.lagradost.cloudstream3.utils.ExtractorApi
 import com.lagradost.cloudstream3.utils.ExtractorLink
-import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.M3u8Helper
-import com.lagradost.cloudstream3.utils.newExtractorLink
-import com.lagradost.cloudstream3.utils.SubtitleFile
+import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.app
+import com.lagradost.cloudstream3.utils.newExtractorLink
 import org.json.JSONObject
 
 class YouTubeTrailerExtractor : ExtractorApi() {
@@ -16,11 +15,10 @@ class YouTubeTrailerExtractor : ExtractorApi() {
 
     private val userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
 
-    // Assinatura correta da versão atual (2025)
     override suspend fun getUrl(
         url: String,
-        referer: String? = null,
-        subtitleCallback: (SubtitleFile) -> Unit = {},
+        referer: String?,
+        subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
         try {
@@ -40,7 +38,6 @@ class YouTubeTrailerExtractor : ExtractorApi() {
 
             val apiUrl = "https://www.youtube.com/youtubei/v1/player?key=$apiKey"
 
-            // Triple quotes pra evitar escape error
             val jsonBody = """
             {
                 "context": {
@@ -73,47 +70,48 @@ class YouTubeTrailerExtractor : ExtractorApi() {
                     "Referer" to "https://www.youtube.com/"
                 )
 
-                M3u8Helper.generateM3u8(
-                    source = name,
-                    streamUrl = hlsUrl,
-                    referer = mainUrl,
-                    headers = streamHeaders
-                ).forEach(callback)
+                // Usando newExtractorLink para M3U8
+                val link = newExtractorLink {
+                    this.name = "$name (HLS)"
+                    this.url = hlsUrl
+                    this.referer = "https://www.youtube.com/"
+                    this.source = name
+                    this.quality = 1080
+                    this.headers = streamHeaders
+                    this.isM3u8 = true
+                }
+                
+                callback(link)
+                
             } else {
-                println("⚠️ Sem HLS, usando fallback DASH/MP4")
-
+                println("⚠️ Sem HLS, tentando extrair URLs diretas")
+                
                 val formatsArray = streamingData.optJSONArray("adaptiveFormats")
                     ?: streamingData.optJSONArray("formats") ?: return
 
-                val validFormats = mutableListOf<JSONObject>()
                 for (i in 0 until formatsArray.length()) {
-                    val f = formatsArray.getJSONObject(i)
-                    val fUrl = f.optString("url")
-                    if (fUrl.isNotBlank()) validFormats.add(f)
-                }
-
-                validFormats.sortByDescending { it.optInt("bitrate") }
-
-                validFormats.take(6).forEach { format ->
+                    val format = formatsArray.getJSONObject(i)
                     val fUrl = format.optString("url")
-                    val qualityLabel = format.optString("qualityLabel", "HD")
-                    val bitrate = format.optInt("bitrate") / 1000
-
-                    val link = newExtractorLink(
-                        source = name,
-                        name = "$name - \( qualityLabel ( \){bitrate}kbps)",
-                        url = fUrl,
-                        type = ExtractorLinkType.VIDEO
-                    ) {
-                        this.referer = "https://www.youtube.com/"
-                        this.quality = qualityLabel.toIntOrNull() ?: 1080
-                        this.headers = mapOf(
-                            "User-Agent" to userAgent,
-                            "Referer" to "https://www.youtube.com/"
-                        )
+                    if (fUrl.isNotBlank()) {
+                        val qualityLabel = format.optString("qualityLabel", "Unknown")
+                        val bitrate = format.optInt("bitrate") / 1000
+                        
+                        // Usando newExtractorLink para vídeo direto
+                        val link = newExtractorLink {
+                            this.name = "$name - $qualityLabel (${bitrate}kbps)"
+                            this.url = fUrl
+                            this.referer = "https://www.youtube.com/"
+                            this.source = name
+                            this.quality = qualityLabel.replace("p", "").toIntOrNull() ?: 1080
+                            this.headers = mapOf(
+                                "User-Agent" to userAgent,
+                                "Referer" to "https://www.youtube.com/"
+                            )
+                            this.isM3u8 = fUrl.contains(".m3u8")
+                        }
+                        
+                        callback(link)
                     }
-
-                    callback(link)
                 }
             }
 
