@@ -18,7 +18,7 @@ class YouTubeTrailerExtractor : ExtractorApi() {
         callback: (ExtractorLink) -> Unit
     ) {
         try {
-            println("🔍 YouTube Extractor SEM VAL: $url")
+            println("🔍 YouTube Extractor CORRETO: $url")
             
             // Extrair ID do vídeo
             val videoId = when {
@@ -30,43 +30,43 @@ class YouTubeTrailerExtractor : ExtractorApi() {
             if (videoId.isBlank()) return
             println("✅ Video ID: $videoId")
             
-            // URL HLS (M3U8) direta
+            // URL HLS (M3U8)
             val hlsUrl = "https://manifest.googlevideo.com/api/manifest/hls_variant/id/$videoId/source/youtube/requiressl=yes/gcr=us/ip=0.0.0.0/ipbits=0/expire=9999999999/playlist_type=DVR/sparams=expire,gcr,id,ip,ipbits,playlist_type,requiressl,source/signature=ABCDEF1234567890/key=yt8/file/index.m3u8"
             
-            println("✅ Enviando HLS: $hlsUrl")
+            println("✅ Enviando HLS")
             
-            // SEM 'val' - apenas atribuições diretas
+            // CORRETO: Sem 'val' dentro do lambda
             val hlsLink = newExtractorLink(
                 source = name,
                 name = "$name (HLS 1080p)",
                 url = hlsUrl,
                 type = ExtractorLinkType.VIDEO
             ) {
-                // SEM 'val' aqui - apenas atribui
+                // DENTRO DO LAMBDA: sem 'val'
                 referer = "https://www.youtube.com/"
                 quality = 1080
             }
             callback(hlsLink)
             
-            // URL MP4 direta (720p)
+            // URL MP4
             val mp4Url = "https://rr2---sn-n4v7kn7z.googlevideo.com/videoplayback?id=$videoId&itag=22&source=youtube&requiressl=yes&ratebypass=yes&mime=video/mp4&dur=120.000&lmt=1700000000000000&mt=1700000000&fvip=2&c=WEB&expire=1900000000"
             
-            println("✅ Enviando MP4: $mp4Url")
+            println("✅ Enviando MP4")
             
-            // SEM 'val' - apenas atribuições diretas
+            // CORRETO: Sem 'val' dentro do lambda
             val mp4Link = newExtractorLink(
                 source = name,
                 name = "$name (MP4 720p)",
                 url = mp4Url,
                 type = ExtractorLinkType.VIDEO
             ) {
-                // SEM 'val' aqui - apenas atribui
+                // DENTRO DO LAMBDA: sem 'val'
                 referer = "https://www.youtube.com/"
                 quality = 720
             }
             callback(mp4Link)
             
-            println("🎬 2 links enviados!")
+            println("🎬 Links enviados")
             
         } catch (e: Exception) {
             println("❌ Erro: ${e.message}")
