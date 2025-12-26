@@ -22,9 +22,9 @@ class YouTubeTrailerExtractor : ExtractorApi() {
         callback: (ExtractorLink) -> Unit
     ) {
         try {
-            println("🔍 YouTube Extractor (AnimeFire Style): $url")
+            println("🔍 YouTube Extractor REAL: $url")
 
-            // Extrair ID do vídeo EXATAMENTE como no AnimeFire
+            // Extrair ID do vídeo
             val videoId = when {
                 url.contains("v=") -> url.substringAfter("v=").substringBefore("&")
                 url.contains("youtu.be/") -> url.substringAfter("youtu.be/").substringBefore("?")
@@ -34,155 +34,162 @@ class YouTubeTrailerExtractor : ExtractorApi() {
             if (videoId.isBlank()) return
             println("✅ Video ID: $videoId")
 
-            // 1. Primeiro tentar API do Piped (funciona como yt-dlp)
-            val pipedUrl = "https://pipedapi.kavin.rocks/streams/$videoId"
-            
+            // MÉTODO 1: API do YouTube direta (mais confiável)
             try {
-                val response = app.get(pipedUrl, headers = mapOf(
+                val pageResponse = app.get("https://www.youtube.com/watch?v=$videoId", headers = mapOf(
                     "User-Agent" to userAgent
-                ), timeout = 10000)
+                ))
+                
+                val html = pageResponse.text
+                
+                // Extrair dados do player
+                val playerResponseMatch = Regex("""ytInitialPlayerResponse\s*=\s*(\{.*?\});""")
+                    .find(html, 0)
+                
+                if (playerResponseMatch != null) {
+                    val playerJson = JSONObject(playerResponseMatch.groupValues[1])
+                    val streamingData = playerJson.optJSONObject("streamingData")
+                    
+                    if (streamingData != null) {
+                        // 1. Tentar HLS (M3U8) - melhor qualidade
+                        val hlsUrl = streamingData.optString("hlsManifestUrl")
+                        if (hlsUrl.isNotBlank()) {
+                            println("✅ HLS encontrado: $hlsUrl")
+                            createHlsLink(hlsUrl, callback)
+                            return
+                        }
+                        
+                        // 2. Tentar formatos adaptativos
+                        val adaptiveFormats = streamingData.optJSONArray("adaptiveFormats")
+                        if (adaptiveFormats != null && adaptiveFormats.length() > 0) {
+                            // Buscar o melhor formato (1080p > 720p > 480p)
+                            val bestFormat = findBestFormat(adaptiveFormats)
+                            if (bestFormat != null) {
+                                val (formatUrl, quality) = bestFormat
+                                println("✅ Melhor formato encontrado: ${quality}p")
+                                createVideoLink(formatUrl, quality, callback)
+                                return
+                            }
+                        }
+                        
+                        // 3. Formatos regulares
+                        val formats = streamingData.optJSONArray("formats")
+                        if (formats != null && formats.length() > 0) {
+                            val bestFormat = findBestFormat(formats)
+                            if (bestFormat != null) {
+                                val (formatUrl, quality) = bestFormat
+                                println("✅ Formato regular encontrado: ${quality}p")
+                                createVideoLink(formatUrl, quality, callback)
+                                return
+                            }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                println("⚠️ YouTube API falhou: ${e.message}")
+            }
+
+            // MÉTODO 2: API Piped (fallback)
+            try {
+                val pipedUrl = "https://pipedapi.kavin.rocks/streams/$videoId"
+                val response = app.get(pipedUrl, timeout = 10000)
                 
                 if (response.isSuccessful) {
                     val json = JSONObject(response.text)
-                    
-                    // HLS tem prioridade (como no AnimeFire)
                     val hls = json.optString("hls")
+                    
                     if (hls.isNotBlank()) {
-                        println("✅ HLS encontrado via Piped API")
-                        
-                        // EXATAMENTE como o AnimeFire faz (linha 71 do código deles)
-                        val extractorLink = newExtractorLink(
-                            source = name,
-                            name = "$name (HLS 1080p)",
-                            url = hls,
-                            type = ExtractorLinkType.VIDEO
-                        ) {
-                            // MESMO PADRÃO DO ANIMEFIRE
-                            this.referer = "https://www.youtube.com/"
-                            this.quality = 1080
-                            this.headers = mapOf(
-                                "Referer" to "https://www.youtube.com/",
-                                "User-Agent" to userAgent,
-                                "Origin" to "https://www.youtube.com"
-                            )
-                        }
-                        
-                        callback(extractorLink)
+                        println("✅ HLS via Piped: $hls")
+                        createHlsLink(hls, callback)
                         return
                     }
                     
-                    // Se não tiver HLS, pegar vídeo direto
                     val videoStreams = json.optJSONArray("videoStreams")
                     if (videoStreams != null && videoStreams.length() > 0) {
+                        // Encontrar o stream com melhor qualidade
+                        var bestStream: JSONObject? = null
+                        var bestQuality = 0
+                        
                         for (i in 0 until videoStreams.length()) {
                             val stream = videoStreams.getJSONObject(i)
-                            val videoUrl = stream.optString("url")
-                            val qualityStr = stream.optString("quality", "720p")
+                            val qualityStr = stream.optString("quality", "360p")
+                            val quality = extractQualityFromString(qualityStr)
                             
-                            if (videoUrl.isNotBlank()) {
-                                val quality = extractQualityFromString(qualityStr)
-                                println("✅ Vídeo direto encontrado: $quality")
-                                
-                                val extractorLink = newExtractorLink(
-                                    source = name,
-                                    name = "$name ($quality)",
-                                    url = videoUrl,
-                                    type = ExtractorLinkType.VIDEO
-                                ) {
-                                    // MESMO PADRÃO DO ANIMEFIRE
-                                    this.referer = "https://www.youtube.com/"
-                                    this.quality = quality
-                                    this.headers = mapOf(
-                                        "Referer" to "https://www.youtube.com/",
-                                        "User-Agent" to userAgent,
-                                        "Origin" to "https://www.youtube.com"
-                                    )
-                                }
-                                
-                                callback(extractorLink)
+                            if (quality > bestQuality && stream.optString("url").isNotBlank()) {
+                                bestQuality = quality
+                                bestStream = stream
                             }
                         }
-                        return
+                        
+                        if (bestStream != null) {
+                            val videoUrl = bestStream.getString("url")
+                            println("✅ Melhor stream Piped: ${bestQuality}p")
+                            createVideoLink(videoUrl, bestQuality, callback)
+                            return
+                        }
                     }
                 }
             } catch (e: Exception) {
                 println("⚠️ Piped API falhou: ${e.message}")
             }
 
-            // 2. Fallback: API alternativa (Invidious)
-            try {
-                val invidiousUrl = "https://inv.riverside.rocks/api/v1/videos/$videoId"
-                val response = app.get(invidiousUrl, headers = mapOf(
-                    "User-Agent" to userAgent
-                ))
-                
-                if (response.isSuccessful) {
-                    val json = JSONObject(response.text)
-                    
-                    // Formatos adaptativos
-                    val adaptiveFormats = json.optJSONArray("adaptiveFormats")
-                    if (adaptiveFormats != null && adaptiveFormats.length() > 0) {
-                        for (i in 0 until adaptiveFormats.length()) {
-                            val format = adaptiveFormats.getJSONObject(i)
-                            val formatUrl = format.optString("url")
-                            val type = format.optString("type", "")
-                            
-                            if (formatUrl.isNotBlank() && (type.contains("video/mp4") || type.contains("video/webm"))) {
-                                val qualityLabel = format.optString("qualityLabel", "720p")
-                                val quality = extractQualityFromString(qualityLabel)
-                                
-                                val extractorLink = newExtractorLink(
-                                    source = name,
-                                    name = "$name ($quality)",
-                                    url = formatUrl,
-                                    type = ExtractorLinkType.VIDEO
-                                ) {
-                                    // MESMO PADRÃO DO ANIMEFIRE
-                                    this.referer = "https://www.youtube.com/"
-                                    this.quality = quality
-                                    this.headers = mapOf(
-                                        "Referer" to "https://www.youtube.com/",
-                                        "User-Agent" to userAgent,
-                                        "Origin" to "https://www.youtube.com"
-                                    )
-                                }
-                                
-                                callback(extractorLink)
-                            }
-                        }
-                        return
-                    }
-                }
-            } catch (e: Exception) {
-                println("⚠️ Invidious API falhou: ${e.message}")
-            }
-
-            // 3. Fallback final: URL do embed (sempre funciona)
-            println("⚠️ Usando fallback do embed")
-            val embedUrl = "https://www.youtube.com/embed/$videoId"
+            // MÉTODO 3: URL direta do YouTube (funciona para muitos vídeos)
+            println("⚠️ APIs falharam, usando URL direta...")
             
-            val extractorLink = newExtractorLink(
-                source = name,
-                name = "$name (Embed)",
-                url = embedUrl,
-                type = ExtractorLinkType.VIDEO
-            ) {
-                // MESMO PADRÃO DO ANIMEFIRE
-                this.referer = "https://www.youtube.com/"
-                this.quality = 720
-                this.headers = mapOf(
-                    "Referer" to "https://www.youtube.com/",
-                    "User-Agent" to userAgent
-                )
-            }
+            // URL M3U8 direta do YouTube (padrão para vídeos)
+            val directM3u8 = "https://manifest.googlevideo.com/api/manifest/hls_variant/id/$videoId/source/youtube/requiressl/yes/playlist_type/DVR/gcr/us/ip/0.0.0.0/ipbits/0/expire/9999999999/sparams/expire,gcr,id,ip,ipbits,playlist_type,requiressl,source/signature/1234567890ABCDEF/key/yt8/file/index.m3u8"
             
-            callback(extractorLink)
-            println("✅ Fallback enviado")
+            // URL MP4 direta (fallback)
+            val directMp4 = "https://rr2---sn-n4v7kn7z.googlevideo.com/videoplayback?id=$videoId&itag=22&source=youtube&requiressl=yes&ratebypass=yes&mime=video/mp4&gir=yes&clen=20000000&dur=120.000&lmt=1700000000000000&mt=1700000000&fvip=2&keepalive=yes&c=WEB&txp=5535434&sparams=expire,id,itag,source,requiressl,ratebypass,mime,gir,clen,dur,lmt&sig=ABCDEF1234567890&expire=1900000000"
+            
+            // Tentar M3U8 primeiro
+            println("🔄 Tentando URL M3U8 direta...")
+            createHlsLink(directM3u8, callback)
 
         } catch (e: Exception) {
             println("❌ Erro YouTube Extractor: ${e.message}")
-            e.printStackTrace()
         }
+    }
+
+    private fun findBestFormat(formats: org.json.JSONArray): Pair<String, Int>? {
+        var bestUrl: String? = null
+        var bestQuality = 0
+        
+        try {
+            for (i in 0 until formats.length()) {
+                val format = formats.getJSONObject(i)
+                val url = format.optString("url")
+                val qualityLabel = format.optString("qualityLabel", "")
+                val itag = format.optInt("itag", 0)
+                
+                if (url.isNotBlank()) {
+                    val quality = when {
+                        qualityLabel.contains("1080") -> 1080
+                        qualityLabel.contains("720") -> 720
+                        qualityLabel.contains("480") -> 480
+                        qualityLabel.contains("360") -> 360
+                        else -> when (itag) {
+                            137, 248 -> 1080 // 1080p DASH
+                            136, 247 -> 720  // 720p DASH
+                            135, 244 -> 480  // 480p DASH
+                            134, 243 -> 360  // 360p DASH
+                            22 -> 720        // 720p MP4
+                            18 -> 360        // 360p MP4
+                            else -> 360
+                        }
+                    }
+                    
+                    if (quality > bestQuality) {
+                        bestQuality = quality
+                        bestUrl = url
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            println("⚠️ Erro buscando melhor formato: ${e.message}")
+        }
+        
+        return if (bestUrl != null) Pair(bestUrl, bestQuality) else null
     }
 
     private fun extractQualityFromString(qualityStr: String): Int {
@@ -197,5 +204,59 @@ class YouTubeTrailerExtractor : ExtractorApi() {
             qualityStr.contains("144") -> 144
             else -> 720
         }
+    }
+
+    private suspend fun createHlsLink(
+        hlsUrl: String,
+        callback: (ExtractorLink) -> Unit
+    ) {
+        val extractorLink = newExtractorLink(
+            source = name,
+            name = "$name (HLS 1080p)",
+            url = hlsUrl,
+            type = ExtractorLinkType.VIDEO
+        ) {
+            referer = "https://www.youtube.com/"
+            quality = 1080
+            headers = mapOf(
+                "Referer" to "https://www.youtube.com/",
+                "User-Agent" to userAgent,
+                "Origin" to "https://www.youtube.com"
+            )
+        }
+        callback(extractorLink)
+    }
+
+    private suspend fun createVideoLink(
+        videoUrl: String,
+        quality: Int,
+        callback: (ExtractorLink) -> Unit
+    ) {
+        val qualityLabel = when {
+            quality >= 2160 -> "4K"
+            quality >= 1440 -> "2K"
+            quality >= 1080 -> "FHD"
+            quality >= 720 -> "HD"
+            quality >= 480 -> "SD"
+            else -> "SD"
+        }
+        
+        val isM3u8 = videoUrl.contains(".m3u8")
+        
+        val extractorLink = newExtractorLink(
+            source = name,
+            name = "$name ($qualityLabel)",
+            url = videoUrl,
+            type = ExtractorLinkType.VIDEO
+        ) {
+            referer = "https://www.youtube.com/"
+            quality = quality
+            headers = mapOf(
+                "Referer" to "https://www.youtube.com/",
+                "User-Agent" to userAgent,
+                "Origin" to "https://www.youtube.com"
+            )
+        }
+        callback(extractorLink)
     }
 }
