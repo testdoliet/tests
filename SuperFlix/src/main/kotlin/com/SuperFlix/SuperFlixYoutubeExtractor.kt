@@ -1,75 +1,44 @@
 package com.SuperFlix
 
 import com.lagradost.cloudstream3.*
-import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.utils.*
-import org.json.JSONObject
+import com.lagradost.cloudstream3.app
+import java.net.URI
 
-class SuperFlixYoutubeExtractor : ExtractorApi() {
-    override val name = "SuperFlixYouTube"
-    override val mainUrl = "https://www.youtube.com"
-    
-    // MÉTODO OBRIGATÓRIO: Define se precisa de referer
-    override val requiresReferer = false
-
-    private val itagQualityMap = mapOf(
-        // Vídeos completos (áudio + vídeo)
-        18 to Qualities.P360.value,   // MP4 360p
-        22 to Qualities.P720.value,   // MP4 720p
-        37 to Qualities.P1080.value,  // MP4 1080p
-        38 to Qualities.P2160.value,  // MP4 4K
-        43 to Qualities.P360.value,   // WebM 360p
-        44 to Qualities.P480.value,   // WebM 480p
-        45 to Qualities.P720.value,   // WebM 720p
-        46 to Qualities.P1080.value,  // WebM 1080p
-        59 to Qualities.P480.value,   // MP4 480p
-        78 to Qualities.P480.value,   // MP4 480p
-        
-        // Vídeo apenas (alta qualidade)
-        137 to Qualities.P1080.value, // MP4 1080p
-        248 to Qualities.P1080.value, // WebM 1080p
-        271 to Qualities.P1440.value, // WebM 1440p
-        313 to Qualities.P2160.value, // WebM 4K
-        315 to Qualities.P2160.value, // WebM 4K60
-    )
-
-    // MÉTODO OBRIGATÓRIO 1: Esta assinatura
-    override suspend fun getUrl(
+object SuperFlixYoutubeExtractor {
+    suspend fun getUrl(
         url: String,
-        referer: String?,
-        subtitleCallback: (SubtitleFile) -> Unit,
+        referer: String? = null,
         callback: (ExtractorLink) -> Unit
-    ) {
-        try {
-            println("🎬 [SuperFlix] YouTubeExtractor processando: $url")
+    ): Boolean {
+        return try {
+            println("🎬 YouTubeExtractor processando: $url")
             
-            val videoId = extractYouTubeId(url) ?: return
-            println("📹 Video ID encontrado: $videoId")
+            // Extrair ID do vídeo
+            val videoId = extractYouTubeId(url) ?: return false
             
-            // Método 1: API do Invidious
-            if (extractWithInvidious(videoId, referer ?: mainUrl, subtitleCallback, callback)) {
-                return
+            // Usar referer padrão se não fornecido
+            val finalReferer = referer ?: "https://www.youtube.com"
+            
+            // Método 1: Usar ytdl web service (funciona melhor)
+            if (extractWithYtdlWeb(videoId, finalReferer, callback)) {
+                return true
             }
             
-            // Método 2: API pública
-            extractWithPublicAPI(videoId, referer ?: mainUrl, callback)
+            // Método 2: Tentar yt-dlp API
+            if (extractWithYtdlpApi(videoId, finalReferer, callback)) {
+                return true
+            }
+            
+            // Método 3: Fallback para embed simples
+            extractWithYouTubeEmbed(videoId, finalReferer, callback)
             
         } catch (e: Exception) {
             println("❌ YouTubeExtractor erro: ${e.message}")
+            false
         }
     }
-    
-    // MÉTODO OBRIGATÓRIO 2: Esta sobrecarga também
-    override suspend fun getUrl(url: String, referer: String?): List<ExtractorLink>? {
-        val links = mutableListOf<ExtractorLink>()
-        
-        getUrl(url, referer, {}, { link ->
-            links.add(link)
-        })
-        
-        return if (links.isNotEmpty()) links else null
-    }
-    
+
     private fun extractYouTubeId(url: String): String? {
         val patterns = listOf(
             "youtube\\.com/watch\\?v=([a-zA-Z0-9_-]{11})",
@@ -85,235 +54,271 @@ class SuperFlixYoutubeExtractor : ExtractorApi() {
         }
         return null
     }
-    
-    private suspend fun extractWithInvidious(
+
+    // MÉTODO MELHOR: Usar serviço web ytdl que já extrai todas as qualidades
+    private suspend fun extractWithYtdlWeb(
         videoId: String,
         referer: String,
-        subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val instances = listOf(
-            "https://inv.riverside.rocks",
-            "https://vid.puffyan.us",
-            "https://yewtu.be"
-        )
-        
-        for (instance in instances) {
-            try {
-                val apiUrl = "$instance/api/v1/videos/$videoId"
-                println("🔗 Tentando Invidious: $instance")
+        return try {
+            // Serviços web que extraem todas as qualidades do YouTube
+            val services = listOf(
+                "https://yt.lemnoslife.com/videos?part=streamingDetails&id=$videoId",
+                "https://ytdl.cutelab.space/video/$videoId",
+                "https://ytdl.ari-web.xyz/watch?v=$videoId"
+            )
+            
+            for (serviceUrl in services) {
+                println("🔗 Tentando serviço: $serviceUrl")
                 
-                val response = app.get(apiUrl, timeout = 15000)
-                if (response.code != 200) continue
-                
-                val json = response.text
-                val jsonObj = JSONObject(json)
-                
-                var foundStreams = false
-                
-                // Extrair legendas primeiro
-                extractSubtitlesFromInvidious(jsonObj, subtitleCallback)
-                
-                // formatStreams (streams completos)
-                if (jsonObj.has("formatStreams")) {
-                    val formatStreams = jsonObj.getJSONArray("formatStreams")
-                    for (i in 0 until formatStreams.length()) {
-                        val stream = formatStreams.getJSONObject(i)
-                        if (stream.has("url") && stream.has("itag")) {
-                            val videoUrl = stream.getString("url")
-                            val itag = stream.getInt("itag")
-                            val qualityLabel = stream.optString("qualityLabel", "")
-                            val hasAudio = stream.optBoolean("audio", false)
-                            val hasVideo = stream.optBoolean("video", false)
-                            
-                            // Só pega streams completos (áudio+video)
-                            if (hasAudio && hasVideo) {
-                                val quality = itagQualityMap[itag] ?: Qualities.P720.value
-                                val qualityText = getQualityText(quality, qualityLabel)
+                try {
+                    val response = app.get(serviceUrl, timeout = 15000)
+                    if (response.code == 200) {
+                        val content = response.text
+                        
+                        // Extrair URLs M3U8 que contêm todas as qualidades
+                        val m3u8Pattern = Regex("""(https?://[^"\s]*\.m3u8[^"\s]*)""")
+                        val m3u8Matches = m3u8Pattern.findAll(content)
+                        
+                        var found = false
+                        m3u8Matches.forEach { match ->
+                            val m3u8Url = match.value
+                            if (m3u8Url.contains("googlevideo") || m3u8Url.contains("youtube")) {
+                                println("✅ Encontrado M3U8 master: $m3u8Url")
                                 
-                                println("✅ Stream completo: $qualityText")
+                                // M3U8 master contém todas as qualidades
+                                val headers = mapOf(
+                                    "Referer" to referer,
+                                    "User-Agent" to "Mozilla/5.0",
+                                    "Origin" to "https://www.youtube.com"
+                                )
                                 
-                                val extractorLink = newExtractorLink(
-                                    source = name,
-                                    name = "YouTube ($qualityText)",
-                                    url = videoUrl,
-                                    type = ExtractorLinkType.VIDEO
-                                ) {
-                                    this.referer = "https://www.youtube.com"
-                                    this.quality = quality
-                                    this.headers = mapOf(
-                                        "Referer" to "https://www.youtube.com",
-                                        "User-Agent" to "Mozilla/5.0",
-                                        "Origin" to "https://www.youtube.com"
-                                    )
-                                }
+                                val extractorLink = ExtractorLink(
+                                    source = "YouTube HLS",
+                                    name = "Trailer YouTube (Múltiplas Qualidades)",
+                                    url = m3u8Url,
+                                    referer = referer,
+                                    quality = Qualities.P1080.value,
+                                    headers = headers,
+                                    type = ExtractorLinkType.HLS,
+                                    isM3u8 = true
+                                )
                                 
                                 callback(extractorLink)
-                                foundStreams = true
+                                found = true
                             }
                         }
-                    }
-                }
-                
-                // adaptiveFormats (streams adaptativos)
-                if (jsonObj.has("adaptiveFormats")) {
-                    val adaptiveFormats = jsonObj.getJSONArray("adaptiveFormats")
-                    for (i in 0 until adaptiveFormats.length()) {
-                        val stream = adaptiveFormats.getJSONObject(i)
-                        if (stream.has("url") && stream.has("itag")) {
-                            val videoUrl = stream.getString("url")
-                            val itag = stream.getInt("itag")
-                            val qualityLabel = stream.optString("qualityLabel", "")
-                            val hasVideo = stream.optBoolean("video", false)
-                            
-                            // Pega streams de vídeo (mesmo sem áudio)
-                            if (hasVideo) {
-                                val quality = itagQualityMap[itag] ?: Qualities.P720.value
-                                
-                                // Só pega qualidades 720p+
-                                if (quality >= Qualities.P720.value) {
-                                    val qualityText = getQualityText(quality, qualityLabel)
-                                    val typeName = if (stream.optBoolean("audio", false)) "Completo" else "Vídeo"
-                                    
-                                    println("🎥 Stream adaptativo: $qualityText [$typeName]")
-                                    
-                                    val extractorLink = newExtractorLink(
-                                        source = name,
-                                        name = "YouTube ($qualityText) [$typeName]",
-                                        url = videoUrl,
-                                        type = ExtractorLinkType.VIDEO
-                                    ) {
-                                        this.referer = "https://www.youtube.com"
-                                        this.quality = quality
-                                        this.headers = mapOf(
-                                            "Referer" to "https://www.youtube.com",
-                                            "User-Agent" to "Mozilla/5.0",
-                                            "Origin" to "https://www.youtube.com"
-                                        )
-                                    }
-                                    
-                                    callback(extractorLink)
-                                    foundStreams = true
-                                }
-                            }
+                        
+                        if (found) {
+                            // Procurar também por links MP4 diretos (qualidades individuais)
+                            extractDirectMP4Links(content, videoId, referer, callback)
+                            return true
                         }
                     }
+                } catch (e: Exception) {
+                    println("⚠️ Serviço falhou: ${e.message}")
+                    continue
                 }
-                
-                if (foundStreams) {
-                    println("✨ Qualidades encontradas via Invidious!")
-                    return true
-                }
-                
-            } catch (e: Exception) {
-                println("⚠️ $instance falhou: ${e.message}")
-                continue
             }
+            
+            false
+        } catch (e: Exception) {
+            println("❌ ytdl web erro: ${e.message}")
+            false
         }
-        
-        return false
     }
-    
-    private fun extractSubtitlesFromInvidious(
-        jsonObj: JSONObject,
-        subtitleCallback: (SubtitleFile) -> Unit
+
+    // Extrair links MP4 diretos para qualidades específicas
+    private suspend fun extractDirectMP4Links(
+        content: String,
+        videoId: String,
+        referer: String,
+        callback: (ExtractorLink) -> Unit
     ) {
         try {
-            if (jsonObj.has("captions")) {
-                val captions = jsonObj.getJSONArray("captions")
-                for (i in 0 until captions.length()) {
-                    val caption = captions.getJSONObject(i)
-                    val label = caption.optString("label", "")
-                    val url = caption.optString("url", "")
+            // Padrão para URLs MP4 do YouTube
+            val mp4Pattern = Regex("""(https?://[^"\s]*googlevideo[^"\s]*videoplayback[^"\s]*itag=\d+[^"\s]*)""")
+            val matches = mp4Pattern.findAll(content)
+            
+            // Mapa de itag para qualidade
+            val itagQualityMap = mapOf(
+                // Qualidades baixas
+                "17" to 144,  // 144p
+                "18" to 360,  // 360p
+                "43" to 360,  // 360p WebM
+                // Qualidades médias
+                "22" to 720,  // 720p
+                "59" to 480,  // 480p
+                "78" to 480,  // 480p
+                // Qualidades altas
+                "37" to 1080, // 1080p
+                "137" to 1080, // 1080p (video only)
+                "248" to 1080, // 1080p WebM
+                // 4K
+                "313" to 2160, // 2160p (4K)
+                "315" to 2160, // 2160p (4K)
+                "271" to 1440  // 1440p (2K)
+            )
+            
+            matches.forEach { match ->
+                val videoUrl = match.value
+                // Extrair itag da URL
+                val itagMatch = Regex("itag=(\\d+)").find(videoUrl)
+                itagMatch?.let {
+                    val itag = it.groupValues[1]
+                    val quality = itagQualityMap[itag] ?: 720
                     
-                    if (label.isNotBlank() && url.isNotBlank()) {
-                        println("📝 Legenda: $label")
-                        subtitleCallback(SubtitleFile(label, url))
-                    }
+                    println("📹 MP4 encontrado: ${quality}p (itag: $itag)")
+                    
+                    val headers = mapOf(
+                        "Referer" to referer,
+                        "User-Agent" to "Mozilla/5.0",
+                        "Origin" to "https://www.youtube.com"
+                    )
+                    
+                    val extractorLink = ExtractorLink(
+                        source = "YouTube Direct",
+                        name = "Trailer YouTube (${quality}p)",
+                        url = videoUrl,
+                        referer = referer,
+                        quality = mapQualityToValue(quality),
+                        headers = headers,
+                        type = ExtractorLinkType.VIDEO,
+                        isM3u8 = false
+                    )
+                    
+                    callback(extractorLink)
                 }
             }
         } catch (e: Exception) {
-            // Ignorar erros de legendas
+            println("⚠️ Erro extraindo MP4: ${e.message}")
         }
     }
-    
-    private suspend fun extractWithPublicAPI(
+
+    // Método alternativo: Usar yt-dlp via API pública
+    private suspend fun extractWithYtdlpApi(
         videoId: String,
         referer: String,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        try {
-            // API pública do yt-dlp
-            val apiUrl = "https://yt.lemnoslife.com/noKey/videos?part=streamingDetails&id=$videoId"
-            println("🔗 Tentando API pública")
+        return try {
+            val ytdlpApi = "https://ytdlp.deno.dev/?url=https://youtube.com/watch?v=$videoId"
+            println("🔗 Usando yt-dlp API: $ytdlpApi")
             
-            val response = app.get(apiUrl, timeout = 10000)
-            if (response.code != 200) return false
-            
-            val json = response.text
-            
-            // Procurar URLs de vídeo
-            val videoPattern = """https?://[^"\s]+googlevideo\.com/videoplayback[^"\s]*itag=\d+[^"\s]*""".toRegex()
-            val matches = videoPattern.findAll(json).toList()
-            
-            if (matches.isNotEmpty()) {
+            val response = app.get(ytdlpApi, timeout = 20000)
+            if (response.code == 200) {
+                val document = response.document
+                
+                // Procurar por links de vídeo
+                val videoLinks = document.select("a[href*='googlevideo.com'], a[href*='.m3u8']")
                 var found = false
-                for (match in matches) {
-                    val videoUrl = match.value
-                    val itagPattern = """itag=(\d+)""".toRegex()
-                    val itagMatch = itagPattern.find(videoUrl)
-                    val itag = itagMatch?.groupValues?.get(1)?.toIntOrNull() ?: 18
-                    val quality = itagQualityMap[itag] ?: Qualities.P720.value
-                    val qualityText = getQualityText(quality, "")
+                
+                videoLinks.forEach { link ->
+                    val href = link.attr("href")
+                    val text = link.text()
                     
-                    println("✅ Link direto: $qualityText")
-                    
-                    val extractorLink = newExtractorLink(
-                        source = name,
-                        name = "YouTube ($qualityText)",
-                        url = videoUrl,
-                        type = ExtractorLinkType.VIDEO
-                    ) {
-                        this.referer = "https://www.youtube.com"
-                        this.quality = quality
-                        this.headers = mapOf(
-                            "Referer" to "https://www.youtube.com",
+                    if (href.isNotBlank() && (href.contains("googlevideo") || href.contains(".m3u8"))) {
+                        // Tentar extrair qualidade do texto
+                        val quality = extractQualityFromText(text)
+                        
+                        println("🎥 yt-dlp encontrou: ${quality}p")
+                        
+                        val headers = mapOf(
+                            "Referer" to referer,
                             "User-Agent" to "Mozilla/5.0",
                             "Origin" to "https://www.youtube.com"
                         )
+                        
+                        val isM3u8 = href.contains(".m3u8")
+                        
+                        val extractorLink = ExtractorLink(
+                            source = "YouTube via yt-dlp",
+                            name = "Trailer YouTube (${quality}p)",
+                            url = href,
+                            referer = referer,
+                            quality = mapQualityToValue(quality),
+                            headers = headers,
+                            type = if (isM3u8) ExtractorLinkType.HLS else ExtractorLinkType.VIDEO,
+                            isM3u8 = isM3u8
+                        )
+                        
+                        callback(extractorLink)
+                        found = true
                     }
-                    
-                    callback(extractorLink)
-                    found = true
                 }
                 
-                if (found) {
-                    println("✨ Links diretos encontrados!")
-                    return true
-                }
+                found
+            } else {
+                false
             }
-            
-            return false
-            
         } catch (e: Exception) {
-            println("❌ API pública falhou: ${e.message}")
-            return false
+            println("❌ yt-dlp API erro: ${e.message}")
+            false
         }
     }
-    
-    private fun getQualityText(quality: Int, qualityLabel: String): String {
-        if (qualityLabel.isNotBlank()) {
-            return qualityLabel
+
+    private fun extractQualityFromText(text: String): Int {
+        return when {
+            text.contains("144") -> 144
+            text.contains("240") -> 240
+            text.contains("360") -> 360
+            text.contains("480") -> 480
+            text.contains("720") -> 720
+            text.contains("1080") -> 1080
+            text.contains("1440") -> 1440
+            text.contains("2160") || text.contains("4K") -> 2160
+            else -> 720
+        }
+    }
+
+    private suspend fun extractWithYouTubeEmbed(
+        videoId: String,
+        referer: String,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        // Fallback: usar embed do YouTube
+        val embedUrl = "https://www.youtube-nocookie.com/embed/$videoId?autoplay=1&rel=0"
+        println("🔗 Fallback para YouTube Embed")
+        
+        val host = try {
+            URI(referer).host ?: "www.youtube-nocookie.com"
+        } catch (e: Exception) {
+            "www.youtube-nocookie.com"
         }
         
-        return when {
-            quality >= Qualities.P2160.value -> "4K"
-            quality >= Qualities.P1440.value -> "1440p"
-            quality >= Qualities.P1080.value -> "1080p"
-            quality >= Qualities.P720.value -> "720p"
-            quality >= Qualities.P480.value -> "480p"
-            quality >= Qualities.P360.value -> "360p"
-            else -> "SD"
+        val headers = mapOf(
+            "Referer" to referer,
+            "User-Agent" to "Mozilla/5.0",
+            "Origin" to "https://$host"
+        )
+        
+        val extractorLink = ExtractorLink(
+            source = "YouTube Embed",
+            name = "Trailer YouTube (720p)",
+            url = embedUrl,
+            referer = referer,
+            quality = Qualities.P720.value,
+            headers = headers,
+            type = ExtractorLinkType.VIDEO,
+            isM3u8 = false
+        )
+        
+        callback(extractorLink)
+        return true
+    }
+
+    private fun mapQualityToValue(quality: Int): Int {
+        return when (quality) {
+            144 -> Qualities.P144.value
+            240 -> Qualities.P240.value
+            360 -> Qualities.P360.value
+            480 -> Qualities.P480.value
+            720 -> Qualities.P720.value
+            1080 -> Qualities.P1080.value
+            1440 -> Qualities.P1440.value
+            2160 -> Qualities.P2160.value
+            else -> Qualities.Unknown.value
         }
     }
 }
