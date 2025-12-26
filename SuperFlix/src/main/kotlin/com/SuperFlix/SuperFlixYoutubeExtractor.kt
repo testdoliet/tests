@@ -1,5 +1,6 @@
 package com.SuperFlix
 
+import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.utils.*
 import org.json.JSONObject
@@ -32,7 +33,7 @@ class SuperFlixYoutubeExtractor : ExtractorApi() {
         315 to Qualities.P2160.value, // WebM 4K60
     )
 
-    // MÉTODO OBRIGATÓRIO: Assinatura CORRETA do ExtractorApi
+    // MÉTODO OBRIGATÓRIO 1: Esta assinatura
     override suspend fun getUrl(
         url: String,
         referer: String?,
@@ -56,6 +57,17 @@ class SuperFlixYoutubeExtractor : ExtractorApi() {
         } catch (e: Exception) {
             println("❌ YouTubeExtractor erro: ${e.message}")
         }
+    }
+    
+    // MÉTODO OBRIGATÓRIO 2: Esta sobrecarga também
+    override suspend fun getUrl(url: String, referer: String?): List<ExtractorLink>? {
+        val links = mutableListOf<ExtractorLink>()
+        
+        getUrl(url, referer, {}, { link ->
+            links.add(link)
+        })
+        
+        return if (links.isNotEmpty()) links else null
     }
     
     private fun extractYouTubeId(url: String): String? {
