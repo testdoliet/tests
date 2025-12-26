@@ -6,6 +6,7 @@ import com.lagradost.cloudstream3.utils.M3u8Helper
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.utils.newExtractorLink
+import com.lagradost.cloudstream3.utils.Qualities
 import org.json.JSONObject
 
 class YouTubeTrailerExtractor : ExtractorApi() {
@@ -70,13 +71,14 @@ class YouTubeTrailerExtractor : ExtractorApi() {
                     "Referer" to "https://www.youtube.com/"
                 )
 
-                // Usando newExtractorLink para M3U8
-                val link = newExtractorLink {
-                    this.name = "$name (HLS)"
-                    this.url = hlsUrl
+                // Forma CORRETA de usar newExtractorLink com parâmetros obrigatórios
+                val link = newExtractorLink(
+                    source = name,
+                    name = "$name (HLS)",
+                    url = hlsUrl
+                ) {
                     this.referer = "https://www.youtube.com/"
-                    this.source = name
-                    this.quality = 1080
+                    this.quality = Qualities.Unknown.value
                     this.headers = streamHeaders
                     this.isM3u8 = true
                 }
@@ -96,13 +98,26 @@ class YouTubeTrailerExtractor : ExtractorApi() {
                         val qualityLabel = format.optString("qualityLabel", "Unknown")
                         val bitrate = format.optInt("bitrate") / 1000
                         
-                        // Usando newExtractorLink para vídeo direto
-                        val link = newExtractorLink {
-                            this.name = "$name - $qualityLabel (${bitrate}kbps)"
-                            this.url = fUrl
+                        // Extrair qualidade numérica (ex: "1080p" -> 1080)
+                        val qualityNum = qualityLabel.replace("p", "").toIntOrNull() ?: 
+                            when {
+                                qualityLabel.contains("1080") || qualityLabel.contains("FHD") -> 1080
+                                qualityLabel.contains("720") || qualityLabel.contains("HD") -> 720
+                                qualityLabel.contains("480") || qualityLabel.contains("SD") -> 480
+                                qualityLabel.contains("360") -> 360
+                                qualityLabel.contains("240") -> 240
+                                qualityLabel.contains("144") -> 144
+                                else -> Qualities.Unknown.value
+                            }
+                        
+                        // Forma CORRETA com parâmetros obrigatórios
+                        val link = newExtractorLink(
+                            source = name,
+                            name = "$name - $qualityLabel (${bitrate}kbps)",
+                            url = fUrl
+                        ) {
                             this.referer = "https://www.youtube.com/"
-                            this.source = name
-                            this.quality = qualityLabel.replace("p", "").toIntOrNull() ?: 1080
+                            this.quality = qualityNum
                             this.headers = mapOf(
                                 "User-Agent" to userAgent,
                                 "Referer" to "https://www.youtube.com/"
