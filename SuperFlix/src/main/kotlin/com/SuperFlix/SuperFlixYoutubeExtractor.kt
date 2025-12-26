@@ -10,7 +10,7 @@ class SuperFlixYoutubeExtractor : ExtractorApi() {
     
     // MÉTODO OBRIGATÓRIO: Define se precisa de referer
     override val requiresReferer = false
-    
+
     private val itagQualityMap = mapOf(
         // Vídeos completos (áudio + vídeo)
         18 to Qualities.P360.value,   // MP4 360p
@@ -32,22 +32,22 @@ class SuperFlixYoutubeExtractor : ExtractorApi() {
         315 to Qualities.P2160.value, // WebM 4K60
     )
 
-    // MÉTODO OBRIGATÓRIO 1: Esta é a assinatura correta
+    // MÉTODO OBRIGATÓRIO: Assinatura CORRETA do ExtractorApi
     override suspend fun getUrl(
         url: String,
         referer: String?,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        return try {
+    ) {
+        try {
             println("🎬 [SuperFlix] YouTubeExtractor processando: $url")
             
-            val videoId = extractYouTubeId(url) ?: return false
+            val videoId = extractYouTubeId(url) ?: return
             println("📹 Video ID encontrado: $videoId")
             
             // Método 1: API do Invidious
             if (extractWithInvidious(videoId, referer ?: mainUrl, subtitleCallback, callback)) {
-                return true
+                return
             }
             
             // Método 2: API pública
@@ -55,19 +55,7 @@ class SuperFlixYoutubeExtractor : ExtractorApi() {
             
         } catch (e: Exception) {
             println("❌ YouTubeExtractor erro: ${e.message}")
-            false
         }
-    }
-    
-    // MÉTODO OBRIGATÓRIO 2: Alternativo (retorna lista)
-    override suspend fun getUrl(url: String, referer: String?): List<ExtractorLink>? {
-        val links = mutableListOf<ExtractorLink>()
-        
-        getUrl(url, referer, {}, { link ->
-            links.add(link)
-        })
-        
-        return if (links.isNotEmpty()) links else null
     }
     
     private fun extractYouTubeId(url: String): String? {
