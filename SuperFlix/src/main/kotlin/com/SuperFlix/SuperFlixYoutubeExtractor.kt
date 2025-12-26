@@ -3,7 +3,7 @@ package com.SuperFlix
 import com.lagradost.cloudstream3.utils.ExtractorApi
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.M3u8Helper
-import com.lagradost.cloudstream3.utils.newExtractorLink  // ← Import obrigatório pro builder
+import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.app
 import org.json.JSONObject
@@ -99,14 +99,16 @@ class YouTubeTrailerExtractor : ExtractorApi() {
                     val quality = format.optString("qualityLabel", "HD")
                     val bitrate = format.optInt("bitrate") / 1000
 
-                    newExtractorLink {
-                        this.source = name
-                        this.name = "$name - \( quality ( \){bitrate}kbps)"
-                        this.url = fUrl
-                        this.referer = "https://www.youtube.com/"
-                        this.quality = quality.toIntOrNull() ?: 1080
-                        this.isM3u8 = false
-                    }.let(callback)
+                    callback(
+                        newExtractorLink {
+                            source = name
+                            name = "$name - \( quality ( \){bitrate}kbps)"
+                            url = fUrl
+                            referer = "https://www.youtube.com/"
+                            quality = quality.toIntOrNull() ?: 1080
+                            isM3u8 = false
+                        }
+                    )
                 }
             }
 
