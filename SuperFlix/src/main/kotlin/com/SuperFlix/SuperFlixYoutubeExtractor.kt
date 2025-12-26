@@ -30,7 +30,7 @@ class YouTubeTrailerExtractor : ExtractorApi() {
 
             println("✅ Video ID: $videoId")
 
-            // MÉTODO 1: yt-dlp via API Pública (funciona melhor)
+            // MÉTODO 1: yt-dlp via API Pública
             val ytdlpFound = tryYtDlpApi(videoId, callback)
             if (ytdlpFound) {
                 println("✅ yt-dlp API funcionou!")
@@ -53,15 +53,10 @@ class YouTubeTrailerExtractor : ExtractorApi() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         return try {
-            // API pública do yt-dlp (funciona como o yt-dlp real)
+            // API pública do yt-dlp
             val apiUrls = listOf(
-                // API 1: yt.lemnoslife.com (mais confiável)
                 "https://yt.lemnoslife.com/videos?part=streamingDetails&id=$videoId",
-                
-                // API 2: invidious (alternativa)
                 "https://inv.riverside.rocks/api/v1/videos/$videoId",
-                
-                // API 3: Piped API
                 "https://pipedapi.kavin.rocks/streams/$videoId"
             )
 
@@ -108,18 +103,14 @@ class YouTubeTrailerExtractor : ExtractorApi() {
     private fun extractHlsUrl(json: JSONObject): String? {
         return try {
             // Tentar diferentes caminhos JSON para HLS
-            val paths = listOf(
+            listOf(
                 { json.optJSONArray("items")?.optJSONObject(0)?.optJSONObject("streamingDetails")?.optString("hlsManifestUrl") },
                 { json.optString("hls") },
                 { json.optJSONObject("videoStreams")?.optString("hls") },
                 { json.optJSONArray("videoStreams")?.optJSONObject(0)?.optString("hls") }
-            )
-            
-            for (path in paths) {
+            ).forEach { path ->
                 val url = path()
-                if (!url.isNullOrBlank()) {
-                    return url
-                }
+                if (!url.isNullOrBlank()) return url
             }
             null
         } catch (e: Exception) {
@@ -131,8 +122,6 @@ class YouTubeTrailerExtractor : ExtractorApi() {
         val formats = mutableListOf<Pair<String, Int>>()
         
         try {
-            // Múltiplos padrões de extração (diferentes APIs)
-            
             // Padrão 1: yt.lemnoslife.com
             val items = json.optJSONArray("items")
             if (items != null && items.length() > 0) {
@@ -173,7 +162,6 @@ class YouTubeTrailerExtractor : ExtractorApi() {
             println("⚠️ Erro extraindo formatos: ${e.message}")
         }
         
-        // Ordenar por qualidade (maior primeiro)
         return formats.sortedByDescending { it.second }
     }
 
@@ -187,7 +175,7 @@ class YouTubeTrailerExtractor : ExtractorApi() {
             label.contains("360") -> 360
             label.contains("240") -> 240
             label.contains("144") -> 144
-            else -> 720 // padrão
+            else -> 720
         }
     }
 
@@ -196,13 +184,11 @@ class YouTubeTrailerExtractor : ExtractorApi() {
         callback: (ExtractorLink) -> Unit
     ) {
         try {
-            // Método direto do YouTube (fallback)
             val pageResponse = app.get("https://www.youtube.com/watch?v=$videoId", headers = mapOf(
                 "User-Agent" to userAgent
             ))
             val html = pageResponse.text
 
-            // Extrair dados da página
             val playerResponseMatch = Regex("""ytInitialPlayerResponse\s*=\s*(\{.*?\});""")
                 .find(html, 0)
             
@@ -210,7 +196,6 @@ class YouTubeTrailerExtractor : ExtractorApi() {
                 val playerJson = JSONObject(playerResponseMatch.groupValues[1])
                 val streamingData = playerJson.optJSONObject("streamingData")
                 
-                // Tentar HLS primeiro
                 val hlsUrl = streamingData?.optString("hlsManifestUrl")
                 if (!hlsUrl.isNullOrBlank()) {
                     println("✅ HLS direto do YouTube: $hlsUrl")
@@ -218,7 +203,6 @@ class YouTubeTrailerExtractor : ExtractorApi() {
                     return
                 }
                 
-                // Formatos adaptativos
                 val formats = streamingData?.optJSONArray("adaptiveFormats")
                 if (formats != null && formats.length() > 0) {
                     for (i in 0 until formats.length()) {
@@ -234,7 +218,7 @@ class YouTubeTrailerExtractor : ExtractorApi() {
                 }
             }
             
-            // Fallback final: URL genérica
+            // Fallback final
             println("⚠️ Usando fallback genérico")
             val fallbackUrl = "https://www.youtube.com/embed/$videoId?autoplay=1"
             createVideoLink(fallbackUrl, 720, callback)
@@ -244,29 +228,31 @@ class YouTubeTrailerExtractor : ExtractorApi() {
         }
     }
 
-    private fun createHlsLink(
+    private suspend fun createHlsLink(
         hlsUrl: String,
         callback: (ExtractorLink) -> Unit
     ) {
+        // CORREÇÃO: newExtractorLink é suspend, então chamamos direto
         val extractorLink = newExtractorLink(
             source = name,
             name = "$name (HLS - 1080p)",
             url = hlsUrl,
             type = ExtractorLinkType.VIDEO
         ) {
-            this.referer = "https://www.youtube.com/"
-            this.quality = 1080
-            this.headers = mapOf(
+            // DENTRO DO LAMBDA: não use 'val', apenas atribua
+            referer = "https://www.youtube.com/"
+            quality = 1080
+            headers = mapOf(
                 "Referer" to "https://www.youtube.com/",
                 "User-Agent" to userAgent,
                 "Origin" to "https://www.youtube.com"
             )
-            this.isM3u8 = true
+            isM3u8 = true
         }
         callback(extractorLink)
     }
 
-    private fun createVideoLink(
+    private suspend fun createVideoLink(
         videoUrl: String,
         quality: Int,
         callback: (ExtractorLink) -> Unit
@@ -282,20 +268,22 @@ class YouTubeTrailerExtractor : ExtractorApi() {
         
         val isM3u8 = videoUrl.contains(".m3u8")
         
+        // CORREÇÃO: newExtractorLink é suspend
         val extractorLink = newExtractorLink(
             source = name,
             name = "$name ($qualityLabel)",
             url = videoUrl,
             type = ExtractorLinkType.VIDEO
         ) {
-            this.referer = "https://www.youtube.com/"
-            this.quality = quality
-            this.headers = mapOf(
+            // DENTRO DO LAMBDA: não use 'val', apenas atribua
+            referer = "https://www.youtube.com/"
+            quality = quality
+            headers = mapOf(
                 "Referer" to "https://www.youtube.com/",
                 "User-Agent" to userAgent,
                 "Origin" to "https://www.youtube.com"
             )
-            this.isM3u8 = isM3u8
+            isM3u8 = isM3u8
         }
         callback(extractorLink)
     }
