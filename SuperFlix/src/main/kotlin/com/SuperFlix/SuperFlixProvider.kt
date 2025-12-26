@@ -1,13 +1,13 @@
 package com.SuperFlix
 
+import android.content.Context
 import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
 import com.lagradost.cloudstream3.plugins.Plugin
-import android.content.Context
 
 @CloudstreamPlugin
-class SuperFlixProvider : Plugin() {
+class SuperFlixProviderPlugin: Plugin() {
+    override fun load(context: Context) {
         registerMainAPI(SuperFlix())
-        registerExtractorAPI(YouTubeTrailerExtractor())
+        registerExtractorAPI(YoutubeTrailerExtractor())
     }
 }
-        
