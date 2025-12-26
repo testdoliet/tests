@@ -24,10 +24,14 @@ class YouTubeTrailerExtractor : ExtractorApi() {
             val videoId = Regex("(?:youtube\\.com/(?:watch\\?v=|embed/)|youtu\\.be/)([A-Za-z0-9_-]{11})")
                 .find(url)?.groupValues?.get(1) ?: return
 
-            val pageResponse = app.get("https://www.youtube.com/watch?v=$videoId", headers = mapOf(
-                "User-Agent" to userAgent,
-                "Accept-Language" to "en-US,en;q=0.9"
-            ))
+            // COMO NO EXEMPLO FUNCIONAL: app.get(url, headers = headers)
+            val pageResponse = app.get(
+                "https://www.youtube.com/watch?v=$videoId",
+                headers = mapOf(
+                    "User-Agent" to userAgent,
+                    "Accept-Language" to "en-US,en;q=0.9"
+                )
+            )
             
             val html = pageResponse.text
 
@@ -62,11 +66,16 @@ class YouTubeTrailerExtractor : ExtractorApi() {
             }
             """.trimIndent()
 
-            val response = app.post(apiUrl, headers = mapOf(
-                "User-Agent" to userAgent,
-                "Content-Type" to "application/json",
-                "Accept" to "*/*"
-            ), data = jsonBody)
+            // CORREÇÃO: Formato correto do app.post como no exemplo funcional
+            val response = app.post(
+                apiUrl,
+                data = jsonBody,
+                headers = mapOf(
+                    "User-Agent" to userAgent,
+                    "Content-Type" to "application/json",
+                    "Accept" to "*/*"
+                )
+            )
             
             if (!response.isSuccessful) return
 
@@ -75,20 +84,18 @@ class YouTubeTrailerExtractor : ExtractorApi() {
             val hlsUrl = streamingData.optString("hlsManifestUrl")
             if (hlsUrl.isBlank()) return
 
-            // CORREÇÃO: Passando os parâmetros na ordem correta
+            // EXATAMENTE como no exemplo funcional
             val headers = mapOf(
                 "Referer" to "https://www.youtube.com/",
                 "Origin" to "https://www.youtube.com",
                 "User-Agent" to userAgent
             )
 
-            // EXATAMENTE como no exemplo funcional:
-            // generateM3u8(name, intercepted, mainUrl, headers = headers)
             M3u8Helper.generateM3u8(
-                name,           // String
-                hlsUrl,         // String (intercepted URL)
-                mainUrl,        // String
-                headers = headers  // Map<String, String>? (parâmetro nomeado)
+                name,
+                hlsUrl,
+                mainUrl,
+                headers = headers
             ).forEach(callback)
 
         } catch (e: Exception) {
