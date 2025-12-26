@@ -152,6 +152,192 @@ class SuperFlixYoutubeExtractor : ExtractorApi() {
         }
     }
     
+    // 🔑 **Obter configuração do YouTube - VERSÃO CORRIGIDA**
+    private suspend fun getYouTubeConfig(videoId: String): Map<String, String>? {
+        return withContext(Dispatchers.IO) {
+            try {
+                val url = "https://www.youtube.com/watch?v=$videoId"
+                println("📄 Baixando página do YouTube: $url")
+                
+                // Headers mais completos
+                val requestHeaders = mapOf(
+                    "User-Agent" to userAgent,
+                    "Accept-Language" to "en-US,en;q=0.9",
+                    "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+                    "Accept-Encoding" to "gzip, deflate, br",
+                    "DNT" to "1",
+                    "Connection" to "keep-alive",
+                    "Upgrade-Insecure-Requests" to "1",
+                    "Sec-Fetch-Dest" to "document",
+                    "Sec-Fetch-Mode" to "navigate",
+                    "Sec-Fetch-Site" to "none",
+                    "Sec-Fetch-User" to "?1"
+                )
+                
+                val response = app.get(url, headers = requestHeaders, timeout = 20000)
+                if (response.code != 200) {
+                    println("❌ Página retornou status ${response.code}")
+                    return@withContext null
+                }
+                
+                val html = response.text
+                println("✅ Página baixada (${html.length} chars)")
+                
+                // MÉTODO 1: Usar regex IDÊNTICO ao original
+                val pattern = Regex("ytcfg\\.set\\(\\s*(\\{.*?\\})\\s*\\)\\s*;", RegexOption.DOT_MATCHES_ALL)
+                val match = pattern.find(html)
+                
+                if (match != null) {
+                    val jsonStr = match.groupValues[1]
+                    println("✅ ytcfg encontrado (${jsonStr.length} chars)")
+                    
+                    try {
+                        val jsonObject = org.json.JSONObject(jsonStr)
+                        
+                        val apiKey = jsonObject.optString("INNERTUBE_API_KEY", null)
+                        val clientVersion = jsonObject.optString("INNERTUBE_CLIENT_VERSION", "2.20241220.00.00")
+                        val visitorData = jsonObject.optString("VISITOR_DATA", "")
+                        
+                        if (apiKey != null && apiKey.isNotBlank()) {
+                            println("🔑 Config extraída via ytcfg")
+                            return@withContext mapOf(
+                                "INNERTUBE_API_KEY" to apiKey,
+                                "INNERTUBE_CLIENT_VERSION" to clientVersion,
+                                "VISITOR_DATA" to visitorData
+                            )
+                        }
+                    } catch (e: Exception) {
+                        println("⚠️ Erro parseando ytcfg JSON: ${e.message}")
+                    }
+                } else {
+                    println("⚠️ ytcfg.set() não encontrado, tentando alternativas...")
+                }
+                
+                // MÉTODO 2: Procurar window.ytcfg
+                val windowPattern = Regex("window\\.ytcfg\\s*=\\s*(\\{.*?\\});", RegexOption.DOT_MATCHES_ALL)
+                val windowMatch = windowPattern.find(html)
+                
+                if (windowMatch != null) {
+                    val jsonStr = windowMatch.groupValues[1]
+                    println("✅ window.ytcfg encontrado (${jsonStr.length} chars)")
+                    
+                    try {
+                        val jsonObject = org.json.JSONObject(jsonStr)
+                        
+                        val apiKey = jsonObject.optString("INNERTUBE_API_KEY", null)
+                        val clientVersion = jsonObject.optString("INNERTUBE_CLIENT_VERSION", "2.20241220.00.00")
+                        val visitorData = jsonObject.optString("VISITOR_DATA", "")
+                        
+                        if (apiKey != null && apiKey.isNotBlank()) {
+                            println("🔑 Config extraída via window.ytcfg")
+                            return@withContext mapOf(
+                                "INNERTUBE_API_KEY" to apiKey,
+                                "INNERTUBE_CLIENT_VERSION" to clientVersion,
+                                "VISITOR_DATA" to visitorData
+                            )
+                        }
+                    } catch (e: Exception) {
+                        println("⚠️ Erro parseando window.ytcfg JSON: ${e.message}")
+                    }
+                }
+                
+                // MÉTODO 3: Procurar diretamente por INNERTUBE_API_KEY no HTML
+                val apiKeyPattern = Regex("\"INNERTUBE_API_KEY\"\\s*:\\s*\"([^\"]+)\"")
+                val apiKeyMatch = apiKeyPattern.find(html)
+                
+                if (apiKeyMatch != null) {
+                    val apiKey = apiKeyMatch.groupValues[1]
+                    println("✅ INNERTUBE_API_KEY encontrada diretamente: ${apiKey.take(10)}...")
+                    
+                    // Tentar encontrar outras informações
+                    val clientVersionPattern = Regex("\"INNERTUBE_CLIENT_VERSION\"\\s*:\\s*\"([^\"]+)\"")
+                    val clientVersionMatch = clientVersionPattern.find(html)
+                    val clientVersion = clientVersionMatch?.groupValues?.get(1) ?: "2.20241220.00.00"
+                    
+                    val visitorDataPattern = Regex("\"VISITOR_DATA\"\\s*:\\s*\"([^\"]+)\"")
+                    val visitorDataMatch = visitorDataPattern.find(html)
+                    val visitorData = visitorDataMatch?.groupValues?.get(1) ?: ""
+                    
+                    println("🔑 Config extraída via patterns diretos")
+                    return@withContext mapOf(
+                        "INNERTUBE_API_KEY" to apiKey,
+                        "INNERTUBE_CLIENT_VERSION" to clientVersion,
+                        "VISITOR_DATA" to visitorData
+                    )
+                }
+                
+                // MÉTODO 4: API keys fixas de fallback
+                println("⚠️ Nenhum método funcionou, usando fallback keys...")
+                
+                val fallbackKeys = listOf(
+                    "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8",
+                    "AIzaSyA8eiZmM1FaDVjRy-df2KTyQ_vz_yYM39w",
+                    "AIzaSyC-6qtuR3pKcDL6mK0vHhYHhpT9qRyd0cQ",
+                    "AIzaSyBUPetSUoZL5F8GhO8zB2K5J_Hwr0kRQoc"
+                )
+                
+                // Testar cada API key
+                for (key in fallbackKeys) {
+                    println("🔑 Testando fallback key: ${key.take(10)}...")
+                    if (testApiKey(key, videoId)) {
+                        println("✅ Fallback key funcionou!")
+                        return@withContext mapOf(
+                            "INNERTUBE_API_KEY" to key,
+                            "INNERTUBE_CLIENT_VERSION" to "2.20241220.00.00",
+                            "VISITOR_DATA" to ""
+                        )
+                    }
+                }
+                
+                println("❌ Nenhuma API key válida encontrada")
+                null
+                
+            } catch (e: Exception) {
+                println("❌ Erro em getYouTubeConfig: ${e.message}")
+                null
+            }
+        }
+    }
+    
+    // 🔧 **Testar API key**
+    private suspend fun testApiKey(apiKey: String, videoId: String): Boolean {
+        return try {
+            val testUrl = "https://www.youtube.com/youtubei/v1/player?key=$apiKey"
+            val requestBody = """
+            {
+                "context": {
+                    "client": {
+                        "hl": "en",
+                        "gl": "US",
+                        "clientName": "WEB",
+                        "clientVersion": "2.20241220.00.00",
+                        "platform": "DESKTOP",
+                        "userAgent": "$userAgent"
+                    }
+                },
+                "videoId": "$videoId"
+            }
+            """.trimIndent()
+            
+            val jsonMediaType = "application/json; charset=utf-8".toMediaType()
+            
+            val response = app.post(
+                testUrl,
+                headers = mapOf(
+                    "User-Agent" to userAgent,
+                    "Content-Type" to "application/json",
+                    "Origin" to "https://www.youtube.com"
+                ),
+                requestBody = requestBody.toRequestBody(jsonMediaType),
+                timeout = 10000
+            )
+            
+            response.code == 200
+        } catch (e: Exception) {
+            false
+        }
+    }
+    
     // 🔧 **Parse manual de HLS (alternativa)**
     private suspend fun extractQualitiesFromHLSManual(hlsUrl: String, callback: (ExtractorLink) -> Unit) {
         println("🎬 Parseando HLS manualmente...")
@@ -350,53 +536,6 @@ class SuperFlixYoutubeExtractor : ExtractorApi() {
             
         } catch (e: Exception) {
             println("❌ Erro criando link: ${e.message}")
-        }
-    }
-    
-    // 🔑 **Obter configuração do YouTube (igual ao original mas simplificado)**
-    private suspend fun getYouTubeConfig(videoId: String): Map<String, String>? {
-        return withContext(Dispatchers.IO) {
-            try {
-                val url = "https://www.youtube.com/watch?v=$videoId"
-                println("📄 Baixando página do YouTube...")
-                
-                val response = app.get(url, headers = headers, timeout = 15000)
-                if (response.code != 200) {
-                    println("❌ Página retornou status ${response.code}")
-                    return@withContext null
-                }
-                
-                val html = response.text
-                println("✅ Página baixada (${html.length} chars)")
-                
-                // Usar regex igual ao original
-                val pattern = """ytcfg\.set\(\s*(\{.*?\})\s*\)\s*;""".toRegex(RegexOption.DOT_MATCHES_ALL)
-                val match = pattern.find(html)
-                
-                if (match != null) {
-                    val jsonStr = match.groupValues[1]
-                    val jsonObject = org.json.JSONObject(jsonStr)
-                    
-                    val apiKey = jsonObject.optString("INNERTUBE_API_KEY", null)
-                    val clientVersion = jsonObject.optString("INNERTUBE_CLIENT_VERSION", "2.20241220.00.00")
-                    val visitorData = jsonObject.optString("VISITOR_DATA", "")
-                    
-                    if (apiKey != null && apiKey.isNotBlank()) {
-                        return@withContext mapOf(
-                            "INNERTUBE_API_KEY" to apiKey,
-                            "INNERTUBE_CLIENT_VERSION" to clientVersion,
-                            "VISITOR_DATA" to visitorData
-                        )
-                    }
-                }
-                
-                println("❌ ytcfg não encontrado")
-                null
-                
-            } catch (e: Exception) {
-                println("❌ Erro em getYouTubeConfig: ${e.message}")
-                null
-            }
         }
     }
     
