@@ -1,10 +1,11 @@
 package com.SuperFlix
 
 import com.lagradost.cloudstream3.utils.ExtractorApi
-import com.lagradost.cloudstream3.utils.ExtractorLink
+import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.utils.M3u8Helper
-import com.lagradost.cloudstream3.SubtitleFile  // Import correto
+import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.app
+import com.lagradost.cloudstream3.utils.Qualities
 import org.json.JSONObject
 
 class YouTubeTrailerExtractor : ExtractorApi() {
@@ -13,6 +14,10 @@ class YouTubeTrailerExtractor : ExtractorApi() {
     override val requiresReferer = false
 
     private val userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
+    private val headers = mapOf(
+        "User-Agent" to userAgent,
+        "Accept-Language" to "en-US,en;q=0.9"
+    )
 
     override suspend fun getUrl(
         url: String,
@@ -24,7 +29,7 @@ class YouTubeTrailerExtractor : ExtractorApi() {
             val videoId = Regex("(?:youtube\\.com/(?:watch\\?v=|embed/)|youtu\\.be/)([A-Za-z0-9_-]{11})")
                 .find(url)?.groupValues?.get(1) ?: return
 
-            val pageResponse = app.get("https://www.youtube.com/watch?v=$videoId")
+            val pageResponse = app.get("https://www.youtube.com/watch?v=$videoId", headers = headers)
             val html = pageResponse.text
 
             val ytCfgJson = Regex("ytcfg\\.set\\(\\s*(\\{.*?\\})\\s*\\);")
@@ -58,7 +63,7 @@ class YouTubeTrailerExtractor : ExtractorApi() {
             }
             """.trimIndent()
 
-            val response = app.post(apiUrl, data = jsonBody)
+            val response = app.post(apiUrl, headers = headers, data = jsonBody)
             if (!response.isSuccessful) return
 
             val playerJson = JSONObject(response.text)
@@ -66,12 +71,57 @@ class YouTubeTrailerExtractor : ExtractorApi() {
             val hlsUrl = streamingData.optString("hlsManifestUrl")
             if (hlsUrl.isBlank()) return
 
-            M3u8Helper.generateM3u8(
-                source = name,
-                streamUrl = hlsUrl,
-                referer = "https://www.youtube.com/",
-                headers = null  // ou mapOf() se quiser headers vazios
-            ).forEach(callback)
+            // VERSÃO 1: Assinatura mais recente (CloudStream 2024+)
+            val m3u8Links = try {
+                // Tentativa com parâmetros nomeados
+                M3u8Helper.generateM3u8(
+                    name = name,
+                    streamUrl = hlsUrl,
+                    referer = "https://www.youtube.com/",
+                    quality = Qualities.Unknown.value,
+                    headers = headers
+                )
+            } catch (e: Exception) {
+                // VERSÃO 2: Assinatura alternativa
+                try {
+                    M3u8Helper.generateM3u8(
+                        source = name,
+                        streamUrl = hlsUrl,
+                        referer = "https://www.youtube.com/",
+                        quality = Qualities.Unknown.value,
+                        headers = headers
+                    )
+                } catch (e2: Exception) {
+                    // VERSÃO 3: Assinatura mínima (sem quality e headers)
+                    try {
+                        M3u8Helper.generateM3u8(
+                            source = name,
+                            streamUrl = hlsUrl,
+                            referer = "https://www.youtube.com/"
+                        )
+                    } catch (e3: Exception) {
+                        // VERSÃO 4: Assinatura antiga
+                        emptyList()
+                    }
+                }
+            }
+
+            if (m3u8Links.isNotEmpty()) {
+                m3u8Links.forEach(callback)
+            } else {
+                // Fallback: criar ExtractorLink manualmente
+                callback(
+                    newExtractorLink(
+                        source = name,
+                        name = "$name (M3U8)",
+                        url = hlsUrl,
+                        referer = "https://www.youtube.com/",
+                        quality = Qualities.Unknown.value,
+                        isM3u8 = true,
+                        headers = headers
+                    )
+                )
+            }
 
         } catch (e: Exception) {
             e.printStackTrace()
