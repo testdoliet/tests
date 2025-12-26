@@ -158,14 +158,14 @@ class YouTubeTrailerExtractor : ExtractorApi() {
                             if (hlsUrl.isNotBlank()) {
                                 debugLog("HLS URL found: $hlsUrl")
                                 
-                                // Processar stream M3U8
+                                // Processar stream M3U8 usando o método correto
                                 val m3u8Links = M3u8Helper2.generateM3u8(
-                                    source = "Youtube",
-                                    url = hlsUrl,
+                                    source = name,
+                                    streamUrl = hlsUrl,
                                     referer = mainUrl,
                                     quality = null,
-                                    headers = null,
-                                    prefix = null
+                                    headers = emptyMap(),
+                                    isLive = false
                                 )
                                 
                                 m3u8Links?.forEach { link ->
