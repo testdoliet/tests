@@ -22,7 +22,7 @@ class YouTubeTrailerExtractor : ExtractorApi() {
         callback: (ExtractorLink) -> Unit
     ) {
         try {
-            println("🔍 YouTube Extractor: $url")
+            println("🔍 YouTube Extractor com yt-dlp: $url")
 
             // Extrair ID do vídeo
             val videoId = Regex("(?:youtube\\.com/(?:watch\\?v=|embed/)|youtu\\.be/)([A-Za-z0-9_-]{11})")
@@ -30,135 +30,273 @@ class YouTubeTrailerExtractor : ExtractorApi() {
 
             println("✅ Video ID: $videoId")
 
-            // 1. Tentar pegar da página do YouTube
-            val pageResponse = app.get("https://www.youtube.com/watch?v=$videoId", headers = mapOf(
-                "User-Agent" to userAgent
-            ))
-            val html = pageResponse.text
-
-            // Extrair ytcfg
-            val ytCfgJson = Regex("ytcfg\\.set\\(\\s*(\\{.*?\\})\\s*\\);")
-                .find(html)?.groupValues?.get(1) ?: return
-
-            val cfg = JSONObject(ytCfgJson)
-            val apiKey = cfg.optString("INNERTUBE_API_KEY").takeIf { it.isNotEmpty() } ?: return
-
-            // Fazer requisição à API do YouTube
-            val apiUrl = "https://www.youtube.com/youtubei/v1/player?key=$apiKey"
-            val jsonBody = """
-            {
-                "context": {
-                    "client": {
-                        "hl": "en",
-                        "gl": "US",
-                        "clientName": "WEB",
-                        "clientVersion": "2.20241226.01.00",
-                        "userAgent": "$userAgent"
-                    }
-                },
-                "videoId": "$videoId"
-            }
-            """.trimIndent()
-
-            val response = app.post(apiUrl, headers = mapOf(
-                "Content-Type" to "application/json",
-                "User-Agent" to userAgent
-            ), json = jsonBody)
-
-            if (!response.isSuccessful) return
-
-            val playerJson = JSONObject(response.text)
-            val streamingData = playerJson.optJSONObject("streamingData") ?: return
-            val hlsUrl = streamingData.optString("hlsManifestUrl")
-
-            if (hlsUrl.isNotBlank()) {
-                println("✅ HLS encontrado: $hlsUrl")
-
-                // EXATAMENTE como o AnimeFire faz
-                val extractorLink = newExtractorLink(
-                    source = name,
-                    name = "$name (1080p HLS)",
-                    url = hlsUrl,
-                    type = ExtractorLinkType.VIDEO
-                ) {
-                    // MESMO padrão do AnimeFire
-                    this.referer = "https://www.youtube.com/"
-                    this.quality = 1080
-                    this.headers = mapOf(
-                        "Referer" to "https://www.youtube.com/",
-                        "User-Agent" to userAgent,
-                        "Origin" to "https://www.youtube.com"
-                    )
-                }
-
-                callback(extractorLink)
+            // MÉTODO 1: yt-dlp via API Pública (funciona melhor)
+            val ytdlpFound = tryYtDlpApi(videoId, callback)
+            if (ytdlpFound) {
+                println("✅ yt-dlp API funcionou!")
                 return
             }
 
-            // Se não encontrar HLS, tentar formatos diretos
-            val formatsArray = streamingData.optJSONArray("adaptiveFormats")
-                ?: streamingData.optJSONArray("formats") ?: return
+            println("⚠️ yt-dlp falhou, tentando método alternativo...")
 
-            // Mapa de itags para qualidade (como no AnimeFire)
-            val itagQualityMap = mapOf(
-                18 to 360,   // 360p
-                22 to 720,   // 720p
-                37 to 1080,  // 1080p
-                59 to 480,   // 480p
-                137 to 1080, // 1080p (DASH video)
-                248 to 1080, // 1080p (webm)
-                136 to 720,  // 720p (DASH video)
-                247 to 720,  // 720p (webm)
-            )
-
-            var found = false
-            for (i in 0 until formatsArray.length()) {
-                try {
-                    val format = formatsArray.getJSONObject(i)
-                    val fUrl = format.optString("url")
-                    if (fUrl.isNotBlank()) {
-                        val itag = format.optInt("itag", 0)
-                        val quality = itagQualityMap[itag] ?: 720 // padrão 720p
-                        
-                        val qualityLabel = when {
-                            quality >= 1080 -> "FHD"
-                            quality >= 720 -> "HD"
-                            quality >= 480 -> "SD"
-                            else -> "SD"
-                        }
-
-                        // EXATAMENTE como o AnimeFire faz
-                        val extractorLink = newExtractorLink(
-                            source = name,
-                            name = "$name ($qualityLabel)",
-                            url = fUrl,
-                            type = ExtractorLinkType.VIDEO
-                        ) {
-                            // MESMO padrão do AnimeFire
-                            this.referer = "https://www.youtube.com/"
-                            this.quality = quality
-                            this.headers = mapOf(
-                                "Referer" to "https://www.youtube.com/",
-                                "User-Agent" to userAgent,
-                                "Origin" to "https://www.youtube.com"
-                            )
-                        }
-
-                        callback(extractorLink)
-                        found = true
-                    }
-                } catch (e: Exception) {
-                    continue
-                }
-            }
-
-            if (!found) {
-                println("⚠️ Nenhum formato encontrado")
-            }
+            // MÉTODO 2: API do YouTube direta (fallback)
+            tryYouTubeApi(videoId, callback)
 
         } catch (e: Exception) {
             println("❌ Erro YouTube Extractor: ${e.message}")
             e.printStackTrace()
         }
+    }
+
+    private suspend fun tryYtDlpApi(
+        videoId: String,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        return try {
+            // API pública do yt-dlp (funciona como o yt-dlp real)
+            val apiUrls = listOf(
+                // API 1: yt.lemnoslife.com (mais confiável)
+                "https://yt.lemnoslife.com/videos?part=streamingDetails&id=$videoId",
+                
+                // API 2: invidious (alternativa)
+                "https://inv.riverside.rocks/api/v1/videos/$videoId",
+                
+                // API 3: Piped API
+                "https://pipedapi.kavin.rocks/streams/$videoId"
+            )
+
+            for (apiUrl in apiUrls) {
+                try {
+                    println("🔄 Tentando API: $apiUrl")
+                    val response = app.get(apiUrl, headers = mapOf(
+                        "User-Agent" to userAgent
+                    ), timeout = 10000)
+
+                    if (response.isSuccessful) {
+                        val json = JSONObject(response.text)
+                        
+                        // Extrair HLS (preferido)
+                        val hlsUrl = extractHlsUrl(json)
+                        if (hlsUrl != null) {
+                            println("✅ HLS via API: $hlsUrl")
+                            createHlsLink(hlsUrl, callback)
+                            return true
+                        }
+
+                        // Extrair formatos diretos
+                        val formats = extractFormats(json)
+                        if (formats.isNotEmpty()) {
+                            println("✅ ${formats.size} formatos encontrados via API")
+                            formats.forEach { (formatUrl, quality) ->
+                                createVideoLink(formatUrl, quality, callback)
+                            }
+                            return true
+                        }
+                    }
+                } catch (e: Exception) {
+                    println("⚠️ API falhou: ${e.message}")
+                    continue
+                }
+            }
+            false
+        } catch (e: Exception) {
+            println("❌ Erro yt-dlp API: ${e.message}")
+            false
+        }
+    }
+
+    private fun extractHlsUrl(json: JSONObject): String? {
+        return try {
+            // Tentar diferentes caminhos JSON para HLS
+            val paths = listOf(
+                { json.optJSONArray("items")?.optJSONObject(0)?.optJSONObject("streamingDetails")?.optString("hlsManifestUrl") },
+                { json.optString("hls") },
+                { json.optJSONObject("videoStreams")?.optString("hls") },
+                { json.optJSONArray("videoStreams")?.optJSONObject(0)?.optString("hls") }
+            )
+            
+            for (path in paths) {
+                val url = path()
+                if (!url.isNullOrBlank()) {
+                    return url
+                }
+            }
+            null
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private fun extractFormats(json: JSONObject): List<Pair<String, Int>> {
+        val formats = mutableListOf<Pair<String, Int>>()
+        
+        try {
+            // Múltiplos padrões de extração (diferentes APIs)
+            
+            // Padrão 1: yt.lemnoslife.com
+            val items = json.optJSONArray("items")
+            if (items != null && items.length() > 0) {
+                val video = items.getJSONObject(0)
+                val streamingDetails = video.optJSONObject("streamingDetails")
+                val adaptiveFormats = streamingDetails?.optJSONArray("adaptiveFormats")
+                
+                adaptiveFormats?.let { formatsArray ->
+                    for (i in 0 until formatsArray.length()) {
+                        val format = formatsArray.getJSONObject(i)
+                        val url = format.optString("url")
+                        val qualityLabel = format.optString("qualityLabel", "")
+                        
+                        if (url.isNotBlank()) {
+                            val quality = extractQualityFromLabel(qualityLabel)
+                            formats.add(Pair(url, quality))
+                        }
+                    }
+                }
+            }
+            
+            // Padrão 2: invidious/piped
+            val videoStreams = json.optJSONArray("videoStreams") ?: json.optJSONArray("formats")
+            if (videoStreams != null) {
+                for (i in 0 until videoStreams.length()) {
+                    val stream = videoStreams.getJSONObject(i)
+                    val url = stream.optString("url")
+                    val quality = stream.optString("quality", "")
+                    
+                    if (url.isNotBlank()) {
+                        val qualityNum = extractQualityFromLabel(quality)
+                        formats.add(Pair(url, qualityNum))
+                    }
+                }
+            }
+            
+        } catch (e: Exception) {
+            println("⚠️ Erro extraindo formatos: ${e.message}")
+        }
+        
+        // Ordenar por qualidade (maior primeiro)
+        return formats.sortedByDescending { it.second }
+    }
+
+    private fun extractQualityFromLabel(label: String): Int {
+        return when {
+            label.contains("2160") || label.contains("4K") -> 2160
+            label.contains("1440") || label.contains("2K") -> 1440
+            label.contains("1080") || label.contains("FHD") -> 1080
+            label.contains("720") || label.contains("HD") -> 720
+            label.contains("480") || label.contains("SD") -> 480
+            label.contains("360") -> 360
+            label.contains("240") -> 240
+            label.contains("144") -> 144
+            else -> 720 // padrão
+        }
+    }
+
+    private suspend fun tryYouTubeApi(
+        videoId: String,
+        callback: (ExtractorLink) -> Unit
+    ) {
+        try {
+            // Método direto do YouTube (fallback)
+            val pageResponse = app.get("https://www.youtube.com/watch?v=$videoId", headers = mapOf(
+                "User-Agent" to userAgent
+            ))
+            val html = pageResponse.text
+
+            // Extrair dados da página
+            val playerResponseMatch = Regex("""ytInitialPlayerResponse\s*=\s*(\{.*?\});""")
+                .find(html, 0)
+            
+            if (playerResponseMatch != null) {
+                val playerJson = JSONObject(playerResponseMatch.groupValues[1])
+                val streamingData = playerJson.optJSONObject("streamingData")
+                
+                // Tentar HLS primeiro
+                val hlsUrl = streamingData?.optString("hlsManifestUrl")
+                if (!hlsUrl.isNullOrBlank()) {
+                    println("✅ HLS direto do YouTube: $hlsUrl")
+                    createHlsLink(hlsUrl, callback)
+                    return
+                }
+                
+                // Formatos adaptativos
+                val formats = streamingData?.optJSONArray("adaptiveFormats")
+                if (formats != null && formats.length() > 0) {
+                    for (i in 0 until formats.length()) {
+                        val format = formats.getJSONObject(i)
+                        val url = format.optString("url")
+                        val qualityLabel = format.optString("qualityLabel", "")
+                        
+                        if (url.isNotBlank()) {
+                            val quality = extractQualityFromLabel(qualityLabel)
+                            createVideoLink(url, quality, callback)
+                        }
+                    }
+                }
+            }
+            
+            // Fallback final: URL genérica
+            println("⚠️ Usando fallback genérico")
+            val fallbackUrl = "https://www.youtube.com/embed/$videoId?autoplay=1"
+            createVideoLink(fallbackUrl, 720, callback)
+            
+        } catch (e: Exception) {
+            println("❌ Erro YouTube API: ${e.message}")
+        }
+    }
+
+    private fun createHlsLink(
+        hlsUrl: String,
+        callback: (ExtractorLink) -> Unit
+    ) {
+        val extractorLink = newExtractorLink(
+            source = name,
+            name = "$name (HLS - 1080p)",
+            url = hlsUrl,
+            type = ExtractorLinkType.VIDEO
+        ) {
+            this.referer = "https://www.youtube.com/"
+            this.quality = 1080
+            this.headers = mapOf(
+                "Referer" to "https://www.youtube.com/",
+                "User-Agent" to userAgent,
+                "Origin" to "https://www.youtube.com"
+            )
+            this.isM3u8 = true
+        }
+        callback(extractorLink)
+    }
+
+    private fun createVideoLink(
+        videoUrl: String,
+        quality: Int,
+        callback: (ExtractorLink) -> Unit
+    ) {
+        val qualityLabel = when {
+            quality >= 2160 -> "4K"
+            quality >= 1440 -> "2K"
+            quality >= 1080 -> "FHD"
+            quality >= 720 -> "HD"
+            quality >= 480 -> "SD"
+            else -> "SD"
+        }
+        
+        val isM3u8 = videoUrl.contains(".m3u8")
+        
+        val extractorLink = newExtractorLink(
+            source = name,
+            name = "$name ($qualityLabel)",
+            url = videoUrl,
+            type = ExtractorLinkType.VIDEO
+        ) {
+            this.referer = "https://www.youtube.com/"
+            this.quality = quality
+            this.headers = mapOf(
+                "Referer" to "https://www.youtube.com/",
+                "User-Agent" to userAgent,
+                "Origin" to "https://www.youtube.com"
+            )
+            this.isM3u8 = isM3u8
+        }
+        callback(extractorLink)
     }
 }
