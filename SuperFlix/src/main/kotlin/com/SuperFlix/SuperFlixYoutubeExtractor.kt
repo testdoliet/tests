@@ -3,7 +3,7 @@ package com.SuperFlix
 import com.lagradost.cloudstream3.utils.ExtractorApi
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.M3u8Helper
-import com.lagradost.cloudstream3.SubtitleFile  // ← IMPORT CORRETO AQUI
+import com.lagradost.cloudstream3.SubtitleFile  // ← IMPORT CERTO
 import com.lagradost.cloudstream3.app
 import org.json.JSONObject
 
@@ -55,7 +55,7 @@ class YouTubeTrailerExtractor : ExtractorApi() {
                 },
                 "videoId": "$videoId",
                 "playbackContext": {
-                    "contentPlaybackContent": {
+                    "contentPlaybackContext": {
                         "html5Preference": "HTML5_PREF_WANTS"
                     }
                 }
@@ -70,12 +70,14 @@ class YouTubeTrailerExtractor : ExtractorApi() {
             val hlsUrl = streamingData.optString("hlsManifestUrl")
             if (hlsUrl.isBlank()) return
 
+            // ORDEM CORRETA + headers como Map
             M3u8Helper.generateM3u8(
                 source = name,
                 streamUrl = hlsUrl,
                 referer = "https://www.youtube.com/",
                 headers = headers  // ← Map<String, String>
             ).forEach(callback)
+
         } catch (e: Exception) {
             e.printStackTrace()
         }
