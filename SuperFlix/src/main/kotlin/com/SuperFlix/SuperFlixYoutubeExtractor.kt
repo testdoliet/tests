@@ -3,8 +3,9 @@ package com.SuperFlix
 import com.lagradost.cloudstream3.utils.ExtractorApi
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.M3u8Helper
-import com.lagradost.cloudstream3.SubtitleFile  // ← IMPORT CERTO
+import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.app
+import com.lagradost.cloudstream3.utils.Qualities
 import org.json.JSONObject
 
 class YouTubeTrailerExtractor : ExtractorApi() {
@@ -70,13 +71,38 @@ class YouTubeTrailerExtractor : ExtractorApi() {
             val hlsUrl = streamingData.optString("hlsManifestUrl")
             if (hlsUrl.isBlank()) return
 
-            // ORDEM CORRETA + headers como Map
-            M3u8Helper.generateM3u8(
-                source = name,
-                streamUrl = hlsUrl,
-                referer = "https://www.youtube.com/",
-                headers = headers  // ← Map<String, String>
-            ).forEach(callback)
+            // TENTATIVA 1: Versão mais nova do CloudStream
+            try {
+                M3u8Helper.generateM3u8(
+                    source = name,
+                    streamUrl = hlsUrl,
+                    referer = "https://www.youtube.com/",
+                    headers = headers
+                ).forEach(callback)
+            } catch (e: Exception) {
+                // TENTATIVA 2: Versão alternativa
+                try {
+                    M3u8Helper.generateM3u8(
+                        name = name,
+                        url = hlsUrl,
+                        referer = "https://www.youtube.com/",
+                        quality = Qualities.Unknown.value,
+                        headers = headers
+                    ).forEach(callback)
+                } catch (e2: Exception) {
+                    // TENTATIVA 3: Versão mínima
+                    callback(
+                        ExtractorLink(
+                            name,
+                            name,
+                            hlsUrl,
+                            referer = "https://www.youtube.com/",
+                            quality = Qualities.Unknown.value,
+                            headers = headers
+                        )
+                    )
+                }
+            }
 
         } catch (e: Exception) {
             e.printStackTrace()
