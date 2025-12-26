@@ -10,6 +10,7 @@ import com.lagradost.cloudstream3.utils.M3u8Helper2
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.MediaType.Companion.toMediaType
 import org.json.JSONObject
 import java.util.regex.Pattern
 
@@ -102,93 +103,85 @@ class YouTubeTrailerExtractor : ExtractorApi() {
             debugLog("Video ID: $videoId")
             
             // Obter configuração da página
-            val config = getPageConfig(videoId) ?: run {
-                debugLog("Failed to get page config, using fallback")
-                sendFallbackUrl(videoId, callback)
-                return
-            }
+            val config = getPageConfig(videoId)
             
-            val apiKey = config["apiKey"]
-            val clientVersion = config["clientVersion"]
-            val visitorData = config["visitorData"]
-            
-            if (apiKey == null || clientVersion == null) {
-                debugLog("Missing API key or client version")
-                sendFallbackUrl(videoId, callback)
-                return
-            }
-            
-            // Fazer requisição para a API do YouTube
-            val apiUrl = "https://www.youtube.com/youtubei/v1/player?key=$apiKey"
-            
-            val jsonBody = """
-            {
-                "context": {
-                    "client": {
-                        "hl": "en",
-                        "gl": "US",
-                        "clientName": "WEB",
-                        "clientVersion": "$clientVersion",
-                        "visitorData": "$visitorData",
-                        "platform": "DESKTOP",
-                        "userAgent": "$USER_AGENT"
-                    }
-                },
-                "videoId": "$videoId",
-                "playbackContext": {
-                    "contentPlaybackContext": {
-                        "html5Preference": "HTML5_PREF_WANTS"
-                    }
-                }
-            }
-            """.trimIndent()
-            
-            val requestBody = jsonBody.toRequestBody(
-                okhttp3.MediaType.parse("application/json; charset=utf-8")
-            )
-            
-            debugLog("Making API request to: $apiUrl")
-            
-            val response = app.post(
-                apiUrl,
-                headers = HEADERS,
-                requestBody = requestBody
-            )
-            
-            if (response.isSuccessful) {
-                val jsonResponse = JSONObject(response.text)
-                val streamingData = jsonResponse.optJSONObject("streamingData")
+            if (config != null) {
+                val apiKey = config["apiKey"]
+                val clientVersion = config["clientVersion"]
+                val visitorData = config["visitorData"]
                 
-                if (streamingData != null) {
-                    val hlsUrl = streamingData.optString("hlsManifestUrl")
+                if (apiKey != null && clientVersion != null) {
+                    // Fazer requisição para a API do YouTube
+                    val apiUrl = "https://www.youtube.com/youtubei/v1/player?key=$apiKey"
                     
-                    if (hlsUrl.isNotBlank()) {
-                        debugLog("HLS URL found: $hlsUrl")
-                        
-                        // Processar stream M3U8
-                        val m3u8Links = M3u8Helper2.generateM3u8(
-                            "Youtube",
-                            hlsUrl,
-                            mainUrl,
-                            null,
-                            null,
-                            null
-                        )
-                        
-                        m3u8Links?.forEach { link ->
-                            callback(link)
-                        }
-                        
-                        if (m3u8Links != null && m3u8Links.isNotEmpty()) {
-                            return
+                    val jsonBody = """
+                    {
+                        "context": {
+                            "client": {
+                                "hl": "en",
+                                "gl": "US",
+                                "clientName": "WEB",
+                                "clientVersion": "$clientVersion",
+                                "visitorData": "$visitorData",
+                                "platform": "DESKTOP",
+                                "userAgent": "$USER_AGENT"
+                            }
+                        },
+                        "videoId": "$videoId",
+                        "playbackContext": {
+                            "contentPlaybackContext": {
+                                "html5Preference": "HTML5_PREF_WANTS"
+                            }
                         }
                     }
+                    """.trimIndent()
                     
-                    debugLog("No HLS URL or M3U8 failed, trying fallback")
+                    val requestBody = jsonBody.toRequestBody(
+                        "application/json; charset=utf-8".toMediaType()
+                    )
+                    
+                    debugLog("Making API request to: $apiUrl")
+                    
+                    val response = app.post(
+                        apiUrl,
+                        headers = HEADERS,
+                        requestBody = requestBody
+                    )
+                    
+                    if (response.isSuccessful) {
+                        val jsonResponse = JSONObject(response.text)
+                        val streamingData = jsonResponse.optJSONObject("streamingData")
+                        
+                        if (streamingData != null) {
+                            val hlsUrl = streamingData.optString("hlsManifestUrl")
+                            
+                            if (hlsUrl.isNotBlank()) {
+                                debugLog("HLS URL found: $hlsUrl")
+                                
+                                // Processar stream M3U8
+                                val m3u8Links = M3u8Helper2.generateM3u8(
+                                    source = "Youtube",
+                                    url = hlsUrl,
+                                    referer = mainUrl,
+                                    quality = null,
+                                    headers = null,
+                                    prefix = null
+                                )
+                                
+                                m3u8Links?.forEach { link ->
+                                    callback(link)
+                                }
+                                
+                                if (m3u8Links != null && m3u8Links.isNotEmpty()) {
+                                    return
+                                }
+                            }
+                        }
+                    }
                 }
             }
             
-            // Fallback se a API falhar
+            // Fallback para URL direta
             sendFallbackUrl(videoId, callback)
             
         } catch (e: Exception) {
