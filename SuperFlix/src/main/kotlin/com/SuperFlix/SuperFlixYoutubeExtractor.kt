@@ -360,7 +360,7 @@ class SuperFlixYoutubeExtractor : ExtractorApi() {
         }
     }
     
-    private fun extractLinksFromHTML(html: String, callback: (ExtractorLink) -> Unit) {
+    private suspend fun extractLinksFromHTML(html: String, callback: (ExtractorLink) -> Unit) {
         // Procurar padrões de URLs de vídeo
         val patterns = listOf(
             """https?://[^"\s]+googlevideo\.com/videoplayback[^"\s]*itag=(22|37|137|248)[^"\s]*""",
