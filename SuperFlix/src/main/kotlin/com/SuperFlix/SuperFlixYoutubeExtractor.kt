@@ -5,6 +5,7 @@ import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.M3u8Helper
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.app
+import com.lagradost.cloudstream3.utils.Qualities
 import org.json.JSONObject
 
 class YouTubeTrailerExtractor : ExtractorApi() {
@@ -16,15 +17,19 @@ class YouTubeTrailerExtractor : ExtractorApi() {
 
     override suspend fun getUrl(
         url: String,
-        referer: String?,
-        subtitleCallback: (SubtitleFile) -> Unit,
+        referer: String? = null,
+        subtitleCallback: (SubtitleFile) -> Unit = {},
         callback: (ExtractorLink) -> Unit
     ) {
         try {
             val videoId = Regex("(?:youtube\\.com/(?:watch\\?v=|embed/)|youtu\\.be/)([A-Za-z0-9_-]{11})")
                 .find(url)?.groupValues?.get(1) ?: return
 
-            val pageResponse = app.get("https://www.youtube.com/watch?v=$videoId")
+            val pageResponse = app.get("https://www.youtube.com/watch?v=$videoId", headers = mapOf(
+                "User-Agent" to userAgent,
+                "Accept-Language" to "en-US,en;q=0.9"
+            ))
+            
             val html = pageResponse.text
 
             val ytCfgJson = Regex("ytcfg\\.set\\(\\s*(\\{.*?\\})\\s*\\);")
@@ -58,7 +63,12 @@ class YouTubeTrailerExtractor : ExtractorApi() {
             }
             """.trimIndent()
 
-            val response = app.post(apiUrl, data = jsonBody)
+            val response = app.post(apiUrl, headers = mapOf(
+                "User-Agent" to userAgent,
+                "Content-Type" to "application/json",
+                "Accept" to "*/*"
+            ), data = jsonBody)
+            
             if (!response.isSuccessful) return
 
             val playerJson = JSONObject(response.text)
@@ -66,14 +76,18 @@ class YouTubeTrailerExtractor : ExtractorApi() {
             val hlsUrl = streamingData.optString("hlsManifestUrl")
             if (hlsUrl.isBlank()) return
 
+            // EXATAMENTE COMO NO EXEMPLO QUE FUNCIONA
+            val headers = mapOf(
+                "Referer" to "https://www.youtube.com/",
+                "Origin" to "https://www.youtube.com",
+                "User-Agent" to userAgent
+            )
+
             M3u8Helper.generateM3u8(
-                source = name,
-                streamUrl = hlsUrl,
-                referer = mainUrl,
-                headers = mapOf(
-                    "User-Agent" to userAgent,
-                    "Referer" to mainUrl
-                )
+                name,
+                hlsUrl,
+                mainUrl,
+                headers = headers
             ).forEach(callback)
 
         } catch (e: Exception) {
