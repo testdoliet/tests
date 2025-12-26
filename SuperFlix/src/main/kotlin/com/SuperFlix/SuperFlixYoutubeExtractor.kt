@@ -71,16 +71,17 @@ class YouTubeTrailerExtractor : ExtractorApi() {
                     "Referer" to "https://www.youtube.com/"
                 )
 
-                // Forma CORRETA de usar newExtractorLink com parâmetros obrigatórios
+                // Método 1: Usando o bloco lambda CORRETAMENTE
                 val link = newExtractorLink(
                     source = name,
                     name = "$name (HLS)",
                     url = hlsUrl
                 ) {
-                    this.referer = "https://www.youtube.com/"
-                    this.quality = Qualities.Unknown.value
-                    this.headers = streamHeaders
-                    this.isM3u8 = true
+                    // Dentro do bloco, apenas configuramos propriedades
+                    referer = "https://www.youtube.com/"
+                    quality = Qualities.Unknown.value
+                    headers = streamHeaders
+                    isM3u8 = true
                 }
                 
                 callback(link)
@@ -98,32 +99,30 @@ class YouTubeTrailerExtractor : ExtractorApi() {
                         val qualityLabel = format.optString("qualityLabel", "Unknown")
                         val bitrate = format.optInt("bitrate") / 1000
                         
-                        // Extrair qualidade numérica (ex: "1080p" -> 1080)
-                        val qualityNum = qualityLabel.replace("p", "").toIntOrNull() ?: 
-                            when {
-                                qualityLabel.contains("1080") || qualityLabel.contains("FHD") -> 1080
-                                qualityLabel.contains("720") || qualityLabel.contains("HD") -> 720
-                                qualityLabel.contains("480") || qualityLabel.contains("SD") -> 480
-                                qualityLabel.contains("360") -> 360
-                                qualityLabel.contains("240") -> 240
-                                qualityLabel.contains("144") -> 144
-                                else -> Qualities.Unknown.value
-                            }
+                        // Extrair qualidade numérica
+                        val qualityNum = when {
+                            qualityLabel.contains("1080") || qualityLabel.contains("FHD") -> 1080
+                            qualityLabel.contains("720") || qualityLabel.contains("HD") -> 720
+                            qualityLabel.contains("480") || qualityLabel.contains("SD") -> 480
+                            qualityLabel.contains("360") -> 360
+                            qualityLabel.contains("240") -> 240
+                            qualityLabel.contains("144") -> 144
+                            else -> Qualities.Unknown.value
+                        }
                         
-                        // Forma CORRETA com parâmetros obrigatórios
+                        // Método 2: Criar link direto sem bloco lambda (alternativa)
                         val link = newExtractorLink(
                             source = name,
                             name = "$name - $qualityLabel (${bitrate}kbps)",
-                            url = fUrl
-                        ) {
-                            this.referer = "https://www.youtube.com/"
-                            this.quality = qualityNum
-                            this.headers = mapOf(
+                            url = fUrl,
+                            referer = "https://www.youtube.com/",
+                            quality = qualityNum,
+                            headers = mapOf(
                                 "User-Agent" to userAgent,
                                 "Referer" to "https://www.youtube.com/"
-                            )
-                            this.isM3u8 = fUrl.contains(".m3u8")
-                        }
+                            ),
+                            isM3u8 = fUrl.contains(".m3u8")
+                        )
                         
                         callback(link)
                     }
