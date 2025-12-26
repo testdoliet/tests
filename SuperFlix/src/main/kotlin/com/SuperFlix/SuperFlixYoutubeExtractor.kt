@@ -3,7 +3,7 @@ package com.SuperFlix
 import com.lagradost.cloudstream3.utils.ExtractorApi
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.M3u8Helper
-import com.lagradost.cloudstream3.utils.newExtractorLink
+import com.lagradost.cloudstream3.utils.newExtractorLink  // ← Import obrigatório pro builder
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.app
 import org.json.JSONObject
@@ -39,18 +39,18 @@ class YouTubeTrailerExtractor : ExtractorApi() {
             val apiUrl = "https://www.youtube.com/youtubei/v1/player?key=$apiKey"
 
             val jsonBody = """
-                {
-                    "context": {
-                        "client": {
-                            "hl": "en",
-                            "gl": "US",
-                            "clientName": "WEB",
-                            "clientVersion": "2.20241226.01.00",
-                            "userAgent": "$userAgent"
-                        }
-                    },
-                    "videoId": "$videoId"
-                }
+            {
+                "context": {
+                    "client": {
+                        "hl": "en",
+                        "gl": "US",
+                        "clientName": "WEB",
+                        "clientVersion": "2.20241226.01.00",
+                        "userAgent": "$userAgent"
+                    }
+                },
+                "videoId": "$videoId"
+            }
             """.trimIndent()
 
             val requestHeaders = mapOf("Content-Type" to "application/json")
@@ -99,7 +99,6 @@ class YouTubeTrailerExtractor : ExtractorApi() {
                     val quality = format.optString("qualityLabel", "HD")
                     val bitrate = format.optInt("bitrate") / 1000
 
-                    // USANDO newExtractorLink (novo padrão)
                     newExtractorLink {
                         this.source = name
                         this.name = "$name - \( quality ( \){bitrate}kbps)"
