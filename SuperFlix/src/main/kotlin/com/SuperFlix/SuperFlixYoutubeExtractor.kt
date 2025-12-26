@@ -9,6 +9,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
+import java.net.URLDecoder
 import java.util.regex.Pattern
 
 class SuperFlixYoutubeExtractor : ExtractorApi() {
@@ -122,7 +123,7 @@ class SuperFlixYoutubeExtractor : ExtractorApi() {
             val jsonText = response.text
             println("✅ Resposta API recebida (${jsonText.length} chars)")
             
-            // 3. Parsear resposta JSON usando Jackson (mais simples)
+            // 3. Parsear resposta JSON usando Jackson
             val rootNode = mapper.readTree(jsonText)
             val streamingData = rootNode.path("streamingData")
             
@@ -131,7 +132,7 @@ class SuperFlixYoutubeExtractor : ExtractorApi() {
                 return false
             }
             
-            // 4. BUSCAR HLS PRIMEIRO (igual ao original)
+            // 4. BUSCAR HLS PRIMEIRO (igual ao original) - CORREÇÃO IMPORTANTE!
             val hlsUrl = streamingData.path("hlsManifestUrl").asText(null)
             
             if (hlsUrl != null && hlsUrl.isNotBlank()) {
@@ -140,16 +141,17 @@ class SuperFlixYoutubeExtractor : ExtractorApi() {
                 // Extrair qualidades do HLS manualmente
                 extractQualitiesFromHLSManual(hlsUrl, callback)
                 return true
+            } else {
+                println("⚠️ HLS não disponível neste vídeo")
             }
             
-            // 5. Se não tiver HLS, tentar formatos adaptativos COM MAIS DETALHES
-            println("⚠️ HLS não disponível, analisando formatos adaptativos...")
-            val success = extractAdaptiveFormatsDetailed(streamingData, callback)
+            // 5. Tentar formatos simples COM URL DECODIFICADA
+            println("🔄 Buscando formatos simples com URL...")
+            val success = extractFormatsWithUrl(streamingData, callback)
             
-            // 6. Se não encontrou formatos adaptativos, tentar formatos simples
             if (!success) {
-                println("🔄 Nenhum formato adaptativo encontrado, tentando formatos simples...")
-                extractSimpleFormats(streamingData, callback)
+                println("🔍 Buscando formatos adaptativos com URLs criptografadas...")
+                extractAdaptiveFormatsWithCipher(streamingData, callback)
             }
             
             success
@@ -157,6 +159,183 @@ class SuperFlixYoutubeExtractor : ExtractorApi() {
         } catch (e: Exception) {
             println("❌ Erro na API: ${e.message}")
             false
+        }
+    }
+    
+    // 🎯 **Buscar formatos COM URL (não criptografados)**
+    private suspend fun extractFormatsWithUrl(streamingData: JsonNode, callback: (ExtractorLink) -> Unit): Boolean {
+        return try {
+            val formats = streamingData.path("formats")
+            
+            if (!formats.isArray || formats.size() == 0) {
+                println("❌ Nenhum formato simples encontrado")
+                return false
+            }
+            
+            println("📦 Formatos simples encontrados: ${formats.size()}")
+            
+            var foundCount = 0
+            
+            for (i in 0 until formats.size()) {
+                val format = formats.get(i)
+                val itag = format.path("itag").asInt(-1)
+                val url = format.path("url").asText(null)
+                val cipher = format.path("cipher").asText(null)
+                val signatureCipher = format.path("signatureCipher").asText(null)
+                val qualityLabel = format.path("qualityLabel").asText("")
+                
+                // Verificar se tem URL direta ou precisa decodificar
+                val finalUrl = when {
+                    url != null -> {
+                        println("✅ URL direta encontrada para itag=$itag")
+                        url
+                    }
+                    cipher != null -> {
+                        println("🔐 URL criptografada (cipher) para itag=$itag")
+                        decodeCipher(cipher)
+                    }
+                    signatureCipher != null -> {
+                        println("🔐 URL criptografada (signatureCipher) para itag=$itag")
+                        decodeSignatureCipher(signatureCipher)
+                    }
+                    else -> null
+                }
+                
+                if (finalUrl != null) {
+                    println("🎯 Formato encontrado: itag=$itag ($qualityLabel)")
+                    
+                    val quality = when {
+                        qualityLabel.contains("2160") || qualityLabel.contains("4K") -> Qualities.P2160.value
+                        qualityLabel.contains("1440") -> Qualities.P1440.value
+                        qualityLabel.contains("1080") -> Qualities.P1080.value
+                        qualityLabel.contains("720") || itag == 22 -> Qualities.P720.value
+                        qualityLabel.contains("480") -> Qualities.P480.value
+                        else -> Qualities.P360.value
+                    }
+                    
+                    val qualityName = when (quality) {
+                        Qualities.P2160.value -> "4K"
+                        Qualities.P1440.value -> "1440p"
+                        Qualities.P1080.value -> "1080p"
+                        Qualities.P720.value -> "720p"
+                        Qualities.P480.value -> "480p"
+                        else -> "360p"
+                    }
+                    
+                    createExtractorLink(finalUrl, quality, qualityName, callback)
+                    foundCount++
+                    
+                    if (foundCount >= 3) break
+                }
+            }
+            
+            println("✨ Encontrados $foundCount formatos com URL")
+            foundCount > 0
+            
+        } catch (e: Exception) {
+            println("❌ Erro em extractFormatsWithUrl: ${e.message}")
+            false
+        }
+    }
+    
+    // 🔐 **Decodificar cipher URLs**
+    private fun decodeCipher(cipher: String): String? {
+        return try {
+            // cipher é uma string URL-encoded com parâmetros
+            val decoded = URLDecoder.decode(cipher, "UTF-8")
+            
+            // Extrair o parâmetro 'url' do cipher
+            val urlPattern = Pattern.compile("url=([^&]+)")
+            val matcher = urlPattern.matcher(decoded)
+            
+            if (matcher.find()) {
+                val encodedUrl = matcher.group(1)
+                URLDecoder.decode(encodedUrl, "UTF-8")
+            } else {
+                null
+            }
+        } catch (e: Exception) {
+            println("❌ Erro decodificando cipher: ${e.message}")
+            null
+        }
+    }
+    
+    // 🔐 **Decodificar signatureCipher URLs**
+    private fun decodeSignatureCipher(signatureCipher: String): String? {
+        return try {
+            // signatureCipher é similar ao cipher
+            val decoded = URLDecoder.decode(signatureCipher, "UTF-8")
+            
+            // Extrair o parâmetro 'url' do signatureCipher
+            val urlPattern = Pattern.compile("url=([^&]+)")
+            val matcher = urlPattern.matcher(decoded)
+            
+            if (matcher.find()) {
+                val encodedUrl = matcher.group(1)
+                URLDecoder.decode(encodedUrl, "UTF-8")
+            } else {
+                null
+            }
+        } catch (e: Exception) {
+            println("❌ Erro decodificando signatureCipher: ${e.message}")
+            null
+        }
+    }
+    
+    // 🔍 **Buscar formatos adaptativos com cipher**
+    private suspend fun extractAdaptiveFormatsWithCipher(streamingData: JsonNode, callback: (ExtractorLink) -> Unit) {
+        try {
+            val adaptiveFormats = streamingData.path("adaptiveFormats")
+            
+            if (!adaptiveFormats.isArray || adaptiveFormats.size() == 0) {
+                println("❌ Nenhum adaptiveFormat encontrado")
+                return
+            }
+            
+            println("🔍 Analisando ${adaptiveFormats.size()} formatos adaptativos...")
+            
+            for (i in 0 until minOf(10, adaptiveFormats.size())) {
+                val format = adaptiveFormats.get(i)
+                val itag = format.path("itag").asInt(-1)
+                val cipher = format.path("cipher").asText(null)
+                val signatureCipher = format.path("signatureCipher").asText(null)
+                val qualityLabel = format.path("qualityLabel").asText("Sem label")
+                val mimeType = format.path("mimeType").asText("")
+                
+                if (cipher != null || signatureCipher != null) {
+                    println("🔐 Formato criptografado: itag=$itag ($qualityLabel) - $mimeType")
+                    
+                    // Tentar decodificar
+                    val url = if (cipher != null) decodeCipher(cipher) else decodeSignatureCipher(signatureCipher!!)
+                    
+                    if (url != null) {
+                        println("✅ URL decodificada para itag=$itag")
+                        
+                        val quality = when {
+                            qualityLabel.contains("2160") || qualityLabel.contains("4K") -> Qualities.P2160.value
+                            qualityLabel.contains("1440") -> Qualities.P1440.value
+                            qualityLabel.contains("1080") -> Qualities.P1080.value
+                            qualityLabel.contains("720") -> Qualities.P720.value
+                            qualityLabel.contains("480") -> Qualities.P480.value
+                            else -> Qualities.P360.value
+                        }
+                        
+                        val qualityName = when (quality) {
+                            Qualities.P2160.value -> "4K"
+                            Qualities.P1440.value -> "1440p"
+                            Qualities.P1080.value -> "1080p"
+                            Qualities.P720.value -> "720p"
+                            Qualities.P480.value -> "480p"
+                            else -> "360p"
+                        }
+                        
+                        createExtractorLink(url, quality, "$qualityName (adaptativo)", callback)
+                    }
+                }
+            }
+            
+        } catch (e: Exception) {
+            println("❌ Erro em extractAdaptiveFormatsWithCipher: ${e.message}")
         }
     }
     
@@ -216,11 +395,7 @@ class SuperFlixYoutubeExtractor : ExtractorApi() {
                         ) {
                             this.referer = mainUrl
                             this.quality = qualityValue
-                            this.headers = mapOf(
-                                "Referer" to mainUrl,
-                                "User-Agent" to userAgent,
-                                "Origin" to mainUrl
-                            )
+                            this.headers = getYouTubeHeaders()
                         }
                         
                         callback(extractorLink)
@@ -234,6 +409,22 @@ class SuperFlixYoutubeExtractor : ExtractorApi() {
         } catch (e: Exception) {
             println("❌ Erro parseando HLS manualmente: ${e.message}")
         }
+    }
+    
+    // 🔧 **Headers específicos para YouTube (evita erro 403)**
+    private fun getYouTubeHeaders(): Map<String, String> {
+        return mapOf(
+            "User-Agent" to userAgent,
+            "Accept" to "*/*",
+            "Accept-Language" to "en-US,en;q=0.9",
+            "Accept-Encoding" to "gzip, deflate, br",
+            "Referer" to "https://www.youtube.com/",
+            "Origin" to "https://www.youtube.com",
+            "Connection" to "keep-alive",
+            "Sec-Fetch-Dest" to "video",
+            "Sec-Fetch-Mode" to "no-cors",
+            "Sec-Fetch-Site" to "same-site"
+        )
     }
     
     // 🔧 **Funções auxiliares para HLS**
@@ -258,193 +449,32 @@ class SuperFlixYoutubeExtractor : ExtractorApi() {
         }
     }
     
-    // 🔍 **ANALISAR FORMATOS ADAPTATIVOS DETALHADAMENTE**
-    private suspend fun extractAdaptiveFormatsDetailed(streamingData: JsonNode, callback: (ExtractorLink) -> Unit): Boolean {
-        return try {
-            val adaptiveFormats = streamingData.path("adaptiveFormats")
-            
-            if (!adaptiveFormats.isArray || adaptiveFormats.size() == 0) {
-                println("❌ Nenhum adaptiveFormat encontrado")
-                return false
-            }
-            
-            println("📊 Total de formatos adaptativos: ${adaptiveFormats.size()}")
-            
-            // Separar vídeo e áudio
-            val videoFormats = mutableListOf<JsonNode>()
-            val audioFormats = mutableListOf<JsonNode>()
-            
-            for (i in 0 until adaptiveFormats.size()) {
-                val format = adaptiveFormats.get(i)
-                val mimeType = format.path("mimeType").asText("").lowercase()
-                
-                if (mimeType.contains("video/")) {
-                    videoFormats.add(format)
-                } else if (mimeType.contains("audio/")) {
-                    audioFormats.add(format)
-                }
-            }
-            
-            println("🎬 Formatos de vídeo: ${videoFormats.size}")
-            println("🎵 Formatos de áudio: ${audioFormats.size}")
-            
-            // DEBUG: Mostrar todos os formatos de vídeo
-            println("📋 TODOS os formatos de vídeo encontrados:")
-            for (i in 0 until minOf(10, videoFormats.size)) {
-                val format = videoFormats[i]
-                val itag = format.path("itag").asInt(-1)
-                val qualityLabel = format.path("qualityLabel").asText("Sem label")
-                val mimeType = format.path("mimeType").asText("")
-                val url = format.path("url").asText(null)
-                val hasAudio = !format.path("audioQuality").isMissingNode
-                
-                println("   [$i] itag=$itag | $qualityLabel | $mimeType | audio=$hasAudio | url=${if (url != null) "SIM" else "NÃO"}")
-            }
-            
-            var foundCount = 0
-            
-            // PRIORIDADE 1: Buscar formatos COM ÁUDIO INCLUSO
-            for (format in videoFormats) {
-                val itag = format.path("itag").asInt(-1)
-                val url = format.path("url").asText(null)
-                val qualityLabel = format.path("qualityLabel").asText("")
-                val mimeType = format.path("mimeType").asText("")
-                
-                // Verificar se é um formato COM ÁUDIO (ideal para trailers)
-                val hasAudio = !format.path("audioQuality").isMissingNode || 
-                              mimeType.contains("mp4a") ||
-                              itag in listOf(22, 37, 46, 18, 43, 45)
-                
-                if (url != null && hasAudio) {
-                    println("✅ Formato COM ÁUDIO encontrado: itag=$itag ($qualityLabel)")
-                    
-                    val quality = when {
-                        qualityLabel.contains("2160") || qualityLabel.contains("4K") -> Qualities.P2160.value
-                        qualityLabel.contains("1440") -> Qualities.P1440.value
-                        qualityLabel.contains("1080") -> Qualities.P1080.value
-                        qualityLabel.contains("720") || itag == 22 -> Qualities.P720.value  // 720p COM ÁUDIO!
-                        qualityLabel.contains("480") -> Qualities.P480.value
-                        else -> Qualities.P360.value
-                    }
-                    
-                    val qualityName = when (quality) {
-                        Qualities.P2160.value -> "4K"
-                        Qualities.P1440.value -> "1440p"
-                        Qualities.P1080.value -> "1080p"
-                        Qualities.P720.value -> "720p"
-                        Qualities.P480.value -> "480p"
-                        else -> "360p"
-                    }
-                    
-                    createExtractorLink(url, quality, "$qualityName (áudio)", callback)
-                    foundCount++
-                    
-                    if (foundCount >= 3) break
-                }
-            }
-            
-            // PRIORIDADE 2: Se não encontrou formatos com áudio, buscar QUALQUER vídeo com URL
-            if (foundCount == 0) {
-                println("🔍 Nenhum formato com áudio encontrado, buscando qualquer vídeo com URL...")
-                
-                for (format in videoFormats) {
-                    val itag = format.path("itag").asInt(-1)
-                    val url = format.path("url").asText(null)
-                    val qualityLabel = format.path("qualityLabel").asText("")
-                    
-                    if (url != null) {
-                        println("✅ Vídeo encontrado: itag=$itag ($qualityLabel)")
-                        
-                        val quality = when {
-                            qualityLabel.contains("2160") -> Qualities.P2160.value
-                            qualityLabel.contains("1440") -> Qualities.P1440.value
-                            qualityLabel.contains("1080") -> Qualities.P1080.value
-                            qualityLabel.contains("720") -> Qualities.P720.value
-                            qualityLabel.contains("480") -> Qualities.P480.value
-                            else -> Qualities.P360.value
-                        }
-                        
-                        val qualityName = when (quality) {
-                            Qualities.P2160.value -> "4K"
-                            Qualities.P1440.value -> "1440p"
-                            Qualities.P1080.value -> "1080p"
-                            Qualities.P720.value -> "720p"
-                            Qualities.P480.value -> "480p"
-                            else -> "360p"
-                        }
-                        
-                        // Verificar se precisa de áudio separado
-                        val needsAudio = audioFormats.isNotEmpty()
-                        
-                        createExtractorLink(url, quality, "$qualityName${if (needsAudio) " (vídeo)" else ""}", callback)
-                        foundCount++
-                        
-                        // Adicionar também um formato de áudio se disponível
-                        if (needsAudio && audioFormats.size > 0) {
-                            val audioFormat = audioFormats[0]
-                            val audioUrl = audioFormat.path("url").asText(null)
-                            if (audioUrl != null) {
-                                println("🎵 Adicionando áudio separado")
-                                createExtractorLink(audioUrl, quality, "Áudio", callback)
-                            }
-                        }
-                        
-                        if (foundCount >= 2) break
-                    }
-                }
-            }
-            
-            println("✨ Extraídos $foundCount qualidades via adaptiveFormats")
-            foundCount > 0
-            
-        } catch (e: Exception) {
-            println("❌ Erro em extractAdaptiveFormatsDetailed: ${e.message}")
-            false
-        }
-    }
-    
-    // 🎯 **Extrair formatos simples (fallback)**
-    private suspend fun extractSimpleFormats(streamingData: JsonNode, callback: (ExtractorLink) -> Unit) {
+    // 🔧 **Criar ExtractorLink COM HEADERS CORRETOS**
+    private suspend fun createExtractorLink(
+        videoUrl: String,
+        quality: Int,
+        qualityText: String,
+        callback: (ExtractorLink) -> Unit
+    ) {
         try {
-            val formats = streamingData.path("formats")
-            if (!formats.isArray || formats.size() == 0) {
-                println("❌ Nenhum formato simples encontrado")
-                return
+            println("🔗 Criando link: $qualityText")
+            
+            val extractorLink = newExtractorLink(
+                source = name,
+                name = "YouTube ($qualityText)",
+                url = videoUrl,
+                type = if (videoUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+            ) {
+                this.referer = mainUrl
+                this.quality = quality
+                this.headers = getYouTubeHeaders()
             }
             
-            println("📦 Formatos simples encontrados: ${formats.size()}")
-            
-            for (i in 0 until formats.size()) {
-                val format = formats.get(i)
-                val itag = format.path("itag").asInt(-1)
-                val url = format.path("url").asText(null)
-                val qualityLabel = format.path("qualityLabel").asText("")
-                
-                if (url != null) {
-                    println("📄 Formato simples: itag=$itag ($qualityLabel)")
-                    
-                    // Priorizar itags com áudio
-                    if (itag in listOf(22, 37, 18)) {
-                        val quality = when (itag) {
-                            37 -> Qualities.P1080.value
-                            22 -> Qualities.P720.value
-                            else -> Qualities.P360.value
-                        }
-                        
-                        val qualityName = when (itag) {
-                            37 -> "1080p"
-                            22 -> "720p"
-                            else -> "360p"
-                        }
-                        
-                        println("✅ Formato simples COM ÁUDIO: $qualityName")
-                        createExtractorLink(url, quality, qualityName, callback)
-                    }
-                }
-            }
+            callback(extractorLink)
+            println("✨ Link $qualityText criado com sucesso!")
             
         } catch (e: Exception) {
-            println("❌ Erro em extractSimpleFormats: ${e.message}")
+            println("❌ Erro criando link: ${e.message}")
         }
     }
     
@@ -578,49 +608,6 @@ class SuperFlixYoutubeExtractor : ExtractorApi() {
             response.code == 200
         } catch (e: Exception) {
             false
-        }
-    }
-    
-    // 🔧 **Criar ExtractorLink COM HEADERS CORRETOS**
-    private suspend fun createExtractorLink(
-        videoUrl: String,
-        quality: Int,
-        qualityText: String,
-        callback: (ExtractorLink) -> Unit
-    ) {
-        try {
-            println("🔗 Criando link: $qualityText")
-            
-            // Headers específicos para YouTube
-            val youtubeHeaders = mapOf(
-                "User-Agent" to userAgent,
-                "Accept" to "*/*",
-                "Accept-Language" to "en-US,en;q=0.9",
-                "Accept-Encoding" to "gzip, deflate, br",
-                "Referer" to "https://www.youtube.com/",
-                "Origin" to "https://www.youtube.com",
-                "Connection" to "keep-alive",
-                "Sec-Fetch-Dest" to "video",
-                "Sec-Fetch-Mode" to "no-cors",
-                "Sec-Fetch-Site" to "same-site"
-            )
-            
-            val extractorLink = newExtractorLink(
-                source = name,
-                name = "YouTube ($qualityText)",
-                url = videoUrl,
-                type = ExtractorLinkType.VIDEO
-            ) {
-                this.referer = mainUrl
-                this.quality = quality
-                this.headers = youtubeHeaders
-            }
-            
-            callback(extractorLink)
-            println("✨ Link $qualityText criado com sucesso!")
-            
-        } catch (e: Exception) {
-            println("❌ Erro criando link: ${e.message}")
         }
     }
     
