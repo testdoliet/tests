@@ -1,10 +1,11 @@
 package com.SuperFlix
 
 import com.lagradost.cloudstream3.utils.ExtractorApi
+import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.M3u8Helper
 import com.lagradost.cloudstream3.utils.newExtractorLink
-import com.lagradost.cloudstream3.SubtitleFile
+import com.lagradost.cloudstream3.utils.SubtitleFile
 import com.lagradost.cloudstream3.app
 import org.json.JSONObject
 
@@ -15,10 +16,11 @@ class YouTubeTrailerExtractor : ExtractorApi() {
 
     private val userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
 
+    // Assinatura correta da versão atual (2025)
     override suspend fun getUrl(
         url: String,
-        referer: String?,
-        subtitleCallback: (SubtitleFile) -> Unit,
+        referer: String? = null,
+        subtitleCallback: (SubtitleFile) -> Unit = {},
         callback: (ExtractorLink) -> Unit
     ) {
         try {
@@ -38,6 +40,7 @@ class YouTubeTrailerExtractor : ExtractorApi() {
 
             val apiUrl = "https://www.youtube.com/youtubei/v1/player?key=$apiKey"
 
+            // Triple quotes pra evitar escape error
             val jsonBody = """
             {
                 "context": {
