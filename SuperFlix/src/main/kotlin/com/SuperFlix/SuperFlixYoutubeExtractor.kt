@@ -52,32 +52,36 @@ class SuperFlixYoutubeExtractor : ExtractorApi() {
     )
 
     override suspend fun getUrl(
-        url: String,
-        referer: String?,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ) {
-        println("🎬 [SuperFlix] YouTubeExtractor - BUSCANDO QUALIDADES ALTAS")
+    url: String,
+    referer: String?,
+    subtitleCallback: (SubtitleFile) -> Unit,
+    callback: (ExtractorLink) -> Unit
+) {
+    println("🎬 [SuperFlix] YouTubeExtractor - BUSCANDO QUALIDADES ALTAS")
+    
+    try {
+        val videoId = extractYouTubeId(url) ?: run {
+            println("❌ Video ID não encontrado")
+            return
+        }
         
-        try {
-            val videoId = extractYouTubeId(url) ?: run {
-                println("❌ Video ID não encontrado")
-                return
-            }
-            
-            println("📹 Video ID: $videoId")
-            
-            // Método 1: Tentar via API interna (HLS ou adaptiveFormats)
+        println("📹 Video ID: $videoId")
+        
+        // Tentar métodos em ordem:
+        // 1. Método simples primeiro
+        if (!extractViaSimpleMethod(videoId, callback)) {
+            // 2. Método API avançado
             if (!extractViaAPI(videoId, callback)) {
-                // Método 2: Fallback para métodos alternativos
-                println("🔄 API falhou, tentando métodos alternativos...")
+                // 3. Fallback alternativos
+                println("🔄 Todos métodos falharam, tentando fallbacks...")
                 extractViaAlternativeMethods(videoId, callback)
             }
-            
-        } catch (e: Exception) {
-            println("❌ Erro geral no extrator: ${e.message}")
-            e.printStackTrace()
         }
+        
+    } catch (e: Exception) {
+        println("❌ Erro geral no extrator: ${e.message}")
+        e.printStackTrace()
+    }
     }
 
     // 🔥 **MÉTODO PRINCIPAL: Usar API interna do YouTube**
