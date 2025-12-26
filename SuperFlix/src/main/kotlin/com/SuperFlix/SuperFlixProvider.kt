@@ -1,12 +1,18 @@
 package com.SuperFlix
 
-import com.lagradost.cloudstream3.plugins.BasePlugin
+import android.content.Context
 import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
+import com.lagradost.cloudstream3.plugins.Plugin
 
 @CloudstreamPlugin
 class SuperFlixProvider : Plugin() {
-    override fun load() {
+    override fun load(context: Context) {
+        // Registra o provider principal (sua classe SuperFlix que estende MainAPI)
         registerMainAPI(SuperFlix())
-        registerExtractorAPI(YouTubeTrailerExtractor())  // ← NOME EXATO DA CLASSE
+
+        // Registra o extractor de YouTube
+        registerExtractorAPI(YouTubeTrailerExtractor())  // ← NOME EXATO DA CLASSE DO EXTRACTOR
+
+        println("✅ SuperFlix Provider carregado com YouTube Extractor")
     }
 }
