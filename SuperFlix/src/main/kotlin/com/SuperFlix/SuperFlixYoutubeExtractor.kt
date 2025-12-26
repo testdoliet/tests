@@ -1,7 +1,7 @@
 package com.SuperFlix
 
 import com.lagradost.cloudstream3.utils.ExtractorApi
-import com.lagradost.cloudstream3.utils.ExtractorLink
+import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.M3u8Helper
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.SubtitleFile
@@ -56,10 +56,7 @@ class YouTubeTrailerExtractor : ExtractorApi() {
             val requestHeaders = mapOf("Content-Type" to "application/json")
 
             val response = app.post(apiUrl, headers = requestHeaders, json = jsonBody)
-            if (!response.isSuccessful) {
-                println("❌ Erro na API: ${response.code}")
-                return
-            }
+            if (!response.isSuccessful) return
 
             val playerJson = JSONObject(response.text)
             val streamingData = playerJson.optJSONObject("streamingData") ?: return
@@ -96,24 +93,28 @@ class YouTubeTrailerExtractor : ExtractorApi() {
 
                 validFormats.take(6).forEach { format ->
                     val fUrl = format.optString("url")
-                    val quality = format.optString("qualityLabel", "HD")
+                    val qualityLabel = format.optString("qualityLabel", "HD")
                     val bitrate = format.optInt("bitrate") / 1000
 
-                    callback(
-                        newExtractorLink {
-                            source = name
-                            name = "$name - \( quality ( \){bitrate}kbps)"
-                            url = fUrl
-                            referer = "https://www.youtube.com/"
-                            quality = quality.toIntOrNull() ?: 1080
-                            isM3u8 = false
-                        }
-                    )
+                    val link = newExtractorLink(
+                        source = name,
+                        name = "$name - \( qualityLabel ( \){bitrate}kbps)",
+                        url = fUrl,
+                        type = ExtractorLinkType.VIDEO
+                    ) {
+                        this.referer = "https://www.youtube.com/"
+                        this.quality = qualityLabel.toIntOrNull() ?: 1080
+                        this.headers = mapOf(
+                            "User-Agent" to userAgent,
+                            "Referer" to "https://www.youtube.com/"
+                        )
+                    }
+
+                    callback(link)
                 }
             }
 
         } catch (e: Exception) {
-            println("❌ Erro: ${e.message}")
             e.printStackTrace()
         }
     }
