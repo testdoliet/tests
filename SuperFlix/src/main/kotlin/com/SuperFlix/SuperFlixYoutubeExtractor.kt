@@ -158,22 +158,23 @@ class YouTubeTrailerExtractor : ExtractorApi() {
                             if (hlsUrl.isNotBlank()) {
                                 debugLog("HLS URL found: $hlsUrl")
                                 
-                                // Processar stream M3U8 usando o método correto
-                                val m3u8Links = M3u8Helper2.generateM3u8(
-                                    source = name,
-                                    streamUrl = hlsUrl,
-                                    referer = mainUrl,
-                                    quality = null,
-                                    headers = emptyMap(),
-                                    isLive = false
-                                )
-                                
-                                m3u8Links?.forEach { link ->
-                                    callback(link)
-                                }
-                                
-                                if (m3u8Links != null && m3u8Links.isNotEmpty()) {
-                                    return
+                                // Processar stream M3U8 - método simplificado
+                                try {
+                                    val m3u8Links = M3u8Helper2.generateM3u8(
+                                        "Youtube",
+                                        hlsUrl,
+                                        mainUrl
+                                    )
+                                    
+                                    m3u8Links?.forEach { link ->
+                                        callback(link)
+                                    }
+                                    
+                                    if (m3u8Links != null && m3u8Links.isNotEmpty()) {
+                                        return
+                                    }
+                                } catch (e: Exception) {
+                                    debugLog("M3U8 processing failed: ${e.message}")
                                 }
                             }
                         }
