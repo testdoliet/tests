@@ -69,10 +69,10 @@ class YouTubeTrailerExtractor : ExtractorApi() {
             M3u8Helper.generateM3u8(
                 source = name,
                 streamUrl = hlsUrl,
-                referer = "https://www.youtube.com/",
+                referer = mainUrl,
                 headers = mapOf(
                     "User-Agent" to userAgent,
-                    "Referer" to "https://www.youtube.com/"
+                    "Referer" to mainUrl
                 )
             ).forEach(callback)
 
