@@ -54,7 +54,12 @@ class YouTubeTrailerExtractor : ExtractorApi() {
             }
             """.trimIndent()
 
-            val response = app.post(apiUrl, data = jsonBody)
+            val headers = mapOf("Content-Type" to "application/json")
+            
+            val response = app.post(
+                apiUrl,
+                json = jsonBody
+            )
             if (!response.isSuccessful) {
                 println("❌ Erro na API player: ${response.code}")
                 return
