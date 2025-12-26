@@ -75,7 +75,6 @@ class YouTubeTrailerExtractor : ExtractorApi() {
                 source = name,
                 streamUrl = hlsUrl,
                 referer = "https://www.youtube.com/",
-                headers = headers
             ).forEach(callback)
 
         } catch (e: Exception) {
