@@ -98,22 +98,75 @@ class Goyabu : MainAPI() {
         return if (clean.isBlank()) dirtyTitle else clean
     }
 
-    // ADICIONADO: Função para limpar sinopse
+    // CORRIGIDO: Função para limpar sinopse MELHORADA
     private fun cleanSynopsis(dirtySynopsis: String): String {
         var clean = dirtySynopsis.trim()
         
-        // Remove padrões de spam
+        // ========== REMOVER SPAM NO INÍCIO ==========
+        // Encontra onde começa a sinopse real (procura por palavras-chave de início de história)
+        val synopsisStartKeywords = listOf(
+            "Era uma vez",
+            "Em um mundo",
+            "A história",
+            "Acompanhe",
+            "Descubra",
+            "Conheça",
+            "Em uma época",
+            "Ambientado",
+            "Situado",
+            "Baseado",
+            "Adaptado",
+            "Conta a história",
+            "Narra",
+            "Um dia",
+            "Certa vez",
+            "Há muito tempo",
+            "Num futuro",
+            "Num passado",
+            "Num universo"
+        )
+        
+        // Procura o ponto onde começa a sinopse real
+        var realSynopsisStart = -1
+        for (keyword in synopsisStartKeywords) {
+            val index = clean.indexOf(keyword, ignoreCase = true)
+            if (index > 0 && (realSynopsisStart == -1 || index < realSynopsisStart)) {
+                realSynopsisStart = index
+            }
+        }
+        
+        // Se encontrou onde começa a sinopse real, corta o spam do início
+        if (realSynopsisStart > 0) {
+            clean = clean.substring(realSynopsisStart).trim()
+        }
+        
+        // ========== REMOVER PADRÕES DE SPAM ==========
         SYNOPSIS_JUNK_PATTERNS.forEach { pattern ->
             clean = pattern.replace(clean, "")
         }
         
-        // Remove frases que começam com palavras-chave de spam
+        // ========== REMOVER FRASES DE SPAM ==========
         val sentences = clean.split(".").map { it.trim() }
         val filteredSentences = sentences.filter { sentence ->
-            !sentence.matches(Regex("(?i)^(assistir|veja|confira|visite|baixar|download|streaming|online|gratis|de graça).*"))
+            // Remove frases que são spam
+            val lowerSentence = sentence.lowercase()
+            !(lowerSentence.contains("assistir") && 
+              (lowerSentence.contains("online") || 
+               lowerSentence.contains("dublado") || 
+               lowerSentence.contains("legendado"))) &&
+            !lowerSentence.contains("anime completo") &&
+            !lowerSentence.contains("todos os episodios") &&
+            !lowerSentence.contains("baixar") &&
+            !lowerSentence.contains("download") &&
+            !lowerSentence.contains("streaming") &&
+            !lowerSentence.contains("gratis") &&
+            !lowerSentence.contains("de graça") &&
+            !lowerSentence.matches(Regex("""(?i)^(visite|confira|acesse|clique|veja|assista).*"""))
         }
         
         clean = filteredSentences.joinToString(". ")
+        
+        // ========== LIMPEZA FINAL ==========
         clean = clean.replace(Regex("\\s+"), " ")
         clean = clean.replace(Regex("\\.\\s*\\.+"), ".")
         clean = clean.trim()
@@ -343,7 +396,7 @@ class Goyabu : MainAPI() {
                 ?.trim()
                 ?: "Sinopse não disponível."
 
-            // ADICIONADO: Limpar sinopse
+            // CORRIGIDO: Usar sinopse limpa
             val synopsis = cleanSynopsis(rawSynopsis)
             if (rawSynopsis != synopsis && synopsis != "Sinopse não disponível.") {
                 println("🧹 Sinopse limpa:")
