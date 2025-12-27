@@ -14,53 +14,17 @@ object SuperFlixExtractor {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         return try {
-            // Lista agressiva de domínios para bloquear (baseado nos seus logs)
-            val blockedPatterns = listOf(
-                "adsco\\.re",
-                "tynt\\.com",
-                "dtscout\\.com",
-                "dtscdn\\.com",
-                "cloudflareinsights\\.com",
-                "eyeota\\.net",
-                "cdn4ads\\.com",
-                "mrktmtrcs\\.net",
-                "onaudience\\.com",
-                "amung\\.us",
-                "waust\\.at",
-                "\\.js$", // Bloqueia todos os scripts
-                "\\.css$", // Bloqueia CSS
-                "\\.png$|\\.jpg$|\\.gif$|\\.webp$", // Bloqueia imagens
-                "beacon",
-                "pixel",
-                "tracking",
-                "analytics"
-            ).joinToString("|")
+            // Regex MUITO específica - só pega URLs que são claramente de vídeo
+            // e NÃO contém padrões de anúncios
+            val videoRegex = Regex("""^https?://(?!.*(?:adsco|tynt|dtscout|dtscdn|cloudflareinsights|eyeota|cnd4ads|mrktmtrcs|onaudience|amung|waust|beacon|pixel|tracking|analytics|\.js\b|\.css\b|\.png\b|\.jpg\b|\.gif\b|\.webp\b)).*\.(m3u8|mp4|mkv)(\?.*)?$""", RegexOption.IGNORE_CASE)
             
             val streamResolver = WebViewResolver(
-                interceptUrl = { interceptedUrl ->
-                    // Filtro extremamente agressivo
-                    val lowerUrl = interceptedUrl.lowercase()
-                    
-                    // Primeiro, bloqueia tudo que parece ad/tracking
-                    if (Regex(blockedPatterns, RegexOption.IGNORE_CASE).containsMatchIn(lowerUrl)) {
-                        return@WebViewResolver false
-                    }
-                    
-                    // Só aceita URLs que claramente são de vídeo
-                    val isVideo = lowerUrl.contains(".m3u8") || 
-                                  lowerUrl.contains(".mp4") || 
-                                  lowerUrl.contains(".mkv") ||
-                                  lowerUrl.contains("/video/") ||
-                                  lowerUrl.contains("/stream/") ||
-                                  (lowerUrl.contains("api") && lowerUrl.contains("video"))
-                    
-                    return@WebViewResolver isVideo
-                },
+                interceptUrl = videoRegex,
                 useOkhttp = false,
-                timeout = 15_000L // Aumenta timeout para sites lentos
+                timeout = 8_000L // Timeout mais curto para evitar ads
             )
 
-            // Headers mínimos - sem muitos detalhes que possam ativar ads
+            // Headers simples
             val headers = mapOf(
                 "Referer" to mainUrl,
                 "User-Agent" to "Mozilla/5.0"
