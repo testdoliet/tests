@@ -34,7 +34,26 @@ object SuperFlixExtractor {
             
             println("✅ ID: $videoId")
             
-            // 2. Fazer POST EXATO como mostrado nas imagens
+            // 2. PRIMEIRO: Acessar a página para obter cookies frescos
+            val pageUrl = "https://fembed.sx/e/$videoId"
+            println("🌐 Acessando página: $pageUrl")
+            
+            val pageHeaders = mapOf(
+                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+                "Accept-Language" to "pt-BR",
+                "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
+                "Upgrade-Insecure-Requests" to "1",
+                "Sec-Fetch-Dest" to "document",
+                "Sec-Fetch-Mode" to "navigate",
+                "Sec-Fetch-Site" to "none",
+                "Sec-Fetch-User" to "?1"
+            )
+            
+            // Acessar página para obter cookies atualizados
+            val pageResponse = app.get(pageUrl, headers = pageHeaders)
+            println("📄 Página acessada (${pageResponse.code})")
+            
+            // 3. AGORA fazer POST EXATO como mostrado nas imagens
             val apiUrl = "https://fembed.sx/api.php?s=$videoId&c="
             println("📡 POST para: $apiUrl")
             
@@ -42,7 +61,7 @@ object SuperFlixExtractor {
                 "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8",
                 "X-Requested-With" to "XMLHttpRequest",
                 "Accept" to "*/*",
-                "Accept-Encoding" to "gzip, deflate, br, zstd",
+                // REMOVER Accept-Encoding para evitar compressão!
                 "Accept-Language" to "pt-BR",
                 "Cache-Control" to "no-cache",
                 "Pragma" to "no-cache",
@@ -56,7 +75,7 @@ object SuperFlixExtractor {
                 "Cookie" to API_COOKIE
             )
             
-            // 3. Body EXATO das imagens
+            // 4. Body EXATO das imagens
             val postData = mapOf(
                 "action" to "getPlayer",
                 "lang" to "DUB",
@@ -69,28 +88,55 @@ object SuperFlixExtractor {
             val responseText = response.text
             
             println("📥 Resposta POST (${responseText.length} chars):")
-            println(responseText.take(500) + "...")
+            println(responseText)
             
-            // 4. Extrair URL do iframe da resposta
-            val iframeUrl = extractIframeUrlFromResponse(responseText)
-            if (iframeUrl != null) {
-                println("🎬 Iframe encontrado: $iframeUrl")
+            // 5. Verificar se a resposta está legível
+            if (responseText.contains("<") || responseText.contains("{")) {
+                // Resposta parece HTML/JSON
                 
-                // 5. Fazer requisição para o iframe
-                return processIframeUrl(iframeUrl, videoId, name, callback)
-            }
-            
-            // 6. Se não achou iframe, procura m3u8 direto
-            val m3u8Url = extractM3u8Directly(responseText)
-            if (m3u8Url != null) {
-                println("✅ M3U8 direto: $m3u8Url")
-                return generateM3u8Links(m3u8Url, name, callback)
+                // Extrair URL do iframe da resposta
+                val iframeUrl = extractIframeUrlFromResponse(responseText)
+                if (iframeUrl != null) {
+                    println("🎬 Iframe encontrado: $iframeUrl")
+                    
+                    // Fazer requisição para o iframe
+                    return processIframeUrl(iframeUrl, videoId, name, callback)
+                }
+                
+                // Tentar extrair m3u8 direto
+                val m3u8Url = extractM3u8Directly(responseText)
+                if (m3u8Url != null) {
+                    println("✅ M3U8 direto: $m3u8Url")
+                    return generateM3u8Links(m3u8Url, name, callback)
+                }
+                
+                // Mostrar resposta para debug
+                println("🔍 Resposta completa: $responseText")
+            } else {
+                // Resposta parece binária/criptografada
+                println("⚠️  Resposta parece binária/criptografada")
+                
+                // Tentar decodificar como string UTF-8
+                try {
+                    val decoded = String(response.body.toByteArray(), Charsets.UTF_8)
+                    println("🔓 Tentativa de decodificação: ${decoded.take(200)}...")
+                    
+                    if (decoded.contains("<iframe") || decoded.contains("src=")) {
+                        val iframeUrl = extractIframeUrlFromResponse(decoded)
+                        if (iframeUrl != null) {
+                            return processIframeUrl(iframeUrl, videoId, name, callback)
+                        }
+                    }
+                } catch (e: Exception) {
+                    println("💥 Erro ao decodificar: ${e.message}")
+                }
             }
             
             println("❌ Nenhum iframe ou m3u8 encontrado")
             false
         } catch (e: Exception) {
             println("💥 Erro no método Fembed: ${e.message}")
+            e.printStackTrace()
             false
         }
     }
@@ -125,7 +171,6 @@ object SuperFlixExtractor {
             
             val headers = mapOf(
                 "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                "Accept-Encoding" to "gzip, deflate, br",
                 "Accept-Language" to "pt-BR",
                 "Referer" to "https://fembed.sx/e/$videoId",
                 "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36",
@@ -135,7 +180,10 @@ object SuperFlixExtractor {
             val response = app.get(iframeUrl, headers = headers)
             val html = response.text
             
-            println("📥 Resposta iframe (${html.length} chars)...")
+            println("📥 Resposta iframe (${html.length} chars): ${html.take(300)}...")
+            
+            // O iframe é provavelmente: /api.php?action=getAds&s=407451&c=&key=0&lang=DUB
+            // Pode conter scripts que carregam o player real
             
             // Tentar extrair m3u8
             val m3u8Url = extractM3u8FromHtml(html)
@@ -144,18 +192,24 @@ object SuperFlixExtractor {
                 return generateM3u8Links(m3u8Url, name, callback)
             }
             
-            // Tentar extrair outro iframe
-            val nestedIframeUrl = extractIframeUrlFromResponse(html)
-            if (nestedIframeUrl != null) {
-                println("🔄 Iframe aninhado: $nestedIframeUrl")
-                return processIframeUrl(nestedIframeUrl, videoId, name, callback)
-            }
+            // Procurar por scripts que possam conter a URL do vídeo
+            val scriptPattern = Regex("""<script[^>]*>([^<]+)</script>""")
+            val scripts = scriptPattern.findAll(html).toList()
             
-            // Tentar extrair de script JavaScript
-            val scriptUrl = extractFromJavaScript(html)
-            if (scriptUrl != null) {
-                println("📜 URL do script: $scriptUrl")
-                return processScriptUrl(scriptUrl, videoId, name, callback)
+            for (scriptMatch in scripts) {
+                val script = scriptMatch.groupValues[1]
+                if (script.contains("m3u8") || script.contains("filemoon") || script.contains("g9r6")) {
+                    println("📜 Script encontrado: ${script.take(100)}...")
+                    
+                    // Procurar URL no script
+                    val urlPattern = Regex("""["'](https?://[^"']+\.m3u8[^"']*)["']""")
+                    val urlMatch = urlPattern.find(script)
+                    if (urlMatch != null) {
+                        val m3u8 = urlMatch.groupValues[1]
+                        println("✅ M3U8 no script: $m3u8")
+                        return generateM3u8Links(m3u8, name, callback)
+                    }
+                }
             }
             
             false
@@ -182,54 +236,6 @@ object SuperFlixExtractor {
         }
         
         return null
-    }
-    
-    private fun extractFromJavaScript(html: String): String? {
-        // Procurar atob (base64 decode) no JavaScript
-        val atobPattern = Regex("""atob\(["']([^"']+)["']\)""")
-        val match = atobPattern.find(html)
-        
-        if (match != null) {
-            val base64 = match.groupValues[1]
-            try {
-                val decoded = java.util.Base64.getDecoder().decode(base64).toString(Charsets.UTF_8)
-                println("🔓 Decodificado: $decoded")
-                
-                // Verificar se é uma URL
-                if (decoded.startsWith("http")) {
-                    return decoded
-                }
-            } catch (e: Exception) {
-                println("⚠️  Erro ao decodificar base64: ${e.message}")
-            }
-        }
-        
-        return null
-    }
-    
-    private suspend fun processScriptUrl(
-        scriptUrl: String,
-        videoId: String,
-        name: String,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        return try {
-            println("📜 Acessando script: $scriptUrl")
-            
-            val response = app.get(scriptUrl)
-            val content = response.text
-            
-            // O script pode conter o m3u8
-            val m3u8Url = extractM3u8FromHtml(content)
-            if (m3u8Url != null) {
-                return generateM3u8Links(m3u8Url, name, callback)
-            }
-            
-            false
-        } catch (e: Exception) {
-            println("💥 Erro no script: ${e.message}")
-            false
-        }
     }
     
     private fun extractM3u8Directly(html: String): String? {
