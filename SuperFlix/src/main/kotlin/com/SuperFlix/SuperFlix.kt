@@ -580,12 +580,12 @@ class SuperFlix : MainAPI() {
     }
 
     override suspend fun loadLinks(
-        data: String,
-        isCasting: Boolean,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        return SuperFlixExtractor.extractVideoLinks(data, mainUrl, name, callback)
+    data: String,
+    isCasting: Boolean,
+    subtitleCallback: (SubtitleFile) -> Unit,
+    callback: (ExtractorLink) -> Unit
+): Boolean {
+    return SuperFlixExtractor.extractVideoLinks(data, name, callback)
     }
 
     private data class TMDBInfo(
