@@ -1,76 +1,32 @@
 package com.SuperFlix
 
+import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.app
+import com.lagradost.cloudstream3.utils.AppUtils
+import com.lagradost.cloudstream3.utils.ExtractorApi
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.M3u8Helper
+import com.lagradost.cloudstream3.utils.WebViewCaptchaObserver
 import com.lagradost.cloudstream3.utils.WebViewResolver
+import kotlinx.coroutines.delay
 
-object SuperFlixExtractor {
+object SuperFlixExtractor : ExtractorApi() {
+    override val name = "SuperFlix"
+    override val mainUrl = "https://superflixapi2.com"
     
     // Lista de padrões para IGNORAR (ads, trackers, redirecionamentos)
     private val ignorePatterns = listOf(
-        // Ads
-        Regex("""adsco\.re""", RegexOption.IGNORE_CASE),
-        Regex("""doubleclick\.net""", RegexOption.IGNORE_CASE),
-        Regex("""googleads""", RegexOption.IGNORE_CASE),
-        Regex("""googlesyndication""", RegexOption.IGNORE_CASE),
-        Regex("""amazon-adsystem""", RegexOption.IGNORE_CASE),
-        Regex("""ads\.""", RegexOption.IGNORE_CASE),
-        Regex("""adserver""", RegexOption.IGNORE_CASE),
-        Regex("""analytics""", RegexOption.IGNORE_CASE),
-        Regex("""tracking""", RegexOption.IGNORE_CASE),
-        Regex("""pixel""", RegexOption.IGNORE_CASE),
-        Regex("""beacon""", RegexOption.IGNORE_CASE),
-        
-        // Trackers
-        Regex("""facebook\.com/tr""", RegexOption.IGNORE_CASE),
-        Regex("""connect\.facebook\.net""", RegexOption.IGNORE_CASE),
-        Regex("""googletagmanager""", RegexOption.IGNORE_CASE),
-        Regex("""googletagservices""", RegexOption.IGNORE_CASE),
-        
-        // CDNs de ads
-        Regex("""cdn4ads""", RegexOption.IGNORE_CASE),
-        Regex("""adnxs""", RegexOption.IGNORE_CASE),
-        Regex("""casalemedia""", RegexOption.IGNORE_CASE),
-        
-        // Redirecionadores
-        Regex("""redirect""", RegexOption.IGNORE_CASE),
-        Regex("""click""", RegexOption.IGNORE_CASE),
-        Regex("""link""", RegexOption.IGNORE_CASE),
-        
-        // Social
-        Regex("""facebook\.com/plugins""", RegexOption.IGNORE_CASE),
-        Regex("""twitter\.com/widgets""", RegexOption.IGNORE_CASE),
-        
-        // Estáticos desnecessários
-        Regex(""".*\.css""", RegexOption.IGNORE_CASE),
-        Regex(""".*\.js""", RegexOption.IGNORE_CASE),
-        Regex(""".*\.png""", RegexOption.IGNORE_CASE),
-        Regex(""".*\.jpg""", RegexOption.IGNORE_CASE),
-        Regex(""".*\.gif""", RegexOption.IGNORE_CASE),
-        Regex(""".*\.ico""", RegexOption.IGNORE_CASE),
-        Regex("""favicon""", RegexOption.IGNORE_CASE),
-        
-        // Domínios específicos que você identificou
-        Regex("""tynt\.com""", RegexOption.IGNORE_CASE),
-        Regex("""dtscout\.com""", RegexOption.IGNORE_CASE),
-        Regex("""mrktmtrcs""", RegexOption.IGNORE_CASE),
-        Regex("""amung\.us""", RegexOption.IGNORE_CASE),
-        Regex("""onaudience""", RegexOption.IGNORE_CASE),
-        Regex("""eyeota\.net""", RegexOption.IGNORE_CASE)
+        "adsco.re", "doubleclick.net", "googleads", "googlesyndication",
+        "amazon-adsystem", "adserver", "analytics", "tracking", "pixel",
+        "beacon", "facebook.com/tr", "connect.facebook.net", "googletagmanager",
+        "googletagservices", "cdn4ads", "adnxs", "casalemedia", "redirect",
+        "click", "link", "tynt.com", "dtscout.com", "mrktmtrcs", "amung.us",
+        "onaudience", "eyeota.net", "analytics", "statistics", "metrics",
+        "tracker", "monitoring", "measurement"
     )
     
-    // Padrões para CAPTURAR (M3U8 real)
-    private val capturePatterns = listOf(
-        Regex("""https?://[^/]+\.i8yz83pn\.com/.+\.m3u8""", RegexOption.IGNORE_CASE),
-        Regex("""https?://[^/]+/hls2/.+\.m3u8""", RegexOption.IGNORE_CASE),
-        Regex("""master\.m3u8""", RegexOption.IGNORE_CASE),
-        Regex("""index\.m3u8""", RegexOption.IGNORE_CASE),
-        Regex("""\.m3u8\?[^"\s]*""", RegexOption.IGNORE_CASE)
-    )
-    
-    // Headers para fingir ser um navegador real
-    private fun getStealthHeaders(): Map<String, String> {
+    // Headers para WebView
+    private fun getWebViewHeaders(): Map<String, String> {
         return mapOf(
             "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
             "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
@@ -78,10 +34,6 @@ object SuperFlixExtractor {
             "Accept-Encoding" to "gzip, deflate, br",
             "Cache-Control" to "no-cache",
             "Pragma" to "no-cache",
-            "Sec-Fetch-Dest" to "document",
-            "Sec-Fetch-Mode" to "navigate",
-            "Sec-Fetch-Site" to "none",
-            "Sec-Fetch-User" to "?1",
             "Upgrade-Insecure-Requests" to "1",
             "sec-ch-ua" to "\"Chromium\";v=\"127\", \"Not)A;Brand\";v=\"99\"",
             "sec-ch-ua-mobile" to "?1",
@@ -89,8 +41,7 @@ object SuperFlixExtractor {
         )
     }
     
-    // Headers específicos para o M3U8
-    private fun getM3u8Headers(referer: String): Map<String, String> {
+    private fun getM3u8Headers(): Map<String, String> {
         return mapOf(
             "Accept" to "*/*",
             "Accept-Encoding" to "gzip, deflate, br, zstd",
@@ -99,7 +50,7 @@ object SuperFlixExtractor {
             "Connection" to "keep-alive",
             "Origin" to "https://g9r6.com",
             "Pragma" to "no-cache",
-            "Referer" to referer,
+            "Referer" to "https://g9r6.com/",
             "Sec-Fetch-Dest" to "empty",
             "Sec-Fetch-Mode" to "cors",
             "Sec-Fetch-Site" to "cross-site",
@@ -110,179 +61,182 @@ object SuperFlixExtractor {
         )
     }
     
-    suspend fun extractWithSmartWebView(
-        url: String,
-        name: String,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        println("🎯 SuperFlixWebViewExtractor iniciado")
-        println("🌐 URL alvo: $url")
+    // Método principal com WebView
+    private suspend fun extractWithWebView(url: String): List<String> {
+        val m3u8Urls = mutableListOf<String>()
         
-        val capturedM3u8Urls = mutableListOf<String>()
-        var m3u8FinalUrl: String? = null
+        println("🌐 Iniciando WebView para: $url")
+        println("⚠️ Aguarde... Pode levar até 2 minutos devido aos redirecionamentos")
         
         try {
-            val streamResolver = WebViewResolver(
-                // Regex que captura TUDO, mas filtramos depois
-                interceptUrl = Regex("""https?://[^"\s<>]+"""),
-                useOkhttp = false,
-                timeout = 120_000L, // 2 minutos timeout
-                enableJavaScript = true,
-                enableDomStorage = true,
+            // Usa WebViewResolver para interceptar requisições
+            val resolver = WebViewResolver(
                 userAgent = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
-                
-                // Callback para CADA requisição interceptada
-                onUrlIntercepted = { interceptedUrl ->
-                    // Debug: mostra todas as URLs (opcional)
-                    // println("🔗 URL interceptada: $interceptedUrl")
-                    
-                    // Verifica se deve IGNORAR
-                    val shouldIgnore = ignorePatterns.any { it.containsMatchIn(interceptedUrl) }
-                    
-                    if (shouldIgnore) {
-                        // IGNORA completamente esta requisição
-                        println("⛔ IGNORADO: $interceptedUrl")
-                        return@WebViewResolver null // Não faz a requisição
-                    }
-                    
-                    // Verifica se é um M3U8 que queremos CAPTURAR
-                    val isM3u8 = capturePatterns.any { it.containsMatchIn(interceptedUrl) }
-                    
-                    if (isM3u8) {
-                        println("🎯 M3U8 CAPTURADO: $interceptedUrl")
-                        capturedM3u8Urls.add(interceptedUrl)
+                timeout = 120000L, // 2 minutos
+                injectJavaScript = """
+                    // Remove elementos de ads enquanto carrega
+                    setTimeout(function() {
+                        var selectors = [
+                            '[class*="ad"]', '[id*="ad"]', '[class*="Ad"]', '[id*="Ad"]',
+                            '.ad-container', '.ad-banner', '.adsbygoogle', 'iframe[src*="ads"]',
+                            'div[class*="popup"]', 'div[class*="modal"]'
+                        ];
                         
-                        // Verifica se é o M3U8 FINAL (baseado no padrão que você encontrou)
-                        if (interceptedUrl.contains("i8yz83pn.com") && 
-                            interceptedUrl.contains("/hls2/") &&
-                            interceptedUrl.contains("master.m3u8")) {
-                            m3u8FinalUrl = interceptedUrl
-                            println("✅ M3U8 FINAL ENCONTRADO!")
-                        }
-                        
-                        // Continua carregando a página, não interrompe
-                        return@WebViewResolver null
-                    }
-                    
-                    // Para outras URLs, permite o carregamento normal
-                    println("✅ Permitindo: ${interceptedUrl.take(80)}...")
-                    null
+                        selectors.forEach(function(selector) {
+                            var elements = document.querySelectorAll(selector);
+                            elements.forEach(function(el) {
+                                el.style.display = 'none';
+                                el.remove();
+                            });
+                        });
+                    }, 3000);
+                """,
+                onUrlLoaded = { loadedUrl ->
+                    println("📄 Página carregada: ${loadedUrl.take(80)}...")
                 }
             )
             
-            // PRIMEIRO: Deixa a página carregar completamente
-            println("⏳ Carregando página (pode levar até 2 minutos devido aos ads)...")
-            
+            // Faz a requisição com o WebView
             val response = app.get(
                 url,
-                headers = getStealthHeaders(),
-                interceptor = streamResolver,
-                timeout = 125_000L // 125 segundos
+                headers = getWebViewHeaders(),
+                interceptor = resolver,
+                timeout = 125000L
             )
             
-            println("📊 Estatísticas:")
-            println("   - URLs M3U8 capturadas: ${capturedM3u8Urls.size}")
-            println("   - HTML final: ${response.text.length} caracteres")
+            println("✅ WebView concluído")
+            println("📊 HTML obtido: ${response.text.length} caracteres")
             
-            // PRIORIDADE 1: Usa o M3U8 final encontrado durante interceptação
-            if (m3u8FinalUrl != null) {
-                println("🚀 Usando M3U8 final capturado: $m3u8FinalUrl")
-                return generateM3u8Links(m3u8FinalUrl!!, name, callback)
-            }
-            
-            // PRIORIDADE 2: Testa todas as URLs M3U8 capturadas (do último para o primeiro)
-            if (capturedM3u8Urls.isNotEmpty()) {
-                println("🔍 Testando ${capturedM3u8Urls.size} URLs M3U8 capturadas...")
-                
-                // Ordena: as últimas URLs são as mais prováveis de serem o stream final
-                val urlsToTest = capturedM3u8Urls.takeLast(5).reversed()
-                
-                for ((index, m3u8Url) in urlsToTest.withIndex()) {
-                    println("🧪 Testando M3U8 #${index + 1}: ${m3u8Url.take(100)}...")
-                    
-                    if (testAndGenerateM3u8(m3u8Url, name, callback)) {
-                        return true
-                    }
-                }
-            }
-            
-            // PRIORIDADE 3: Procura M3U8 no HTML final
-            println("🔍 Procurando M3U8 no HTML final...")
-            val htmlM3u8Urls = extractM3u8FromHtml(response.text)
-            
-            for (m3u8Url in htmlM3u8Urls.take(3)) {
-                println("🧪 Testando M3U8 do HTML: ${m3u8Url.take(100)}...")
-                
-                if (testAndGenerateM3u8(m3u8Url, name, callback)) {
-                    return true
-                }
-            }
-            
-            println("❌ Nenhum M3U8 funcionou")
-            return false
+            // Extrai URLs M3U8 do HTML
+            val htmlM3u8s = extractM3u8FromHtml(response.text)
+            m3u8Urls.addAll(htmlM3u8s)
             
         } catch (e: Exception) {
             println("❌ Erro no WebView: ${e.message}")
-            e.printStackTrace()
-            return false
-        }
-    }
-    
-    private fun extractM3u8FromHtml(html: String): List<String> {
-        val m3u8Urls = mutableListOf<String>()
-        
-        val patterns = listOf(
-            Regex("""["'](https?://[^"']+\.m3u8[^"']*)["']""", RegexOption.IGNORE_CASE),
-            Regex("""(https?://[^\s<>"']+\.m3u8)""", RegexOption.IGNORE_CASE),
-            Regex("""src\s*[:=]\s*["']([^"']+\.m3u8[^"']*)["']""", RegexOption.IGNORE_CASE),
-            Regex("""hls\s*[:=]\s*["']([^"']+\.m3u8[^"']*)["']""", RegexOption.IGNORE_CASE),
-            Regex("""videoUrl\s*[:=]\s*["']([^"']+\.m3u8[^"']*)["']""", RegexOption.IGNORE_CASE)
-        )
-        
-        patterns.forEach { pattern ->
-            val matches = pattern.findAll(html)
-            matches.forEach { match ->
-                var url = match.groupValues.getOrNull(1) ?: match.value
-                
-                // Limpeza da URL
-                url = url.replace("\\/", "/")
-                    .replace("\\\"", "")
-                    .replace("\\\\", "")
-                    .trim()
-                
-                if (url.isNotBlank() && !url.contains("ads") && url.startsWith("http")) {
-                    if (!m3u8Urls.contains(url)) {
-                        m3u8Urls.add(url)
-                    }
-                }
-            }
         }
         
         return m3u8Urls
     }
     
-    private suspend fun testAndGenerateM3u8(
-        m3u8Url: String,
-        name: String,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        return try {
-            println("🔄 Testando URL: ${m3u8Url.take(80)}...")
-            
-            // Teste rápido HEAD para ver se a URL existe
-            val headers = getM3u8Headers("https://g9r6.com/")
-            val testResponse = app.head(
-                m3u8Url,
-                headers = headers,
-                timeout = 10_000L
+    // Método alternativo: WebView com interceptação manual
+    private suspend fun extractWithWebViewInterceptor(url: String): List<String> {
+        val m3u8Urls = mutableListOf<String>()
+        
+        println("🎯 WebView com interceptação avançada...")
+        
+        try {
+            // Usa WebViewCaptchaObserver para mais controle
+            val observer = WebViewCaptchaObserver(
+                userAgent = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
+                timeout = 120000L,
+                onPageStarted = { url -> 
+                    println("➡️ Navegando para: ${url.take(80)}...")
+                },
+                onPageFinished = { url ->
+                    println("🏁 Página carregada: ${url.take(80)}...")
+                },
+                onLoadResource = { resourceUrl ->
+                    // Filtra requisições
+                    val shouldIgnore = ignorePatterns.any { 
+                        resourceUrl.contains(it, ignoreCase = true) 
+                    }
+                    
+                    if (!shouldIgnore && resourceUrl.contains(".m3u8", ignoreCase = true)) {
+                        println("🎯 M3U8 detectado: ${resourceUrl.take(100)}...")
+                        if (!m3u8Urls.contains(resourceUrl)) {
+                            m3u8Urls.add(resourceUrl)
+                        }
+                    }
+                    
+                    true // Continua carregando
+                }
             )
             
-            if (testResponse.code in 200..299) {
-                println("✅ URL válida, gerando links M3U8...")
-                generateM3u8Links(m3u8Url, name, callback)
-                return true
+            // Executa o WebView
+            val result = AppUtils.parseResponseUsingWebView(
+                url = url,
+                headers = getWebViewHeaders(),
+                timeout = 120000L,
+                webViewObserver = observer
+            )
+            
+            println("✅ Interceptação concluída: ${m3u8Urls.size} URLs M3U8 encontradas")
+            
+        } catch (e: Exception) {
+            println("❌ Erro na interceptação: ${e.message}")
+        }
+        
+        return m3u8Urls
+    }
+    
+    // Extrai M3U8 do HTML
+    private fun extractM3u8FromHtml(html: String): List<String> {
+        val urls = mutableListOf<String>()
+        
+        val patterns = listOf(
+            "\"(https?://[^\"]+\\.m3u8[^\"]*)\"",
+            "'(https?://[^']+\\.m3u8[^']*)'",
+            "src=[\"'](https?://[^\"']+\\.m3u8[^\"']*)[\"']",
+            "hls.*?[\"'](https?://[^\"']+\\.m3u8[^\"']*)[\"']",
+            "videoUrl.*?[\"'](https?://[^\"']+\\.m3u8[^\"']*)[\"']",
+            "file.*?[\"'](https?://[^\"']+\\.m3u8[^\"']*)[\"']",
+            "source.*?[\"'](https?://[^\"']+\\.m3u8[^\"']*)[\"']"
+        )
+        
+        for (pattern in patterns) {
+            try {
+                val regex = Regex(pattern, RegexOption.IGNORE_CASE)
+                val matches = regex.findAll(html)
+                
+                matches.forEach { match ->
+                    var url = match.groupValues.getOrNull(1) ?: continue
+                    
+                    // Limpa a URL
+                    url = url.replace("\\/", "/")
+                        .replace("\\\"", "")
+                        .replace("\\'", "")
+                        .replace("\\\\", "")
+                        .trim()
+                    
+                    // Verifica se é URL válida e não é ad
+                    if (url.startsWith("http") && 
+                        url.contains(".m3u8") &&
+                        !ignorePatterns.any { url.contains(it, ignoreCase = true) }) {
+                        
+                        // Filtra padrões específicos que você encontrou
+                        if (url.contains("i8yz83pn.com") || 
+                            url.contains("/hls2/") ||
+                            url.contains("master.m3u8") ||
+                            url.contains("index.m3u8")) {
+                            
+                            if (!urls.contains(url)) {
+                                urls.add(url)
+                                println("🔍 M3U8 no HTML: ${url.take(80)}...")
+                            }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                // Continua com próximo padrão
+            }
+        }
+        
+        return urls
+    }
+    
+    // Testa uma URL M3U8
+    private suspend fun testM3u8Url(m3u8Url: String): Boolean {
+        return try {
+            println("🧪 Testando: ${m3u8Url.take(80)}...")
+            
+            val headers = getM3u8Headers()
+            val response = app.head(m3u8Url, headers = headers, timeout = 15000L)
+            
+            if (response.code in 200..299) {
+                println("✅ URL válida (status ${response.code})")
+                true
             } else {
-                println("⚠️ URL retornou status ${testResponse.code}")
+                println("⚠️ URL inválida (status ${response.code})")
                 false
             }
         } catch (e: Exception) {
@@ -291,49 +245,100 @@ object SuperFlixExtractor {
         }
     }
     
-    private suspend fun generateM3u8Links(
-        m3u8Url: String,
-        name: String,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        return try {
-            val headers = getM3u8Headers("https://g9r6.com/")
-            
-            M3u8Helper.generateM3u8(
-                name,
-                m3u8Url,
-                referer = "https://g9r6.com/",
-                headers = headers,
-                quality = null // Detecta qualidade automaticamente
-            ).forEach(callback)
-            
-            println("🎉 Links M3U8 gerados com sucesso!")
-            true
-        } catch (e: Exception) {
-            println("❌ Erro ao gerar links M3U8: ${e.message}")
-            false
-        }
-    }
-    
-    // Função principal do extrator
-    suspend fun extractVideoLinks(
-        url: String,
-        mainUrl: String,
-        name: String,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        println("=========================================")
-        println("🚀 SuperFlix Extractor v2.0 (WebView Otimizado)")
-        println("=========================================")
+    override suspend fun getUrl(url: String, referer: String?): List<ExtractorLink> {
+        println("=".repeat(50))
+        println("🚀 SUPERFLIX EXTRACTOR INICIADO")
+        println("🎯 URL: $url")
+        println("=".repeat(50))
         
-        // Tenta com WebView inteligente primeiro
-        val success = extractWithSmartWebView(url, name, callback)
+        val results = mutableListOf<ExtractorLink>()
+        val allM3u8Urls = mutableListOf<String>()
         
-        if (!success) {
-            println("⚠️ WebView falhou, tentando método alternativo...")
-            // Pode adicionar fallback aqui se necessário
+        // STRATÉGIA 1: WebView com interceptação
+        println("\n1️⃣ ESTRATÉGIA: WebView com interceptação")
+        val webViewUrls = extractWithWebViewInterceptor(url)
+        allM3u8Urls.addAll(webViewUrls)
+        
+        // Se não encontrou, tenta WebView simples
+        if (allM3u8Urls.isEmpty()) {
+            println("\n2️⃣ ESTRATÉGIA: WebView simples")
+            val simpleWebViewUrls = extractWithWebView(url)
+            allM3u8Urls.addAll(simpleWebViewUrls)
         }
         
-        return success
+        // Se ainda não encontrou, tenta padrão direto
+        if (allM3u8Urls.isEmpty()) {
+            println("\n3️⃣ ESTRATÉGIA: Padrão direto")
+            // Extrai ID da URL
+            val idMatch = Regex("""/(\d+)(?:-dub)?""").find(url)
+            val videoId = idMatch?.groupValues?.get(1)
+            
+            if (videoId != null) {
+                // URL baseada no padrão que você encontrou
+                val directUrl = "https://be7713.rcr82.waw05.i8yz83pn.com/hls2/09/10529/ftltsho61fgs_h/master.m3u8"
+                allM3u8Urls.add(directUrl)
+                
+                // Tenta algumas variações
+                val variations = listOf(
+                    "https://be7713.rcr82.waw05.i8yz83pn.com/hls2/01/0101/video_${videoId}_h/master.m3u8",
+                    "https://cdn.superflix.com/hls/$videoId/master.m3u8",
+                    "https://stream.superflix.com/video/$videoId/master.m3u8"
+                )
+                allM3u8Urls.addAll(variations)
+            }
+        }
+        
+        // Remove duplicados
+        val uniqueUrls = allM3u8Urls.distinct()
+        
+        println("\n📊 RESULTADOS DA BUSCA:")
+        println("   Total de URLs M3U8 encontradas: ${uniqueUrls.size}")
+        uniqueUrls.forEachIndexed { index, url ->
+            println("   ${index + 1}. ${url.take(100)}...")
+        }
+        
+        // Testa cada URL e gera links
+        println("\n🧪 TESTANDO URLs...")
+        for ((index, m3u8Url) in uniqueUrls.withIndex()) {
+            println("\n${index + 1}/${uniqueUrls.size}: Testando URL...")
+            
+            if (testM3u8Url(m3u8Url)) {
+                try {
+                    println("🔄 Gerando links M3u8...")
+                    
+                    val headers = getM3u8Headers()
+                    val links = M3u8Helper.generateM3u8(
+                        "SuperFlix",
+                        m3u8Url,
+                        referer = "https://g9r6.com/",
+                        headers = headers
+                    )
+                    
+                    if (links.isNotEmpty()) {
+                        results.addAll(links)
+                        println("✅ ${links.size} qualidades geradas com sucesso!")
+                        break // Para no primeiro sucesso
+                    }
+                } catch (e: Exception) {
+                    println("❌ Erro ao gerar M3U8: ${e.message}")
+                }
+            }
+            
+            // Pequena pausa entre testes
+            if (index < uniqueUrls.size - 1) {
+                delay(1000)
+            }
+        }
+        
+        println("\n" + "=".repeat(50))
+        if (results.isNotEmpty()) {
+            println("🎉 EXTRATOR CONCLUÍDO COM SUCESSO!")
+            println("   Total de links gerados: ${results.size}")
+        } else {
+            println("❌ EXTRATOR FALHOU - Nenhum link encontrado")
+        }
+        println("=".repeat(50))
+        
+        return results
     }
 }
