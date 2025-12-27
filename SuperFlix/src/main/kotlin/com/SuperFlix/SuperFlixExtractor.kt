@@ -14,51 +14,56 @@ object SuperFlixExtractor {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         return try {
-            // Estratégia SIMPLES: WebView com timeout grande
-            // Deixa carregar TUDO - redirecionamentos, ads, player
-            
+            // WebView que só intercepta URLs do CDN REAL
             val streamResolver = WebViewResolver(
-                interceptUrl = Regex(""".*\.m3u8.*"""), // Qualquer m3u8
+                interceptUrl = Regex("""(g9r6\.com|be7713\.rcr82\.waw05\.i8yz83pn\.com|filemoon\.sx).*\.m3u8"""),
                 useOkhttp = false,
-                timeout = 30000L // 30 SEGUNDOS - tempo para tudo carregar
+                timeout = 15_000L
             )
+
+            println("🎯 Interceptando apenas domínios do CDN...")
             
-            // Headers para parecer um navegador real
             val headers = mapOf(
-                "User-Agent" to "Mozilla/5.0 (Linux; Android 10; SM-G973F) AppleWebKit/537.36",
-                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                "Accept-Language" to "pt-BR,pt;q=0.9,en;q=0.8",
-                "Referer" to "https://superflix21.lol/"
+                "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36",
+                "Referer" to "https://g9r6.com/"
             )
             
             val response = app.get(url, headers = headers, interceptor = streamResolver)
             val intercepted = response.url
             
-            if (intercepted.contains(".m3u8")) {
-                println("✅ M3U8 encontrado: $intercepted")
+            println("🔗 URL interceptada: $intercepted")
+
+            if (intercepted.isNotEmpty() && intercepted.contains(".m3u8")) {
+                println("✅ M3U8 do CDN encontrado!")
                 
-                // Headers para o CDN - ESSENCIAIS!
+                // Headers COMPLETOS do CDN
                 val cdnHeaders = mapOf(
+                    "Accept" to "*/*",
+                    "Accept-Language" to "pt-BR",
+                    "Cache-Control" to "no-cache",
+                    "Pragma" to "no-cache",
                     "Referer" to "https://g9r6.com/",
-                    "Origin" to "https://g9r6.com/",
-                    "User-Agent" to "Mozilla/5.0"
+                    "Origin" to "https://g9r6.com",
+                    "Sec-Fetch-Dest" to "empty",
+                    "Sec-Fetch-Mode" to "cors",
+                    "Sec-Fetch-Site" to "cross-site",
+                    "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36"
                 )
-                
+
                 M3u8Helper.generateM3u8(
                     name,
                     intercepted,
                     "https://g9r6.com/",
-                    headers = cdnHeaders,
-                    prefix = "SuperFlix"
+                    headers = cdnHeaders
                 ).forEach(callback)
-                
+
                 true
             } else {
-                println("❌ Nenhum M3U8 encontrado. URL final: $intercepted")
+                println("❌ Nenhum M3U8 do CDN encontrado")
                 false
             }
         } catch (e: Exception) {
-            println("❌ Erro no extractor: ${e.message}")
+            println("💥 Erro: ${e.message}")
             false
         }
     }
