@@ -14,78 +14,97 @@ object SuperFlixExtractor {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         return try {
-            println("🎯 Estratégia: Ignorar ads iniciais por 5 segundos")
+            println("🚀 Iniciando extração com estratégia de delay...")
             
-            // Variável para controlar quando começar a interceptar
-            var interceptActive = false
+            // Variável para controlar o tempo
             val startTime = System.currentTimeMillis()
+            var interceptEnabled = false
             
+            // A assinatura CORRETA do WebViewResolver é:
+            // WebViewResolver(interceptUrl: Regex, useOkhttp: Boolean = false, timeout: Long = 8000L)
             val streamResolver = WebViewResolver(
-                // Usando a assinatura correta do construtor
+                interceptUrl = Regex(""".*"""), // Intercepta TUDO inicialmente
                 useOkhttp = false,
-                timeout = 20000L,
-                shouldIntercept = { requestUrl ->
-                    val elapsed = System.currentTimeMillis() - startTime
-                    
-                    // Só começa a interceptar após 5 segundos
-                    if (elapsed < 5000) {
-                        // Log a cada segundo
-                        if (elapsed % 1000 < 50) {
-                            val secondsLeft = (5000 - elapsed) / 1000
-                            if (secondsLeft > 0) {
-                                println("⏳ Aguardando: ${secondsLeft}s - IGNORANDO requisições")
-                            }
-                        }
-                        return@WebViewResolver false
-                    }
-                    
-                    // Após 5s, verifica se é m3u8
-                    if (!interceptActive) {
-                        interceptActive = true
-                        println("✅ Delay de 5s finalizado! Agora interceptando m3u8...")
-                    }
-                    
-                    val isM3u8 = requestUrl.contains(".m3u8")
-                    if (isM3u8) {
-                        println("🎯 Interceptando m3u8: ${requestUrl.take(80)}...")
-                    }
-                    
-                    return@WebViewResolver isM3u8
-                }
+                timeout = 25000L // 25 segundos
             )
             
-            val response = app.get(url, interceptor = streamResolver)
-            val intercepted = response.url
-
-            if (intercepted.contains(".m3u8")) {
-                println("✅ M3U8 encontrado após delay: $intercepted")
+            // Mas precisamos de um wrapper para controlar o delay
+            // Infelizmente não podemos modificar o WebViewResolver diretamente
+            
+            // SOLUÇÃO: Usar abordagem diferente - duas etapas
+            return twoStepExtraction(url, name, callback)
+            
+        } catch (e: Exception) {
+            println("💥 Erro: ${e.message}")
+            false
+        }
+    }
+    
+    private suspend fun twoStepExtraction(
+        url: String,
+        name: String,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        return try {
+            println("🎯 Estratégia em 2 etapas:")
+            println("1. Primeiros 5s: Ignorar tudo")
+            println("2. Depois: Interceptar m3u8")
+            
+            val startTime = System.currentTimeMillis()
+            var m3u8Found: String? = null
+            
+            // Primeiro: Deixar a página carregar por 5 segundos
+            val initialResolver = WebViewResolver(
+                interceptUrl = Regex(""".*\.m3u8.*"""), // Procura m3u8
+                useOkhttp = false,
+                timeout = 5000L // Só 5 segundos para a fase inicial
+            )
+            
+            println("⏳ Etapa 1: Carregando página (5s)...")
+            try {
+                val initialResponse = app.get(url, interceptor = initialResolver)
+                if (initialResponse.url.contains(".m3u8")) {
+                    m3u8Found = initialResponse.url
+                    println("⚠️  M3U8 encontrado cedo demais (durante ads)")
+                }
+            } catch (e: Exception) {
+                // Timeout esperado após 5s
+                println("✅ Primeiros 5s completos (ads devem ter carregado)")
+            }
+            
+            // Segundo: Agora tentar achar o m3u8 REAL
+            println("🔍 Etapa 2: Procurando m3u8 real...")
+            
+            val finalResolver = WebViewResolver(
+                interceptUrl = Regex(""".*\.m3u8.*"""),
+                useOkhttp = false,
+                timeout = 15000L // Mais 15 segundos
+            )
+            
+            val finalResponse = app.get(url, interceptor = finalResolver)
+            
+            if (finalResponse.url.contains(".m3u8")) {
+                val m3u8Url = finalResponse.url
+                println("✅ M3U8 encontrado após delay: $m3u8Url")
                 
-                // Headers baseados na sua análise
-                val headers = mapOf(
-                    "Referer" to "https://g9r6.com/",
-                    "Origin" to "https://g9r6.com",
-                    "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36",
-                    "Accept" to "*/*",
-                    "Accept-Language" to "pt-BR",
-                    "Sec-Fetch-Dest" to "empty",
-                    "Sec-Fetch-Mode" to "cors",
-                    "Sec-Fetch-Site" to "cross-site"
-                )
-
                 M3u8Helper.generateM3u8(
                     name,
-                    intercepted,
+                    m3u8Url,
                     "https://g9r6.com/",
-                    headers = headers
+                    headers = mapOf(
+                        "Referer" to "https://g9r6.com/",
+                        "Origin" to "https://g9r6.com",
+                        "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36"
+                    )
                 ).forEach(callback)
-
+                
                 true
             } else {
-                println("❌ Nenhum M3U8 encontrado após delay")
+                println("❌ Nenhum M3U8 encontrado")
                 false
             }
         } catch (e: Exception) {
-            println("💥 Erro no extractor: ${e.message}")
+            println("💥 Erro na extração: ${e.message}")
             false
         }
     }
