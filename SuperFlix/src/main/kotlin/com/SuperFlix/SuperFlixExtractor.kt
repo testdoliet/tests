@@ -218,7 +218,12 @@ object SuperFlixExtractor {
             val scriptContent = response.text
             
             println("📜 Conteúdo do script (${scriptContent.length} chars)")
-            
+            // Salvar uma amostra do script para análise
+val sampleSize = 5000
+println("🔍 Primeiros $sampleSize caracteres do script:")
+println(scriptContent.take(sampleSize))
+println("\n\n🔍 Últimos $sampleSize caracteres do script:")
+println(scriptContent.takeLast(sampleSize))
             // Procurar m3u8 no script JavaScript
             // Padrões comuns em SPAs React:
             // 1. URLs em strings: "https://...m3u8"
