@@ -14,37 +14,36 @@ object SuperFlixExtractor {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         return try {
-            // Estratégia: Esperar a página carregar COMPLETAMENTE
-            // antes de interceptar
-            
-            val streamResolver = DelayedWebViewResolver(
-                initialDelay = 5000L, // 5 segundos de delay
-                interceptPattern = Regex("""\.(m3u8|mp4|mkv)"""),
-                timeout = 20_000L // Total 20s
+            // WebView com DELAY de 5 segundos antes de interceptar
+            // Durante os primeiros 5s, IGNORA TUDO
+            val streamResolver = DelayedInterceptorWebViewResolver(
+                initialDelayMs = 5000L, // 5 segundos
+                interceptPattern = Regex(""".*\.m3u8.*"""),
+                totalTimeout = 20_000L // 20 segundos total
             )
+
+            println("⏱️  Iniciando WebView com delay de 5s...")
+            println("📡 Primeiros 5 segundos: IGNORANDO TODAS as requisições (ads)")
 
             val response = app.get(url, interceptor = streamResolver)
             val intercepted = response.url
 
             if (intercepted.isNotEmpty() && intercepted.contains(".m3u8")) {
-                println("✅ M3U8 encontrado após delay: $intercepted")
+                println("✅ M3U8 encontrado APÓS delay de 5s: $intercepted")
                 
-                // Headers CORRETOS baseados na sua análise
+                // Headers baseados na sua análise
                 val headers = mapOf(
                     "Referer" to "https://g9r6.com/",
                     "Origin" to "https://g9r6.com",
                     "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36",
                     "Accept" to "*/*",
-                    "Accept-Language" to "pt-BR",
-                    "Sec-Fetch-Dest" to "empty",
-                    "Sec-Fetch-Mode" to "cors",
-                    "Sec-Fetch-Site" to "cross-site"
+                    "Accept-Language" to "pt-BR"
                 )
 
                 M3u8Helper.generateM3u8(
                     name,
                     intercepted,
-                    "https://g9r6.com/", // Referer CORRETO
+                    "https://g9r6.com/",
                     headers = headers
                 ).forEach(callback)
 
@@ -60,33 +59,58 @@ object SuperFlixExtractor {
     }
 }
 
-// WebViewResolver personalizado com DELAY inicial
-class DelayedWebViewResolver(
-    private val initialDelay: Long = 5000L,
+// WebViewResolver que IGNORA requisições durante um período inicial
+class DelayedInterceptorWebViewResolver(
+    private val initialDelayMs: Long = 5000L,
     interceptPattern: Regex,
     useOkhttp: Boolean = false,
-    timeout: Long = 15000L
-) : WebViewResolver(interceptPattern, useOkhttp, timeout) {
+    totalTimeout: Long = 15000L
+) : WebViewResolver(interceptPattern, useOkhttp, totalTimeout) {
     
-    private var startTime = System.currentTimeMillis()
+    private var startTime: Long = 0
     private var delayPassed = false
+    
+    init {
+        startTime = System.currentTimeMillis()
+        println("⏰ Delay configurado: ${initialDelayMs}ms")
+    }
     
     override fun shouldIntercept(requestUrl: String): Boolean {
         val currentTime = System.currentTimeMillis()
-        val elapsed = currentTime - startTime
+        val elapsedTime = currentTime - startTime
         
-        // Se ainda não passou o delay, NÃO intercepta
-        if (elapsed < initialDelay) {
-            return false
+        // Se ainda está no período de delay, IGNORA TUDO
+        if (elapsedTime < initialDelayMs) {
+            // Log apenas a cada segundo para não poluir
+            if (elapsedTime % 1000 < 50) { // Aprox a cada segundo
+                val secondsLeft = (initialDelayMs - elapsedTime) / 1000
+                if (secondsLeft > 0) {
+                    println("⏳ Delay ativo: ${secondsLeft}s restantes - IGNORANDO: ${getUrlSummary(requestUrl)}")
+                }
+            }
+            return false // NÃO intercepta durante o delay
         }
         
-        // Passou o delay, marca como true
+        // Após o delay, começa a verificar
         if (!delayPassed) {
-            println("⏰ Delay de ${initialDelay}ms passado, começando a interceptar...")
             delayPassed = true
+            println("✅ Delay finalizado! Começando a interceptar m3u8...")
         }
         
-        // Agora intercepta normalmente
-        return super.shouldIntercept(requestUrl)
+        // Só intercepta se for m3u8 (após o delay)
+        val shouldIntercept = super.shouldIntercept(requestUrl)
+        if (shouldIntercept) {
+            println("🎯 Interceptando APÓS delay: ${getUrlSummary(requestUrl)}")
+        }
+        
+        return shouldIntercept
+    }
+    
+    private fun getUrlSummary(url: String): String {
+        return if (url.length > 60) {
+            "${url.substring(0, 30)}...${url.substring(url.length - 30)}"
+        } else {
+            url
+        }
     }
 }
