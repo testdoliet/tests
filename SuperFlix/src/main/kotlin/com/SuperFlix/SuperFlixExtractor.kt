@@ -30,13 +30,11 @@ object SuperFlixExtractor {
                 "Pragma" to "no-cache"
             )
             
+            // Regex para detectar URLs de vídeo
+            val videoRegex = Regex("""\.(m3u8|mp4|mkv)(\?.*)?$""")
+            
             val streamResolver = WebViewResolver(
-                interceptUrl = { interceptedUrl ->
-                    // Filtra apenas URLs que parecem ser de vídeo
-                    interceptedUrl.contains(".m3u8") || 
-                    interceptedUrl.contains(".mp4") || 
-                    interceptedUrl.contains(".mkv")
-                },
+                interceptUrl = videoRegex,
                 useOkhttp = false,
                 timeout = 10_000L
             )
