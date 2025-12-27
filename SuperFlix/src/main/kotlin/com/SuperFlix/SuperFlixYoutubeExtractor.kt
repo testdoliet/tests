@@ -1,159 +1,249 @@
 package com.SuperFlix
 
+import com.lagradost.cloudstream3.utils.ExtractorApi
+import com.lagradost.cloudstream3.utils.ExtractorLink
+import com.lagradost.cloudstream3.utils.newExtractorLink
+import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.app
-import com.lagradost.cloudstream3.utils.ExtractorLink
-import com.lagradost.cloudstream3.utils.M3u8Helper
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import java.util.concurrent.TimeUnit
+import com.lagradost.cloudstream3.utils.M3u8Helper2
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
+import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.MediaType.Companion.toMediaType
+import org.json.JSONObject
+import java.util.regex.Pattern
 
-object SuperFlixExtractor {
-    private val okHttpClient = OkHttpClient.Builder()
-        .followRedirects(true)
-        .connectTimeout(10, TimeUnit.SECONDS)
-        .readTimeout(15, TimeUnit.SECONDS)
-        .writeTimeout(10, TimeUnit.SECONDS)
-        .addInterceptor { chain ->
-            val request = chain.request().newBuilder()
-                .header("User-Agent", "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36")
-                .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-                .header("Accept-Language", "pt-BR,pt;q=0.9,en;q=0.8")
-                .header("Referer", "https://superflix21.lol/")
-                .header("Sec-Fetch-Dest", "document")
-                .header("Sec-Fetch-Mode", "navigate")
-                .header("Sec-Fetch-Site", "cross-site")
-                .build()
-            chain.proceed(request)
-        }
-        .build()
+class YouTubeTrailerExtractor : ExtractorApi() {
+    override val name = "YouTube"
+    override val mainUrl = "https://www.youtube.com"
+    override val requiresReferer = false
 
-    suspend fun extractVideoLinks(
-        url: String,
-        mainUrl: String,
-        name: String,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        return try {
-            println("🚀 Usando OkHttp para extração direta...")
-            
-            // PASSO 1: Seguir TODOS os redirecionamentos com OkHttp
-            val finalUrl = followRedirectsWithOkHttp(url)
-            println("🔗 URL final após redirecionamentos: $finalUrl")
-            
-            // PASSO 2: Se chegou no player bysevepoin, extrair m3u8
-            if (finalUrl.contains("bysevepoin.com/e/")) {
-                extractM3u8FromBysevepoin(finalUrl, name, callback)
-            } else {
-                println("❌ Não chegou no player bysevepoin.com")
-                false
-            }
-        } catch (e: Exception) {
-            println("💥 Erro no OkHttp: ${e.message}")
-            false
-        }
-    }
-    
-    private suspend fun followRedirectsWithOkHttp(startUrl: String): String {
-        return try {
-            val request = Request.Builder()
-                .url(startUrl)
-                .get()
-                .build()
-            
-            val response = okHttpClient.newCall(request).execute()
-            // Retorna a URL FINAL após TODOS os redirecionamentos
-            val finalUrl = response.request.url.toString()
-            response.close()
-            finalUrl
-        } catch (e: Exception) {
-            startUrl
-        }
-    }
-    
-    private suspend fun extractM3u8FromBysevepoin(
-        playerUrl: String,
-        name: String,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        return try {
-            println("🎬 Extraindo m3u8 do player: $playerUrl")
-            
-            // Faz request ao player bysevepoin
-            val request = Request.Builder()
-                .url(playerUrl)
-                .header("Referer", "https://superflix21.lol/")
-                .header("Origin", "https://superflix21.lol")
-                .header("User-Agent", "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36")
-                .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-                .build()
-            
-            val response = okHttpClient.newCall(request).execute()
-            
-            if (response.isSuccessful) {
-                val html = response.body?.string() ?: ""
-                response.close()
-                println("📄 HTML do player obtido (${html.length} chars)")
-                
-                // Procura m3u8 no HTML
-                val m3u8Url = findM3u8InHtml(html)
-                
-                if (m3u8Url != null) {
-                    println("✅ M3U8 encontrado no HTML: $m3u8Url")
-                    
-                    // Gerar links M3U8 com headers CORRETOS
-                    M3u8Helper.generateM3u8(
-                        name,
-                        m3u8Url,
-                        "https://g9r6.com/",
-                        headers = mapOf(
-                            "Referer" to "https://g9r6.com/",
-                            "Origin" to "https://g9r6.com",
-                            "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36"
-                        )
-                    ).forEach(callback)
-                    
-                    true
-                } else {
-                    println("❌ Nenhum m3u8 encontrado no HTML do player")
-                    response.close()
-                    false
-                }
-            } else {
-                println("❌ Falha ao acessar player: ${response.code}")
-                response.close()
-                false
-            }
-        } catch (e: Exception) {
-            println("💥 Erro ao extrair do player: ${e.message}")
-            false
-        }
-    }
-    
-    private fun findM3u8InHtml(html: String): String? {
-        // Padrões para encontrar m3u8 no HTML
-        val patterns = listOf(
-            Regex("""["'](https?://[^"']+\.m3u8[^"']*)["']"""),
-            Regex("""src=["'](https?://[^"']+\.m3u8[^"']*)["']"""),
-            Regex("""source.*src=["'](https?://[^"']+\.m3u8[^"']*)["']"""),
-            Regex("""file:\s*["'](https?://[^"']+\.m3u8[^"']*)["']"""),
-            Regex("""hls\.loadSource\(["'](https?://[^"']+\.m3u8[^"']*)["']"""),
-            Regex("""(https?://[^"'\s]+\.m3u8[^"'\s]*)""")
+    private companion object {
+        private const val USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15"
+        private val HEADERS = mapOf(
+            "User-Agent" to USER_AGENT,
+            "Accept-Language" to "en-US,en;q=0.5"
         )
-        
-        for (pattern in patterns) {
-            val match = pattern.find(html)
-            if (match != null) {
-                val url = match.groupValues[1]
-                // Filtra apenas URLs do CDN correto
-                if (url.contains("g9r6.com") || url.contains("filemoon") || 
-                    url.contains("sxcdn") || url.contains("fcdn") ||
-                    url.contains(".m3u8")) {
-                    return url
-                }
-            }
-        }
-        
-        return null
     }
+
+    private fun debugLog(message: String) {
+        println("🔍 YouTubeExt: $message")
+    }
+
+    private fun extractYtCfg(html: String): JSONObject? {
+return try {
+            val pattern = Pattern.compile("ytcfg\\.set\\(\\s*(\\{.*?\\})\\s*\\)\\s*;")
+            val matcher = pattern.matcher(html)
+            if (matcher.find()) {
+                JSONObject(matcher.group(1))
+} else {
+                null
+}
+} catch (e: Exception) {
+            debugLog("ytcfg error: ${e.message}")
+            null
+}
+}
+
+    private suspend fun getPageConfig(videoId: String): Map<String, String>? {
+        return withContext(Dispatchers.IO) {
+            try {
+                val url = "https://www.youtube.com/watch?v=$videoId"
+                debugLog("Fetching page: $url")
+                
+                val response = app.get(url, headers = HEADERS)
+                if (response.isSuccessful) {
+                    val html = response.text
+                    val ytCfg = extractYtCfg(html)
+                    
+                    ytCfg?.let {
+                        val apiKey = it.optString("INNERTUBE_API_KEY")
+                        val clientVersion = it.optString("INNERTUBE_CLIENT_VERSION")
+                        val visitorData = it.optString("VISITOR_DATA")
+                        
+                        if (apiKey.isNotBlank() && clientVersion.isNotBlank()) {
+                            mapOf(
+                                "apiKey" to apiKey,
+                                "clientVersion" to clientVersion,
+                                "visitorData" to visitorData
+                            )
+                        } else {
+                            debugLog("API key or client version not found")
+                            null
+                        }
+                    }
+                } else {
+                    debugLog("Failed to fetch page: ${response.code}")
+                    null
+                }
+            } catch (e: Exception) {
+                debugLog("Error in getPageConfig: ${e.message}")
+                null
+            }
+}
+}
+
+    override suspend fun getUrl(
+        url: String,
+        referer: String?,
+        subtitleCallback: (SubtitleFile) -> Unit,
+callback: (ExtractorLink) -> Unit
+    ) {
+        try {
+            debugLog("Processing URL: $url")
+            
+            // Extrair videoId
+            val videoId = extractVideoId(url)
+            if (videoId.isEmpty()) {
+                debugLog("Could not extract videoId")
+                return
+            }
+
+            debugLog("Video ID: $videoId")
+
+            // Obter configuração da página
+            val config = getPageConfig(videoId)
+
+            if (config != null) {
+                val apiKey = config["apiKey"]
+                val clientVersion = config["clientVersion"]
+                val visitorData = config["visitorData"]
+
+                if (apiKey != null && clientVersion != null) {
+                    // Fazer requisição para a API do YouTube
+                    val apiUrl = "https://www.youtube.com/youtubei/v1/player?key=$apiKey"
+                    
+                    val jsonBody = """
+                    {
+                        "context": {
+                            "client": {
+                                "hl": "en",
+                                "gl": "US",
+                                "clientName": "WEB",
+                                "clientVersion": "$clientVersion",
+                                "visitorData": "$visitorData",
+                                "platform": "DESKTOP",
+                                "userAgent": "$USER_AGENT"
+                            }
+                        },
+                        "videoId": "$videoId",
+                        "playbackContext": {
+                            "contentPlaybackContext": {
+                                "html5Preference": "HTML5_PREF_WANTS"
+                            }
+                        }
+                    }
+                    """.trimIndent()
+                    
+                    val requestBody = jsonBody.toRequestBody(
+                        "application/json; charset=utf-8".toMediaType()
+                    )
+                    
+                    debugLog("Making API request to: $apiUrl")
+
+                    val response = app.post(
+                        apiUrl,
+                        headers = HEADERS,
+                        requestBody = requestBody
+                    )
+
+                    if (response.isSuccessful) {
+                        val jsonResponse = JSONObject(response.text)
+                        val streamingData = jsonResponse.optJSONObject("streamingData")
+                        
+                        if (streamingData != null) {
+                            val hlsUrl = streamingData.optString("hlsManifestUrl")
+                            
+                            if (hlsUrl.isNotBlank()) {
+                                debugLog("HLS URL found: $hlsUrl")
+                                
+                                // Processar stream M3U8 - método simplificado
+                                try {
+                                    val m3u8Links = M3u8Helper2.generateM3u8(
+                                        "Youtube",
+                                        hlsUrl,
+                                        mainUrl
+                                    )
+                                    
+                                    m3u8Links?.forEach { link ->
+                                        callback(link)
+                                    }
+                                    
+                                    if (m3u8Links != null && m3u8Links.isNotEmpty()) {
+                                        return
+                                    }
+                                } catch (e: Exception) {
+                                    debugLog("M3U8 processing failed: ${e.message}")
+                                }
+                            }
+                        }
+                    }
+}
+}
+            
+            // Fallback para URL direta
+            sendFallbackUrl(videoId, callback)
+            
+} catch (e: Exception) {
+            debugLog("Error: ${e.message}")
+            e.printStackTrace()
+            
+            // Fallback em caso de erro
+            try {
+                val videoId = extractVideoId(url)
+                if (videoId.isNotEmpty()) {
+                    sendFallbackUrl(videoId, callback)
+                }
+            } catch (e2: Exception) {
+                debugLog("Fallback also failed: ${e2.message}")
+            }
+}
+}
+
+    private suspend fun sendFallbackUrl(videoId: String, callback: (ExtractorLink) -> Unit) {
+        debugLog("Using fallback URL")
+        
+        val youtubeUrl = "https://www.youtube.com/watch?v=$videoId"
+        
+        val link = newExtractorLink(
+            source = name,
+            name = "YouTube Player",
+            url = youtubeUrl,
+            type = ExtractorLinkType.VIDEO
+        ) {
+            this.referer = mainUrl
+            quality = 1080
+        }
+
+        callback(link)
+    }
+    
+    private fun extractVideoId(url: String): String {
+        return try {
+            // Padrão 1: v=ID
+            val pattern1 = Pattern.compile("v=([a-zA-Z0-9_-]{11})")
+            val matcher1 = pattern1.matcher(url)
+            if (matcher1.find()) {
+                return matcher1.group(1) ?: ""
+            }
+            
+            // Padrão 2: youtu.be/ID
+            val pattern2 = Pattern.compile("youtu\\.be/([a-zA-Z0-9_-]{11})")
+            val matcher2 = pattern2.matcher(url)
+            if (matcher2.find()) {
+                return matcher2.group(1) ?: ""
+            }
+            
+            // Se já for apenas um ID
+            if (url.length == 11 && url.matches(Regex("[a-zA-Z0-9_-]+"))) {
+                return url
+}
+            
+            // Último segmento da URL
+            url.substringAfterLast("/")
+        } catch (e: Exception) {
+            ""
+}
+}
 }
