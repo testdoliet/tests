@@ -368,32 +368,31 @@ class Goyabu : MainAPI() {
                 }
                 
                 // Verificar se é dublado
-                val hasDubBadge = element.selectFirst(".audio-box.dublado") != null
-                
-                if (cleanedTitle.isNotBlank()) {
-                    items.add(newAnimeSearchResponse(cleanedTitle, fixUrl(href)) {
-                        this.posterUrl = posterUrl
-                        this.type = TvType.Anime
-                        
-                        if (episodeNum > 0) {
-                            this.name = "$cleanedTitle - Episódio $episodeNum"
-                        }
-                        
-                        if (hasDubBadge) {
-                            addDubStatus(dubExist = true, subExist = false)
-                        } else {
-                            addDubStatus(dubExist = false, subExist = true)
-                        }
-                    })
-                    
-                    if (index < 3) {
-                        println("   🎬 Lançamento: $cleanedTitle (Ep $episodeNum) -> $href")
-                    }
-                }
-            } catch (e: Exception) {
-                println("   ❌ Erro ao extrair lançamento ${index + 1}: ${e.message}")
-            }
+val hasDubBadge = element.selectFirst(".audio-box.dublado") != null
+
+if (cleanedTitle.isNotBlank()) {
+    val searchResponse = newAnimeSearchResponse(cleanedTitle, fixUrl(href)) {
+        this.posterUrl = posterUrl
+        this.type = TvType.Anime
+        
+        if (episodeNum > 0) {
+            this.name = "$cleanedTitle - Episódio $episodeNum"
         }
+    }
+    
+    // Configurar status de dublagem diretamente no objeto retornado
+    if (hasDubBadge) {
+        searchResponse.addDubStatus(dubExist = true, subExist = false)
+    } else {
+        searchResponse.addDubStatus(dubExist = false, subExist = true)
+    }
+    
+    items.add(searchResponse)
+    
+    if (index < 3) {
+        println("   🎬 Lançamento: $cleanedTitle (Ep $episodeNum) -> $href")
+    }
+}
         
         return items
     }
