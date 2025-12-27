@@ -5,274 +5,168 @@ import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.network.WebViewResolver
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.M3u8Helper
-import com.lagradost.cloudstream3.utils.Qualities
 
 object SuperFlixExtractor {
-    // JavaScript para CLICAR automaticamente em tudo
-    private val autoClickScript = """
-        // Função para clicar em elementos automaticamente
-        function autoClickElements() {
-            console.log('🔍 Procurando elementos para clicar...');
-            
-            // Lista de seletores de botões comuns
-            const buttonSelectors = [
-                'button', 
-                'div[role="button"]',
-                'a[href*="play"]',
-                'a[href*="video"]',
-                '.play-btn',
-                '.player-button',
-                '[class*="play"]',
-                '[id*="play"]',
-                '.btn-play',
-                '.play-button',
-                'input[type="button"][value*="Play"]',
-                'input[type="button"][value*="Assistir"]',
-                '.jw-icon-play',
-                '.vjs-big-play-button',
-                '.plyr__control--play'
-            ];
-            
-            let clicked = false;
-            
-            // Tenta cada seletor
-            buttonSelectors.forEach(selector => {
-                const elements = document.querySelectorAll(selector);
-                elements.forEach(element => {
-                    console.log('🎯 Encontrado elemento:', element);
-                    
-                    // Simula click
-                    element.click();
-                    console.log('✅ Clicado no elemento via click()');
-                    
-                    // Também dispara eventos
-                    const mouseEvents = ['mousedown', 'mouseup', 'click'];
-                    mouseEvents.forEach(eventType => {
-                        const event = new MouseEvent(eventType, {
-                            view: window,
-                            bubbles: true,
-                            cancelable: true
-                        });
-                        element.dispatchEvent(event);
-                    });
-                    
-                    clicked = true;
-                });
-            });
-            
-            // Se não encontrou botões normais, procura por divs clicáveis
-            if (!clicked) {
-                const allDivs = document.querySelectorAll('div');
-                allDivs.forEach(div => {
-                    const style = window.getComputedStyle(div);
-                    const hasCursorPointer = style.cursor === 'pointer';
-                    const hasText = div.textContent && (
-                        div.textContent.toLowerCase().includes('play') ||
-                        div.textContent.toLowerCase().includes('assistir') ||
-                        div.textContent.toLowerCase().includes('watch') ||
-                        div.textContent.toLowerCase().includes('carregar')
-                    );
-                    
-                    if (hasCursorPointer || hasText) {
-                        console.log('🎯 Div clicável encontrada:', div);
-                        div.click();
-                        clicked = true;
-                    }
-                });
-            }
-            
-            return clicked;
-        }
-        
-        // Executa imediatamente
-        setTimeout(autoClickElements, 1000);
-        
-        // Executa periodicamente (a página pode carregar conteúdo dinâmico)
-        setInterval(autoClickElements, 3000);
-        
-        // Também observa mudanças no DOM
-        const observer = new MutationObserver(function(mutations) {
-            console.log('🔄 DOM mudou, tentando clicar novamente...');
-            autoClickElements();
-        });
-        
-        observer.observe(document.body, {
-            childList: true,
-            subtree: true
-        });
-        
-        console.log('🤖 Auto-click script carregado!');
-    """.trimIndent()
-
     suspend fun extractVideoLinks(
         url: String,
         mainUrl: String,
         name: String,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        println("🎮 SuperFlixExtractor com Auto-Click")
+        println("🎬 SuperFlixExtractor - Versão Simplificada")
         
-        // Lista para armazenar URLs interceptadas
-        val interceptedUrls = mutableListOf<String>()
+        // Usa um Set para armazenar URLs únicas
+        val interceptedM3u8 = mutableSetOf<String>()
         
+        // Cria um listener simples para capturar M3U8
         val streamResolver = WebViewResolver(
-            interceptUrl = Regex("""\.m3u8"""),
+            interceptUrl = Regex("""\.m3u8"""),  // Só intercepta M3U8
             useOkhttp = false,
-            timeout = 90_000L,  // 90 segundos (precisa clicar e carregar)
-            
-            // Configurações customizadas do WebView
-            additionalSettings = { webView ->
-                // Permite JavaScript
-                webView.settings.javaScriptEnabled = true
-                
-                // Injeta o script de auto-click
-                webView.evaluateJavascript(autoClickScript) {
-                    println("✅ Script de auto-click injetado")
-                }
-                
-                // Re-injeta o script quando a página carrega
-                webView.webViewClient = object : android.webkit.WebViewClient() {
-                    override fun onPageFinished(view: android.webkit.WebView?, url: String?) {
-                        super.onPageFinished(view, url)
-                        
-                        // Injeta o script novamente
-                        webView.evaluateJavascript(autoClickScript) {
-                            println("🔄 Script re-injetado após carregamento da página")
-                        }
-                        
-                        // Também tenta clicar via JavaScript
-                        val clickScript = """
-                            // Tenta clicar em qualquer coisa que pareça um botão de play
-                            function clickPlayButtons() {
-                                var clicked = false;
-                                
-                                // Procura por texto "Play", "Assistir", etc
-                                var texts = ['play', 'assistir', 'watch', 'carregar', 'player'];
-                                for(var i = 0; i < texts.length; i++) {
-                                    var xpath = "//*[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), '" + texts[i] + "')]";
-                                    var elements = document.evaluate(xpath, document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
-                                    
-                                    for(var j = 0; j < elements.snapshotLength; j++) {
-                                        var element = elements.snapshotItem(j);
-                                        if(element) {
-                                            element.click();
-                                            console.log('✅ Clicado via XPath: ' + texts[i]);
-                                            clicked = true;
-                                        }
-                                    }
-                                }
-                                
-                                return clicked;
-                            }
-                            
-                            clickPlayButtons();
-                        """.trimIndent()
-                        
-                        webView.evaluateJavascript(clickScript, null)
-                    }
-                }
-            },
-            
-            // Callback quando intercepta URL
-            onUrlIntercept = { interceptedUrl ->
-                println("🔄 Interceptado: $interceptedUrl")
-                
-                if (interceptedUrl.contains(".m3u8")) {
-                    interceptedUrls.add(interceptedUrl)
-                    println("✅ M3U8 salvo (total: ${interceptedUrls.size})")
-                }
-                
-                true
-            }
+            timeout = 120_000L  // 2 minutos - tempo suficiente
         )
 
         return try {
-            println("🌐 Navegando com auto-click...")
+            println("🌐 Iniciando navegação...")
             
+            // Acessa a URL e tenta interceptar
             val response = app.get(
                 url,
-                headers = getBrowserHeaders(),
+                headers = mapOf(
+                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
+                ),
                 interceptor = streamResolver
             )
             
-            println("📊 Navegação concluída!")
-            println("📈 M3U8 interceptados: ${interceptedUrls.size}")
+            // O WebViewResolver já interceptou URLs durante a navegação
+            // Vamos tentar pegar o M3U8 da URL final
+            val finalUrl = response.url
+            println("📍 URL final: $finalUrl")
             
-            // Mostra todos os links encontrados
-            interceptedUrls.forEachIndexed { index, m3u8Url ->
-                println("${index + 1}. $m3u8Url")
+            // Tenta encontrar M3U8 na resposta ou na URL final
+            val m3u8Urls = findM3u8InResponse(response.text, finalUrl)
+            
+            if (m3u8Urls.isNotEmpty()) {
+                println("✅ Encontrados ${m3u8Urls.size} links M3U8")
+                
+                // Escolhe o melhor M3U8
+                val bestM3u8 = selectBestM3u8(m3u8Urls)
+                println("🎯 Melhor M3U8: $bestM3u8")
+                
+                // Gera os links
+                M3u8Helper.generateM3u8(
+                    name,
+                    bestM3u8,
+                    "https://bysevepoin.com",
+                    headers = mapOf(
+                        "Referer" to "https://bysevepoin.com/",
+                        "User-Agent" to "Mozilla/5.0"
+                    )
+                ).forEach(callback)
+                
+                return true
             }
             
-            // Processa o melhor link
-            return processBestM3u8(interceptedUrls, name, callback)
+            println("❌ Nenhum M3U8 encontrado")
+            false
             
         } catch (e: Exception) {
             println("❌ Erro: ${e.message}")
-            
-            // Tenta usar o que foi interceptado mesmo com erro
-            if (interceptedUrls.isNotEmpty()) {
-                return processBestM3u8(interceptedUrls, name, callback)
-            }
-            
             false
         }
     }
     
     /**
-     * Processa o melhor M3U8 da lista
+     * Encontra URLs M3U8 no HTML da resposta
      */
-    private fun processBestM3u8(
-        urls: List<String>,
-        name: String,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        if (urls.isEmpty()) return false
+    private fun findM3u8InResponse(html: String, finalUrl: String): List<String> {
+        val urls = mutableListOf<String>()
         
-        // Filtra e ordena por qualidade
-        val sortedUrls = urls.sortedByDescending { url ->
-            when {
-                url.contains("1080") -> 1080
-                url.contains("720") -> 720
-                url.contains("master.m3u8") -> 1000  // Master tem todas as qualidades
-                url.contains("iframes") -> 500
-                else -> 0
+        // 1. Procura por M3U8 no HTML
+        val m3u8Regex = Regex("""(https?://[^"\s]+\.m3u8[^"\s]*)""")
+        val matches = m3u8Regex.findAll(html)
+        
+        matches.forEach { match ->
+            val url = match.value
+            if (isValidM3u8(url)) {
+                urls.add(url)
+                println("🔍 M3U8 encontrado no HTML: $url")
             }
         }
         
-        val bestUrl = sortedUrls.first()
-        println("🎯 Melhor URL: $bestUrl")
-        
-        // Determina qualidade
-        val quality = when {
-            bestUrl.contains("1080") -> Qualities.FullHd.value
-            bestUrl.contains("720") -> Qualities.HD.value
-            bestUrl.contains("480") -> Qualities.SDVD.value
-            else -> Qualities.Unknown.value
+        // 2. Se a URL final for M3U8, adiciona
+        if (finalUrl.contains(".m3u8") && isValidM3u8(finalUrl)) {
+            urls.add(finalUrl)
+            println("🔍 URL final é M3U8: $finalUrl")
         }
         
-        M3u8Helper.generateM3u8(
-            name,
-            bestUrl,
-            "https://bysevepoin.com",
-            headers = getStreamHeaders(),
-            quality = quality
-        ).forEach(callback)
+        // 3. Tenta construir URLs com base em padrões conhecidos
+        if (urls.isEmpty() && finalUrl.contains("bysevepoin.com")) {
+            val possibleUrls = generatePossibleM3u8Urls(finalUrl)
+            urls.addAll(possibleUrls)
+        }
         
-        return true
+        return urls.distinct()
     }
     
-    private fun getBrowserHeaders(): Map<String, String> {
-        return mapOf(
-            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
-        )
+    /**
+     * Verifica se é um M3U8 válido (não é ad)
+     */
+    private fun isValidM3u8(url: String): Boolean {
+        return !(url.contains("ads") || 
+                url.contains("doubleclick") || 
+                url.contains("google") ||
+                url.contains("analytics"))
     }
     
-    private fun getStreamHeaders(): Map<String, String> {
-        return mapOf(
-            "User-Agent" to "Mozilla/5.0",
-            "Referer" to "https://bysevepoin.com/",
-            "Origin" to "https://bysevepoin.com"
-        )
+    /**
+     * Gera URLs M3U8 possíveis baseadas na URL do bysevepoin
+     */
+    private fun generatePossibleM3u8Urls(bysevepoinUrl: String): List<String> {
+        val urls = mutableListOf<String>()
+        
+        try {
+            // Extrai o ID único da URL
+            val pattern = """bysevepoin\.com/e/([^/]+)""".toRegex()
+            val match = pattern.find(bysevepoinUrl)
+            val videoId = match?.groupValues?.get(1) ?: return urls
+            
+            println("🔑 Video ID extraído: $videoId")
+            
+            // URLs possíveis baseadas nos padrões que vimos antes
+            val possiblePatterns = listOf(
+                "https://be2719.rcr22.ams01.i8yz83pn.com/hls2/05/10459/${videoId}_h/master.m3u8",
+                "https://be2719.rcr22.ams01.i8yz83pn.com/hls2/05/10459/${videoId}_h/iframes-v1-a1.m3u8",
+                "https://cdn.bysevepoin.com/videos/$videoId/master.m3u8",
+                "https://stream.bysevepoin.com/$videoId/master.m3u8",
+                "https://video.bysevepoin.com/$videoId/playlist.m3u8"
+            )
+            
+            urls.addAll(possiblePatterns)
+            println("🧪 Geradas ${urls.size} URLs possíveis")
+            
+        } catch (e: Exception) {
+            println("⚠️ Erro ao gerar URLs: ${e.message}")
+        }
+        
+        return urls
+    }
+    
+    /**
+     * Seleciona o melhor M3U8 da lista
+     */
+    private fun selectBestM3u8(urls: List<String>): String {
+        if (urls.isEmpty()) return ""
+        
+        // Ordena por qualidade (1080p > 720p > master > iframes > outros)
+        return urls.sortedByDescending { url ->
+            when {
+                url.contains("1080") -> 5
+                url.contains("720") -> 4
+                url.contains("master.m3u8") -> 3
+                url.contains("iframes") -> 2
+                else -> 1
+            }
+        }.first()
     }
 }
