@@ -333,79 +333,70 @@ class Goyabu : MainAPI() {
     // ========== EXTRATOR DE LANÇAMENTOS ==========
     
     private fun extractLancamentosItems(document: org.jsoup.nodes.Document): List<SearchResponse> {
-        val items = mutableListOf<SearchResponse>()
-        
-        println("🔍 Extraindo itens da página de Lançamentos...")
-        
-        // Selecionar os episódios da página de lançamentos
-        val episodeElements = document.select("article.boxEP.grid-view a")
-        
-        episodeElements.forEachIndexed { index, element ->
-            try {
-                val href = element.attr("href") ?: return@forEachIndexed
-                val isEpisodePage = href.matches(Regex("""^/\d+/?$"""))
-                
-                if (!isEpisodePage) return@forEachIndexed
-                
-                // Extrair título do episódio
-                val titleElement = element.selectFirst(".title.hidden-text")
-                val rawTitle = titleElement?.text()?.trim() ?: return@forEachIndexed
-                
-                // Extrair número do episódio
-                val episodeNumElement = element.selectFirst(".ep-type b")
-                val episodeText = episodeNumElement?.text()?.trim() ?: ""
-                val episodeNum = extractEpisodeNumberFromText(episodeText)
-                
-                // Criar título limpo
-                val cleanedTitle = cleanTitle(rawTitle)
-                
-                // Extrair poster (thumbnail do episódio)
-                val posterUrl = element.selectFirst(".coverImg")?.attr("style")?.let { style ->
-                    val regex = Regex("""url\(['"]?([^'"()]+)['"]?\)""")
-                    regex.find(style)?.groupValues?.get(1)?.let { url ->
-                        fixUrl(url)
-                    }
+    val items = mutableListOf<SearchResponse>()
+    
+    println("🔍 Extraindo itens da página de Lançamentos...")
+    
+    // Selecionar os episódios da página de lançamentos
+    val episodeElements = document.select("article.boxEP.grid-view a")
+    
+    episodeElements.forEachIndexed { index, element ->
+        try {
+            val href = element.attr("href") ?: return@forEachIndexed
+            val isEpisodePage = href.matches(Regex("""^/\d+/?$"""))
+            
+            if (!isEpisodePage) return@forEachIndexed
+            
+            // Extrair título do episódio
+            val titleElement = element.selectFirst(".title.hidden-text")
+            val rawTitle = titleElement?.text()?.trim() ?: return@forEachIndexed
+            
+            // Extrair número do episódio
+            val episodeNumElement = element.selectFirst(".ep-type b")
+            val episodeText = episodeNumElement?.text()?.trim() ?: ""
+            val episodeNum = extractEpisodeNumberFromText(episodeText)
+            
+            // Criar título limpo
+            val cleanedTitle = cleanTitle(rawTitle)
+            
+            // Criar título completo com número do episódio
+            val fullTitle = if (episodeNum > 0) "$cleanedTitle - Episódio $episodeNum" else cleanedTitle
+            
+            // Extrair poster (thumbnail do episódio)
+            val posterUrl = element.selectFirst(".coverImg")?.attr("style")?.let { style ->
+                val regex = Regex("""url\(['"]?([^'"()]+)['"]?\)""")
+                regex.find(style)?.groupValues?.get(1)?.let { url ->
+                    fixUrl(url)
                 }
-                
-                // Verificar se é dublado
-                val hasDubBadge = element.selectFirst(".audio-box.dublado") != null
-                
-                if (cleanedTitle.isNotBlank()) {
-                    val response = newAnimeSearchResponse(cleanedTitle, fixUrl(href)) {
-                        this.posterUrl = posterUrl
-                        this.type = TvType.Anime
-                        
-                        if (episodeNum > 0) {
-                            this.name = "$cleanedTitle - Episódio $episodeNum"
-                        }
-                    }
-                    
-                    // Adicionar status de dublagem
-                    if (hasDubBadge) {
-                        response.addDubStatus(dubExist = true, subExist = false)
-                    }
-                    
-                    items.add(response)
-                    
-                    if (index < 3) {
-                        println("   🎬 Lançamento: $cleanedTitle (Ep $episodeNum) -> $href")
-                    }
-                }
-            } catch (e: Exception) {
-                println("   ❌ Erro ao extrair lançamento ${index + 1}: ${e.message}")
             }
+            
+            // Verificar se é dublado
+            val hasDubBadge = element.selectFirst(".audio-box.dublado") != null
+            
+            if (cleanedTitle.isNotBlank()) {
+                val response = newAnimeSearchResponse(fullTitle, fixUrl(href)) {
+                    this.posterUrl = posterUrl
+                    this.type = TvType.Anime
+                }
+                
+                // Adicionar status de dublagem
+                if (hasDubBadge) {
+                    response.addDubStatus(dubExist = true, subExist = false)
+                }
+                
+                items.add(response)
+                
+                if (index < 3) {
+                    println("   🎬 Lançamento: $fullTitle -> $href")
+                }
+            }
+        } catch (e: Exception) {
+            println("   ❌ Erro ao extrair lançamento ${index + 1}: ${e.message}")
         }
-        
-        return items
     }
-
-    private fun extractRegularItems(document: org.jsoup.nodes.Document): List<SearchResponse> {
-        val elements = document.select("article a, .boxAN a, a[href*='/anime/']")
-        return elements.mapNotNull { it.toSearchResponse() }
-            .distinctBy { it.url }
-            .take(30)
+    
+    return items
     }
-
     // ========== FUNÇÕES PRINCIPAIS ==========
     
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
