@@ -52,20 +52,19 @@ object SuperFlixExtractor {
             
             println("🔗 URL do bysevepoin: $bysevepoinUrl")
             
-            // 4. Acessar bysevepoin e procurar script principal
-            val mainScriptUrl = extractMainScriptUrl(bysevepoinUrl, videoId)
-            if (mainScriptUrl == null) {
-                println("❌ Não consegui extrair script principal")
-                return false
-            }
-            
-            println("📜 Script principal: $mainScriptUrl")
-            
-            // 5. Baixar script e extrair m3u8
-            val m3u8Url = extractM3u8FromScript(mainScriptUrl, videoId)
+            // 4. EXTRAIR DADOS DO BYSEVEPOIN (NOVA ESTRATÉGIA)
+            // Extrair o identificador real da URL: /e/uvgxvuik7woo/407451-dub
+            val m3u8Url = extractBysevepoinData(bysevepoinUrl, videoId)
             if (m3u8Url != null) {
                 println("✅ M3U8 encontrado: $m3u8Url")
                 return generateM3u8Links(m3u8Url, name, callback)
+            }
+            
+            // 5. Tentar API diretamente
+            val apiUrl = tryApiDirectMethods(videoId, bysevepoinUrl)
+            if (apiUrl != null) {
+                println("✅ URL da API: $apiUrl")
+                return generateM3u8Links(apiUrl, name, callback)
             }
             
             println("❌ Não consegui extrair m3u8")
@@ -74,6 +73,146 @@ object SuperFlixExtractor {
             println("💥 Erro no método Fembed: ${e.message}")
             false
         }
+    }
+    
+    private suspend fun extractBysevepoinData(
+        bysevepoinUrl: String,
+        videoId: String
+    ): String? {
+        return try {
+            println("🔍 Extraindo dados da URL do Bysevepoin")
+            
+            // Extrair o identificador da URL: /e/uvgxvuik7woo/407451-dub
+            val pattern = Regex("""/e/([^/]+)/([^/]+)""")
+            val match = pattern.find(bysevepoinUrl)
+            
+            if (match != null) {
+                val realVideoId = match.groupValues[1] // uvgxvuik7woo
+                println("🎯 ID real do vídeo: $realVideoId")
+                
+                // Tentar diferentes endpoints da API
+                val endpoints = listOf(
+                    "https://bysevepoin.com/api/v1/video/$realVideoId",
+                    "https://bysevepoin.com/api/video/$realVideoId",
+                    "https://bysevepoin.com/video/$realVideoId/data",
+                    "https://bysevepoin.com/e/$realVideoId/data.json",
+                    "https://bysevepoin.com/embed/$realVideoId",
+                    "https://bysevepoin.com/api/player/$realVideoId",
+                    "https://bysevepoin.com/api/stream/$realVideoId"
+                )
+                
+                for (endpoint in endpoints) {
+                    try {
+                        println("📡 Testando endpoint: $endpoint")
+                        val response = app.get(endpoint, headers = mapOf(
+                            "Referer" to "https://bysevepoin.com/",
+                            "Origin" to "https://bysevepoin.com",
+                            "User-Agent" to "Mozilla/5.0",
+                            "Accept" to "application/json, text/plain, */*",
+                            "Cookie" to API_COOKIE
+                        ))
+                        
+                        if (response.statusCode == 200) {
+                            val json = response.text
+                            println("📥 Resposta da API: ${json.take(200)}...")
+                            
+                            val m3u8Url = extractM3u8FromJson(json)
+                            if (m3u8Url != null) {
+                                return m3u8Url
+                            }
+                        }
+                    } catch (e: Exception) {
+                        println("⚠️  Falha no endpoint $endpoint: ${e.message}")
+                    }
+                }
+            }
+            
+            null
+        } catch (e: Exception) {
+            println("💥 Erro ao extrair dados do Bysevepoin: ${e.message}")
+            null
+        }
+    }
+    
+    private suspend fun tryApiDirectMethods(
+        videoId: String,
+        bysevepoinUrl: String
+    ): String? {
+        return try {
+            println("🔧 Tentando APIs diretas")
+            
+            // Tentar diferentes APIs conhecidas
+            val apis = listOf(
+                // API do Fembed
+                "https://fembed.sx/api/source/$videoId",
+                "https://fembed.sx/f/$videoId",
+                "https://fembed.sx/api/v1/video/$videoId",
+                
+                // API do Bysevepoin
+                "https://bysevepoin.com/api/source/$videoId",
+                "https://bysevepoin.com/api/v1/stream/$videoId",
+                "https://bysevepoin.com/api/video/$videoId"
+            )
+            
+            for (apiUrl in apis) {
+                try {
+                    println("📡 Testando API: $apiUrl")
+                    val response = app.get(apiUrl, headers = mapOf(
+                        "Referer" to bysevepoinUrl,
+                        "Accept" to "application/json",
+                        "User-Agent" to "Mozilla/5.0",
+                        "Cookie" to API_COOKIE
+                    ))
+                    
+                    if (response.statusCode == 200) {
+                        val json = response.text
+                        println("📥 Resposta API: ${json.take(200)}...")
+                        
+                        val m3u8Url = extractM3u8FromJson(json)
+                        if (m3u8Url != null) {
+                            println("✅ URL encontrada via API: $m3u8Url")
+                            return m3u8Url
+                        }
+                    }
+                } catch (e: Exception) {
+                    println("⚠️  Falha na API $apiUrl: ${e.message}")
+                }
+            }
+            
+            null
+        } catch (e: Exception) {
+            println("💥 Erro em APIs diretas: ${e.message}")
+            null
+        }
+    }
+    
+    private fun extractM3u8FromJson(json: String): String? {
+        // Padrões para extrair URL m3u8 de JSON
+        val patterns = listOf(
+            Regex(""""url"\s*:\s*"([^"]+\.m3u8[^"]*)"""),
+            Regex(""""file"\s*:\s*"([^"]+\.m3u8[^"]*)"""),
+            Regex(""""source"\s*:\s*"([^"]+\.m3u8[^"]*)"""),
+            Regex(""""m3u8_url"\s*:\s*"([^"]+)"""),
+            Regex(""""video_url"\s*:\s*"([^"]+\.m3u8[^"]*)"""),
+            Regex(""""stream_url"\s*:\s*"([^"]+\.m3u8[^"]*)"""),
+            Regex(""""hls"\s*:\s*"([^"]+\.m3u8[^"]*)"""),
+            Regex(""""([^"]+\.m3u8[^"]*)"""")  // Último recurso
+        )
+        
+        for (pattern in patterns) {
+            val match = pattern.find(json)
+            if (match != null) {
+                val url = match.groupValues[1]
+                println("✅ URL m3u8 extraída do JSON: $url")
+                
+                // Validar URL
+                if (isValidVideoUrl(url)) {
+                    return url
+                }
+            }
+        }
+        
+        return null
     }
     
     private suspend fun getIframeUrlFromFembed(videoId: String): String? {
@@ -162,134 +301,6 @@ object SuperFlixExtractor {
         val match = pattern.find(html)
         
         return match?.groupValues?.get(1)
-    }
-    
-    private suspend fun extractMainScriptUrl(
-        bysevepoinUrl: String,
-        videoId: String
-    ): String? {
-        return try {
-            println("🌐 Acessando bysevepoin: $bysevepoinUrl")
-            
-            val headers = mapOf(
-                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                "Accept-Language" to "pt-BR",
-                "Referer" to "https://fembed.sx/e/$videoId",
-                "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36",
-                "Cookie" to API_COOKIE
-            )
-            
-            val response = app.get(bysevepoinUrl, headers = headers)
-            val html = response.text
-            
-            // Procurar o script principal do React/Vite
-            // Padrão: <script type="module" crossorigin src="/assets/index-XXXXXXX.js"></script>
-            val scriptPattern = Regex("""<script[^>]+src=["'](/assets/index-[^"']+\.js)["']""")
-            val match = scriptPattern.find(html)
-            
-            if (match != null) {
-                val scriptPath = match.groupValues[1]
-                // Converter para URL completa
-                val baseUrl = "https://bysevepoin.com"
-                return "$baseUrl$scriptPath"
-            }
-            
-            null
-        } catch (e: Exception) {
-            println("💥 Erro ao acessar bysevepoin: ${e.message}")
-            null
-        }
-    }
-    
-    private suspend fun extractM3u8FromScript(
-        scriptUrl: String,
-        videoId: String
-    ): String? {
-        return try {
-            println("📥 Baixando script: $scriptUrl")
-            
-            val headers = mapOf(
-                "Accept" to "*/*",
-                "Referer" to "https://bysevepoin.com/",
-                "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36"
-            )
-            
-            val response = app.get(scriptUrl, headers = headers)
-            val scriptContent = response.text
-            
-            println("📜 Conteúdo do script (${scriptContent.length} chars)")
-            
-            // ADICIONAR AQUI: Amostras do script para análise
-            val sampleSize = 5000
-            println("🔍 Primeiros $sampleSize caracteres do script:")
-            println(scriptContent.take(sampleSize))
-            println("\n\n🔍 Últimos $sampleSize caracteres do script:")
-            println(scriptContent.takeLast(sampleSize))
-            
-            // Procurar m3u8 no script JavaScript
-            // Padrões comuns em SPAs React:
-            // 1. URLs em strings: "https://...m3u8"
-            // 2. Em objetos: file: "https://...m3u8"
-            // 3. Em arrays: ["https://...m3u8"]
-            
-            val patterns = listOf(
-                // Padrão mais comum: URL direta
-                Regex("""["'](https?://[^"']+\.m3u8[^"']*)["']"""),
-                
-                // Padrão em objetos JavaScript
-                Regex("""(?:file|src|url|source)\s*:\s*["'](https?://[^"']+\.m3u8[^"']*)["']"""),
-                
-                // Padrão em strings grandes (pode ser base64)
-                Regex("""(https?://[^"';\s]+\.m3u8[^"';\s]*)"""),
-                
-                // Padrão para g9r6.com (que sabemos que é usado)
-                Regex("""(https?://g9r6\.com/[^"']+\.m3u8[^"']*)"""),
-                
-                // Padrão para filemoon (outro CDN comum)
-                Regex("""(https?://filemoon\.[^"']+\.m3u8[^"']*)""")
-            )
-            
-            for (pattern in patterns) {
-                val matches = pattern.findAll(scriptContent).toList()
-                for (match in matches) {
-                    val url = match.groupValues[1]
-                    println("🔍 URL encontrada: $url")
-                    
-                    // Validar se parece uma URL de vídeo
-                    if (isValidVideoUrl(url)) {
-                        println("✅ URL válida encontrada: $url")
-                        return url
-                    }
-                }
-            }
-            
-            // Se não encontrou, procurar por base64
-            val base64Pattern = Regex("""["']([A-Za-z0-9+/]{100,}={0,2})["']""")
-            val base64Matches = base64Pattern.findAll(scriptContent).toList()
-            
-            for (match in base64Matches) {
-                val base64 = match.groupValues[1]
-                try {
-                    val decoded = android.util.Base64.decode(base64, android.util.Base64.DEFAULT)
-                    val decodedStr = String(decoded, Charsets.UTF_8)
-                    
-                    if (decodedStr.contains(".m3u8")) {
-                        println("🔓 Base64 decodificado contém m3u8")
-                        val m3u8Url = Regex("""(https?://[^"'\s]+\.m3u8[^"'\s]*)""").find(decodedStr)
-                        if (m3u8Url != null) {
-                            return m3u8Url.groupValues[1]
-                        }
-                    }
-                } catch (e: Exception) {
-                    // Não é base64 válido, continuar
-                }
-            }
-            
-            null
-        } catch (e: Exception) {
-            println("💥 Erro ao baixar script: ${e.message}")
-            null
-        }
     }
     
     private fun isValidVideoUrl(url: String): Boolean {
