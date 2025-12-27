@@ -6,14 +6,8 @@ import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.M3u8Helper
 
 object SuperFlixExtractor {
-    // COOKIE ATUALIZADO (baseado nas suas imagens)
-    private const val API_COOKIE = """
-        SITE_TOTAL_ID=aTYqe6GU65PNmeCXpelwJwAAAMi;
-        __dtsu=104017651574995957BEB724C6373F9E;
-        __cc_id=a44d1e52993b9c2Oaaf40eba24989a06;
-        __cc_cc=ACZ4nGNQSDQXsTFMNTWyTDROskw2MkhMTDDMXSE1KNDKxtLBMNDBjAIJMC4fgVe%2B%2F%2BDngAHemT8XsDBKrv%2FF3%2F2F2%2F%2FF0ZGhFP15u.VnW-1Y0o8o6/84-1.2.1.1-4_OXh2hYevsbO8hINijDKB8O_SPowh.pNojloHEbwX_qZorbmW8u8zqV9B7UsV6bbRmCWx_dD17mA7vJJklpOD9WBh9DA0wMV2a1QSKuR2J3FN9.TRzOUM4AhnTGFd8dJH8bHfqQdY7uYuUg7Ny1TVQDF9kXqyEPtnmkZ9rFkqQ2KS6u0t2hhFdQvRBY7dqyGfdjmyjDqwc7ZOovHB0eqep.FPHrh8T9iz1LuucA;
-        cf_clearance=rfIEldahI7B..Y4PpZhGgwi.QOJBqIRGdFP150.VnW-1766868784-1.1-
-    """.trimIndent()
+    // COOKIE ATUALIZADO (em uma linha só)
+    private const val API_COOKIE = "SITE_TOTAL_ID=aTYqe6GU65PNmeCXpelwJwAAAMi; __dtsu=104017651574995957BEB724C6373F9E; __cc_id=a44d1e52993b9c2Oaaf40eba24989a06; __cc_cc=ACZ4nGNQSDQXsTFMNTWyTDROskw2MkhMTDDMXSE1KNDKxtLBMNDBjAIJMC4fgVe%2B%2F%2BDngAHemT8XsDBKrv%2FF3%2F2F2%2F%2FF0ZGhFP15u.VnW-1Y0o8o6/84-1.2.1.1-4_OXh2hYevsbO8hINijDKB8O_SPowh.pNojloHEbwX_qZorbmW8u8zqV9B7UsV6bbRmCWx_dD17mA7vJJklpOD9WBh9DA0wMV2a1QSKuR2J3FN9.TRzOUM4AhnTGFd8dJH8bHfqQdY7uYuUg7Ny1TVQDF9kXqyEPtnmkZ9rFkqQ2KS6u0t2hhFdQvRBY7dqyGfdjmyjDqwc7ZOovHB0eqep.FPHrh8T9iz1LuucA; cf_clearance=rfIEldahI7B..Y4PpZhGgwi.QOJBqIRGdFP150.VnW-1766868784-1.1-"
     
     suspend fun extractVideoLinks(
         url: String,
@@ -82,7 +76,7 @@ object SuperFlixExtractor {
             if (iframeUrl != null) {
                 println("🎬 Iframe encontrado: $iframeUrl")
                 
-                // 5. Fazer requisição para o iframe (que pode conter o m3u8 ou mais redirects)
+                // 5. Fazer requisição para o iframe
                 return processIframeUrl(iframeUrl, videoId, name, callback)
             }
             
@@ -97,7 +91,6 @@ object SuperFlixExtractor {
             false
         } catch (e: Exception) {
             println("💥 Erro no método Fembed: ${e.message}")
-            e.printStackTrace()
             false
         }
     }
@@ -144,11 +137,6 @@ object SuperFlixExtractor {
             
             println("📥 Resposta iframe (${html.length} chars)...")
             
-            // O iframe pode conter:
-            // 1. Outro iframe com o player real
-            // 2. Script que redireciona para o vídeo
-            // 3. M3U8 direto
-            
             // Tentar extrair m3u8
             val m3u8Url = extractM3u8FromHtml(html)
             if (m3u8Url != null) {
@@ -167,7 +155,6 @@ object SuperFlixExtractor {
             val scriptUrl = extractFromJavaScript(html)
             if (scriptUrl != null) {
                 println("📜 URL do script: $scriptUrl")
-                // Pode ser um script que carrega o player
                 return processScriptUrl(scriptUrl, videoId, name, callback)
             }
             
@@ -205,8 +192,7 @@ object SuperFlixExtractor {
         if (match != null) {
             val base64 = match.groupValues[1]
             try {
-                val decoded = android.util.Base64.decode(base64, android.util.Base64.DEFAULT)
-                    .toString(Charsets.UTF_8)
+                val decoded = java.util.Base64.getDecoder().decode(base64).toString(Charsets.UTF_8)
                 println("🔓 Decodificado: $decoded")
                 
                 // Verificar se é uma URL
