@@ -166,13 +166,31 @@ class Goyabu : MainAPI() {
         
         clean = filteredSentences.joinToString(". ")
         
-        // ========== LIMPEZA FINAL ==========
-        clean = clean.replace(Regex("\\s+"), " ")
-        clean = clean.replace(Regex("\\.\\s*\\.+"), ".")
-        clean = clean.trim()
+        // ========== CORREÇÃO: LIMPAR PONTOS DUPLOS E PONTOS SOZINHOS ==========
+        // Remove pontos duplos (..) mantendo apenas um ponto
+        clean = clean.replace(Regex("\\.\\.+"), ".")
         
-        if (clean.isNotEmpty() && !clean.endsWith(".") && !clean.endsWith("!") && !clean.endsWith("?")) {
+        // Remove pontos sozinhos no final de frases (que não fazem sentido)
+        clean = clean.replace(Regex("""\s+\.\s*"""), " ")
+        
+        // Remove pontos no início de frases
+        clean = clean.replace(Regex("""^\.+\s*"""), "")
+        
+        // Garante que tenha apenas um espaço entre palavras
+        clean = clean.replace(Regex("\\s+"), " ")
+        
+        // Remove pontos que ficaram soltos no meio do texto
+        clean = clean.replace(Regex("""\.\s*\.\s*"""), ". ")
+        
+        // Adiciona ponto final se não tiver
+        clean = clean.trim()
+        if (clean.isNotEmpty() && !clean.endsWith(".") && !clean.endsWith("!") && !clean.endsWith("?") && clean.length > 10) {
             clean += "."
+        }
+        
+        // Remove ponto final se estiver muito próximo do início
+        if (clean.length < 30 && clean.endsWith(".")) {
+            clean = clean.dropLast(1)
         }
         
         return when {
