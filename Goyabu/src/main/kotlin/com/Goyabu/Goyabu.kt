@@ -39,6 +39,14 @@ class Goyabu : MainAPI() {
             "/generos/guerra" to "Guerra"
         )
 
+        // ADICIONADO: Página de Lançamentos
+        private val MAIN_PAGES = listOf(
+            "$LANCAMENTOS_PATH" to "Lançamentos",
+            *ALL_GENRES.map { (path, name) -> 
+                path to name 
+            }.toTypedArray()
+        )
+
         // ADICIONADO: Padrões para limpar sinopse
         private val SYNOPSIS_JUNK_PATTERNS = listOf(
             Regex("""(?i)assistir.*?online"""),
@@ -79,12 +87,12 @@ class Goyabu : MainAPI() {
     }
 
     init {
-        println("🎬 GOYABU: Plugin inicializado - ${ALL_GENRES.size} gêneros + Lançamentos")
+        println("🎬 GOYABU: Plugin inicializado - ${MAIN_PAGES.size} páginas (Lançamentos + ${ALL_GENRES.size} gêneros)")
     }
 
+    // ATUALIZADO: Agora inclui Lançamentos como primeira página
     override val mainPage = mainPageOf(
-        "$mainUrl$LANCAMENTOS_PATH" to "Lançamentos",
-        *ALL_GENRES.map { (path, name) -> 
+        *MAIN_PAGES.map { (path, name) -> 
             "$mainUrl$path" to name 
         }.toTypedArray()
     )
@@ -290,16 +298,35 @@ class Goyabu : MainAPI() {
         }
     }
 
+    // ATUALIZADO: Agora também processa episódios da página de Lançamentos
     private fun Element.toSearchResponse(): AnimeSearchResponse? {
         val href = attr("href") ?: return null
+        
+        // Verificar se é link de episódio (como na página de lançamentos)
         val isEpisodePage = href.matches(Regex("""^/\d+/?$"""))
+        
+        // Verificar se é página de anime ou episódio
         val isAnimePage = href.contains("/anime/")
-        if (!isAnimePage || isEpisodePage) return null
-
+        val isLancamentoPage = href.matches(Regex("""^/\d+/?$""")) // Links como /66475
+        
+        // Se não for nem anime nem episódio/lançamento, ignorar
+        if (!isAnimePage && !isLancamentoPage) return null
+        
         val titleElement = selectFirst(".title, .hidden-text")
         val rawTitle = titleElement?.text()?.trim() ?: return null
-        val cleanedTitle = cleanTitle(rawTitle)
-
+        
+        // Para lançamentos, extrair título do anime (pode incluir "Dublado")
+        var cleanedTitle = cleanTitle(rawTitle)
+        
+        // Se for um lançamento, o título já vem limpo
+        if (isLancamentoPage) {
+            // Remover "Dublado" do título se estiver no final
+            cleanedTitle = cleanedTitle
+                .replace(" Dublado", "", ignoreCase = true)
+                .replace("(Dublado)", "", ignoreCase = true)
+                .trim()
+        }
+        
         if (rawTitle != cleanedTitle) {
             println("🧹 Título limpo: '$rawTitle' → '$cleanedTitle'")
         }
@@ -308,7 +335,17 @@ class Goyabu : MainAPI() {
         val scoreElement = selectFirst(".rating-score-box, .rating")
         val scoreText = scoreElement?.text()?.trim()
         val score = parseScore(scoreText)
+        
+        // Detectar badges - agora funciona tanto para animes quanto lançamentos
         val hasDubBadge = selectFirst(".audio-box.dublado, .dublado") != null
+        val hasSubBadge = !hasDubBadge // Se não tem badge DUB, assume legendado
+        
+        // Para lançamentos, verificar se o título contém "Dublado"
+        val titleHasDub = rawTitle.contains("dublado", ignoreCase = true)
+        
+        // Determinar status de áudio
+        val dubExist = hasDubBadge || titleHasDub
+        val subExist = hasSubBadge || !dubExist
 
         if (cleanedTitle.isBlank()) return null
 
@@ -323,47 +360,62 @@ class Goyabu : MainAPI() {
             this.type = TvType.Anime
             this.score = score
 
-            if (hasDubBadge) {
-                addDubStatus(dubExist = true, subExist = false)
-                println("🎭 Badge: DUB (dublado detectado)")
-            } else {
-                addDubStatus(dubExist = false, subExist = true)
-                println("🎭 Badge: LEG (apenas legendado)")
-            }
+            // Badges funcionam corretamente agora
+            addDubStatus(dubExist = dubExist, subExist = subExist)
+            println("🎭 Badges: DUB=$dubExist, SUB=$subExist")
         }
     }
 
     private fun Element.extractPosterUrl(): String? {
+        // Primeiro tenta do style background-image
         selectFirst(".coverImg")?.attr("style")?.let { style ->
             val regex = Regex("""url\(['"]?([^'"()]+)['"]?\)""")
             regex.find(style)?.groupValues?.get(1)?.let { url ->
                 return fixUrl(url)
             }
         }
+        
+        // Depois do data-thumb
         selectFirst("[data-thumb]")?.attr("data-thumb")?.let { url ->
             return fixUrl(url)
         }
+        
+        // Finalmente da imagem direta
         selectFirst("img[src]")?.attr("src")?.let { url ->
             return fixUrl(url)
         }
+        
         return null
     }
 
+    // ATUALIZADO: Agora processa tanto animes quanto episódios de lançamentos
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         return loadingMutex.withLock {
             try {
                 println("🎬 GOYABU: '${request.name}' - Página $page")
-                val url = if (page > 1) "${request.data}page/$page/" else request.data
+                
+                // Construir URL corretamente
+                val url = if (page > 1) "${request.data}?paged=$page" else request.data
                 val document = app.get(url, timeout = 20).document
 
-                val elements = document.select("article a, .boxAN a, a[href*='/anime/']")
+                // Para página de lançamentos, usar seletores de episódios
+                val elements = if (request.data.contains("/lancamentos")) {
+                    // Para lançamentos: buscar cards de episódios
+                    document.select(".boxEP a, .boxEP.grid-view a, article a, a[href*='/']")
+                } else {
+                    // Para gêneros: buscar cards de animes
+                    document.select("article a, .boxAN a, a[href*='/anime/']")
+                }
+                
                 println("📊 ${elements.size} links encontrados em '${request.name}'")
 
                 val homeItems = elements.mapNotNull { it.toSearchResponse() }
                     .distinctBy { it.url }
                     .take(30)
 
-                val hasNextPage = false
+                // Verificar se tem próxima página (baseado no HTML fornecido)
+                val hasNextPage = document.select(".pagination a:contains(›), .pagination a:contains(Próxima), .page-numbers a").isNotEmpty()
+                
                 newHomePageResponse(request.name, homeItems, hasNextPage)
             } catch (e: Exception) {
                 println("❌ ERRO: ${request.name} - ${e.message}")
@@ -397,7 +449,17 @@ class Goyabu : MainAPI() {
 
             val document = app.get(url, timeout = 30).document
 
-            val rawTitle = document.selectFirst("h1.text-hidden, h1")?.text()?.trim() ?: "Sem Título"
+            // Verificar se é uma página de episódio (lançamento) ou de anime
+            val isEpisodePage = url.matches(Regex("""$mainUrl/\d+/?$"""))
+            
+            val rawTitle = if (isEpisodePage) {
+                // Para episódios, buscar título do episódio
+                document.selectFirst("h1, .title, .ep-type b")?.text()?.trim() ?: "Episódio"
+            } else {
+                // Para animes, buscar título normal
+                document.selectFirst("h1.text-hidden, h1")?.text()?.trim() ?: "Sem Título"
+            }
+            
             val title = cleanTitle(rawTitle)
             if (rawTitle != title) {
                 println("🧹 Título limpo: '$rawTitle' → '$title'")
@@ -756,129 +818,4 @@ class Goyabu : MainAPI() {
         val regex2 = Regex("""/episodio[-_]?(\d+)/?$""", RegexOption.IGNORE_CASE)
         
         regex1.find(href)?.groupValues?.get(1)?.toIntOrNull()?.let { return it }
-        regex2.find(href)?.groupValues?.get(1)?.toIntOrNull()?.let { return it }
-
-        return default
-    }
-
-    private fun extractArrayContent(scriptContent: String, arrayName: String): String {
-        val startIndex = scriptContent.indexOf("$arrayName = [")
-        if (startIndex == -1) return ""
-        
-        var braceCount = 0
-        var inString = false
-        var escapeNext = false
-        var i = startIndex + arrayName.length + 3
-        
-        while (i < scriptContent.length) {
-            val char = scriptContent[i]
-            
-            when {
-                escapeNext -> {
-                    escapeNext = false
-                }
-                char == '\\' -> {
-                    escapeNext = true
-                }
-                char == '"' -> {
-                    inString = !inString
-                }
-                !inString && char == '[' -> {
-                    braceCount++
-                }
-                !inString && char == ']' -> {
-                    braceCount--
-                    if (braceCount == 0) {
-                        return scriptContent.substring(startIndex + arrayName.length + 3, i)
-                    }
-                }
-            }
-            i++
-        }
-        
-        return ""
-    }
-
-    private fun extractJsonObjects(jsonArray: String): List<String> {
-        val objects = mutableListOf<String>()
-        var depth = 0
-        var currentObject = StringBuilder()
-        var inString = false
-        var escapeNext = false
-
-        for (char in jsonArray) {
-            when {
-                escapeNext -> {
-                    currentObject.append(char)
-                    escapeNext = false
-                }
-                char == '\\' -> {
-                    currentObject.append(char)
-                    escapeNext = true
-                }
-                char == '"' -> {
-                    currentObject.append(char)
-                    inString = !inString
-                }
-                !inString && char == '{' -> {
-                    if (depth == 0) {
-                        currentObject = StringBuilder("{")
-                    } else {
-                        currentObject.append(char)
-                    }
-                    depth++
-                }
-                !inString && char == '}' -> {
-                    depth--
-                    currentObject.append(char)
-                    if (depth == 0) {
-                        objects.add(currentObject.toString())
-                    }
-                }
-                else -> {
-                    if (depth > 0) currentObject.append(char)
-                }
-            }
-        }
-        
-        return objects
-    }
-
-    private fun extractValueFromJson(json: String, vararg keys: String): String? {
-        for (key in keys) {
-            val pattern1 = Regex(""""$key"\s*:\s*"([^"]*)"""")
-            val match1 = pattern1.find(json)
-            if (match1 != null) return match1.groupValues.getOrNull(1)
-            
-            val pattern2 = Regex(""""$key"\s*:\s*(\d+)""")
-            val match2 = pattern2.find(json)
-            if (match2 != null) return match2.groupValues.getOrNull(1)
-        }
-        return null
-    }
-
-    private fun buildEpisodeUrl(idOrPath: String, episodeNumber: Int): String {
-        return when {
-            idOrPath.matches(Regex("""^\d+$""")) -> "$mainUrl/$idOrPath"
-            idOrPath.startsWith("/") -> "$mainUrl$idOrPath"
-            idOrPath.startsWith("http") -> idOrPath
-            idOrPath.isNotBlank() -> fixUrl(idOrPath)
-            else -> "$mainUrl/$episodeNumber"
-        }
-    }
-
-    override suspend fun loadLinks(
-        data: String,
-        isCasting: Boolean,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        println("\n🎬 GOYABU loadLinks: URL recebida: $data")
-
-        return GoyabuExtractor.extractVideoLinks(
-            url = data,
-            name = "Vídeo Goyabu",
-            callback = callback
-        )
-    }
-}
+        regex2.find(href
