@@ -473,42 +473,45 @@ class Goyabu : MainAPI() {
     }
 
     private fun extractEpisodeFromBoxEP(boxEP: Element, index: Int, episodes: MutableList<Episode>) {
-        val linkElement = boxEP.selectFirst("a[href]") ?: return
-        val href = linkElement.attr("href").trim()
-        if (href.isBlank()) return
-        
-        var episodeNum = index + 1
+    val linkElement = boxEP.selectFirst("a[href]") ?: return
+    val href = linkElement.attr("href").trim()
+    if (href.isBlank()) return
+    
+    var episodeNum = index + 1
 
-        // Extrair número do episódio
-        val epTypeElement = linkElement.selectFirst(".ep-type b")
-        epTypeElement?.text()?.trim()?.let { text ->
-            val regex = Regex("""Epis[oó]dio\s+(\d+)""", RegexOption.IGNORE_CASE)
-            val match = regex.find(text)
-            match?.groupValues?.get(1)?.toIntOrNull()?.let { foundNum ->
-                episodeNum = foundNum
-            }
+    // Extrair número do episódio
+    val epTypeElement = linkElement.selectFirst(".ep-type b")
+    epTypeElement?.text()?.trim()?.let { text ->
+        val regex = Regex("""Epis[oó]dio\s+(\d+)""", RegexOption.IGNORE_CASE)
+        val match = regex.find(text)
+        match?.groupValues?.get(1)?.toIntOrNull()?.let { foundNum ->
+            episodeNum = foundNum
         }
+    }
 
-        // Tentar extrair do data-episode-number do pai
-        boxEP.parent()?.attr("data-episode-number")?.toIntOrNull()?.let { episodeNum = it }
-        episodeNum = extractEpisodeNumberFromHref(href, episodeNum)
-        
-        // EXTRAIR THUMB DO EPISÓDIO
-        val thumb = extractEpisodeThumbnail(linkElement)
-        
-        val episodeTitle = epTypeElement?.text()?.trim() ?: "Episódio $episodeNum"
-        
-        episodes.add(newEpisode(fixUrl(href)) {
-            this.name = episodeTitle
-            this.episode = episodeNum
-            this.season = 1
-            this.posterUrl = thumb // ADICIONANDO A THUMB
-        })
+    // Tentar extrair do data-episode-number do pai
+    boxEP.parent()?.attr("data-episode-number")?.toIntOrNull()?.let { parentNum ->
+        episodeNum = parentNum
+    }
+    
+    val finalEpisodeNum = extractEpisodeNumberFromHref(href, episodeNum)
+    
+    // EXTRAIR THUMB DO EPISÓDIO
+    val thumb = extractEpisodeThumbnail(linkElement)
+    
+    val episodeTitle = epTypeElement?.text()?.trim() ?: "Episódio $finalEpisodeNum"
+    
+    episodes.add(newEpisode(fixUrl(href)) {
+        this.name = episodeTitle
+        this.episode = finalEpisodeNum
+        this.season = 1
+        this.posterUrl = thumb // ADICIONANDO A THUMB
+    })
 
-        println("   ✅ Ep $episodeNum: $episodeTitle -> $href")
-        if (thumb != null) {
-            println("   🖼️  Thumb: $thumb")
-        }
+    println("   ✅ Ep $finalEpisodeNum: $episodeTitle -> $href")
+    if (thumb != null) {
+        println("   🖼️  Thumb: $thumb")
+    }
     }
 
     private fun extractEpisodeThumbnail(linkElement: Element): String? {
