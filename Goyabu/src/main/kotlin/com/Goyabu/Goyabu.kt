@@ -368,31 +368,33 @@ class Goyabu : MainAPI() {
                 }
                 
                 // Verificar se é dublado
-val hasDubBadge = element.selectFirst(".audio-box.dublado") != null
-
-if (cleanedTitle.isNotBlank()) {
-    val searchResponse = newAnimeSearchResponse(cleanedTitle, fixUrl(href)) {
-        this.posterUrl = posterUrl
-        this.type = TvType.Anime
-        
-        if (episodeNum > 0) {
-            this.name = "$cleanedTitle - Episódio $episodeNum"
+                val hasDubBadge = element.selectFirst(".audio-box.dublado") != null
+                
+                if (cleanedTitle.isNotBlank()) {
+                    val response = newAnimeSearchResponse(cleanedTitle, fixUrl(href)) {
+                        this.posterUrl = posterUrl
+                        this.type = TvType.Anime
+                        
+                        if (episodeNum > 0) {
+                            this.name = "$cleanedTitle - Episódio $episodeNum"
+                        }
+                    }
+                    
+                    // Adicionar status de dublagem
+                    if (hasDubBadge) {
+                        response.addDubStatus(dubExist = true, subExist = false)
+                    }
+                    
+                    items.add(response)
+                    
+                    if (index < 3) {
+                        println("   🎬 Lançamento: $cleanedTitle (Ep $episodeNum) -> $href")
+                    }
+                }
+            } catch (e: Exception) {
+                println("   ❌ Erro ao extrair lançamento ${index + 1}: ${e.message}")
+            }
         }
-    }
-    
-    // Configurar status de dublagem diretamente no objeto retornado
-    if (hasDubBadge) {
-        searchResponse.addDubStatus(dubExist = true, subExist = false)
-    } else {
-        searchResponse.addDubStatus(dubExist = false, subExist = true)
-    }
-    
-    items.add(searchResponse)
-    
-    if (index < 3) {
-        println("   🎬 Lançamento: $cleanedTitle (Ep $episodeNum) -> $href")
-    }
-}
         
         return items
     }
@@ -472,45 +474,45 @@ if (cleanedTitle.isNotBlank()) {
     }
 
     private fun extractEpisodeFromBoxEP(boxEP: Element, index: Int, episodes: MutableList<Episode>) {
-    val linkElement = boxEP.selectFirst("a[href]") ?: return
-    val href = linkElement.attr("href").trim()
-    if (href.isBlank()) return
-    
-    var episodeNum = index + 1
+        val linkElement = boxEP.selectFirst("a[href]") ?: return
+        val href = linkElement.attr("href").trim()
+        if (href.isBlank()) return
+        
+        var episodeNum = index + 1
 
-    // Extrair número do episódio
-    val epTypeElement = linkElement.selectFirst(".ep-type b")
-    epTypeElement?.text()?.trim()?.let { text ->
-        val regex = Regex("""Epis[oó]dio\s+(\d+)""", RegexOption.IGNORE_CASE)
-        val match = regex.find(text)
-        match?.groupValues?.get(1)?.toIntOrNull()?.let { foundNum ->
-            episodeNum = foundNum
+        // Extrair número do episódio
+        val epTypeElement = linkElement.selectFirst(".ep-type b")
+        epTypeElement?.text()?.trim()?.let { text ->
+            val regex = Regex("""Epis[oó]dio\s+(\d+)""", RegexOption.IGNORE_CASE)
+            val match = regex.find(text)
+            match?.groupValues?.get(1)?.toIntOrNull()?.let { foundNum ->
+                episodeNum = foundNum
+            }
         }
-    }
 
-    // Tentar extrair do data-episode-number do pai
-    boxEP.parent()?.attr("data-episode-number")?.toIntOrNull()?.let { parentNum ->
-        episodeNum = parentNum
-    }
-    
-    val finalEpisodeNum = extractEpisodeNumberFromHref(href, episodeNum)
-    
-    // EXTRAIR THUMB DO EPISÓDIO
-    val thumb = extractEpisodeThumbnail(linkElement)
-    
-    val episodeTitle = epTypeElement?.text()?.trim() ?: "Episódio $finalEpisodeNum"
-    
-    episodes.add(newEpisode(fixUrl(href)) {
-        this.name = episodeTitle
-        this.episode = finalEpisodeNum
-        this.season = 1
-        this.posterUrl = thumb // ADICIONANDO A THUMB
-    })
+        // Tentar extrair do data-episode-number do pai
+        boxEP.parent()?.attr("data-episode-number")?.toIntOrNull()?.let { parentNum ->
+            episodeNum = parentNum
+        }
+        
+        val finalEpisodeNum = extractEpisodeNumberFromHref(href, episodeNum)
+        
+        // EXTRAIR THUMB DO EPISÓDIO
+        val thumb = extractEpisodeThumbnail(linkElement)
+        
+        val episodeTitle = epTypeElement?.text()?.trim() ?: "Episódio $finalEpisodeNum"
+        
+        episodes.add(newEpisode(fixUrl(href)) {
+            this.name = episodeTitle
+            this.episode = finalEpisodeNum
+            this.season = 1
+            this.posterUrl = thumb // ADICIONANDO A THUMB
+        })
 
-    println("   ✅ Ep $finalEpisodeNum: $episodeTitle -> $href")
-    if (thumb != null) {
-        println("   🖼️  Thumb: $thumb")
-    }
+        println("   ✅ Ep $finalEpisodeNum: $episodeTitle -> $href")
+        if (thumb != null) {
+            println("   🖼️  Thumb: $thumb")
+        }
     }
 
     private fun extractEpisodeThumbnail(linkElement: Element): String? {
@@ -852,7 +854,7 @@ if (cleanedTitle.isNotBlank()) {
             println("🎬 GOYABU: Load concluído para '$title'")
             println("=".repeat(60) + "\n")
             
-            return response
+            response
             
         } catch (e: Exception) {
             println("❌ ERRO no load: ${e.message}")
