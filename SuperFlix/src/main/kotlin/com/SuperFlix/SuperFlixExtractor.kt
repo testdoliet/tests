@@ -6,7 +6,7 @@ import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.M3u8Helper
 
 object SuperFlixExtractor {
-    // COOKIE ATUALIZADO (em uma linha só)
+    // COOKIE ATUALIZADO
     private const val API_COOKIE = "SITE_TOTAL_ID=aTYqe6GU65PNmeCXpelwJwAAAMi; __dtsu=104017651574995957BEB724C6373F9E; __cc_id=a44d1e52993b9c2Oaaf40eba24989a06; __cc_cc=ACZ4nGNQSDQXsTFMNTWyTDROskw2MkhMTDDMXSE1KNDKxtLBMNDBjAIJMC4fgVe%2B%2F%2BDngAHemT8XsDBKrv%2FF3%2F2F2%2F%2FF0ZGhFP15u.VnW-1Y0o8o6/84-1.2.1.1-4_OXh2hYevsbO8hINijDKB8O_SPowh.pNojloHEbwX_qZorbmW8u8zqV9B7UsV6bbRmCWx_dD17mA7vJJklpOD9WBh9DA0wMV2a1QSKuR2J3FN9.TRzOUM4AhnTGFd8dJH8bHfqQdY7uYuUg7Ny1TVQDF9kXqyEPtnmkZ9rFkqQ2KS6u0t2hhFdQvRBY7dqyGfdjmyjDqwc7ZOovHB0eqep.FPHrh8T9iz1LuucA; cf_clearance=rfIEldahI7B..Y4PpZhGgwi.QOJBqIRGdFP150.VnW-1766868784-1.1-"
     
     suspend fun extractVideoLinks(
@@ -14,16 +14,16 @@ object SuperFlixExtractor {
         name: String,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        return tryFembedNewMethod(url, name, callback)
+        return tryFembedMethod(url, name, callback)
     }
     
-    private suspend fun tryFembedNewMethod(
+    private suspend fun tryFembedMethod(
         url: String,
         name: String,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         return try {
-            println("🎯 SuperFlixExtractor: Método NOVO Fembed...")
+            println("🎯 SuperFlixExtractor: Método Fembed...")
             
             // 1. Extrair ID
             val videoId = extractFembedId(url)
@@ -34,16 +34,48 @@ object SuperFlixExtractor {
             
             println("✅ ID: $videoId")
             
-            // 2. Fazer POST EXATO como mostrado nas imagens
+            // 2. Fazer POST para obter iframe
+            val iframeUrl = getIframeUrlFromFembed(videoId)
+            if (iframeUrl == null) {
+                println("❌ Não consegui obter iframe")
+                return false
+            }
+            
+            println("🎬 Iframe obtido: $iframeUrl")
+            
+            // 3. Acessar iframe (getAds)
+            val bysevepoinUrl = getBysevepoinUrlFromIframe(iframeUrl, videoId)
+            if (bysevepoinUrl == null) {
+                println("❌ Não consegui obter URL do bysevepoin")
+                return false
+            }
+            
+            println("🔗 URL do bysevepoin: $bysevepoinUrl")
+            
+            // 4. Extrair m3u8 do bysevepoin
+            val m3u8Url = extractM3u8FromBysevepoin(bysevepoinUrl, videoId)
+            if (m3u8Url != null) {
+                println("✅ M3U8 encontrado: $m3u8Url")
+                return generateM3u8Links(m3u8Url, name, callback)
+            }
+            
+            println("❌ Não consegui extrair m3u8")
+            false
+        } catch (e: Exception) {
+            println("💥 Erro no método Fembed: ${e.message}")
+            false
+        }
+    }
+    
+    private suspend fun getIframeUrlFromFembed(videoId: String): String? {
+        return try {
             val apiUrl = "https://fembed.sx/api.php?s=$videoId&c="
             println("📡 POST para: $apiUrl")
             
-            // Headers SIMPLIFICADOS para evitar compressão
             val headers = mapOf(
                 "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8",
                 "X-Requested-With" to "XMLHttpRequest",
                 "Accept" to "*/*",
-                // NÃO incluir Accept-Encoding para evitar zstd/gzip
                 "Accept-Language" to "pt-BR",
                 "Cache-Control" to "no-cache",
                 "Pragma" to "no-cache",
@@ -53,146 +85,28 @@ object SuperFlixExtractor {
                 "Cookie" to API_COOKIE
             )
             
-            println("📋 Headers: ${headers.keys}")
-            
-            // 3. Body EXATO das imagens
             val postData = mapOf(
                 "action" to "getPlayer",
                 "lang" to "DUB",
                 "key" to "MA=="
             )
             
-            println("📦 Body: $postData")
-            
             val response = app.post(apiUrl, headers = headers, data = postData)
             val responseText = response.text
             
-            println("📥 Resposta POST (${responseText.length} chars):")
-            println("Primeiros 500 chars: ${responseText.take(500)}")
+            println("📥 Resposta POST (${responseText.length} chars): ${responseText.take(200)}...")
             
-            // 4. Verificar se a resposta está legível
-            if (responseText.isNotEmpty()) {
-                // Verificar se parece ser HTML/JSON ou lixo
-                val isLikelyText = responseText.any { it in ' '..'~' || it == '\n' || it == '\r' || it == '\t' }
-                
-                if (isLikelyText) {
-                    // Tentar encontrar iframe
-                    val iframeUrl = extractIframeUrlFromResponse(responseText)
-                    if (iframeUrl != null) {
-                        println("🎬 Iframe encontrado: $iframeUrl")
-                        
-                        // Fazer requisição para o iframe
-                        return processIframeUrl(iframeUrl, videoId, name, callback)
-                    }
-                    
-                    // Tentar encontrar m3u8 direto
-                    val m3u8Url = extractM3u8FromHtml(responseText)
-                    if (m3u8Url != null) {
-                        println("✅ M3U8 direto: $m3u8Url")
-                        return generateM3u8Links(m3u8Url, name, callback)
-                    }
-                    
-                    // Tentar encontrar script
-                    val scriptUrl = extractScriptUrl(responseText)
-                    if (scriptUrl != null) {
-                        println("📜 Script encontrado: $scriptUrl")
-                        return processScriptUrl(scriptUrl, videoId, name, callback)
-                    }
-                    
-                    // Mostrar resposta para debug
-                    if (responseText.length < 1000) {
-                        println("🔍 Resposta completa: $responseText")
-                    }
-                } else {
-                    println("⚠️  Resposta parece binária (poucos caracteres imprimíveis)")
-                    
-                    // Tentar como string UTF-8 de qualquer maneira
-                    val decoded = responseText
-                    if (decoded.contains("iframe") || decoded.contains("src=")) {
-                        val iframeUrl = extractIframeUrlFromResponse(decoded)
-                        if (iframeUrl != null) {
-                            return processIframeUrl(iframeUrl, videoId, name, callback)
-                        }
-                    }
-                }
-            }
-            
-            // 5. Se não funcionou, tentar método alternativo: GET direto para getAds
-            println("🔄 Tentando método alternativo (GET para getAds)...")
-            return tryAlternativeMethod(videoId, name, callback)
-            
+            // Extrair URL do iframe
+            extractIframeUrl(responseText)
         } catch (e: Exception) {
-            println("💥 Erro no método Fembed: ${e.message}")
-            false
+            println("💥 Erro ao obter iframe: ${e.message}")
+            null
         }
     }
     
-    private suspend fun tryAlternativeMethod(
-        videoId: String,
-        name: String,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        return try {
-            // URL do iframe que vimos nas imagens
-            val iframeUrl = "https://fembed.sx/api.php?action=getAds&s=$videoId&c=&key=0&lang=DUB"
-            println("🎬 Acessando iframe diretamente: $iframeUrl")
-            
-            val headers = mapOf(
-                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                "Accept-Language" to "pt-BR",
-                "Referer" to "https://fembed.sx/e/$videoId",
-                "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36",
-                "Cookie" to API_COOKIE
-            )
-            
-            val response = app.get(iframeUrl, headers = headers)
-            val html = response.text
-            
-            println("📥 Resposta iframe (${html.length} chars): ${html.take(300)}...")
-            
-            // Procurar m3u8 no iframe
-            val m3u8Url = extractM3u8FromHtml(html)
-            if (m3u8Url != null) {
-                println("✅ M3U8 no iframe: $m3u8Url")
-                return generateM3u8Links(m3u8Url, name, callback)
-            }
-            
-            // Procurar por atob (base64) no JavaScript
-            val atobMatch = Regex("""atob\(["']([^"']+)["']\)""").find(html)
-            if (atobMatch != null) {
-                val base64 = atobMatch.groupValues[1]
-                println("🔓 Base64 encontrado: ${base64.take(50)}...")
-                
-                try {
-                    val decoded = android.util.Base64.decode(base64, android.util.Base64.DEFAULT)
-                        .toString(Charsets.UTF_8)
-                    println("🔓 Decodificado: $decoded")
-                    
-                    if (decoded.contains("m3u8")) {
-                        val m3u8Pattern = Regex("""(https?://[^"'\s]+\.m3u8[^"'\s]*)""")
-                        val m3u8Match = m3u8Pattern.find(decoded)
-                        if (m3u8Match != null) {
-                            val m3u8Url = m3u8Match.groupValues[1]
-                            println("✅ M3U8 no base64: $m3u8Url")
-                            return generateM3u8Links(m3u8Url, name, callback)
-                        }
-                    }
-                } catch (e: Exception) {
-                    println("⚠️  Erro ao decodificar base64: ${e.message}")
-                }
-            }
-            
-            false
-        } catch (e: Exception) {
-            println("💥 Erro no método alternativo: ${e.message}")
-            false
-        }
-    }
-    
-    private fun extractIframeUrlFromResponse(html: String): String? {
-        // Procurar src do iframe
-        val iframePattern = Regex("""<iframe[^>]+src=["']([^"']+)["']""")
-        val match = iframePattern.find(html)
+    private fun extractIframeUrl(html: String): String? {
+        val pattern = Regex("""<iframe[^>]+src=["']([^"']+)["']""")
+        val match = pattern.find(html)
         
         if (match != null) {
             var url = match.groupValues[1]
@@ -208,20 +122,7 @@ object SuperFlixExtractor {
         return null
     }
     
-    private fun extractScriptUrl(html: String): String? {
-        // Procurar src em scripts
-        val scriptPattern = Regex("""<script[^>]+src=["']([^"']+)["']""")
-        val match = scriptPattern.find(html)
-        
-        return match?.groupValues?.get(1)
-    }
-    
-    private suspend fun processIframeUrl(
-        iframeUrl: String,
-        videoId: String,
-        name: String,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
+    private suspend fun getBysevepoinUrlFromIframe(iframeUrl: String, videoId: String): String? {
         return try {
             println("🔍 Acessando iframe: $iframeUrl")
             
@@ -238,46 +139,71 @@ object SuperFlixExtractor {
             
             println("📥 Resposta iframe (${html.length} chars): ${html.take(300)}...")
             
-            // Tentar extrair m3u8
-            val m3u8Url = extractM3u8FromHtml(html)
-            if (m3u8Url != null) {
-                println("✅ M3U8 no iframe: $m3u8Url")
-                return generateM3u8Links(m3u8Url, name, callback)
-            }
-            
-            false
+            // Extrair URL do bysevepoin
+            extractBysevepoinUrl(html)
         } catch (e: Exception) {
-            println("💥 Erro ao processar iframe: ${e.message}")
-            false
+            println("💥 Erro ao acessar iframe: ${e.message}")
+            null
         }
     }
     
-    private suspend fun processScriptUrl(
-        scriptUrl: String,
-        videoId: String,
-        name: String,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
+    private fun extractBysevepoinUrl(html: String): String? {
+        // Procurar src do iframe que aponta para bysevepoin
+        val pattern = Regex("""<iframe[^>]+src=["'](https?://bysevepoin\.com/[^"']+)["']""")
+        val match = pattern.find(html)
+        
+        if (match != null) {
+            return match.groupValues[1]
+        }
+        
+        // Tentar padrão alternativo
+        val altPattern = Regex("""src=["'](https?://[^"']*bysevepoin[^"']*)["']""")
+        val altMatch = altPattern.find(html)
+        
+        return altMatch?.groupValues?.get(1)
+    }
+    
+    private suspend fun extractM3u8FromBysevepoin(
+        bysevepoinUrl: String,
+        videoId: String
+    ): String? {
         return try {
-            println("📜 Acessando script: $scriptUrl")
+            println("🌐 Acessando bysevepoin: $bysevepoinUrl")
             
-            val response = app.get(scriptUrl)
-            val content = response.text
+            val headers = mapOf(
+                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language" to "pt-BR",
+                "Referer" to "https://fembed.sx/e/$videoId",
+                "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36",
+                "Cookie" to API_COOKIE
+            )
             
-            // O script pode conter o m3u8
-            val m3u8Url = extractM3u8FromHtml(content)
+            val response = app.get(bysevepoinUrl, headers = headers)
+            val html = response.text
+            
+            println("📥 Resposta bysevepoin (${html.length} chars): ${html.take(500)}...")
+            
+            // Procurar m3u8 de várias formas
+            val m3u8Url = findM3u8InHtml(html)
             if (m3u8Url != null) {
-                return generateM3u8Links(m3u8Url, name, callback)
+                return m3u8Url
             }
             
-            false
+            // Se não achou, tentar procurar em scripts
+            val scriptUrl = findScriptUrl(html)
+            if (scriptUrl != null) {
+                println("📜 Script encontrado: $scriptUrl")
+                return extractM3u8FromScript(scriptUrl, videoId)
+            }
+            
+            null
         } catch (e: Exception) {
-            println("💥 Erro no script: ${e.message}")
-            false
+            println("💥 Erro ao acessar bysevepoin: ${e.message}")
+            null
         }
     }
     
-    private fun extractM3u8FromHtml(html: String): String? {
+    private fun findM3u8InHtml(html: String): String? {
         val patterns = listOf(
             Regex("""["'](https?://[^"']+\.m3u8[^"']*)["']"""),
             Regex("""source.*?src=["'](https?://[^"']+\.m3u8[^"']*)["']""", RegexOption.DOT_MATCHES_ALL),
@@ -294,6 +220,36 @@ object SuperFlixExtractor {
         }
         
         return null
+    }
+    
+    private fun findScriptUrl(html: String): String? {
+        val pattern = Regex("""<script[^>]+src=["']([^"']+)["']""")
+        val match = pattern.find(html)
+        return match?.groupValues?.get(1)
+    }
+    
+    private suspend fun extractM3u8FromScript(
+        scriptUrl: String,
+        videoId: String
+    ): String? {
+        return try {
+            println("📜 Baixando script: $scriptUrl")
+            
+            val headers = mapOf(
+                "Accept" to "*/*",
+                "Referer" to "https://fembed.sx/e/$videoId",
+                "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36"
+            )
+            
+            val response = app.get(scriptUrl, headers = headers)
+            val scriptContent = response.text
+            
+            // Procurar m3u8 no script
+            return findM3u8InHtml(scriptContent)
+        } catch (e: Exception) {
+            println("💥 Erro ao baixar script: ${e.message}")
+            null
+        }
     }
     
     private fun extractFembedId(url: String): String? {
