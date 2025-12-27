@@ -19,7 +19,7 @@ class Goyabu : MainAPI() {
         private const val SEARCH_PATH = "/?s="
         private const val LANCAMENTOS_PATH = "/lancamentos"
         private val loadingMutex = Mutex()
-        
+
         // LISTA COMPLETA DE GÊNEROS (REMOVIDOS: /18, /generos/gore, /generos/ecchi)
         private val ALL_GENRES = listOf(
             "/generos/china" to "China",
@@ -38,14 +38,15 @@ class Goyabu : MainAPI() {
             "/generos/harem" to "Harém",
             "/generos/guerra" to "Guerra"
         )
-        
+
+        // ADICIONADO: Padrões para limpar sinopse
         private val SYNOPSIS_JUNK_PATTERNS = listOf(
             Regex("""(?i)assistir.*?online"""),
             Regex("""(?i)anime completo"""),
             Regex("""(?i)todos os episodios"""),
             Regex("""(?i)dublado.*?online"""),
             Regex("""(?i)legendado.*?online"""),
-            Regex("""(?i)assistir.*?gratis"""),
+            Regex("""(?i)assista.*?gratis"""),
             Regex("""(?i)veja.*?de graça"""),
             Regex("""(?i)streaming.*?(online|gratis)"""),
             Regex("""(?i)assistir anime"""),
@@ -58,7 +59,7 @@ class Goyabu : MainAPI() {
             Regex("""(?i)qualidade.*?(alta|hd)"""),
             Regex("""(?i)sinopse.*?:""", RegexOption.IGNORE_CASE)
         )
-        
+
         private val TITLE_CLEANUP_PATTERNS = listOf(
             "(?i)\\s*\\(dublado\\)".toRegex(),
             "(?i)\\s*\\(legendado\\)".toRegex(),
@@ -72,6 +73,9 @@ class Goyabu : MainAPI() {
             "(?i)\\s*-\\s*completo".toRegex(),
             "(?i)\\s*\\|.*".toRegex()
         )
+        
+        private val ADULT_GENRES = setOf("+18", "Hentai", "Adulto", "Erótico", "Yaoi", "Yuri")
+        private val SUGGESTIVE_GENRES = setOf("Ecchi", "Harém", "Harem")
     }
 
     init {
@@ -85,8 +89,6 @@ class Goyabu : MainAPI() {
         }.toTypedArray()
     )
 
-    // ========== FUNÇÕES AUXILIARES ==========
-    
     private fun cleanTitle(dirtyTitle: String): String {
         var clean = dirtyTitle.trim()
         TITLE_CLEANUP_PATTERNS.forEach { pattern ->
@@ -96,106 +98,41 @@ class Goyabu : MainAPI() {
         return if (clean.isBlank()) dirtyTitle else clean
     }
 
+    // ADICIONADO: Função para limpar sinopse
     private fun cleanSynopsis(dirtySynopsis: String): String {
         var clean = dirtySynopsis.trim()
         
-        // Primeiro: tentar detectar e remover o bloco de texto promocional no início
-        val promotionalPatterns = listOf(
-            Regex("""^(?:Assistir.*?Online.*?(?:Anime.*?Completo.*?)?(?:Dublado.*?Online\.)?\s*)+""", RegexOption.IGNORE_CASE),
-            Regex("""^(?:Todos os Episodios.*?Online.*?(?:Anime.*?Completo.*?)?\.?\s*)+""", RegexOption.IGNORE_CASE),
-            Regex("""^(?:Assistir.*?Anime.*?Completo.*?(?:Dublado.*?Online\.)?\s*)+""", RegexOption.IGNORE_CASE),
-            Regex("""^(?:Assistir.*?Dublado.*?Online.*?\.\s*)+""", RegexOption.IGNORE_CASE),
-            Regex("""^(?:.*?Online.*?(?:Completo|Dublado|Legendado).*?\.\s*)+""", RegexOption.IGNORE_CASE),
-        )
-        
-        // Tentar remover bloco promocional no início
-        for (pattern in promotionalPatterns) {
-            val match = pattern.find(clean)
-            if (match != null) {
-                println("🧹 Removendo bloco promocional: '${match.value}'")
-                clean = pattern.replaceFirst(clean, "").trim()
-                
-                // Se começar com ponto, remover
-                if (clean.startsWith(".")) {
-                    clean = clean.substring(1).trim()
-                }
-                // Se começar com vírgula, remover
-                if (clean.startsWith(",")) {
-                    clean = clean.substring(1).trim()
-                }
-                break
-            }
-        }
-        
-        // Segunda abordagem: dividir por frases e remover as promocionais
-        val sentences = clean.split(".").map { it.trim() }
-        if (sentences.size > 1) {
-            val filteredSentences = mutableListOf<String>()
-            var foundRealSynopsis = false
-            
-            for (sentence in sentences) {
-                val trimmedSentence = sentence.trim()
-                if (trimmedSentence.isEmpty()) continue
-                
-                // Verificar se é uma frase promocional
-                val isPromotional = trimmedSentence.matches(Regex("(?i)^(assistir|veja|confira|visite|baixar|download|streaming|online|gratis|de graça|todos os episódios|anime completo|dublado|legendado).*")) ||
-                                   trimmedSentence.contains(Regex("(?i)assistir.*?online")) ||
-                                   trimmedSentence.contains(Regex("(?i)anime.*?completo")) ||
-                                   trimmedSentence.contains(Regex("(?i)todos os episódios")) ||
-                                   trimmedSentence.contains(Regex("(?i)dublado.*?online"))
-                
-                // Se já encontramos a sinopse real ou esta frase não é promocional, adicionar
-                if (foundRealSynopsis || !isPromotional) {
-                    filteredSentences.add(trimmedSentence)
-                    // Marcar que encontramos sinopse real a partir da primeira frase não promocional
-                    if (!isPromotional) {
-                        foundRealSynopsis = true
-                    }
-                } else if (isPromotional) {
-                    println("🧹 Removendo frase promocional: '$trimmedSentence'")
-                }
-            }
-            
-            // Juntar as frases, garantindo que a primeira comece com maiúscula
-            if (filteredSentences.isNotEmpty()) {
-                clean = filteredSentences.joinToString(". ")
-                
-                // Garantir que a primeira letra seja maiúscula
-                if (clean.isNotEmpty()) {
-                    clean = clean.first().uppercaseChar() + clean.drop(1)
-                }
-            }
-        }
-        
-        // Remover padrões específicos que possam ter sobrado
+        // Remove padrões de spam
         SYNOPSIS_JUNK_PATTERNS.forEach { pattern ->
             clean = pattern.replace(clean, "")
         }
         
-        // Limpeza final
+        // Remove frases que começam com palavras-chave de spam
+        val sentences = clean.split(".").map { it.trim() }
+        val filteredSentences = sentences.filter { sentence ->
+            !sentence.matches(Regex("(?i)^(assistir|veja|confira|visite|baixar|download|streaming|online|gratis|de graça).*"))
+        }
+        
+        clean = filteredSentences.joinToString(". ")
         clean = clean.replace(Regex("\\s+"), " ")
         clean = clean.replace(Regex("\\.\\s*\\.+"), ".")
-        clean = clean.replace(Regex("^[.,]\\s*"), "") // Remover ponto ou vírgula no início
         clean = clean.trim()
         
-        // Adicionar ponto final se necessário
         if (clean.isNotEmpty() && !clean.endsWith(".") && !clean.endsWith("!") && !clean.endsWith("?")) {
             clean += "."
         }
         
-        // Caso de sinopse vazia ou muito curta
         return when {
             clean.length < 20 -> "Sinopse não disponível."
-            clean == dirtySynopsis -> dirtySynopsis
             else -> clean
         }
     }
-    
+
     private fun extractGoyabuStatus(doc: org.jsoup.nodes.Document): ShowStatus? {
         return try {
             println("🔍 Procurando status do anime...")
             var statusText = ""
-            
+
             val statusSelectors = listOf(
                 "li.status",
                 ".status",
@@ -246,12 +183,26 @@ class Goyabu : MainAPI() {
         }
     }
 
+    private fun hasAdultContent(genres: List<String>): Boolean {
+        val lowerGenres = genres.map { it.lowercase().trim() }
+        val hasExplicit = ADULT_GENRES.any { explicitGenre ->
+            lowerGenres.any { it == explicitGenre.lowercase() }
+        }
+        
+        if (hasExplicit) {
+            println("🔞 CONTEÚDO ADULTO DETECTADO: $genres")
+            return true
+        }
+        
+        return false
+    }
+
     private fun parseScore(text: String?): Score? {
         if (text.isNullOrBlank()) {
             println("📊 Score: Nenhum score encontrado")
             return null
         }
-        
+
         try {
             val regex = Regex("""(\d+\.?\d*)""")
             val match = regex.find(text)
@@ -277,11 +228,11 @@ class Goyabu : MainAPI() {
         val titleElement = selectFirst(".title, .hidden-text")
         val rawTitle = titleElement?.text()?.trim() ?: return null
         val cleanedTitle = cleanTitle(rawTitle)
-        
+
         if (rawTitle != cleanedTitle) {
             println("🧹 Título limpo: '$rawTitle' → '$cleanedTitle'")
         }
-        
+
         val posterUrl = extractPosterUrl()
         val scoreElement = selectFirst(".rating-score-box, .rating")
         val scoreText = scoreElement?.text()?.trim()
@@ -292,12 +243,15 @@ class Goyabu : MainAPI() {
 
         val genreElement = selectFirst(".genre-tag, .tag")
         val genres = genreElement?.text()?.split(",")?.map { it.trim() } ?: emptyList()
-        
+        if (hasAdultContent(genres)) {
+            println("⚠️ Anime adulto na lista: $cleanedTitle")
+        }
+
         return newAnimeSearchResponse(cleanedTitle, fixUrl(href)) {
             this.posterUrl = posterUrl
             this.type = TvType.Anime
             this.score = score
-            
+
             if (hasDubBadge) {
                 addDubStatus(dubExist = true, subExist = false)
                 println("🎭 Badge: DUB (dublado detectado)")
@@ -324,161 +278,22 @@ class Goyabu : MainAPI() {
         return null
     }
 
-    private fun extractEpisodeNumberFromText(text: String): Int {
-        val regex = Regex("""Epis[oó]dio\s+(\d+)""", RegexOption.IGNORE_CASE)
-        val match = regex.find(text)
-        return match?.groupValues?.get(1)?.toIntOrNull() ?: 0
-    }
-
-    // ========== EXTRATOR DE LANÇAMENTOS ==========
-    
-    private fun extractLancamentosItems(document: org.jsoup.nodes.Document): List<SearchResponse> {
-        val items = mutableListOf<SearchResponse>()
-        
-        println("🔍 Extraindo itens da página de Lançamentos...")
-        
-        // Selecionar os episódios da página de lançamentos
-        val episodeElements = document.select("article.boxEP.grid-view a")
-        
-        episodeElements.forEachIndexed { index, element ->
-            try {
-                val href = element.attr("href") ?: return@forEachIndexed
-                val isEpisodePage = href.matches(Regex("""^/\d+/?$"""))
-                
-                if (!isEpisodePage) return@forEachIndexed
-                
-                // Extrair título do episódio
-                val titleElement = element.selectFirst(".title.hidden-text")
-                val rawTitle = titleElement?.text()?.trim() ?: return@forEachIndexed
-                
-                // Extrair número do episódio
-                val episodeNumElement = element.selectFirst(".ep-type b")
-                val episodeText = episodeNumElement?.text()?.trim() ?: ""
-                val episodeNum = extractEpisodeNumberFromText(episodeText)
-                
-                // Criar título limpo
-                val cleanedTitle = cleanTitle(rawTitle)
-                
-                // Criar título completo com número do episódio
-                val fullTitle = if (episodeNum > 0) "$cleanedTitle - Episódio $episodeNum" else cleanedTitle
-                
-                // Extrair poster (thumbnail do episódio)
-                val posterUrl = element.selectFirst(".coverImg")?.attr("style")?.let { style ->
-                    val regex = Regex("""url\(['"]?([^'"()]+)['"]?\)""")
-                    regex.find(style)?.groupValues?.get(1)?.let { url ->
-                        fixUrl(url)
-                    }
-                }
-                
-                // Verificar se é dublado
-                val hasDubBadge = element.selectFirst(".audio-box.dublado") != null
-                
-                if (cleanedTitle.isNotBlank()) {
-                    val response = newAnimeSearchResponse(fullTitle, fixUrl(href)) {
-                        this.posterUrl = posterUrl
-                        this.type = TvType.Anime
-                    }
-                    
-                    // Adicionar status de dublagem
-                    if (hasDubBadge) {
-                        response.addDubStatus(dubExist = true, subExist = false)
-                    }
-                    
-                    items.add(response)
-                    
-                    if (index < 3) {
-                        println("   🎬 Lançamento: $fullTitle -> $href")
-                    }
-                }
-            } catch (e: Exception) {
-                println("   ❌ Erro ao extrair lançamento ${index + 1}: ${e.message}")
-            }
-        }
-        
-        return items
-    }
-    
-    // ========== FUNÇÃO AUXILIAR PARA ITENS REGULARES ==========
-    
-    private fun extractRegularItems(document: org.jsoup.nodes.Document): List<SearchResponse> {
-        val items = mutableListOf<SearchResponse>()
-        
-        println("🔍 Extraindo itens regulares...")
-        
-        // Selecionar todos os artigos/animes
-        val animeElements = document.select("article.boxAN a, a[href*='/anime/']")
-        
-        animeElements.forEachIndexed { index, element ->
-            try {
-                val href = element.attr("href") ?: return@forEachIndexed
-                val isAnimePage = href.contains("/anime/")
-                val isEpisodePage = href.matches(Regex("""^/\d+/?$"""))
-                
-                if (!isAnimePage || isEpisodePage) return@forEachIndexed
-                
-                val titleElement = element.selectFirst(".title, .hidden-text")
-                val rawTitle = titleElement?.text()?.trim() ?: return@forEachIndexed
-                val cleanedTitle = cleanTitle(rawTitle)
-                
-                val posterUrl = element.extractPosterUrl()
-                val hasDubBadge = element.selectFirst(".audio-box.dublado, .dublado") != null
-                
-                if (cleanedTitle.isNotBlank()) {
-                    val response = newAnimeSearchResponse(cleanedTitle, fixUrl(href)) {
-                        this.posterUrl = posterUrl
-                        this.type = TvType.Anime
-                    }
-                    
-                    // Adicionar status de dublagem
-                    if (hasDubBadge) {
-                        response.addDubStatus(dubExist = true, subExist = false)
-                    }
-                    
-                    items.add(response)
-                    
-                    if (index < 3) {
-                        println("   📺 Anime: $cleanedTitle -> $href")
-                    }
-                }
-            } catch (e: Exception) {
-                println("   ❌ Erro ao extrair anime ${index + 1}: ${e.message}")
-            }
-        }
-        
-        return items
-    }
-
-    // ========== FUNÇÕES PRINCIPAIS ==========
-    
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         return loadingMutex.withLock {
             try {
                 println("🎬 GOYABU: '${request.name}' - Página $page")
-                
-                // Verificar se é a página de Lançamentos
-                val isLancamentosPage = request.name == "Lançamentos"
-                
                 val url = if (page > 1) "${request.data}page/$page/" else request.data
                 val document = app.get(url, timeout = 20).document
-                
-                val items = if (isLancamentosPage) {
-                    // Para página de Lançamentos, extrair episódios como itens de pesquisa
-                    extractLancamentosItems(document)
-                } else {
-                    // Para outras páginas, usar a extração normal
-                    extractRegularItems(document)
-                }
-                
-                println("📊 ${items.size} itens encontrados em '${request.name}'")
-                
-                val hasNextPage = if (isLancamentosPage) {
-                    // Verificar se há mais páginas nos Lançamentos
-                    document.selectFirst(".pagination") != null
-                } else {
-                    false
-                }
-                
-                newHomePageResponse(request.name, items, hasNextPage)
+
+                val elements = document.select("article a, .boxAN a, a[href*='/anime/']")
+                println("📊 ${elements.size} links encontrados em '${request.name}'")
+
+                val homeItems = elements.mapNotNull { it.toSearchResponse() }
+                    .distinctBy { it.url }
+                    .take(30)
+
+                val hasNextPage = false
+                newHomePageResponse(request.name, homeItems, hasNextPage)
             } catch (e: Exception) {
                 println("❌ ERRO: ${request.name} - ${e.message}")
                 newHomePageResponse(request.name, emptyList(), false)
@@ -490,10 +305,10 @@ class Goyabu : MainAPI() {
         if (query.length < 2) return emptyList()
 
         val searchUrl = "$mainUrl$SEARCH_PATH${query.trim().replace(" ", "+")}"
-        
+
         return try {
             val document = app.get(searchUrl, timeout = 20).document
-            
+
             document.select("article a, .boxAN a, a[href*='/anime/']")
                 .mapNotNull { it.toSearchResponse() }
                 .distinctBy { it.url }
@@ -503,236 +318,240 @@ class Goyabu : MainAPI() {
         }
     }
 
-    // ========== FUNÇÕES DE EXTRACTION DE EPISÓDIOS ==========
-    
-    private fun extractEpisodeNumberFromHref(href: String, default: Int): Int {
-        val regex1 = Regex("""/(\d+)/?$""")
-        val regex2 = Regex("""/episodio[-_]?(\d+)/?$""", RegexOption.IGNORE_CASE)
-        
-        regex1.find(href)?.groupValues?.get(1)?.toIntOrNull()?.let { return it }
-        regex2.find(href)?.groupValues?.get(1)?.toIntOrNull()?.let { return it }
+    override suspend fun load(url: String): LoadResponse {
+        return try {
+            println("\n" + "=".repeat(60))
+            println("🎬 GOYABU: Carregando com extração JavaScript: $url")
+            println("=".repeat(60))
 
-        return default
-    }
+            val document = app.get(url, timeout = 30).document
 
-    private fun extractEpisodeFromBoxEP(boxEP: Element, index: Int, episodes: MutableList<Episode>) {
-        val linkElement = boxEP.selectFirst("a[href]") ?: return
-        val href = linkElement.attr("href").trim()
-        if (href.isBlank()) return
-        
-        var episodeNum = index + 1
+            val rawTitle = document.selectFirst("h1.text-hidden, h1")?.text()?.trim() ?: "Sem Título"
+            val title = cleanTitle(rawTitle)
+            if (rawTitle != title) {
+                println("🧹 Título limpo: '$rawTitle' → '$title'")
+            }
+            println("📌 Título: $title")
 
-        // Extrair número do episódio
-        val epTypeElement = linkElement.selectFirst(".ep-type b")
-        epTypeElement?.text()?.trim()?.let { text ->
-            val regex = Regex("""Epis[oó]dio\s+(\d+)""", RegexOption.IGNORE_CASE)
-            val match = regex.find(text)
-            match?.groupValues?.get(1)?.toIntOrNull()?.let { foundNum ->
-                episodeNum = foundNum
+            val poster = document.selectFirst(".streamer-poster img, .cover")?.attr("src")
+                ?.takeIf { it.isNotBlank() }
+                ?.let { fixUrl(it) }
+            println("🖼️ Poster: ${poster != null}")
+
+            val rawSynopsis = document.selectFirst(".streamer-sinopse")?.text()?.trim()
+                ?.replace("ler mais", "")
+                ?.trim()
+                ?: "Sinopse não disponível."
+
+            // ADICIONADO: Limpar sinopse
+            val synopsis = cleanSynopsis(rawSynopsis)
+            if (rawSynopsis != synopsis && synopsis != "Sinopse não disponível.") {
+                println("🧹 Sinopse limpa:")
+                println("   ANTES: ${rawSynopsis.take(100)}...")
+                println("   DEPOIS: ${synopsis.take(100)}...")
+            }
+            println("📖 Sinopse (${synopsis.length} chars)")
+
+            val yearElement = document.selectFirst("li#year")
+            val year = yearElement?.text()?.trim()?.toIntOrNull()
+            println("📅 Ano: $year")
+
+            val status = extractGoyabuStatus(document)
+
+            val genres = mutableListOf<String>()
+            document.select(".filter-btn.btn-style, a[href*='/generos/']").forEach { element ->
+                element.text().trim().takeIf { it.isNotBlank() }?.let { 
+                    if (it.length > 1 && !genres.contains(it)) genres.add(it) 
+                }
+            }
+            println("🏷️ Gêneros: ${genres.size}")
+
+            val isAdultContent = hasAdultContent(genres)
+            if (isAdultContent) {
+                println("⚠️ AVISO: Este anime contém conteúdo adulto (+18)")
+            }
+
+            val scoreElement = document.selectFirst(".rating-total, .rating-score")
+            val scoreText = scoreElement?.text()?.trim()
+            val score = parseScore(scoreText)
+
+            val isDubbed = rawTitle.contains("dublado", ignoreCase = true) ||
+                          document.selectFirst(".audio-box.dublado, .dublado") != null
+            println("🎭 Dublado: $isDubbed")
+
+            println("\n🔍 BUSCANDO EPISÓDIOS...")
+            var episodes = extractEpisodesFromJavaScript(document, url)
+
+            if (episodes.isEmpty()) {
+                println("⚠️ Nenhum episódio encontrado no JavaScript, tentando métodos alternativos...")
+                val fallbackEpisodes = extractEpisodesFallback(document, url)
+                if (fallbackEpisodes.isNotEmpty()) {
+                    println("✅ Encontrados ${fallbackEpisodes.size} episódios via fallback")
+                    episodes = episodes + fallbackEpisodes
+                }
+            } else {
+                println("✅ ENCONTRADOS ${episodes.size} EPISÓDIOS NO JAVASCRIPT!")
+            }
+
+            val sortedEpisodes = episodes.sortedBy { it.episode }
+
+            val response = newAnimeLoadResponse(title, url, TvType.Anime) {
+                this.posterUrl = poster
+                this.year = year
+                this.plot = synopsis // USANDO SINOPSE LIMPA
+                this.tags = genres
+                this.score = score
+                this.showStatus = status
+
+                if (sortedEpisodes.isNotEmpty()) {
+                    val dubStatus = if (isDubbed) DubStatus.Dubbed else DubStatus.Subbed
+                    addEpisodes(dubStatus, sortedEpisodes)
+
+                    println("\n✅ SUCESSO! ${sortedEpisodes.size} EPISÓDIOS:")
+                    sortedEpisodes.take(5).forEach { ep ->
+                        println("   📺 Ep ${ep.episode}: ${ep.name} -> ${ep.data}")
+                    }
+                    if (sortedEpisodes.size > 5) {
+                        println("   ... e mais ${sortedEpisodes.size - 5} episódios")
+                    }
+                } else {
+                    println("\n⚠️ NENHUM EPISÓDIO ENCONTRADO")
+                    println("📝 Tente acessar: $url e verifique se há episódios na página")
+                }
+            }
+
+            println("\n" + "=".repeat(60))
+            println("🎬 GOYABU: Load concluído para '$title'")
+            println("=".repeat(60) + "\n")
+
+            response
+
+        } catch (e: Exception) {
+            println("❌ ERRO no load: ${e.message}")
+            newAnimeLoadResponse("Erro", url, TvType.Anime) {
+                this.plot = "Erro: ${e.message}"
             }
         }
-
-        // Tentar extrair do data-episode-number do pai
-        boxEP.parent()?.attr("data-episode-number")?.toIntOrNull()?.let { parentNum ->
-            episodeNum = parentNum
-        }
-        
-        val finalEpisodeNum = extractEpisodeNumberFromHref(href, episodeNum)
-        
-        // EXTRAIR THUMB DO EPISÓDIO
-        val thumb = extractEpisodeThumbnail(linkElement)
-        
-        val episodeTitle = epTypeElement?.text()?.trim() ?: "Episódio $finalEpisodeNum"
-        
-        episodes.add(newEpisode(fixUrl(href)) {
-            this.name = episodeTitle
-            this.episode = finalEpisodeNum
-            this.season = 1
-            this.posterUrl = thumb // ADICIONANDO A THUMB
-        })
-
-        println("   ✅ Ep $finalEpisodeNum: $episodeTitle -> $href")
-        if (thumb != null) {
-            println("   🖼️  Thumb: $thumb")
-        }
     }
 
-    private fun extractEpisodeThumbnail(linkElement: Element): String? {
-        // Tentar múltiplos seletores para encontrar a thumbnail
-        val selectors = listOf(
-            "figure.thumb.contentImg div.coverImg",
-            ".coverImg",
-            ".thumb img",
-            ".contentImg img",
-            "div[data-thumb]",
-            "img[src]",
-            "figure img"
-        )
-        
-        for (selector in selectors) {
-            try {
-                // Primeiro, tentar extrair do atributo style (background-image)
-                val styleElement = linkElement.selectFirst("$selector[style]")
-                styleElement?.attr("style")?.let { style ->
-                    val regex = Regex("""url\(['"]?([^'"()]+)['"]?\)""")
-                    val match = regex.find(style)
-                    match?.groupValues?.get(1)?.let { url ->
-                        val cleanUrl = url.replace("&quot;", "").trim()
-                        if (cleanUrl.isNotBlank()) {
-                            println("      🖼️ Encontrada thumb via style: $cleanUrl")
-                            return fixUrl(cleanUrl)
-                        }
-                    }
-                }
-                
-                // Tentar data-thumb
-                val dataThumbElement = linkElement.selectFirst("$selector[data-thumb]")
-                dataThumbElement?.attr("data-thumb")?.let { url ->
-                    val cleanUrl = url.replace("&quot;", "").trim()
-                    if (cleanUrl.isNotBlank()) {
-                        println("      🖼️ Encontrada thumb via data-thumb: $cleanUrl")
-                        return fixUrl(cleanUrl)
-                    }
-                }
-                
-                // Tentar src direto
-                val imgElement = linkElement.selectFirst("$selector img")
-                imgElement?.attr("src")?.let { url ->
-                    val cleanUrl = url.trim()
-                    if (cleanUrl.isNotBlank()) {
-                        println("      🖼️ Encontrada thumb via src: $cleanUrl")
-                        return fixUrl(cleanUrl)
-                    }
-                }
-                
-                // Tentar data-src (lazy loading)
-                imgElement?.attr("data-src")?.let { url ->
-                    val cleanUrl = url.trim()
-                    if (cleanUrl.isNotBlank()) {
-                        println("      🖼️ Encontrada thumb via data-src: $cleanUrl")
-                        return fixUrl(cleanUrl)
-                    }
-                }
-                
-            } catch (e: Exception) {
-                println("      ⚠️ Erro ao extrair thumb com seletor '$selector': ${e.message}")
-            }
-        }
-        
-        return null
-    }
+    private fun extractEpisodesFromJavaScript(document: org.jsoup.nodes.Document, baseUrl: String): List<Episode> {
+        val episodes = mutableListOf<Episode>()
 
-    private fun findEpisodeThumbsInDocument(document: org.jsoup.nodes.Document): Map<Int, String> {
-        val thumbMap = mutableMapOf<Int, String>()
-        
         try {
-            println("\n🔍 Buscando thumbs de episódios no documento...")
-            
-            // Procurar em várias estruturas possíveis
-            val episodeContainers = listOf(
-                "#episodes-container",
-                ".episodes-slide",
-                ".episodes-grid",
-                ".episode-list",
-                ".episodios-list"
-            )
-            
-            for (container in episodeContainers) {
-                val containerElement = document.selectFirst(container)
-                if (containerElement != null) {
-                    println("✅ Encontrado container: $container")
-                    
-                    // Buscar todas as thumbs
-                    val thumbElements = containerElement.select(".coverImg, [data-thumb], .thumb img")
-                    println("📊 ${thumbElements.size} elementos de thumb encontrados")
-                    
-                    thumbElements.forEachIndexed { index, element ->
-                        try {
-                            // Extrair URL da thumb
-                            val thumbUrl = extractThumbUrlFromElement(element)
-                            if (!thumbUrl.isNullOrBlank()) {
-                                thumbMap[index + 1] = fixUrl(thumbUrl)
-                                if (index < 3) {
-                                    println("   📸 Thumb para episódio ${index + 1}: $thumbUrl")
+            val scripts = document.select("script")
+            println("📊 Encontrados ${scripts.size} scripts na página")
+
+            for ((index, script) in scripts.withIndex()) {
+                val scriptContent = script.html()
+
+                if (scriptContent.contains("allEpisodes") || 
+                    scriptContent.contains("\"episodio\"") || 
+                    scriptContent.contains("\"id\"")) {
+
+                    println("\n🔍 Analisando script #$index...")
+
+                    if (scriptContent.contains("allEpisodes")) {
+                        println("✅ Encontrado 'allEpisodes' no script")
+
+                        val arrayContent = extractArrayContent(scriptContent, "allEpisodes")
+
+                        if (arrayContent.isNotBlank()) {
+                            println("📦 Array extraído (${arrayContent.length} caracteres)")
+
+                            val episodeObjects = extractJsonObjects(arrayContent)
+                            println("📈 ${episodeObjects.size} objetos encontrados no array")
+
+                            episodeObjects.forEachIndexed { objIndex, jsonObj ->
+                                try {
+                                    val epNumber = extractValueFromJson(jsonObj, "episodio", "episode", "number")?.toIntOrNull() ?: (objIndex + 1)
+                                    val epId = extractValueFromJson(jsonObj, "id") ?: ""
+                                    val epTitle = extractValueFromJson(jsonObj, "title", "name") ?: "Episódio $epNumber"
+
+                                    val epUrl = buildEpisodeUrl(epId, epNumber)
+
+                                    // ADICIONADO: Thumb para episódios do JavaScript
+                                    val epThumb = extractValueFromJson(jsonObj, "thumb", "image", "poster")
+                                    
+                                    episodes.add(newEpisode(epUrl) {
+                                        this.name = epTitle
+                                        this.episode = epNumber
+                                        this.season = 1
+                                        // ADICIONA THUMB SE EXISTIR
+                                        if (epThumb != null) {
+                                            this.posterUrl = fixUrl(epThumb)
+                                        }
+                                    })
+
+                                    if (objIndex < 3) {
+                                        println("   📺 Ep $epNumber: $epTitle -> $epUrl")
+                                    }
+
+                                } catch (e: Exception) {
+                                    println("   ❌ Erro ao processar objeto $objIndex: ${e.message}")
                                 }
                             }
-                        } catch (e: Exception) {
-                            println("   ⚠️ Erro ao processar thumb $index: ${e.message}")
+
+                            if (episodes.isNotEmpty()) {
+                                return episodes
+                            }
                         }
                     }
-                    
-                    break
-                }
-            }
-            
-        } catch (e: Exception) {
-            println("❌ Erro ao buscar thumbs no documento: ${e.message}")
-        }
-        
-        println("📊 Total de thumbs encontradas: ${thumbMap.size}")
-        return thumbMap
-    }
 
-    private fun extractThumbUrlFromElement(element: Element): String? {
-        // Tentar múltiplas fontes
-        try {
-            // Tentar style attribute first
-            element.attr("style")?.let { style ->
-                if (style.contains("url(")) {
-                    val regex = Regex("""url\(['"]?([^'"()]+)['"]?\)""")
-                    val match = regex.find(style)
-                    match?.groupValues?.get(1)?.let { url ->
-                        val cleanUrl = url.replace("&quot;", "").trim()
-                        if (cleanUrl.isNotBlank()) return cleanUrl
+                    if (episodes.isEmpty()) {
+                        println("🔍 Tentando extrair episódios individualmente...")
+
+                        val episodePattern = Regex("""\{"id":"(\d+)","episodio":"(\d+)".*?"(thumb|image)":"([^"]*)".*?\}""")
+                        val episodeMatches = episodePattern.findAll(scriptContent)
+
+                        var matchCount = 0
+                        episodeMatches.forEach { match ->
+                            matchCount++
+                            try {
+                                val id = match.groupValues.getOrNull(1) ?: ""
+                                val epNum = match.groupValues.getOrNull(2)?.toIntOrNull() ?: matchCount
+                                val thumb = match.groupValues.getOrNull(4)
+
+                                if (id.isNotBlank()) {
+                                    episodes.add(newEpisode("$mainUrl/$id") {
+                                        this.name = "Episódio $epNum"
+                                        this.episode = epNum
+                                        this.season = 1
+                                        // ADICIONA THUMB SE EXISTIR
+                                        if (thumb != null) {
+                                            this.posterUrl = fixUrl(thumb)
+                                        }
+                                    })
+
+                                    if (matchCount <= 3) {
+                                        println("   📺 Ep $epNum -> $mainUrl/$id")
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                println("   ❌ Erro no match $matchCount: ${e.message}")
+                            }
+                        }
+
+                        if (matchCount > 0) {
+                            println("✅ Encontrados $matchCount episódios via padrão individual")
+                        }
                     }
                 }
             }
-            
-            // Tentar data-thumb
-            element.attr("data-thumb")?.let { url ->
-                val cleanUrl = url.trim()
-                if (cleanUrl.isNotBlank()) return cleanUrl
-            }
-            
-            // Tentar data-src
-            element.attr("data-src")?.let { url ->
-                val cleanUrl = url.trim()
-                if (cleanUrl.isNotBlank()) return cleanUrl
-            }
-            
-            // Tentar src
-            element.attr("src")?.let { url ->
-                val cleanUrl = url.trim()
-                if (cleanUrl.isNotBlank()) return cleanUrl
-            }
-            
-            // Tentar img dentro do elemento
-            element.selectFirst("img")?.let { img ->
-                img.attr("src")?.let { url ->
-                    val cleanUrl = url.trim()
-                    if (cleanUrl.isNotBlank()) return cleanUrl
-                }
-                
-                img.attr("data-src")?.let { url ->
-                    val cleanUrl = url.trim()
-                    if (cleanUrl.isNotBlank()) return cleanUrl
-                }
-            }
-            
+
         } catch (e: Exception) {
-            // Continuar para próxima fonte
+            println("❌ Erro ao extrair episódios do JavaScript: ${e.message}")
         }
-        
-        return null
+
+        return episodes
     }
 
     private fun extractEpisodesFallback(document: org.jsoup.nodes.Document, baseUrl: String): List<Episode> {
         val episodes = mutableListOf<Episode>()
-        
+
         println("🔍 Fallback: Procurando episódios via HTML...")
-        
+
         val episodeItems = document.select("#episodes-container .episode-item, .episode-item")
-        
+
         if (episodeItems.isEmpty()) {
             println("   ⚠️ Nenhum .episode-item encontrado")
             val boxEPs = document.select(".boxEP.grid-view, .boxEP")
@@ -757,7 +576,7 @@ class Goyabu : MainAPI() {
                 }
             }
         }
-        
+
         if (episodes.isEmpty()) {
             println("   🔍 Procurando links diretos de episódios...")
             val episodeLinks = document.select("a[href]").filter { 
@@ -769,145 +588,214 @@ class Goyabu : MainAPI() {
                 try {
                     val href = link.attr("href").trim()
                     if (href.isBlank()) return@forEachIndexed
-                    
+
                     val episodeNum = extractEpisodeNumberFromHref(href, index + 1)
-                    
+
+                    // ADICIONADO: Tentar extrair thumb do link
+                    val thumb = link.selectFirst("img[src]")?.attr("src")?.let { fixUrl(it) }
+
                     episodes.add(newEpisode(fixUrl(href)) {
                         this.name = "Episódio $episodeNum"
                         this.episode = episodeNum
                         this.season = 1
+                        // ADICIONA THUMB SE EXISTIR
+                        if (thumb != null) {
+                            this.posterUrl = thumb
+                        }
                     })
-                    
+
                     println("   🔗 Link direto Ep $episodeNum: $href")
                 } catch (e: Exception) {
                     println("   ⚠️ Erro no link ${index + 1}: ${e.message}")
                 }
             }
         }
-        
+
         println("   📊 Total de episódios via fallback: ${episodes.size}")
         return episodes
     }
 
-    // ========== LOAD FUNCTION ==========
-    
-    override suspend fun load(url: String): LoadResponse {
-        return try {
-            println("\n" + "=".repeat(60))
-            println("🎬 GOYABU: Carregando com extração JavaScript: $url")
-            println("=".repeat(60))
-            
-            val document = app.get(url, timeout = 30).document
-            
-            val rawTitle = document.selectFirst("h1.text-hidden, h1")?.text()?.trim() ?: "Sem Título"
-            val title = cleanTitle(rawTitle)
-            if (rawTitle != title) {
-                println("🧹 Título limpo: '$rawTitle' → '$title'")
-            }
-            println("📌 Título: $title")
-            
-            val poster = document.selectFirst(".streamer-poster img, .cover")?.attr("src")
-                ?.takeIf { it.isNotBlank() }
-                ?.let { fixUrl(it) }
-            println("🖼️ Poster: ${poster != null}")
-            
-            val rawSynopsis = document.selectFirst(".streamer-sinopse")?.text()?.trim()
-                ?.replace("ler mais", "")
-                ?.replace("Leia mais", "")
-                ?.trim()
-                ?: "Sinopse não disponível."
-            
-            val synopsis = cleanSynopsis(rawSynopsis)
-            println("📖 Sinopse (${synopsis.length} chars)")
-            
-            val yearElement = document.selectFirst("li#year")
-            val year = yearElement?.text()?.trim()?.toIntOrNull()
-            println("📅 Ano: $year")
-            
-            val status = extractGoyabuStatus(document)
+    private fun extractEpisodeFromBoxEP(boxEP: Element, index: Int, episodes: MutableList<Episode>) {
+        val linkElement = boxEP.selectFirst("a[href]") ?: return
+        val href = linkElement.attr("href").trim()
+        if (href.isBlank()) return
 
-            val genres = mutableListOf<String>()
-            document.select(".filter-btn.btn-style, a[href*='/generos/']").forEach { element ->
-                element.text().trim().takeIf { it.isNotBlank() }?.let { 
-                    if (it.length > 1 && !genres.contains(it)) genres.add(it) 
+        var episodeNum = index + 1
+
+        val epTypeElement = linkElement.selectFirst(".ep-type b")
+        epTypeElement?.text()?.trim()?.let { text ->
+            val regex = Regex("""Epis[oó]dio\s+(\d+)""", RegexOption.IGNORE_CASE)
+            val match = regex.find(text)
+            match?.groupValues?.get(1)?.toIntOrNull()?.let { episodeNum = it }
+        }
+
+        boxEP.parent()?.attr("data-episode-number")?.toIntOrNull()?.let { episodeNum = it }
+        episodeNum = extractEpisodeNumberFromHref(href, episodeNum)
+
+        // MELHORADO: Extrair thumb de mais lugares
+        var thumb: String? = null
+        
+        // Método 1: Do estilo background-image
+        linkElement.selectFirst(".coverImg")?.attr("style")?.let { style ->
+            val regex = Regex("""url\(['"]?([^'"()]+)['"]?\)""")
+            regex.find(style)?.groupValues?.get(1)?.replace("&quot;", "")?.trim()?.let { 
+                thumb = fixUrl(it)
+            }
+        }
+        
+        // Método 2: De imagem direta
+        if (thumb == null) {
+            linkElement.selectFirst("img[src]")?.attr("src")?.let { src ->
+                thumb = fixUrl(src.trim())
+            }
+        }
+        
+        // Método 3: Do boxEP pai
+        if (thumb == null) {
+            boxEP.selectFirst("img[src]")?.attr("src")?.let { src ->
+                thumb = fixUrl(src.trim())
+            }
+        }
+        
+        // Método 4: Do data-thumb
+        if (thumb == null) {
+            linkElement.selectFirst("[data-thumb]")?.attr("data-thumb")?.let { dataThumb ->
+                thumb = fixUrl(dataThumb.trim())
+            }
+        }
+
+        val episodeTitle = epTypeElement?.text()?.trim() ?: "Episódio $episodeNum"
+
+        episodes.add(newEpisode(fixUrl(href)) {
+            this.name = episodeTitle
+            this.episode = episodeNum
+            this.season = 1
+            // ADICIONA THUMB SE ENCONTRADO
+            if (thumb != null) {
+                this.posterUrl = thumb
+                println("   🖼️ Thumb encontrada para Ep $episodeNum")
+            }
+        })
+
+        println("   ✅ Ep $episodeNum: $episodeTitle -> $href")
+    }
+
+    private fun extractEpisodeNumberFromHref(href: String, default: Int): Int {
+        val regex1 = Regex("""/(\d+)/?$""")
+        val regex2 = Regex("""/episodio[-_]?(\d+)/?$""", RegexOption.IGNORE_CASE)
+        
+        regex1.find(href)?.groupValues?.get(1)?.toIntOrNull()?.let { return it }
+        regex2.find(href)?.groupValues?.get(1)?.toIntOrNull()?.let { return it }
+
+        return default
+    }
+
+    private fun extractArrayContent(scriptContent: String, arrayName: String): String {
+        val startIndex = scriptContent.indexOf("$arrayName = [")
+        if (startIndex == -1) return ""
+        
+        var braceCount = 0
+        var inString = false
+        var escapeNext = false
+        var i = startIndex + arrayName.length + 3
+        
+        while (i < scriptContent.length) {
+            val char = scriptContent[i]
+            
+            when {
+                escapeNext -> {
+                    escapeNext = false
                 }
-            }
-            println("🏷️ Gêneros: ${genres.size}")
-
-            val scoreElement = document.selectFirst(".rating-total, .rating-score")
-            val scoreText = scoreElement?.text()?.trim()
-            val score = parseScore(scoreText)
-            
-            val isDubbed = rawTitle.contains("dublado", ignoreCase = true) ||
-                           document.selectFirst(".audio-box.dublado, .dublado") != null
-            println("🎭 Dublado: $isDubbed")
-
-            println("\n🔍 BUSCANDO EPISÓDIOS...")
-            val episodes = extractEpisodesFallback(document, url)
-            
-            // BUSCAR THUMBS ADICIONAIS DO DOCUMENTO
-            val additionalThumbs = findEpisodeThumbsInDocument(document)
-            if (additionalThumbs.isNotEmpty()) {
-                println("\n🔍 Aplicando thumbs adicionais aos episódios...")
-                episodes.forEach { episode ->
-                    val thumbUrl = additionalThumbs[episode.episode]
-                    if (thumbUrl != null && episode.posterUrl == null) {
-                        episode.posterUrl = thumbUrl
-                        println("   🖼️ Adicionada thumb para Ep ${episode.episode}")
+                char == '\\' -> {
+                    escapeNext = true
+                }
+                char == '"' -> {
+                    inString = !inString
+                }
+                !inString && char == '[' -> {
+                    braceCount++
+                }
+                !inString && char == ']' -> {
+                    braceCount--
+                    if (braceCount == 0) {
+                        return scriptContent.substring(startIndex + arrayName.length + 3, i)
                     }
                 }
             }
+            i++
+        }
+        
+        return ""
+    }
 
-            val sortedEpisodes = episodes.sortedBy { it.episode }
+    private fun extractJsonObjects(jsonArray: String): List<String> {
+        val objects = mutableListOf<String>()
+        var depth = 0
+        var currentObject = StringBuilder()
+        var inString = false
+        var escapeNext = false
 
-            // Log de resumo das thumbs
-            val episodesWithThumbs = sortedEpisodes.count { it.posterUrl != null }
-            println("\n📊 RESUMO DE EPISÓDIOS:")
-            println("   Total: ${sortedEpisodes.size}")
-            println("   Com thumbs: $episodesWithThumbs")
-            println("   Sem thumbs: ${sortedEpisodes.size - episodesWithThumbs}")
-
-            val response = newAnimeLoadResponse(title, url, TvType.Anime) {
-                this.posterUrl = poster
-                this.year = year
-                this.plot = synopsis
-                this.tags = genres
-                this.score = score
-                this.showStatus = status
-                
-                if (sortedEpisodes.isNotEmpty()) {
-                    val dubStatus = if (isDubbed) DubStatus.Dubbed else DubStatus.Subbed
-                    addEpisodes(dubStatus, sortedEpisodes)
-
-                    println("\n✅ SUCESSO! ${sortedEpisodes.size} EPISÓDIOS:")
-                    sortedEpisodes.take(5).forEach { ep ->
-                        println("   📺 Ep ${ep.episode}: ${ep.name} -> ${ep.data}")
+        for (char in jsonArray) {
+            when {
+                escapeNext -> {
+                    currentObject.append(char)
+                    escapeNext = false
+                }
+                char == '\\' -> {
+                    currentObject.append(char)
+                    escapeNext = true
+                }
+                char == '"' -> {
+                    currentObject.append(char)
+                    inString = !inString
+                }
+                !inString && char == '{' -> {
+                    if (depth == 0) {
+                        currentObject = StringBuilder("{")
+                    } else {
+                        currentObject.append(char)
                     }
-                    if (sortedEpisodes.size > 5) {
-                        println("   ... e mais ${sortedEpisodes.size - 5} episódios")
+                    depth++
+                }
+                !inString && char == '}' -> {
+                    depth--
+                    currentObject.append(char)
+                    if (depth == 0) {
+                        objects.add(currentObject.toString())
                     }
-                } else {
-                    println("\n⚠️ NENHUM EPISÓDIO ENCONTRADO")
-                    println("📝 Tente acessar: $url e verifique se há episódios na página")
+                }
+                else -> {
+                    if (depth > 0) currentObject.append(char)
                 }
             }
+        }
+        
+        return objects
+    }
+
+    private fun extractValueFromJson(json: String, vararg keys: String): String? {
+        for (key in keys) {
+            val pattern1 = Regex(""""$key"\s*:\s*"([^"]*)"""")
+            val match1 = pattern1.find(json)
+            if (match1 != null) return match1.groupValues.getOrNull(1)
             
-            println("\n" + "=".repeat(60))
-            println("🎬 GOYABU: Load concluído para '$title'")
-            println("=".repeat(60) + "\n")
-            
-            response
-            
-        } catch (e: Exception) {
-            println("❌ ERRO no load: ${e.message}")
-            return newAnimeLoadResponse("Erro", url, TvType.Anime) {
-                this.plot = "Erro: ${e.message}"
-            }
+            val pattern2 = Regex(""""$key"\s*:\s*(\d+)""")
+            val match2 = pattern2.find(json)
+            if (match2 != null) return match2.groupValues.getOrNull(1)
+        }
+        return null
+    }
+
+    private fun buildEpisodeUrl(idOrPath: String, episodeNumber: Int): String {
+        return when {
+            idOrPath.matches(Regex("""^\d+$""")) -> "$mainUrl/$idOrPath"
+            idOrPath.startsWith("/") -> "$mainUrl$idOrPath"
+            idOrPath.startsWith("http") -> idOrPath
+            idOrPath.isNotBlank() -> fixUrl(idOrPath)
+            else -> "$mainUrl/$episodeNumber"
         }
     }
 
-    // ========== LOAD LINKS ==========
-    
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -915,6 +803,11 @@ class Goyabu : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         println("\n🎬 GOYABU loadLinks: URL recebida: $data")
-        return false
+
+        return GoyabuExtractor.extractVideoLinks(
+            url = data,
+            name = "Vídeo Goyabu",
+            callback = callback
+        )
     }
 }
