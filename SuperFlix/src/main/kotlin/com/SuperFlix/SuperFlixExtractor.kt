@@ -52,7 +52,7 @@ object SuperFlixExtractor {
             
             println("🔗 URL do bysevepoin: $bysevepoinUrl")
             
-            // 4. Extrair m3u8 do bysevepoin
+            // 4. Acessar bysevepoin e procurar m3u8
             val m3u8Url = extractM3u8FromBysevepoin(bysevepoinUrl, videoId)
             if (m3u8Url != null) {
                 println("✅ M3U8 encontrado: $m3u8Url")
@@ -181,7 +181,12 @@ object SuperFlixExtractor {
             val response = app.get(bysevepoinUrl, headers = headers)
             val html = response.text
             
-            println("📥 Resposta bysevepoin (${html.length} chars): ${html.take(500)}...")
+            println("📥 Resposta bysevepoin (${html.length} chars)")
+            
+            // Salvar HTML completo para debug (apenas se for pequeno)
+            if (html.length < 5000) {
+                println("🔍 HTML completo:\n$html")
+            }
             
             // Procurar m3u8 de várias formas
             val m3u8Url = findM3u8InHtml(html)
@@ -189,11 +194,37 @@ object SuperFlixExtractor {
                 return m3u8Url
             }
             
-            // Se não achou, tentar procurar em scripts
-            val scriptUrl = findScriptUrl(html)
-            if (scriptUrl != null) {
-                println("📜 Script encontrado: $scriptUrl")
-                return extractM3u8FromScript(scriptUrl, videoId)
+            // Procurar por dados JSON que possam conter o m3u8
+            val jsonData = findJsonData(html)
+            if (jsonData != null) {
+                println("📊 JSON encontrado: ${jsonData.take(200)}...")
+                val m3u8FromJson = extractM3u8FromJson(jsonData)
+                if (m3u8FromJson != null) {
+                    return m3u8FromJson
+                }
+            }
+            
+            // Procurar por script inline
+            val inlineScripts = findInlineScripts(html)
+            for (script in inlineScripts) {
+                println("📜 Script inline encontrado (${script.length} chars)")
+                val m3u8FromScript = findM3u8InHtml(script)
+                if (m3u8FromScript != null) {
+                    return m3u8FromScript
+                }
+                
+                // Procurar por base64
+                val base64Data = extractBase64Data(script)
+                if (base64Data != null) {
+                    println("🔓 Base64 encontrado")
+                    val decoded = decodeBase64(base64Data)
+                    if (decoded != null && decoded.contains("m3u8")) {
+                        val m3u8FromBase64 = findM3u8InHtml(decoded)
+                        if (m3u8FromBase64 != null) {
+                            return m3u8FromBase64
+                        }
+                    }
+                }
             }
             
             null
@@ -215,6 +246,27 @@ object SuperFlixExtractor {
         for (pattern in patterns) {
             val match = pattern.find(html)
             if (match != null) {
+                val url = match.groupValues[1]
+                println("✅ M3U8 encontrado com padrão: $url")
+                return url
+            }
+        }
+        
+        return null
+    }
+    
+    private fun findJsonData(html: String): String? {
+        // Procurar por objetos JSON
+        val patterns = listOf(
+            Regex("""\{[^{}]*\.m3u8[^{}]*\}"""),
+            Regex(""""file"\s*:\s*"[^"]+\.m3u8"""),
+            Regex(""""sources"\s*:\s*\[[^\]]+\]"""),
+            Regex("""data\s*=\s*(\{.*?\})""", RegexOption.DOT_MATCHES_ALL)
+        )
+        
+        for (pattern in patterns) {
+            val match = pattern.find(html)
+            if (match != null) {
                 return match.groupValues[1]
             }
         }
@@ -222,32 +274,62 @@ object SuperFlixExtractor {
         return null
     }
     
-    private fun findScriptUrl(html: String): String? {
-        val pattern = Regex("""<script[^>]+src=["']([^"']+)["']""")
-        val match = pattern.find(html)
-        return match?.groupValues?.get(1)
+    private fun extractM3u8FromJson(jsonString: String): String? {
+        // Tentar extrair m3u8 de string JSON
+        val patterns = listOf(
+            Regex("""["'](https?://[^"']+\.m3u8[^"']*)["']"""),
+            Regex(""""file"\s*:\s*["'](https?://[^"']+\.m3u8[^"']*)["']"""),
+            Regex(""""url"\s*:\s*["'](https?://[^"']+\.m3u8[^"']*)["']""")
+        )
+        
+        for (pattern in patterns) {
+            val match = pattern.find(jsonString)
+            if (match != null) {
+                return match.groupValues[1]
+            }
+        }
+        
+        return null
     }
     
-    private suspend fun extractM3u8FromScript(
-        scriptUrl: String,
-        videoId: String
-    ): String? {
+    private fun findInlineScripts(html: String): List<String> {
+        val scripts = mutableListOf<String>()
+        val pattern = Regex("""<script[^>]*>([^<]+)</script>""")
+        val matches = pattern.findAll(html)
+        
+        for (match in matches) {
+            scripts.add(match.groupValues[1])
+        }
+        
+        return scripts
+    }
+    
+    private fun extractBase64Data(script: String): String? {
+        val patterns = listOf(
+            Regex("""atob\(["']([^"']+)["']\)"""),
+            Regex("""["']([A-Za-z0-9+/]+={0,2})["']""")
+        )
+        
+        for (pattern in patterns) {
+            val match = pattern.find(script)
+            if (match != null) {
+                val data = match.groupValues[1]
+                // Verificar se parece base64
+                if (data.length > 20 && data.matches(Regex("""[A-Za-z0-9+/]+={0,2}"""))) {
+                    return data
+                }
+            }
+        }
+        
+        return null
+    }
+    
+    private fun decodeBase64(base64: String): String? {
         return try {
-            println("📜 Baixando script: $scriptUrl")
-            
-            val headers = mapOf(
-                "Accept" to "*/*",
-                "Referer" to "https://fembed.sx/e/$videoId",
-                "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36"
-            )
-            
-            val response = app.get(scriptUrl, headers = headers)
-            val scriptContent = response.text
-            
-            // Procurar m3u8 no script
-            return findM3u8InHtml(scriptContent)
+            val decoded = android.util.Base64.decode(base64, android.util.Base64.DEFAULT)
+            String(decoded, Charsets.UTF_8)
         } catch (e: Exception) {
-            println("💥 Erro ao baixar script: ${e.message}")
+            println("⚠️  Erro ao decodificar base64: ${e.message}")
             null
         }
     }
