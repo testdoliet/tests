@@ -359,23 +359,115 @@ class Goyabu : MainAPI() {
         return loadingMutex.withLock {
             try {
                 println("🎬 GOYABU: '${request.name}' - Página $page")
+                
+                // Verificar se é a página de Lançamentos
+                val isLancamentosPage = request.name == "Lançamentos"
+                
                 val url = if (page > 1) "${request.data}page/$page/" else request.data
                 val document = app.get(url, timeout = 20).document
                 
-                val elements = document.select("article a, .boxAN a, a[href*='/anime/']")
-                println("📊 ${elements.size} links encontrados em '${request.name}'")
+                val items = if (isLancamentosPage) {
+                    // Para página de Lançamentos, extrair episódios como itens de pesquisa
+                    extractLancamentosItems(document)
+                } else {
+                    // Para outras páginas, usar a extração normal
+                    extractRegularItems(document)
+                }
                 
-                val homeItems = elements.mapNotNull { it.toSearchResponse() }
-                    .distinctBy { it.url }
-                    .take(30)
+                println("📊 ${items.size} itens encontrados em '${request.name}'")
                 
-                val hasNextPage = false
-                newHomePageResponse(request.name, homeItems, hasNextPage)
+                val hasNextPage = if (isLancamentosPage) {
+                    // Verificar se há mais páginas nos Lançamentos
+                    document.selectFirst(".pagination") != null
+                } else {
+                    false
+                }
+                
+                newHomePageResponse(request.name, items, hasNextPage)
             } catch (e: Exception) {
                 println("❌ ERRO: ${request.name} - ${e.message}")
                 newHomePageResponse(request.name, emptyList(), false)
             }
         }
+    }
+
+    private fun extractLancamentosItems(document: org.jsoup.nodes.Document): List<SearchResponse> {
+        val items = mutableListOf<SearchResponse>()
+        
+        println("🔍 Extraindo itens da página de Lançamentos...")
+        
+        // Selecionar os episódios da página de lançamentos
+        val episodeElements = document.select("article.boxEP.grid-view a")
+        
+        episodeElements.forEachIndexed { index, element ->
+            try {
+                val href = element.attr("href") ?: return@forEachIndexed
+                val isEpisodePage = href.matches(Regex("""^/\d+/?$"""))
+                
+                if (!isEpisodePage) return@forEachIndexed
+                
+                // Extrair título do episódio
+                val titleElement = element.selectFirst(".title.hidden-text")
+                val rawTitle = titleElement?.text()?.trim() ?: return@forEachIndexed
+                
+                // Extrair número do episódio
+                val episodeNumElement = element.selectFirst(".ep-type b")
+                val episodeText = episodeNumElement?.text()?.trim() ?: ""
+                val episodeNum = extractEpisodeNumberFromText(episodeText)
+                
+                // Criar título limpo
+                val cleanedTitle = cleanTitle(rawTitle)
+                
+                // Extrair poster (thumbnail do episódio)
+                val posterUrl = element.selectFirst(".coverImg")?.attr("style")?.let { style ->
+                    val regex = Regex("""url\(['"]?([^'"()]+)['"]?\)""")
+                    regex.find(style)?.groupValues?.get(1)?.let { url ->
+                        fixUrl(url)
+                    }
+                }
+                
+                // Verificar se é dublado
+                val hasDubBadge = element.selectFirst(".audio-box.dublado") != null
+                
+                if (cleanedTitle.isNotBlank()) {
+                    items.add(newAnimeSearchResponse(cleanedTitle, fixUrl(href)) {
+                        this.posterUrl = posterUrl
+                        this.type = TvType.Anime
+                        
+                        if (episodeNum > 0) {
+                            this.name = "$cleanedTitle - Episódio $episodeNum"
+                        }
+                        
+                        if (hasDubBadge) {
+                            addDubStatus(dubExist = true, subExist = false)
+                        } else {
+                            addDubStatus(dubExist = false, subExist = true)
+                        }
+                    })
+                    
+                    if (index < 3) {
+                        println("   🎬 Lançamento: $cleanedTitle (Ep $episodeNum) -> $href")
+                    }
+                }
+            } catch (e: Exception) {
+                println("   ❌ Erro ao extrair lançamento ${index + 1}: ${e.message}")
+            }
+        }
+        
+        return items
+    }
+
+    private fun extractRegularItems(document: org.jsoup.nodes.Document): List<SearchResponse> {
+        val elements = document.select("article a, .boxAN a, a[href*='/anime/']")
+        return elements.mapNotNull { it.toSearchResponse() }
+            .distinctBy { it.url }
+            .take(30)
+    }
+
+    private fun extractEpisodeNumberFromText(text: String): Int {
+        val regex = Regex("""Epis[oó]dio\s+(\d+)""", RegexOption.IGNORE_CASE)
+        val match = regex.find(text)
+        return match?.groupValues?.get(1)?.toIntOrNull() ?: 0
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
@@ -722,90 +814,4 @@ class Goyabu : MainAPI() {
             }
         }
         
-        println("   📊 Total de episódios via fallback: ${episodes.size}")
-        return episodes
-    }
-
-    private fun extractEpisodeFromBoxEP(boxEP: Element, index: Int, episodes: MutableList<Episode>) {
-        val linkElement = boxEP.selectFirst("a[href]") ?: return
-        val href = linkElement.attr("href").trim()
-        if (href.isBlank()) return
-        
-        var episodeNum = index + 1
-
-        // Extrair número do episódio
-        val epTypeElement = linkElement.selectFirst(".ep-type b")
-        epTypeElement?.text()?.trim()?.let { text ->
-            val regex = Regex("""Epis[oó]dio\s+(\d+)""", RegexOption.IGNORE_CASE)
-            val match = regex.find(text)
-            match?.groupValues?.get(1)?.toIntOrNull()?.let { episodeNum = it }
-        }
-
-        // Tentar extrair do data-episode-number do pai
-        boxEP.parent()?.attr("data-episode-number")?.toIntOrNull()?.let { episodeNum = it }
-        episodeNum = extractEpisodeNumberFromHref(href, episodeNum)
-        
-        // EXTRAIR THUMB DO EPISÓDIO - MÚLTIPLOS SELETORES
-        val thumb = extractEpisodeThumbnail(linkElement)
-        
-        val episodeTitle = epTypeElement?.text()?.trim() ?: "Episódio $episodeNum"
-        
-        episodes.add(newEpisode(fixUrl(href)) {
-            this.name = episodeTitle
-            this.episode = episodeNum
-            this.season = 1
-            this.posterUrl = thumb // ADICIONANDO A THUMB
-        })
-
-        println("   ✅ Ep $episodeNum: $episodeTitle -> $href")
-        if (thumb != null) {
-            println("   🖼️  Thumb: $thumb")
-        }
-    }
-
-    private fun extractEpisodeThumbnail(linkElement: Element): String? {
-        // Tentar múltiplos seletores para encontrar a thumbnail
-        val selectors = listOf(
-            // Seletor específico que você mencionou
-            "figure.thumb.contentImg div.coverImg",
-            // Seletores alternativos
-            ".coverImg",
-            ".thumb img",
-            ".contentImg img",
-            "div[data-thumb]",
-            "img[src]",
-            "figure img"
-        )
-        
-        for (selector in selectors) {
-            try {
-                // Primeiro, tentar extrair do atributo style (background-image)
-                val styleElement = linkElement.selectFirst("$selector[style]")
-                styleElement?.attr("style")?.let { style ->
-                    val regex = Regex("""url\(['"]?([^'"()]+)['"]?\)""")
-                    val match = regex.find(style)
-                    match?.groupValues?.get(1)?.let { url ->
-                        val cleanUrl = url.replace("&quot;", "").trim()
-                        if (cleanUrl.isNotBlank()) {
-                            println("      🖼️ Encontrada thumb via style: $cleanUrl")
-                            return fixUrl(cleanUrl)
-                        }
-                    }
-                }
-                
-                // Tentar data-thumb
-                val dataThumbElement = linkElement.selectFirst("$selector[data-thumb]")
-                dataThumbElement?.attr("data-thumb")?.let { url ->
-                    val cleanUrl = url.replace("&quot;", "").trim()
-                    if (cleanUrl.isNotBlank()) {
-                        println("      🖼️ Encontrada thumb via data-thumb: $cleanUrl")
-                        return fixUrl(cleanUrl)
-                    }
-                }
-                
-                // Tentar src direto
-                val imgElement = linkElement.selectFirst("$selector img")
-                imgElement?.attr("src")?.let { url ->
-                    val cleanUrl = url.trim()
-                    if (cleanUrl.isNotBlank()) {
-                        println("     
+        println
