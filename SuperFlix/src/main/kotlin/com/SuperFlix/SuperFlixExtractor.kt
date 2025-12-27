@@ -14,57 +14,79 @@ object SuperFlixExtractor {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         return try {
-            // WebView que só intercepta URLs do CDN REAL
-            val streamResolver = WebViewResolver(
-                interceptUrl = Regex("""(g9r6\.com|be7713\.rcr82\.waw05\.i8yz83pn\.com|filemoon\.sx).*\.m3u8"""),
-                useOkhttp = false,
-                timeout = 15_000L
+            // Estratégia: Esperar a página carregar COMPLETAMENTE
+            // antes de interceptar
+            
+            val streamResolver = DelayedWebViewResolver(
+                initialDelay = 5000L, // 5 segundos de delay
+                interceptPattern = Regex("""\.(m3u8|mp4|mkv)"""),
+                timeout = 20_000L // Total 20s
             )
 
-            println("🎯 Interceptando apenas domínios do CDN...")
-            
-            val headers = mapOf(
-                "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36",
-                "Referer" to "https://g9r6.com/"
-            )
-            
-            val response = app.get(url, headers = headers, interceptor = streamResolver)
+            val response = app.get(url, interceptor = streamResolver)
             val intercepted = response.url
-            
-            println("🔗 URL interceptada: $intercepted")
 
             if (intercepted.isNotEmpty() && intercepted.contains(".m3u8")) {
-                println("✅ M3U8 do CDN encontrado!")
+                println("✅ M3U8 encontrado após delay: $intercepted")
                 
-                // Headers COMPLETOS do CDN
-                val cdnHeaders = mapOf(
-                    "Accept" to "*/*",
-                    "Accept-Language" to "pt-BR",
-                    "Cache-Control" to "no-cache",
-                    "Pragma" to "no-cache",
+                // Headers CORRETOS baseados na sua análise
+                val headers = mapOf(
                     "Referer" to "https://g9r6.com/",
                     "Origin" to "https://g9r6.com",
+                    "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36",
+                    "Accept" to "*/*",
+                    "Accept-Language" to "pt-BR",
                     "Sec-Fetch-Dest" to "empty",
                     "Sec-Fetch-Mode" to "cors",
-                    "Sec-Fetch-Site" to "cross-site",
-                    "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36"
+                    "Sec-Fetch-Site" to "cross-site"
                 )
 
                 M3u8Helper.generateM3u8(
                     name,
                     intercepted,
-                    "https://g9r6.com/",
-                    headers = cdnHeaders
+                    "https://g9r6.com/", // Referer CORRETO
+                    headers = headers
                 ).forEach(callback)
 
                 true
             } else {
-                println("❌ Nenhum M3U8 do CDN encontrado")
+                println("❌ Nenhum M3U8 encontrado após delay")
                 false
             }
         } catch (e: Exception) {
-            println("💥 Erro: ${e.message}")
+            println("💥 Erro no extractor: ${e.message}")
             false
         }
+    }
+}
+
+// WebViewResolver personalizado com DELAY inicial
+class DelayedWebViewResolver(
+    private val initialDelay: Long = 5000L,
+    interceptPattern: Regex,
+    useOkhttp: Boolean = false,
+    timeout: Long = 15000L
+) : WebViewResolver(interceptPattern, useOkhttp, timeout) {
+    
+    private var startTime = System.currentTimeMillis()
+    private var delayPassed = false
+    
+    override fun shouldIntercept(requestUrl: String): Boolean {
+        val currentTime = System.currentTimeMillis()
+        val elapsed = currentTime - startTime
+        
+        // Se ainda não passou o delay, NÃO intercepta
+        if (elapsed < initialDelay) {
+            return false
+        }
+        
+        // Passou o delay, marca como true
+        if (!delayPassed) {
+            println("⏰ Delay de ${initialDelay}ms passado, começando a interceptar...")
+            delayPassed = true
+        }
+        
+        // Agora intercepta normalmente
+        return super.shouldIntercept(requestUrl)
     }
 }
