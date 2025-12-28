@@ -5,6 +5,7 @@ import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.network.WebViewResolver
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.M3u8Helper
+import java.net.URLEncoder
 
 object SuperFlixExtractor {
     // Cookie atualizado para evitar bloqueios
@@ -108,18 +109,20 @@ object SuperFlixExtractor {
             val streamResolver = WebViewResolver(
                 interceptUrl = Regex(""".*\.m3u8.*"""), // Interceptar qualquer URL com .m3u8
                 useOkhttp = false,
-                timeout = 30_000L, // 30 segundos timeout
-                additionalHeaders = mapOf(
-                    "Cookie" to API_COOKIE,
-                    "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
-                    "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-                    "Accept-Language" to "pt-BR,pt;q=0.9,en;q=0.8",
-                    "Referer" to "https://superflix21.lol/"
-                )
+                timeout = 30_000L // 30 segundos timeout
+            )
+            
+            // Headers para a requisição
+            val headers = mapOf(
+                "Cookie" to API_COOKIE,
+                "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
+                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+                "Accept-Language" to "pt-BR,pt;q=0.9,en;q=0.8",
+                "Referer" to "https://superflix21.lol/"
             )
             
             // Fazer a requisição com o WebViewResolver
-            val response = app.get(playerUrl, interceptor = streamResolver)
+            val response = app.get(playerUrl, headers = headers, interceptor = streamResolver)
             val interceptedUrl = response.url
             
             println("📡 Resposta do WebView: ${response.code}")
@@ -161,7 +164,10 @@ object SuperFlixExtractor {
             Regex("""["'](https?://[^"']+\.m3u8)["']"""),
             Regex("""file["']?\s*:\s*["']([^"']+\.m3u8)["']"""),
             Regex("""src["']?\s*:\s*["']([^"']+\.m3u8)["']"""),
-            Regex("""hls["']?\s*:\s*["']([^"']+\.m3u8)["']""")
+            Regex("""hls["']?\s*:\s*["']([^"']+\.m3u8)["']"""),
+            Regex("""url["']?\s*:\s*["']([^"']+\.m3u8)["']"""),
+            Regex("""(https?://[^"\s]+/hls/[^"\s]+\.m3u8)"""),
+            Regex("""(https?://[^"\s]+/hls2/[^"\s]+\.m3u8)""")
         )
         
         for (pattern in patterns) {
@@ -170,6 +176,7 @@ object SuperFlixExtractor {
                 var url = match.groupValues[1]
                 // Limpar a URL se necessário
                 url = url.replace("\\/", "/")
+                println("🔍 Padrão encontrado: $url")
                 return url
             }
         }
@@ -188,28 +195,52 @@ object SuperFlixExtractor {
             println("🎯 URL M3U8: $m3u8Url")
             println("🔗 Referer: $referer")
             
-            val links = M3u8Helper.generateM3u8(
-                name,
-                m3u8Url,
-                referer,
-                headers = mapOf(
+            // Testar diferentes combinações de headers
+            val headerSets = listOf(
+                mapOf(
                     "Referer" to referer,
                     "Origin" to referer.removeSuffix("/"),
                     "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36",
                     "Accept" to "*/*",
                     "Accept-Language" to "pt-BR,pt;q=0.9,en;q=0.8",
                     "Cookie" to API_COOKIE
+                ),
+                mapOf(
+                    "Referer" to referer,
+                    "User-Agent" to "Mozilla/5.0",
+                    "Accept" to "*/*"
+                ),
+                mapOf(
+                    "Referer" to "https://g9r6.com/",
+                    "Origin" to "https://g9r6.com",
+                    "User-Agent" to "Mozilla/5.0",
+                    "Cookie" to API_COOKIE
                 )
             )
             
-            if (links.isNotEmpty()) {
-                links.forEach(callback)
-                println("🎉 ${links.size} links M3U8 gerados com sucesso!")
-                true
-            } else {
-                println("❌ Nenhum link M3U8 gerado")
-                false
+            for (headers in headerSets) {
+                try {
+                    println("🔧 Testando headers...")
+                    val links = M3u8Helper.generateM3u8(
+                        name,
+                        m3u8Url,
+                        referer,
+                        headers = headers
+                    )
+                    
+                    if (links.isNotEmpty()) {
+                        links.forEach(callback)
+                        println("🎉 ${links.size} links M3U8 gerados com sucesso!")
+                        return true
+                    }
+                } catch (e: Exception) {
+                    println("⚠️  Falha com headers: ${e.message}")
+                }
             }
+            
+            println("❌ Nenhum link M3U8 gerado")
+            false
+            
         } catch (e: Exception) {
             println("💥 Erro ao gerar links M3U8: ${e.message}")
             false
