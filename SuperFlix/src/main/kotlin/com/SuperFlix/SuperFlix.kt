@@ -25,13 +25,15 @@ class SuperFlix : MainAPI() {
     companion object {
         private const val SEARCH_PATH = "/buscar"
 
+        // ✅ ABAS FIXAS ATUALIZADAS
         private val FIXED_CATEGORIES = listOf(
             "/lancamentos" to "Lançamentos",
-            "/filmes" to "Filmes",
-            "/series" to "Séries",
-            "/animes" to "Animes"
+            "/filmes" to "Últimos Filmes",
+            "/series" to "Últimas Séries",
+            "/animes" to "Últimos Animes"
         )
 
+        // ✅ CATEGORIAS ALEATÓRIAS COM NOMES CORRIGIDOS
         private val ALL_RANDOM_CATEGORIES = listOf(
             "/categoria/acao?ft=all" to "Ação",
             "/categoria/animacao?ft=all" to "Animação",
@@ -50,13 +52,12 @@ class SuperFlix : MainAPI() {
             "/categoria/faroeste?ft=all" to "Faroeste",
             "/categoria/guerra?ft=all" to "Guerra",
             "/categoria/historia?ft=all" to "História",
-            "/categoria/musica?ft=all" to "Música",
+            "/categoria/musica?ft=all" to "Musicais",
             "/categoria/politica?ft=all" to "Política",
             "/categoria/reality?ft=all" to "Reality",
-            "/categoria/cinema-tv?ft=all" to "Cinema TV",
-            "/categoria/kids?ft=all" to "Kids",
-            "/categoria/soap?ft=all" to "Soap",
-            "/categoria/talk?ft=all" to "Talk"
+            "/categoria/cinema-tv?ft=all" to "Filmes para TV",
+            "/categoria/kids?ft=all" to "Infantil",
+            "/categoria/soap?ft=all" to "Novelas"
         )
 
         private var cachedRandomTabs: List<Pair<String, String>>? = null
@@ -66,15 +67,13 @@ class SuperFlix : MainAPI() {
         fun getCombinedTabs(): List<Pair<String, String>> {
             val currentTime = System.currentTimeMillis()
 
-            // Retorna cache se ainda for válido
             if (cachedRandomTabs != null && (currentTime - cacheTime) < CACHE_DURATION) {
                 return FIXED_CATEGORIES + cachedRandomTabs!!
             }
 
-            // Gera novas abas aleatórias (7 agora)
             val randomTabs = ALL_RANDOM_CATEGORIES
                 .shuffled()
-                .take(7)
+                .take(9)
                 .distinctBy { it.first }
 
             cachedRandomTabs = randomTabs
@@ -108,7 +107,6 @@ class SuperFlix : MainAPI() {
             element.toSearchResult()
         }
 
-        // Verifica se há próxima página
         val hasNextPage = document.select("a:contains(Próxima), .page-numbers a[href*='page']").isNotEmpty() ||
                          document.select(".pagination").isNotEmpty()
 
