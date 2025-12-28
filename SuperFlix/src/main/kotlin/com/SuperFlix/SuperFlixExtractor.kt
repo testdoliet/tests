@@ -65,34 +65,53 @@ object SuperFlixExtractor {
         }
     }
 
+
     private fun extractVideoIdAndType(url: String): Triple<String, Boolean, String> {
-        println("🔍 Extraindo ID de: $url")
+    println("🔍 Extraindo ID de: $url")
+    
+    // Remove protocolo e domínio para análise mais fácil
+    val cleanUrl = url.replace(Regex("""^https?://[^/]+"""), "")
+    
+    println("🔍 URL limpa: $cleanUrl")
+    
+    // Lista de padrões em ordem de prioridade
+    val patterns = listOf(
+        // 1. SÉRIE: /e/ID/TEMP-EP
+        Triple(Regex("""^/e/([a-zA-Z0-9]+)/(\d+-\d+)$"""), true, "formato /ID/TEMP-EP"),
         
-        // 1. Extrai o ID (números ou letras) depois de /e/ ou /v/
-        val idPattern = Regex("""/(?:e|v)/([a-zA-Z0-9]+)""")
-        val idMatch = idPattern.find(url)
+        // 2. SÉRIE: /e/ID?c=TEMP-EP
+        Triple(Regex("""^/e/([a-zA-Z0-9]+)\?c=(\d+-\d+)"""), true, "formato ?c="),
         
-        if (idMatch == null) {
-            println("❌ Não encontrei ID na URL")
-            return Triple("", false, "")
+        // 3. SÉRIE: /ID-c=TEMP-EP (formato alternativo)
+        Triple(Regex("""^/([a-zA-Z0-9]+)-c=(\d+-\d+)"""), true, "formato -c="),
+        
+        // 4. FILME: /e/ID
+        Triple(Regex("""^/e/([a-zA-Z0-9]+)(?:\?|$|/)"""), false, "filme padrão"),
+        
+        // 5. FILME: /v/ID
+        Triple(Regex("""^/v/([a-zA-Z0-9]+)(?:\?|$|/)"""), false, "filme /v/"),
+        
+        // 6. Qualquer ID numérico no final
+        Triple(Regex("""/(\d+)$"""), false, "fallback numérico")
+    )
+    
+    for ((pattern, isSeries, desc) in patterns) {
+        val match = pattern.find(cleanUrl)
+        if (match != null) {
+            val id = match.groupValues[1]
+            if (isSeries && match.groupValues.size > 2) {
+                val cParam = match.groupValues[2]
+                println("✅ SÉRIE ($desc): ID=$id, c=$cParam")
+                return Triple(id, true, cParam)
+            } else {
+                println("✅ ${if (isSeries) "SÉRIE" else "FILME"} ($desc): ID=$id")
+                return Triple(id, isSeries, if (isSeries) "1-1" else "")
+            }
         }
-        
-        val videoId = idMatch.groupValues[1]
-        println("✅ ID extraído: $videoId")
-        
-        // 2. Verifica se tem parâmetro c= (série)
-        val cParamPattern = Regex("""[?&]c=(\d+-\d+)""")
-        val cParamMatch = cParamPattern.find(url)
-        
-        if (cParamMatch != null) {
-            val cParam = cParamMatch.groupValues[1]
-            println("📺 É UMA SÉRIE: c=$cParam")
-            return Triple(videoId, true, cParam)
-        }
-        
-        // 3. É filme
-        println("🎬 É UM FILME")
-        return Triple(videoId, false, "")
+    }
+    
+    println("❌ Não consegui extrair ID da URL")
+    return Triple("", false, "")
     }
 
     private suspend fun tryDirectG9r6Api(videoId: String, originalUrl: String): String? {
