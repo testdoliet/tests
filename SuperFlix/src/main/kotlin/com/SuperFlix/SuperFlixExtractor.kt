@@ -608,4 +608,5 @@ object SuperFlixExtractor {
         BYSEVEPOIN,    // URLs diretas do Bysevepoin
         UNKNOWN
     }
+  }
 }
