@@ -187,6 +187,7 @@ println("⚠️  Erro no Fembed: ${e.message}")
 null
 }
 }
+
 private suspend fun getBysevepoinFromIframe(iframeUrl: String, videoId: String): String? {
     return try {
         println("🔍 [DEBUG 2º POST] Acessando: $iframeUrl")
@@ -209,9 +210,9 @@ private suspend fun getBysevepoinFromIframe(iframeUrl: String, videoId: String):
         
         // MOSTRA O CONTEÚDO COMPLETO para debug
         println("🔍 [DEBUG] Conteúdo da resposta (primeiros 2000 chars):")
-        println("=" * 50)
+        println("=".repeat(50))  // ← CORRIGIDO
         println(response.text.take(2000))
-        println("=" * 50)
+        println("=".repeat(50))  // ← CORRIGIDO
         
         val html = response.text
         
@@ -251,7 +252,6 @@ private suspend fun getBysevepoinFromIframe(iframeUrl: String, videoId: String):
         null
     }
 }
-
 
 private fun extractRealVideoId(bysevepoinUrl: String): String? {
 // Formato: /e/yziqjcntix6v/1497017-dub
