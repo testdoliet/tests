@@ -64,14 +64,13 @@ object SuperFlixExtractor {
         return try {
             println("🚀 Tentando API direta do g9r6.com...")
             
-            // Construir headers EXATAMENTE como no curl
+            // Construir headers
             val headers = mapOf(
                 "accept" to "*/*",
                 "accept-language" to "pt-BR,pt;q=0.9,en;q=0.8",
                 "cache-control" to "no-cache",
                 "pragma" to "no-cache",
                 "priority" to "u=1, i",
-                // REFERER CRÍTICO: https://g9r6.com/bk2vx/{videoId}
                 "referer" to "$G9R6_DOMAIN/bk2vx/$videoId",
                 "sec-ch-ua" to "\"Chromium\";v=\"127\", \"Not)A;Brand\";v=\"99\", \"Microsoft Edge Simulate\";v=\"127\", \"Lemur\";v=\"127\"",
                 "sec-ch-ua-mobile" to "?1",
@@ -80,15 +79,12 @@ object SuperFlixExtractor {
                 "sec-fetch-mode" to "cors",
                 "sec-fetch-site" to "same-origin",
                 "user-agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
-                // HEADER MAIS IMPORTANTE: X-Embed-Parent
-                "x-embed-parent" to originalUrl, // URL original do bysevepoin
+                "x-embed-parent" to originalUrl,
                 "cookie" to API_COOKIE
             )
             
             val apiUrl = "$G9R6_DOMAIN/api/videos/$videoId/embed/playback"
             println("📡 API URL: $apiUrl")
-            println("🔑 Referer: ${headers["referer"]}")
-            println("🔑 X-Embed-Parent: ${headers["x-embed-parent"]}")
             
             val response = app.get(apiUrl, headers = headers)
             
@@ -224,11 +220,11 @@ object SuperFlixExtractor {
     
     private fun extractVideoId(url: String): String? {
         val patterns = listOf(
-            Regex("""/e/([a-zA-Z0-9]+)"""),              // /e/ouu59ray1kvp
-            Regex("""/v/([a-zA-Z0-9]+)"""),              // /v/283689
-            Regex("""fembed\.sx/e/([a-zA-Z0-9]+)"""),    // fembed.sx/e/1497017
-            Regex("""bysevepoin\.com/e/([a-zA-Z0-9]+)"""), // bysevepoin.com/e/yziqjcntix6v
-            Regex("""/([0-9]+)$""")                      // /1497017
+            Regex("""/e/([a-zA-Z0-9]+)"""),
+            Regex("""/v/([a-zA-Z0-9]+)"""),
+            Regex("""fembed\.sx/e/([a-zA-Z0-9]+)"""),
+            Regex("""bysevepoin\.com/e/([a-zA-Z0-9]+)"""),
+            Regex("""/([0-9]+)$""")
         )
         
         for (pattern in patterns) {
@@ -242,78 +238,54 @@ object SuperFlixExtractor {
     }
     
     private fun processEncryptedResponse(jsonText: String, videoId: String): String? {
-    return try {
-        println("🔧 Processando resposta da API...")
-        println("📄 JSON recebido: ${jsonText.take(500)}...")
-        
-        val json = JSONObject(jsonText)
-        
-        // Verificar se tem erro
-        if (json.has("error")) {
-            println("❌ Erro no JSON: ${json.getString("error")}")
-            return null
-        }
-        
-        if (!json.has("playback")) {
-            println("❌ JSON não tem campo 'playback'")
-            println("📊 JSON completo: ${json.toString().take(500)}")
-            return null
-        }
-        
-        val playback = json.getJSONObject("playback")
-        
-        // LOG DETALHADO para debug
-        println("📊 Campos do playback:")
-        for (key in playback.keys()) {
-            val value = playback.get(key)
-            println("   $key = ${if (value.toString().length > 100) "${value.toString().take(100)}..." else value}")
-        }
-        
-        // Verificar campos obrigatórios
-        if (!playback.has("iv") || !playback.has("payload") || !playback.has("key_parts")) {
-            println("❌ Campos de criptografia ausentes")
-            return null
-        }
-        
-        // EXTRAIR BASE64 CORRETAMENTE
-        val ivBase64 = playback.getString("iv")
-        val payloadBase64 = playback.getString("payload")
-        val keyParts = playback.getJSONArray("key_parts")
-        
-        println("🔐 Dados de criptografia:")
-        println("   iv (Base64): ${ivBase64.take(50)}... (${ivBase64.length} chars)")
-        println("   payload (Base64): ${payloadBase64.take(50)}... (${payloadBase64.length} chars)")
-        println("   key_parts: ${keyParts.length()} partes")
-        
-        for (i in 0 until keyParts.length()) {
-            val part = keyParts.getString(i)
-            println("     Parte $i: ${part.take(50)}... (${part.length} chars)")
-        }
-        
-        // DECODIFICAR BASE64 CORRETAMENTE
-        try {
-            val iv = Base64.decode(ivBase64, Base64.DEFAULT)
-            val payload = Base64.decode(payloadBase64, Base64.DEFAULT)
+        return try {
+            println("🔧 Processando resposta da API...")
             
-            println("✅ Base64 decodificado:")
-            println("   iv: ${iv.size} bytes")
-            println("   payload: ${payload.size} bytes")
+            val json = JSONObject(jsonText)
+            val playback = json.getJSONObject("playback")
             
-            // Juntar partes da chave
-            val key1 = Base64.decode(keyParts.getString(0), Base64.DEFAULT)
-            val key2 = Base64.decode(keyParts.getString(1), Base64.DEFAULT)
+            println("📊 Algoritmo: ${playback.getString("algorithm")}")
+            
+            // FUNÇÃO PARA DECODIFICAR BASE64 SEM PADDING
+            fun decodeBase64NoPadding(base64Str: String): ByteArray {
+                // Adicionar padding se necessário
+                var padded = base64Str
+                when (base64Str.length % 4) {
+                    2 -> padded += "=="
+                    3 -> padded += "="
+                }
+                return Base64.decode(padded, Base64.DEFAULT)
+            }
+            
+            // Decodificar dados
+            val ivBase64 = playback.getString("iv")
+            val payloadBase64 = playback.getString("payload")
+            val keyParts = playback.getJSONArray("key_parts")
+            
+            val iv = decodeBase64NoPadding(ivBase64)
+            val payload = decodeBase64NoPadding(payloadBase64)
+            val key1 = decodeBase64NoPadding(keyParts.getString(0))
+            val key2 = decodeBase64NoPadding(keyParts.getString(1))
             val key = key1 + key2
             
-            println("   key1: ${key1.size} bytes")
-            println("   key2: ${key2.size} bytes")
-            println("   key total: ${key.size} bytes (esperado: 32 para AES-256)")
+            println("🔐 Dados de criptografia:")
+            println("   iv: $ivBase64 -> ${iv.size} bytes")
+            println("   payload: ${payloadBase64.take(20)}... -> ${payload.size} bytes")
+            println("   key1: ${keyParts.getString(0)} -> ${key1.size} bytes")
+            println("   key2: ${keyParts.getString(1)} -> ${key2.size} bytes")
+            println("   key total: ${key.size} bytes")
             
-            // Verificar tamanhos
-            if (key.size != 32) {
-                println("⚠️  Atenção: chave tem ${key.size} bytes, esperado 32")
+            // Verificar tamanho da chave
+            when (key.size) {
+                16 -> println("🔑 AES-128 detectado")
+                24 -> println("🔑 AES-192 detectado")
+                32 -> println("🔑 AES-256 detectado")
+                else -> println("⚠️  Tamanho de chave inválido: ${key.size} bytes")
             }
             
             // Descriptografar
+            println("🔓 Iniciando descriptografia AES-256-GCM...")
+            
             val decrypted = decryptAesGcm(payload, key, iv)
             if (decrypted == null) {
                 println("❌ Falha na descriptografia AES")
@@ -322,83 +294,101 @@ object SuperFlixExtractor {
             
             val decryptedText = String(decrypted, Charsets.UTF_8)
             println("✅ Descriptografado com sucesso!")
-            println("📝 Texto descriptografado: ${decryptedText.take(500)}...")
+            println("📝 Texto descriptografado: $decryptedText")
             
             // Parse JSON descriptografado
             val decryptedJson = JSONObject(decryptedText)
             
-            // LOG dos parâmetros
             println("📊 Parâmetros descriptografados:")
             for (keyParam in decryptedJson.keys()) {
-                val value = decryptedJson.get(keyParam)
-                println("   $keyParam = $value")
+                println("   $keyParam = ${decryptedJson.get(keyParam)}")
             }
             
             // Construir URL M3U8
-            return buildM3u8Url(videoId, decryptedJson)
+            buildM3u8Url(videoId, decryptedJson)
             
         } catch (e: Exception) {
-            println("💥 Erro ao decodificar Base64: ${e.message}")
-            println("🔍 Tentando Base64 com FLAGS diferentes...")
+            println("💥 Erro ao processar resposta: ${e.message}")
+            e.printStackTrace()
+            null
+        }
+    }
+    
+    private fun decryptAesGcm(ciphertext: ByteArray, key: ByteArray, iv: ByteArray): ByteArray? {
+        return try {
+            println("   ciphertext: ${ciphertext.size} bytes")
+            println("   key: ${key.size} bytes")
+            println("   iv: ${iv.size} bytes")
             
-            // Tentar diferentes modos de Base64
-            val base64Variants = listOf(
-                Pair("DEFAULT", Base64.DEFAULT),
-                Pair("NO_WRAP", Base64.NO_WRAP),
-                Pair("NO_PADDING", Base64.NO_PADDING),
-                Pair("URL_SAFE", Base64.URL_SAFE),
-                Pair("NO_CLOSE", Base64.NO_CLOSE)
-            )
+            // AES/GCM/NoPadding é padrão para AES-GCM
+            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
             
-            for ((name, flags) in base64Variants) {
-                try {
-                    println("🔧 Tentando Base64.$name...")
-                    val iv = Base64.decode(ivBase64, flags)
-                    val payload = Base64.decode(payloadBase64, flags)
-                    println("✅ Base64.$name funcionou!")
-                    
-                    // Continuar com esta decodificação...
-                    val key1 = Base64.decode(keyParts.getString(0), flags)
-                    val key2 = Base64.decode(keyParts.getString(1), flags)
-                    val key = key1 + key2
-                    
-                    val decrypted = decryptAesGcm(payload, key, iv)
-                    if (decrypted != null) {
-                        val decryptedText = String(decrypted, Charsets.UTF_8)
-                        println("✅ Descriptografado com Base64.$name")
-                        val decryptedJson = JSONObject(decryptedText)
-                        return buildM3u8Url(videoId, decryptedJson)
-                    }
-                } catch (e2: Exception) {
-                    println("❌ Base64.$name falhou: ${e2.message}")
-                }
+            // Para GCM, IV deve ter 12 bytes (96 bits)
+            val actualIv = if (iv.size != 12) {
+                println("⚠️  IV tem ${iv.size} bytes, usando primeiros 12 bytes")
+                iv.copyOf(12) // Pegar os primeiros 12 bytes
+            } else {
+                iv
             }
             
-            return null
+            // Tag de autenticação de 128 bits
+            val spec = GCMParameterSpec(128, actualIv)
+            cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), spec)
+            
+            val result = cipher.doFinal(ciphertext)
+            println("✅ Descriptografia bem-sucedida: ${result.size} bytes")
+            result
+            
+        } catch (e: Exception) {
+            println("💥 Erro na descriptografia: ${e.message}")
+            
+            // Tentar alternativa
+            try {
+                println("🔧 Tentando alternativa...")
+                val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+                
+                // Tentar com IV original (sem truncar)
+                val spec = GCMParameterSpec(128, iv)
+                cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), spec)
+                
+                cipher.doFinal(ciphertext)
+            } catch (e2: Exception) {
+                println("💥 Alternativa também falhou: ${e2.message}")
+                null
+            }
         }
-        
-    } catch (e: Exception) {
-        println("💥 Erro ao processar resposta: ${e.message}")
-        e.printStackTrace()
-        null
     }
-                    }
     
     private fun buildM3u8Url(videoId: String, params: JSONObject): String {
-        // Extrair parâmetros
-        val token = params.optString("t", params.optString("token", ""))
-        val timestamp = params.optString("s", params.optString("timestamp", ""))
-        val expire = params.optString("e", params.optString("expire", ""))
-        val fileId = params.optString("f", params.optString("file_id", ""))
-        val server = params.optString("srv", params.optString("server", "1070"))
-        val speed = params.optString("sp", params.optString("speed", "4000"))
-        val quality = params.optString("p", params.optString("quality", "0"))
+        println("🔧 Construindo URL M3U8...")
         
-        // Verificar se tem domínio CDN no JSON
-        val cdnDomain = params.optString("cdn", "be6721.rcr72.waw04.i8yz83pn.com")
+        // Log de todos os campos
+        for (key in params.keys()) {
+            println("   Campo '$key' = ${params.get(key)}")
+        }
+        
+        // Extrair parâmetros comuns
+        val token = when {
+            params.has("t") -> params.getString("t")
+            params.has("token") -> params.getString("token")
+            else -> {
+                println("⚠️  Token não encontrado, usando valor padrão")
+                "default"
+            }
+        }
+        
+        val timestamp = params.optString("s", System.currentTimeMillis().toString())
+        val expire = params.optString("e", (System.currentTimeMillis() + 10800000).toString())
+        val fileId = params.optString("f", "1")
+        val server = params.optString("srv", "1070")
+        val speed = params.optString("sp", "4000")
+        val quality = params.optString("p", "0")
+        
+        // Domínio CDN (pode variar)
+        val cdnBase = "be6721.rcr72.waw04.i8yz83pn.com"
         
         // Construir URL
-        val url = "https://$cdnDomain/hls2/05/10459/${videoId}_h/master.m3u8" +
+        val url = "https://$cdnBase/hls2/05/10459/${videoId}_h/master.m3u8" +
                  "?t=$token" +
                  "&s=$timestamp" +
                  "&e=$expire" +
@@ -411,18 +401,6 @@ object SuperFlixExtractor {
         return url
     }
     
-    private fun decryptAesGcm(ciphertext: ByteArray, key: ByteArray, iv: ByteArray): ByteArray? {
-        return try {
-            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-            val spec = GCMParameterSpec(128, iv) // 128-bit auth tag
-            cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), spec)
-            cipher.doFinal(ciphertext)
-        } catch (e: Exception) {
-            println("🔒 Erro AES-GCM: ${e.message}")
-            null
-        }
-    }
-    
     private suspend fun generateM3u8Links(
         m3u8Url: String,
         name: String,
@@ -431,11 +409,12 @@ object SuperFlixExtractor {
         return try {
             println("🔄 Gerando links M3U8...")
             
-            // Testar diferentes referers para o M3U8Helper
+            // Testar diferentes referers
             val referers = listOf(
                 "$G9R6_DOMAIN/bk2vx/",
                 BYSEVEPOIN_DOMAIN,
-                FEMBED_DOMAIN
+                FEMBED_DOMAIN,
+                "https://superflix21.lol/"
             )
             
             for (referer in referers) {
