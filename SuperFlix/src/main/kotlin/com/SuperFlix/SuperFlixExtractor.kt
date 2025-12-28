@@ -112,7 +112,8 @@ object SuperFlixExtractor {
                             "Cookie" to API_COOKIE
                         ))
                         
-                        if (response.statusCode == 200) {
+                        // CORREÇÃO: usar response.code em vez de response.statusCode
+                        if (response.code == 200) {
                             val json = response.text
                             println("📥 Resposta da API: ${json.take(200)}...")
                             
@@ -164,7 +165,8 @@ object SuperFlixExtractor {
                         "Cookie" to API_COOKIE
                     ))
                     
-                    if (response.statusCode == 200) {
+                    // CORREÇÃO: usar response.code em vez de response.statusCode
+                    if (response.code == 200) {
                         val json = response.text
                         println("📥 Resposta API: ${json.take(200)}...")
                         
