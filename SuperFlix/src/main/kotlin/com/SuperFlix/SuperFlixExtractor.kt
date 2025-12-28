@@ -425,7 +425,6 @@ private suspend fun createExtractorLink(
         )
         
         println("🔗 URL: $m3u8Url")
-        println("📋 Headers: $headers")
         
         // TESTE DIRETO primeiro
         println("🧪 Testando acesso direto...")
@@ -439,13 +438,13 @@ private suspend fun createExtractorLink(
             println("⚠️  URL deu ${testResponse.code}, mas vamos tentar mesmo assim")
         }
         
-        // AGORA usar M3u8Helper que é a maneira CORRETA
+        // AGORA usar M3u8Helper CORRETAMENTE
         println("🔄 Usando M3u8Helper...")
         val links = M3u8Helper.generateM3u8(
-            name = name,
-            m3u8Url = m3u8Url,
-            referer = m3u8Url,  // Referer correto
-            headers = headers
+            source = "SuperFlix",  // Nome do source
+            streamUrl = m3u8Url,   // URL do stream
+            referer = m3u8Url,     // Referer correto
+            headers = headers      // Headers customizados
         )
         
         if (links.isEmpty()) {
