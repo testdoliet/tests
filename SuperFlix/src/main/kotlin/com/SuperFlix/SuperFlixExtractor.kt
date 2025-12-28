@@ -103,7 +103,7 @@ object SuperFlixExtractor {
             val streamResolver = WebViewResolver(
                 interceptUrl = Regex(""".*\.m3u8.*"""),
                 useOkhttp = false,
-                timeout = 90_000L
+                timeout = 1500_000L
             )
             
             // Headers
