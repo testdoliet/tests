@@ -10,15 +10,19 @@ import javax.crypto.spec.SecretKeySpec
 import android.util.Base64
 
 object SuperFlixExtractor {
-    private const val MAIN_DOMAIN = "https://g9r6.com"
-    private const val PLAYER_DOMAIN = "https://bysevepoin.com"
+    private const val API_COOKIE = "SITE_TOTAL_ID=aTYqe6GU65PNmeCXpelwJwAAAMi; __dtsu=104017651574995957BEB724C6373F9E; __cc_id=a44d1e52993b9c2Oaaf40eba24989a06; __cc_cc=ACZ4nGNQSDQXsTFMNTWyTDROskw2MkhMTDDMXSE1KNDKxtLBMNDBjAIJMC4fgVe%2B%2F%2BDngAHemT8XsDBKrv%2FF3%2F2F2%2F%2FF0ZGhFP15u.VnW-1Y0o8o6/84-1.2.1.1-4_OXh2hYevsbO8hINijDKB8O_SPowh.pNojloHEbwX_qZorbmW8u8zqV9B7UsV6bbRmCWx_dD17mA7vJJklpOD9WBh9DA0wMV2a1QSKuR2J3FN9.TRzOUM4AhnTGFd8dJH8bHfqQdY7uYuUg7Ny1TVQDF9kXqyEPtnmkZ9rFkqQ2KS6u0t2hhFdQvRBY7dqyGfdjmyjDqwc7ZOovHB0eqep.FPHrh8T9iz1LuucA; cf_clearance=rfIEldahI7B..Y4PpZhGgwi.QOJBqIRGdFP150.VnW-1766868784-1.1-"
     
-    private val headers = mapOf(
+    // Domínios principais
+    private const val FEMBED_DOMAIN = "https://fembed.sx"
+    private const val BYSEVEPOIN_DOMAIN = "https://bysevepoin.com"
+    private const val G9R6_DOMAIN = "https://g9r6.com"
+    
+    // Headers para todas as requisições
+    private val defaultHeaders = mapOf(
         "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept" to "application/json, text/plain, */*",
+        "Accept" to "*/*",
         "Accept-Language" to "pt-BR,pt;q=0.9,en;q=0.8",
-        "Referer" to "$PLAYER_DOMAIN/",
-        "Origin" to PLAYER_DOMAIN,
+        "Cookie" to API_COOKIE,
         "Connection" to "keep-alive"
     )
     
@@ -27,91 +31,222 @@ object SuperFlixExtractor {
         name: String,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        println("🎯 SuperFlixExtractor: Iniciando...")
-        println("🔗 URL: $url")
+        println("🎯 SuperFlixExtractor: Iniciando extração...")
+        println("🔗 URL original: $url")
         
         return try {
-            // 1. Extrair ID do vídeo (ex: ouu59ray1kvp)
+            // PASSO 1: Extrair ID do vídeo (ex: "ouu59ray1kvp" ou "283689")
             val videoId = extractVideoId(url)
-            if (videoId.isNullOrEmpty()) {
-                println("❌ Não consegui extrair ID da URL")
+            if (videoId == null) {
+                println("❌ Não consegui extrair ID")
                 return false
             }
             
             println("✅ ID extraído: $videoId")
             
-            // 2. Fazer requisição para a API
-            val apiUrl = "$MAIN_DOMAIN/api/videos/$videoId/embed/playback"
-            println("📡 Acessando API: $apiUrl")
+            // PASSO 2: Determinar se já temos um ID completo ou precisamos fazer o fluxo completo
+            val m3u8Url = if (videoId.length > 10 && videoId.matches(Regex("[a-z0-9]+"))) {
+                // É um ID longo (ex: ouu59ray1kvp) - tentar API diretamente
+                tryDirectApi(videoId, url)
+            } else {
+                // É um ID curto (ex: 283689) - fazer fluxo completo
+                tryFullFlow(videoId, url)
+            }
             
-            val response = app.get(apiUrl, headers = headers)
-            
-            if (response.code != 200) {
-                println("❌ Erro na API: Status ${response.code}")
-                println("📄 Resposta: ${response.text}")
+            if (m3u8Url == null) {
+                println("❌ Não consegui obter URL M3U8")
                 return false
             }
             
-            println("✅ API respondeu com sucesso")
+            println("🎬 URL M3U8 final: $m3u8Url")
             
-            val json = JSONObject(response.text)
-            
-            // Verificar se tem erro
-            if (json.has("error")) {
-                println("❌ Erro no JSON: ${json.getString("error")}")
-                return false
-            }
-            
-            // 3. Extrair dados de playback
-            val playback = json.getJSONObject("playback")
-            
-            // 4. Descriptografar payload
-            val decryptedData = decryptPlayback(playback)
-            if (decryptedData == null) {
-                println("❌ Falha na descriptografia")
-                return false
-            }
-            
-            println("✅ Payload descriptografado!")
-            println("📊 Dados: $decryptedData")
-            
-            // 5. Construir URL do m3u8
-            val m3u8Url = buildM3u8Url(videoId, decryptedData)
-            println("🎬 URL M3U8: $m3u8Url")
-            
-            // 6. Gerar links
+            // Gerar links
             generateM3u8Links(m3u8Url, name, callback)
             
         } catch (e: Exception) {
-            println("💥 Erro: ${e.message}")
-            e.printStackTrace()
+            println("💥 Erro fatal: ${e.message}")
             false
         }
     }
     
+    private suspend fun tryDirectApi(videoId: String, originalUrl: String): String? {
+        // Tentar acessar diretamente a API do g9r6.com
+        return try {
+            println("🚀 Tentando API direta do g9r6.com...")
+            
+            val apiUrl = "$G9R6_DOMAIN/api/videos/$videoId/embed/playback"
+            println("📡 API URL: $apiUrl")
+            
+            val headers = defaultHeaders + mapOf(
+                "Referer" to originalUrl,
+                "Origin" to BYSEVEPOIN_DOMAIN
+            )
+            
+            val response = app.get(apiUrl, headers = headers)
+            
+            if (response.code != 200) {
+                println("❌ API retornou ${response.code}: ${response.text}")
+                return null
+            }
+            
+            println("✅ API respondeu com sucesso")
+            
+            // Processar resposta criptografada
+            processEncryptedResponse(response.text, videoId)
+            
+        } catch (e: Exception) {
+            println("⚠️  Falha na API direta: ${e.message}")
+            null
+        }
+    }
+    
+    private suspend fun tryFullFlow(shortVideoId: String, originalUrl: String): String? {
+        // Fluxo completo: Fembed → Iframe → Bysevepoin → Extrair ID real → API
+        return try {
+            println("🔄 Iniciando fluxo completo...")
+            
+            // PASSO 1: Obter iframe do Fembed
+            val iframeUrl = getFembedIframe(shortVideoId)
+            if (iframeUrl == null) {
+                println("❌ Falha ao obter iframe do Fembed")
+                return null
+            }
+            
+            println("✅ Iframe obtido: $iframeUrl")
+            
+            // PASSO 2: Acessar iframe para obter URL do Bysevepoin
+            val bysevepoinUrl = getBysevepoinFromIframe(iframeUrl, shortVideoId)
+            if (bysevepoinUrl == null) {
+                println("❌ Falha ao obter URL do Bysevepoin")
+                return null
+            }
+            
+            println("✅ URL do Bysevepoin: $bysevepoinUrl")
+            
+            // PASSO 3: Extrair ID real do Bysevepoin
+            val realVideoId = extractRealVideoId(bysevepoinUrl)
+            if (realVideoId == null) {
+                println("❌ Não consegui extrair ID real do Bysevepoin")
+                return null
+            }
+            
+            println("🎯 ID real encontrado: $realVideoId")
+            
+            // PASSO 4: Acessar API do g9r6.com com ID real
+            tryDirectApi(realVideoId, bysevepoinUrl)
+            
+        } catch (e: Exception) {
+            println("💥 Erro no fluxo completo: ${e.message}")
+            null
+        }
+    }
+    
+    private suspend fun getFembedIframe(videoId: String): String? {
+        return try {
+            val apiUrl = "$FEMBED_DOMAIN/api.php?s=$videoId&c="
+            println("📡 POST para Fembed: $apiUrl")
+            
+            val headers = defaultHeaders + mapOf(
+                "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8",
+                "X-Requested-With" to "XMLHttpRequest",
+                "Referer" to "$FEMBED_DOMAIN/e/$videoId"
+            )
+            
+            val postData = mapOf(
+                "action" to "getPlayer",
+                "lang" to "DUB",
+                "key" to "MA=="
+            )
+            
+            val response = app.post(apiUrl, headers = headers, data = postData)
+            val text = response.text
+            
+            // Extrair URL do iframe
+            val iframeRegex = Regex("""<iframe[^>]+src=["']([^"']+)["']""")
+            val match = iframeRegex.find(text)
+            
+            if (match != null) {
+                var url = match.groupValues[1]
+                if (url.startsWith("/")) {
+                    url = "$FEMBED_DOMAIN$url"
+                }
+                url
+            } else {
+                null
+            }
+            
+        } catch (e: Exception) {
+            println("⚠️  Erro no Fembed: ${e.message}")
+            null
+        }
+    }
+    
+    private suspend fun getBysevepoinFromIframe(iframeUrl: String, videoId: String): String? {
+        return try {
+            println("🔍 Acessando iframe: $iframeUrl")
+            
+            val headers = defaultHeaders + mapOf(
+                "Referer" to "$FEMBED_DOMAIN/e/$videoId"
+            )
+            
+            val response = app.get(iframeUrl, headers = headers)
+            val html = response.text
+            
+            // Procurar URL do Bysevepoin no HTML
+            val patterns = listOf(
+                Regex("""<iframe[^>]+src=["'](https?://bysevepoin\.com/[^"']+)["']"""),
+                Regex("""window\.location\.href\s*=\s*["']([^"']+)["']"""),
+                Regex("""src:\s*["'](https?://bysevepoin\.com/[^"']+)["']""")
+            )
+            
+            for (pattern in patterns) {
+                val match = pattern.find(html)
+                if (match != null) {
+                    return match.groupValues[1]
+                }
+            }
+            
+            null
+            
+        } catch (e: Exception) {
+            println("⚠️  Erro no iframe: ${e.message}")
+            null
+        }
+    }
+    
+    private fun extractRealVideoId(bysevepoinUrl: String): String? {
+        // Extrair ID do formato: /e/ouu59ray1kvp/1457-s01e01-dub
+        val pattern = Regex("""/e/([a-zA-Z0-9]+)(?:/|$)""")
+        val match = pattern.find(bysevepoinUrl)
+        
+        return match?.groupValues?.get(1)
+    }
+    
     private fun extractVideoId(url: String): String? {
-        // Padrão: /e/{id}/{slug} ou /v/{id}/{slug}
+        // Extrair ID de várias formas possíveis
         val patterns = listOf(
-            Regex("""/(?:e|v)/([a-zA-Z0-9]+)(?:/|$)"""),
-            Regex("""/videos/([a-zA-Z0-9]+)(?:/|$)"""),
-            Regex("""id=([a-zA-Z0-9]+)""")
+            Regex("""/e/([a-zA-Z0-9]+)"""),                     // /e/ouu59ray1kvp
+            Regex("""/v/([a-zA-Z0-9]+)"""),                     // /v/283689
+            Regex("""fembed\.sx/e/([a-zA-Z0-9]+)"""),           // fembed.sx/e/283689
+            Regex("""bysevepoin\.com/e/([a-zA-Z0-9]+)"""),      // bysevepoin.com/e/ouu59ray1kvp
+            Regex("""/([0-9]+)$""")                             // /283689
         )
         
         for (pattern in patterns) {
             val match = pattern.find(url)
             if (match != null) {
-                val id = match.groupValues[1]
-                if (id.length >= 8) { // IDs geralmente são longos
-                    return id
-                }
+                return match.groupValues[1]
             }
         }
         
         return null
     }
     
-    private fun decryptPlayback(playback: JSONObject): JSONObject? {
+    private fun processEncryptedResponse(jsonText: String, videoId: String): String? {
         return try {
+            val json = JSONObject(jsonText)
+            val playback = json.getJSONObject("playback")
+            
             // Extrair dados de criptografia
             val iv = Base64.decode(playback.getString("iv"), Base64.DEFAULT)
             val payload = Base64.decode(playback.getString("payload"), Base64.DEFAULT)
@@ -120,11 +255,9 @@ object SuperFlixExtractor {
             // Juntar partes da chave
             val key1 = Base64.decode(keyParts.getString(0), Base64.DEFAULT)
             val key2 = Base64.decode(keyParts.getString(1), Base64.DEFAULT)
-            val key = key1 + key2 // 32 bytes para AES-256
+            val key = key1 + key2
             
-            println("🔐 Descriptografando: key=${key.size} bytes, iv=${iv.size} bytes")
-            
-            // Descriptografar AES-256-GCM
+            // Descriptografar
             val decrypted = decryptAesGcm(payload, key, iv)
             if (decrypted == null) {
                 println("❌ Falha na descriptografia AES")
@@ -132,31 +265,33 @@ object SuperFlixExtractor {
             }
             
             val decryptedText = String(decrypted, Charsets.UTF_8)
-            println("✅ Texto descriptografado: ${decryptedText.take(200)}...")
+            println("✅ Descriptografado: ${decryptedText.take(200)}...")
             
-            JSONObject(decryptedText)
+            // Parse JSON descriptografado
+            val decryptedJson = JSONObject(decryptedText)
+            
+            // Construir URL M3U8
+            buildM3u8Url(videoId, decryptedJson)
             
         } catch (e: Exception) {
-            println("💥 Erro na descriptografia: ${e.message}")
+            println("💥 Erro ao processar resposta: ${e.message}")
             null
         }
     }
     
-    private fun buildM3u8Url(videoId: String, decryptedData: JSONObject): String {
-        // Extrair parâmetros do JSON descriptografado
-        // Estes são os nomes que vimos na análise anterior
-        val token = decryptedData.optString("t", "")
-        val timestamp = decryptedData.optString("s", "")
-        val expire = decryptedData.optString("e", "")
-        val fileId = decryptedData.optString("f", "")
-        val server = decryptedData.optString("srv", "1070")
-        val speed = decryptedData.optString("sp", "4000")
-        val quality = decryptedData.optString("p", "0")
+    private fun buildM3u8Url(videoId: String, params: JSONObject): String {
+        // Extrair parâmetros do JSON
+        val token = params.optString("t", "")
+        val timestamp = params.optString("s", "")
+        val expire = params.optString("e", "")
+        val fileId = params.optString("f", "")
+        val server = params.optString("srv", "1070")
+        val speed = params.optString("sp", "4000")
+        val quality = params.optString("p", "0")
         
-        // Domínio CDN (pode precisar ajustar)
+        // Domínio CDN padrão (pode precisar ser extraído dinamicamente)
         val cdnDomain = "be6721.rcr72.waw04.i8yz83pn.com"
         
-        // Construir URL no formato observado
         return "https://$cdnDomain/hls2/05/10459/${videoId}_h/master.m3u8" +
                "?t=$token" +
                "&s=$timestamp" +
@@ -165,36 +300,6 @@ object SuperFlixExtractor {
                "&srv=$server" +
                "&sp=$speed" +
                "&p=$quality"
-    }
-    
-    private suspend fun generateM3u8Links(
-        m3u8Url: String,
-        name: String,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        return try {
-            println("🔄 Gerando links M3U8...")
-            
-            val links = M3u8Helper.generateM3u8(
-                name,
-                m3u8Url,
-                referer = PLAYER_DOMAIN,
-                headers = headers
-            )
-            
-            if (links.isNotEmpty()) {
-                links.forEach(callback)
-                println("🎉 SUCESSO! ${links.size} links gerados!")
-                true
-            } else {
-                println("❌ Nenhum link gerado")
-                false
-            }
-            
-        } catch (e: Exception) {
-            println("💥 Erro ao gerar links: ${e.message}")
-            false
-        }
     }
     
     private fun decryptAesGcm(ciphertext: ByteArray, key: ByteArray, iv: ByteArray): ByteArray? {
@@ -206,6 +311,55 @@ object SuperFlixExtractor {
         } catch (e: Exception) {
             println("🔒 Erro AES-GCM: ${e.message}")
             null
+        }
+    }
+    
+    private suspend fun generateM3u8Links(
+        m3u8Url: String,
+        name: String,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        return try {
+            println("🔄 Gerando links M3U8...")
+            
+            // Testar diferentes referers
+            val referers = listOf(
+                BYSEVEPOIN_DOMAIN,
+                G9R6_DOMAIN,
+                FEMBED_DOMAIN,
+                "https://superflix21.lol/"
+            )
+            
+            for (referer in referers) {
+                try {
+                    println("🔧 Testando referer: $referer")
+                    
+                    val links = M3u8Helper.generateM3u8(
+                        name,
+                        m3u8Url,
+                        referer = referer,
+                        headers = defaultHeaders + mapOf(
+                            "Referer" to referer,
+                            "Origin" to referer.removeSuffix("/")
+                        )
+                    )
+                    
+                    if (links.isNotEmpty()) {
+                        links.forEach(callback)
+                        println("🎉 SUCESSO! ${links.size} links gerados!")
+                        return true
+                    }
+                } catch (e: Exception) {
+                    println("⚠️  Falha com referer $referer: ${e.message}")
+                }
+            }
+            
+            println("❌ Nenhum link gerado com os referers testados")
+            false
+            
+        } catch (e: Exception) {
+            println("💥 Erro ao gerar links: ${e.message}")
+            false
         }
     }
 }
