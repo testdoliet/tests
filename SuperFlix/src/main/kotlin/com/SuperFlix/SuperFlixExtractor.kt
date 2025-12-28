@@ -30,19 +30,26 @@ object SuperFlixExtractor {
         
         return try {
             // PASSO 1: Identificar tipo de URL e extrair ID
-            val (videoId, urlType) = extractVideoIdAndType(url)
+            val (videoId, urlType, episodeParam) = extractVideoIdAndType(url)
             if (videoId == null) {
                 println("❌ Não consegui extrair ID")
                 return false
             }
             
             println("✅ ID extraído: $videoId (Tipo: $urlType)")
+            if (episodeParam != null) {
+                println("📺 Parâmetro de episódio: $episodeParam")
+            }
             
             // PASSO 2: Baseado no tipo, usar fluxo apropriado
             val m3u8Url = when (urlType) {
-                UrlType.SHORT_ID -> tryFullFlow(videoId)      // IDs curtos (10529, 1456349)
-                UrlType.LONG_ID -> tryDirectG9r6Api(videoId, url) // IDs longos (j7u05mwoi6xc, ouu59ray1kvp)
-                UrlType.BYSEVEPOIN -> extractFromBysevepoinUrl(url) // URLs diretas do Bysevepoin
+                UrlType.SHORT_ID -> tryFullFlow(videoId, episodeParam)  // IDs curtos com possível episódio
+                UrlType.LONG_ID -> tryDirectG9r6Api(videoId, url)        // IDs longos
+                UrlType.BYSEVEPOIN -> extractFromBysevepoinUrl(url)      // URLs diretas
+                UrlType.UNKNOWN -> {
+                    println("⚠️  Tipo de URL desconhecido")
+                    null
+                }
             }
             
             if (m3u8Url == null) {
@@ -62,13 +69,44 @@ object SuperFlixExtractor {
         }
     }
     
+    private fun extractVideoIdAndType(url: String): Triple<String?, UrlType, String?> {
+        // IDs curtos (85718) com possíveis parâmetros de episódio
+        val shortIdMatch = Regex("""/(\d{4,})(?:/|$|-|\.)""").find(url)
+        if (shortIdMatch != null) {
+            val videoId = shortIdMatch.groupValues[1]
+            
+            // Verificar se tem parâmetro de episódio (ex: /85718/1-1)
+            val episodeMatch = Regex("""/\d{4,}/(\d+-\d+)""").find(url)
+            val episodeParam = episodeMatch?.groupValues?.get(1)
+            
+            return Triple(videoId, UrlType.SHORT_ID, episodeParam)
+        }
+        
+        // IDs longos alfanuméricos
+        val longIdMatch = Regex("""/([a-z0-9]{10,})(?:/|$|-|\.)""").find(url)
+        if (longIdMatch != null) {
+            return Triple(longIdMatch.groupValues[1], UrlType.LONG_ID, null)
+        }
+        
+        // URLs do Bysevepoin
+        if (url.contains("bysevepoin.com")) {
+            val id = extractRealVideoId(url)
+            return Triple(id, UrlType.BYSEVEPOIN, null)
+        }
+        
+        return Triple(null, UrlType.UNKNOWN, null)
+    }
+    
     // ================ SISTEMA 1: IDs CURTOS (fluxo completo) ================
-    private suspend fun tryFullFlow(shortVideoId: String): String? {
+    private suspend fun tryFullFlow(shortVideoId: String, episodeParam: String? = null): String? {
         println("🔄 Iniciando fluxo completo para ID curto: $shortVideoId")
+        if (episodeParam != null) {
+            println("📺 Parâmetro de episódio: $episodeParam")
+        }
         
         return try {
             // TENTATIVA 1: Sistema 1 (JSON direto com M3U8)
-            val system1Result = trySystem1(shortVideoId)
+            val system1Result = trySystem1(shortVideoId, episodeParam)
             if (system1Result != null) {
                 println("✅ Sistema 1 funcionou!")
                 return system1Result
@@ -77,7 +115,7 @@ object SuperFlixExtractor {
             println("⚠️  Sistema 1 falhou, tentando Sistema 2...")
             
             // TENTATIVA 2: Sistema 2 (Iframe -> Bysevepoin)
-            val system2Result = trySystem2(shortVideoId)
+            val system2Result = trySystem2(shortVideoId, episodeParam)
             if (system2Result != null) {
                 println("✅ Sistema 2 funcionou!")
                 return system2Result
@@ -92,10 +130,16 @@ object SuperFlixExtractor {
         }
     }
     
-    private suspend fun trySystem1(shortVideoId: String): String? {
+    private suspend fun trySystem1(shortVideoId: String, episodeParam: String? = null): String? {
         println("🔧 Tentando Sistema 1 (JSON direto)...")
         
-        val endpoint = "https://fembed.sx/api.php?s=$shortVideoId&c="
+        // Construir endpoint baseado no tipo
+        val endpoint = if (episodeParam != null) {
+            "https://fembed.sx/api.php?s=$shortVideoId&c=$episodeParam"
+        } else {
+            "https://fembed.sx/api.php?s=$shortVideoId&c="
+        }
+        
         println("📡 POST para: $endpoint")
         
         try {
@@ -129,6 +173,17 @@ object SuperFlixExtractor {
                         println("⚠️  Não é JSON válido: ${e.message}")
                     }
                 }
+                
+                // Se não for JSON, pode ser HTML com iframe
+                if (text.contains("<iframe")) {
+                    println("🔍 Resposta contém iframe HTML")
+                    val iframeUrl = extractIframeUrl(text)
+                    if (iframeUrl != null) {
+                        println("✅ Extraído iframe do HTML: $iframeUrl")
+                        // A partir do iframe, seguir fluxo normal
+                        return processIframeUrl(iframeUrl)
+                    }
+                }
             }
             
             return null
@@ -139,12 +194,17 @@ object SuperFlixExtractor {
         }
     }
     
-    private suspend fun trySystem2(shortVideoId: String): String? {
+    private suspend fun trySystem2(shortVideoId: String, episodeParam: String? = null): String? {
         println("🔧 Tentando Sistema 2 (Bysevepoin)...")
         
         return try {
             // 1. Obter resposta do Fembed
-            val endpoint = "https://fembed.sx/api.php?s=$shortVideoId&c="
+            val endpoint = if (episodeParam != null) {
+                "https://fembed.sx/api.php?s=$shortVideoId&c=$episodeParam"
+            } else {
+                "https://fembed.sx/api.php?s=$shortVideoId&c="
+            }
+            
             println("📡 POST para Fembed: $endpoint")
             
             val response = app.post(
@@ -175,26 +235,8 @@ object SuperFlixExtractor {
             
             println("✅ URL do iframe: $iframeUrl")
             
-            // 3. Acessar iframe para obter URL do Bysevepoin
-            val bysevepoinUrl = extractBysevepoinUrl(iframeUrl)
-            if (bysevepoinUrl == null) {
-                println("❌ Não consegui extrair URL do Bysevepoin")
-                return null
-            }
-            
-            println("✅ URL do Bysevepoin: $bysevepoinUrl")
-            
-            // 4. Extrair ID real do Bysevepoin e usar API direta
-            val realVideoId = extractRealVideoId(bysevepoinUrl)
-            if (realVideoId == null) {
-                println("❌ Não consegui extrair ID real do Bysevepoin")
-                return null
-            }
-            
-            println("🎯 ID real extraído: $realVideoId")
-            
-            // 5. Usar API direta com ID real
-            tryDirectG9r6Api(realVideoId, bysevepoinUrl)
+            // 3. Processar iframe
+            return processIframeUrl(iframeUrl)
             
         } catch (e: Exception) {
             println("💥 Erro no Sistema 2: ${e.message}")
@@ -202,11 +244,36 @@ object SuperFlixExtractor {
         }
     }
     
+    private suspend fun processIframeUrl(iframeUrl: String): String? {
+        println("🔗 Processando iframe URL: $iframeUrl")
+        
+        // Acessar iframe para obter URL do Bysevepoin
+        val bysevepoinUrl = extractBysevepoinUrl(iframeUrl)
+        if (bysevepoinUrl == null) {
+            println("❌ Não consegui extrair URL do Bysevepoin do iframe")
+            return null
+        }
+        
+        println("✅ URL do Bysevepoin: $bysevepoinUrl")
+        
+        // Extrair ID real do Bysevepoin
+        val realVideoId = extractRealVideoId(bysevepoinUrl)
+        if (realVideoId == null) {
+            println("❌ Não consegui extrair ID real do Bysevepoin")
+            return null
+        }
+        
+        println("🎯 ID real extraído: $realVideoId")
+        
+        // Usar API direta
+        return tryDirectG9r6Api(realVideoId, bysevepoinUrl)
+    }
+    
     private fun extractIframeUrl(html: String): String? {
         // Padrões para encontrar URL do iframe
         val patterns = listOf(
-            Regex("""src=["'](https?://[^"']+)["']"""),
             Regex("""<iframe[^>]+src=["']([^"']+)["']"""),
+            Regex("""src=["']([^"']+)["']"""),
             Regex("""iframe=["']([^"']+)["']""")
         )
         
@@ -214,20 +281,26 @@ object SuperFlixExtractor {
             val match = pattern.find(html)
             if (match != null) {
                 var url = match.groupValues[1]
-                // Garantir que seja URL completa
-                if (url.startsWith("//")) {
-                    url = "https:$url"
-                } else if (url.startsWith("/")) {
+                println("🔍 URL encontrada com padrão: '$url'")
+                
+                // CORREÇÃO PARA SÉRIES: URL relativa
+                if (url.startsWith("/")) {
                     url = "https://fembed.sx$url"
+                    println("📌 Convertida para URL completa: $url")
+                } else if (!url.startsWith("http")) {
+                    // Se não começar com http e nem com /, pode ser caminho relativo
+                    url = "https://fembed.sx/$url"
+                    println("📌 Adicionado domínio: $url")
                 }
                 
                 if (url.startsWith("http")) {
-                    println("🔍 URL encontrada com padrão: $url")
+                    println("✅ URL final do iframe: $url")
                     return url
                 }
             }
         }
         
+        println("❌ Não encontrei URL do iframe válida")
         return null
     }
     
@@ -355,28 +428,6 @@ object SuperFlixExtractor {
         }
         
         return null
-    }
-    
-    private fun extractVideoIdAndType(url: String): Pair<String?, UrlType> {
-        // IDs curtos (10529, 1456349) - apenas números
-        val shortIdMatch = Regex("""/(\d{4,})(?:/|$|-|\.)""").find(url)
-        if (shortIdMatch != null) {
-            return Pair(shortIdMatch.groupValues[1], UrlType.SHORT_ID)
-        }
-        
-        // IDs longos alfanuméricos (yziqjcntix6v, j7u05mwoi6xc)
-        val longIdMatch = Regex("""/([a-z0-9]{10,})(?:/|$|-|\.)""").find(url)
-        if (longIdMatch != null) {
-            return Pair(longIdMatch.groupValues[1], UrlType.LONG_ID)
-        }
-        
-        // URLs do Bysevepoin
-        if (url.contains("bysevepoin.com")) {
-            val id = extractRealVideoId(url)
-            return Pair(id, UrlType.BYSEVEPOIN)
-        }
-        
-        return Pair(null, UrlType.UNKNOWN)
     }
     
     // ================ DECRIPTOGRAFIA ================
@@ -552,10 +603,9 @@ object SuperFlixExtractor {
     
     // ================ ENUMS ================
     private enum class UrlType {
-        SHORT_ID,      // IDs curtos numéricos (10529, 1456349) - precisa fluxo completo
+        SHORT_ID,      // IDs curtos numéricos (10529, 1456349, 85718) - pode ter episódio
         LONG_ID,       // IDs longos alfanuméricos (yziqjcntix6v) - API direta
         BYSEVEPOIN,    // URLs diretas do Bysevepoin
         UNKNOWN
     }
-  }
 }
