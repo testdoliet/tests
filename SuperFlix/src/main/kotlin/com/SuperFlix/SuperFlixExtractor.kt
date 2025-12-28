@@ -4,608 +4,466 @@ import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
-import com.lagradost.cloudstream3.utils.M3u8Helper
 import org.json.JSONObject
 import javax.crypto.Cipher
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
 import android.util.Base64
+import com.lagradost.cloudstream3.utils.M3u8Helper
 
 object SuperFlixExtractor {
-    // Cookies atualizados
-    private const val API_COOKIE = "__dtsu=104017651574995957BEB724C6373F9E; __cc_id=a44d1e52993b9c2Oaaf40eba24989a06; cf_clearance=rfIEldahI7B..Y4PpZhGgwi.QOJBqIRGdFP150.VnW-1766868784-1.1-"
-    
-    // Domínios
-    private const val G9R6_DOMAIN = "https://g9r6.com"
-    private const val BYSEVEPOIN_DOMAIN = "https://bysevepoin.com"
-    private const val FEMBED_DOMAIN = "https://fembed.sx"
-    
-    suspend fun extractVideoLinks(
-        url: String,
-        name: String,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        println("🎯 SuperFlixExtractor: Iniciando extração...")
-        println("🔗 URL original: $url")
-        
-        return try {
-            // PASSO 1: Identificar tipo de URL e extrair ID
-            val (videoId, urlType, episodeParam) = extractVideoIdAndType(url)
-            if (videoId == null) {
-                println("❌ Não consegui extrair ID")
-                return false
-            }
-            
-            println("✅ ID extraído: $videoId (Tipo: $urlType)")
-            if (episodeParam != null) {
-                println("📺 Parâmetro de episódio: $episodeParam")
-            }
-            
-            // PASSO 2: Baseado no tipo, usar fluxo apropriado
-            val m3u8Url = when (urlType) {
-                UrlType.SHORT_ID -> tryFullFlow(videoId, episodeParam)  // IDs curtos com possível episódio
-                UrlType.LONG_ID -> tryDirectG9r6Api(videoId, url)        // IDs longos
-                UrlType.BYSEVEPOIN -> extractFromBysevepoinUrl(url)      // URLs diretas
-                UrlType.UNKNOWN -> {
-                    println("⚠️  Tipo de URL desconhecido")
-                    null
-                }
-            }
-            
-            if (m3u8Url == null) {
-                println("❌ Não consegui obter URL M3U8")
-                return false
-            }
-            
-            println("🎬 URL M3U8 final: $m3u8Url")
-            
-            // PASSO 3: Criar ExtractorLink
-            createExtractorLink(m3u8Url, name, callback)
-            
-        } catch (e: Exception) {
-            println("💥 Erro fatal: ${e.message}")
-            e.printStackTrace()
-            false
-        }
-    }
-    
-    private fun extractVideoIdAndType(url: String): Triple<String?, UrlType, String?> {
-        // IDs curtos (85718) com possíveis parâmetros de episódio
-        val shortIdMatch = Regex("""/(\d{4,})(?:/|$|-|\.)""").find(url)
-        if (shortIdMatch != null) {
-            val videoId = shortIdMatch.groupValues[1]
-            
-            // Verificar se tem parâmetro de episódio (ex: /85718/1-1)
-            val episodeMatch = Regex("""/\d{4,}/(\d+-\d+)""").find(url)
-            val episodeParam = episodeMatch?.groupValues?.get(1)
-            
-            return Triple(videoId, UrlType.SHORT_ID, episodeParam)
-        }
-        
-        // IDs longos alfanuméricos
-        val longIdMatch = Regex("""/([a-z0-9]{10,})(?:/|$|-|\.)""").find(url)
-        if (longIdMatch != null) {
-            return Triple(longIdMatch.groupValues[1], UrlType.LONG_ID, null)
-        }
-        
-        // URLs do Bysevepoin
-        if (url.contains("bysevepoin.com")) {
-            val id = extractRealVideoId(url)
-            return Triple(id, UrlType.BYSEVEPOIN, null)
-        }
-        
-        return Triple(null, UrlType.UNKNOWN, null)
-    }
-    
-    // ================ SISTEMA 1: IDs CURTOS (fluxo completo) ================
-    private suspend fun tryFullFlow(shortVideoId: String, episodeParam: String? = null): String? {
-        println("🔄 Iniciando fluxo completo para ID curto: $shortVideoId")
-        if (episodeParam != null) {
-            println("📺 Parâmetro de episódio: $episodeParam")
-        }
-        
-        return try {
-            // TENTATIVA 1: Sistema 1 (JSON direto com M3U8)
-            val system1Result = trySystem1(shortVideoId, episodeParam)
-            if (system1Result != null) {
-                println("✅ Sistema 1 funcionou!")
-                return system1Result
-            }
-            
-            println("⚠️  Sistema 1 falhou, tentando Sistema 2...")
-            
-            // TENTATIVA 2: Sistema 2 (Iframe -> Bysevepoin)
-            val system2Result = trySystem2(shortVideoId, episodeParam)
-            if (system2Result != null) {
-                println("✅ Sistema 2 funcionou!")
-                return system2Result
-            }
-            
-            println("❌ Ambos os sistemas falharam")
-            null
-            
-        } catch (e: Exception) {
-            println("💥 Erro no fluxo completo: ${e.message}")
-            null
-        }
-    }
-    
-    private suspend fun trySystem1(shortVideoId: String, episodeParam: String? = null): String? {
-        println("🔧 Tentando Sistema 1 (JSON direto)...")
-        
-        // Construir endpoint baseado no tipo
-        val endpoint = if (episodeParam != null) {
-            "https://fembed.sx/api.php?s=$shortVideoId&c=$episodeParam"
-        } else {
-            "https://fembed.sx/api.php?s=$shortVideoId&c="
-        }
-        
-        println("📡 POST para: $endpoint")
-        
-        try {
-            val response = app.post(
-                endpoint,
-                headers = mapOf(
-                    "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36",
-                    "Accept" to "*/*",
-                    "X-Requested-With" to "XMLHttpRequest",
-                    "Referer" to "https://fembed.sx/",
-                    "Origin" to "https://fembed.sx"
-                )
-            )
-            
-            if (response.isSuccessful) {
-                val text = response.text
-                println("📊 Resposta (primeiros 500 chars): ${text.take(500)}...")
-                
-                // Verificar se é JSON
-                if (text.trim().startsWith("{") && text.contains("\"file\"")) {
-                    try {
-                        val json = JSONObject(text)
-                        if (json.has("file")) {
-                            val m3u8Url = json.getString("file")
-                            if (m3u8Url.contains(".m3u8")) {
-                                println("✅ Sistema 1 - M3U8 direto encontrado: $m3u8Url")
-                                return m3u8Url
-                            }
-                        }
-                    } catch (e: Exception) {
-                        println("⚠️  Não é JSON válido: ${e.message}")
-                    }
-                }
-                
-                // Se não for JSON, pode ser HTML com iframe
-                if (text.contains("<iframe")) {
-                    println("🔍 Resposta contém iframe HTML")
-                    val iframeUrl = extractIframeUrl(text)
-                    if (iframeUrl != null) {
-                        println("✅ Extraído iframe do HTML: $iframeUrl")
-                        // A partir do iframe, seguir fluxo normal
-                        return processIframeUrl(iframeUrl)
-                    }
-                }
-            }
-            
-            return null
-            
-        } catch (e: Exception) {
-            println("⚠️  Erro no Sistema 1: ${e.message}")
-            return null
-        }
-    }
-    
-    private suspend fun trySystem2(shortVideoId: String, episodeParam: String? = null): String? {
-        println("🔧 Tentando Sistema 2 (Bysevepoin)...")
-        
-        return try {
-            // 1. Obter resposta do Fembed
-            val endpoint = if (episodeParam != null) {
-                "https://fembed.sx/api.php?s=$shortVideoId&c=$episodeParam"
-            } else {
-                "https://fembed.sx/api.php?s=$shortVideoId&c="
-            }
-            
-            println("📡 POST para Fembed: $endpoint")
-            
-            val response = app.post(
-                endpoint,
-                headers = mapOf(
-                    "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36",
-                    "Accept" to "*/*",
-                    "X-Requested-With" to "XMLHttpRequest",
-                    "Referer" to "https://fembed.sx/",
-                    "Origin" to "https://fembed.sx"
-                )
-            )
-            
-            if (!response.isSuccessful) {
-                println("❌ Fembed API falhou: ${response.code}")
-                return null
-            }
-            
-            val content = response.text
-            println("📄 Resposta do Fembed (${content.length} chars)")
-            
-            // 2. Extrair URL do iframe
-            val iframeUrl = extractIframeUrl(content)
-            if (iframeUrl == null) {
-                println("❌ Não encontrei URL do iframe")
-                return null
-            }
-            
-            println("✅ URL do iframe: $iframeUrl")
-            
-            // 3. Processar iframe
-            return processIframeUrl(iframeUrl)
-            
-        } catch (e: Exception) {
-            println("💥 Erro no Sistema 2: ${e.message}")
-            null
-        }
-    }
-    
-    private suspend fun processIframeUrl(iframeUrl: String): String? {
-        println("🔗 Processando iframe URL: $iframeUrl")
-        
-        // Acessar iframe para obter URL do Bysevepoin
-        val bysevepoinUrl = extractBysevepoinUrl(iframeUrl)
-        if (bysevepoinUrl == null) {
-            println("❌ Não consegui extrair URL do Bysevepoin do iframe")
-            return null
-        }
-        
-        println("✅ URL do Bysevepoin: $bysevepoinUrl")
-        
-        // Extrair ID real do Bysevepoin
-        val realVideoId = extractRealVideoId(bysevepoinUrl)
-        if (realVideoId == null) {
-            println("❌ Não consegui extrair ID real do Bysevepoin")
-            return null
-        }
-        
-        println("🎯 ID real extraído: $realVideoId")
-        
-        // Usar API direta
-        return tryDirectG9r6Api(realVideoId, bysevepoinUrl)
-    }
-    
-    private fun extractIframeUrl(html: String): String? {
-        // Padrões para encontrar URL do iframe
-        val patterns = listOf(
-            Regex("""<iframe[^>]+src=["']([^"']+)["']"""),
-            Regex("""src=["']([^"']+)["']"""),
-            Regex("""iframe=["']([^"']+)["']""")
-        )
-        
-        for (pattern in patterns) {
-            val match = pattern.find(html)
-            if (match != null) {
-                var url = match.groupValues[1]
-                println("🔍 URL encontrada com padrão: '$url'")
-                
-                // CORREÇÃO PARA SÉRIES: URL relativa
-                if (url.startsWith("/")) {
-                    url = "https://fembed.sx$url"
-                    println("📌 Convertida para URL completa: $url")
-                } else if (!url.startsWith("http")) {
-                    // Se não começar com http e nem com /, pode ser caminho relativo
-                    url = "https://fembed.sx/$url"
-                    println("📌 Adicionado domínio: $url")
-                }
-                
-                if (url.startsWith("http")) {
-                    println("✅ URL final do iframe: $url")
-                    return url
-                }
-            }
-        }
-        
-        println("❌ Não encontrei URL do iframe válida")
-        return null
-    }
-    
-    private suspend fun extractBysevepoinUrl(iframeUrl: String): String? {
-        println("🔍 Acessando iframe: $iframeUrl")
-        
-        try {
-            val response = app.get(iframeUrl, headers = mapOf(
-                "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36",
-                "Referer" to "https://fembed.sx/",
-                "Origin" to "https://fembed.sx"
-            ))
-            
-            if (!response.isSuccessful) {
-                println("❌ Iframe não acessível: ${response.code}")
-                return null
-            }
-            
-            val html = response.text
-            
-            // Procurar URL do Bysevepoin
-            val bysevepoinPatterns = listOf(
-                Regex("""src=["'](https?://bysevepoin\.com/[^"']+)["']"""),
-                Regex("""<iframe[^>]+src=["'](https?://bysevepoin\.com/[^"']+)["']"""),
-                Regex("""bysevepoin\.com/e/([^"'\s]+)""")
-            )
-            
-            for (pattern in bysevepoinPatterns) {
-                val match = pattern.find(html)
-                if (match != null) {
-                    var url = match.groupValues[1]
-                    // Construir URL completa se necessário
-                    if (!url.startsWith("http") && url.startsWith("/e/")) {
-                        url = "https://bysevepoin.com$url"
-                    } else if (!url.startsWith("http")) {
-                        url = "https://bysevepoin.com/e/$url"
-                    }
-                    
-                    if (url.startsWith("http")) {
-                        println("✅ URL do Bysevepoin encontrada: $url")
-                        return url
-                    }
-                }
-            }
-            
-            println("❌ Não encontrei URL do Bysevepoin no iframe")
-            return null
-            
-        } catch (e: Exception) {
-            println("⚠️  Erro ao acessar iframe: ${e.message}")
-            return null
-        }
-    }
-    
-    // ================ SISTEMA 2: IDs LONGOS (API direta) ================
-    private suspend fun tryDirectG9r6Api(videoId: String, refererUrl: String): String? {
-        println("🚀 Usando API direta do g9r6.com: $videoId")
-        
-        return try {
-            val apiUrl = "$G9R6_DOMAIN/api/videos/$videoId/embed/playback"
-            println("📡 API URL: $apiUrl")
-            
-            val response = app.get(apiUrl, headers = createApiHeaders(refererUrl))
-            
-            if (response.code != 200) {
-                println("❌ API retornou ${response.code}")
-                return null
-            }
-            
-            println("✅ API respondeu com sucesso")
-            
-            // Processar resposta criptografada
-            processEncryptedResponse(response.text, videoId)
-            
-        } catch (e: Exception) {
-            println("⚠️  Falha na API direta: ${e.message}")
-            null
-        }
-    }
-    
-    // ================ SISTEMA 3: URLs DIRETAS DO BYSEVEPOIN ================
-    private suspend fun extractFromBysevepoinUrl(url: String): String? {
-        println("🔗 Processando URL direta do Bysevepoin: $url")
-        
-        val realVideoId = extractRealVideoId(url)
-        if (realVideoId == null) {
-            println("❌ Não consegui extrair ID da URL do Bysevepoin")
-            return null
-        }
-        
-        println("🎯 ID extraído do Bysevepoin: $realVideoId")
-        return tryDirectG9r6Api(realVideoId, url)
-    }
-    
-    // ================ FUNÇÕES AUXILIARES ================
-    private fun createApiHeaders(refererUrl: String): Map<String, String> {
-        return mapOf(
-            "accept" to "*/*",
-            "accept-language" to "pt-BR,pt;q=0.9",
-            "cache-control" to "no-cache",
-            "pragma" to "no-cache",
-            "referer" to refererUrl,
-            "sec-ch-ua" to "\"Chromium\";v=\"127\", \"Not)A;Brand\";v=\"99\"",
-            "sec-ch-ua-mobile" to "?1",
-            "sec-ch-ua-platform" to "\"Android\"",
-            "user-agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
-            "x-embed-parent" to refererUrl,
-            "cookie" to API_COOKIE
-        )
-    }
-    
-    private fun extractRealVideoId(url: String): String? {
-        // Extrair ID de URLs do Bysevepoin
-        val patterns = listOf(
-            Regex("""/e/([a-zA-Z0-9]+)(?:/|$)"""),  // /e/yziqjcntix6v/
-            Regex("""/v/([a-zA-Z0-9]+)(?:/|$)"""),  // /v/abc123
-            Regex("""bysevepoin\.com/e/([a-zA-Z0-9]+)""")
-        )
-        
-        for (pattern in patterns) {
-            val match = pattern.find(url)
-            if (match != null) {
-                return match.groupValues[1]
-            }
-        }
-        
-        return null
-    }
-    
-    // ================ DECRIPTOGRAFIA ================
-    private fun processEncryptedResponse(jsonText: String, videoId: String): String? {
-        return try {
-            println("🔧 Processando resposta criptografada...")
-            
-            val json = JSONObject(jsonText)
-            val playback = json.getJSONObject("playback")
-            
-            val ivBase64 = playback.getString("iv")
-            val payloadBase64 = playback.getString("payload")
-            val keyParts = playback.getJSONArray("key_parts")
-            
-            // Decodificar Base64
-            val iv = decodeBase64(ivBase64)
-            val payload = decodeBase64(payloadBase64)
-            val key1 = decodeBase64(keyParts.getString(0))
-            val key2 = decodeBase64(keyParts.getString(1))
-            val key = key1 + key2
-            
-            // Descriptografar
-            val decrypted = decryptAesGcm(payload, key, iv)
-            if (decrypted == null) {
-                println("❌ Falha na descriptografia")
-                return null
-            }
-            
-            val decryptedText = String(decrypted, Charsets.UTF_8)
-            println("✅ Descriptografado: ${decryptedText.take(200)}...")
-            
-            // Extrair URL do JSON descriptografado
-            extractM3u8FromDecryptedJson(JSONObject(decryptedText))
-            
-        } catch (e: Exception) {
-            println("💥 Erro ao processar resposta: ${e.message}")
-            null
-        }
-    }
-    
-    private fun decodeBase64(base64Str: String): ByteArray {
-        val cleanStr = base64Str.trim()
-        return try {
-            Base64.decode(cleanStr, Base64.NO_PADDING)
-        } catch (e: Exception) {
-            Base64.decode(cleanStr, Base64.DEFAULT)
-        }
-    }
-    
-    private fun decryptAesGcm(ciphertext: ByteArray, key: ByteArray, iv: ByteArray): ByteArray? {
-        return try {
-            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-            val actualIv = if (iv.size != 12) iv.copyOf(12) else iv
-            val spec = GCMParameterSpec(128, actualIv)
-            cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), spec)
-            cipher.doFinal(ciphertext)
-        } catch (e: Exception) {
-            println("💥 Erro na descriptografia: ${e.message}")
-            null
-        }
-    }
-    
-    private fun extractM3u8FromDecryptedJson(json: JSONObject): String? {
-        return try {
-            // Procurar em sources
-            if (json.has("sources")) {
-                val sources = json.getJSONArray("sources")
-                for (i in 0 until sources.length()) {
-                    val source = sources.getJSONObject(i)
-                    if (source.has("url")) {
-                        var url = source.getString("url")
-                        url = decodeUnicodeEscapes(url)
-                        if (url.contains(".m3u8")) {
-                            println("🎯 M3U8 encontrado em sources: $url")
-                            return url
-                        }
-                    }
-                }
-            }
-            
-            // Procurar em playlists
-            if (json.has("playlists")) {
-                val playlists = json.getJSONArray("playlists")
-                for (i in 0 until playlists.length()) {
-                    val playlist = playlists.getJSONObject(i)
-                    if (playlist.has("url")) {
-                        var url = playlist.getString("url")
-                        url = decodeUnicodeEscapes(url)
-                        if (url.contains(".m3u8")) {
-                            println("🎯 M3U8 encontrado em playlists: $url")
-                            return url
-                        }
-                    }
-                }
-            }
-            
-            println("❌ Nenhum M3U8 encontrado no JSON")
-            null
-            
-        } catch (e: Exception) {
-            println("💥 Erro ao extrair M3U8: ${e.message}")
-            null
-        }
-    }
-    
-    private fun decodeUnicodeEscapes(text: String): String {
-        return text.replace("\\u0026", "&")
-                  .replace("\\u002F", "/")
-                  .replace("\\u003D", "=")
-    }
-    
-    // ================ CRIAÇÃO DO LINK ================
-    private suspend fun createExtractorLink(
-        m3u8Url: String,
-        name: String,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        try {
-            val headers = mapOf(
-                "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36",
-                "Accept" to "*/*",
-                "Accept-Language" to "pt-BR",
-                "Referer" to m3u8Url,
-                "Range" to "bytes=0-"
-            )
-            
-            println("🔗 Testando URL M3U8: $m3u8Url")
-            val testResponse = app.get(m3u8Url, headers = headers)
-            
-            if (!testResponse.isSuccessful || !testResponse.text.contains("#EXTM3U")) {
-                println("❌ M3U8 inválido ou inacessível")
-                return false
-            }
-            
-            println("✅ M3U8 válido! Gerando links...")
-            
-            val links = M3u8Helper.generateM3u8(
-                source = "SuperFlix",
-                streamUrl = m3u8Url,
-                referer = m3u8Url,
-                headers = headers
-            )
-            
-            if (links.isNotEmpty()) {
-                links.forEach { link ->
-                    println("📺 ${link.name} - ${link.quality}p")
-                    callback(link)
-                }
-                return true
-            }
-            
-            // Fallback
-            val fallbackLink = newExtractorLink(
-                source = "SuperFlix",
-                name = "$name (720p)",
-                url = m3u8Url,
-                type = ExtractorLinkType.M3U8
-            ) {
-                this.referer = m3u8Url
-                this.quality = 720
-                this.headers = headers
-            }
-            
-            callback(fallbackLink)
-            println("✅ Link fallback criado")
-            return true
-            
-        } catch (e: Exception) {
-            println("💥 ERRO criando link: ${e.message}")
-            return false
-        }
-    }
-    
-    // ================ ENUMS ================
-    private enum class UrlType {
-        SHORT_ID,      // IDs curtos numéricos (10529, 1456349, 85718) - pode ter episódio
-        LONG_ID,       // IDs longos alfanuméricos (yziqjcntix6v) - API direta
-        BYSEVEPOIN,    // URLs diretas do Bysevepoin
-        UNKNOWN
-    }
+private const val API_COOKIE = "SITE_TOTAL_ID=aTYqe6GU65PNmeCXpelwJwAAAMi; __dtsu=104017651574995957BEB724C6373F9E; __cc_id=a44d1e52993b9c2Oaaf40eba24989a06; __cc_cc=ACZ4nGNQSDQXsTFMNTWyTDROskw2MkhMTDDMXSE1KNDKxtLBMNDBjAIJMC4fgVe%2B%2F%2BDngAHemT8XsDBKrv%2FF3%2F2F2%2F%2FF0ZGhFP15u.VnW-1Y0o8o6/84-1.2.1.1-4_OXh2hYevsbO8hINijDKB8O_SPowh.pNojloHEbwX_qZorbmW8u8zqV9B7UsV6bbRmCWx_dD17mA7vJJklpOD9WBh9DA0wMV2a1QSKuR2J3FN9.TRzOUM4AhnTGFd8dJH8bHfqQdY7uYuUg7Ny1TVQDF9kXqyEPtnmkZ9rFkqQ2KS6u0t2hhFdQvRBY7dqyGfdjmyjDqwc7ZOovHB0eqep.FPHrh8T9iz1LuucA; cf_clearance=rfIEldahI7B..Y4PpZhGgwi.QOJBqIRGdFP150.VnW-1766868784-1.1-"
+
+// Domínios
+private const val G9R6_DOMAIN = "https://g9r6.com"
+private const val BYSEVEPOIN_DOMAIN = "https://bysevepoin.com"
+private const val FEMBED_DOMAIN = "https://fembed.sx"
+
+suspend fun extractVideoLinks(
+url: String,
+name: String,
+callback: (ExtractorLink) -> Unit
+): Boolean {
+println("🎯 SuperFlixExtractor: Iniciando extração...")
+println("🔗 URL original: $url")
+
+return try {
+// PASSO 1: Extrair ID do vídeo
+val videoId = extractVideoId(url)
+if (videoId == null) {
+println("❌ Não consegui extrair ID")
+return false
+}
+
+println("✅ ID extraído: $videoId")
+
+// PASSO 2: Verificar tipo de ID
+val m3u8Url = if (videoId.length > 10 && videoId.matches(Regex("[a-z0-9]+"))) {
+// ID longo (ex: ouu59ray1kvp) - API direta
+tryDirectG9r6Api(videoId, url)
+} else {
+// ID curto (ex: 1497017) - Fluxo completo
+tryFullFlow(videoId, url)
+}
+
+if (m3u8Url == null) {
+println("❌ Não consegui obter URL M3U8")
+return false
+}
+
+println("🎬 URL M3U8 final: $m3u8Url")
+
+// PASSO 3: Criar ExtractorLink CORRETAMENTE (como no AnimeFire)
+return createExtractorLink(m3u8Url, name, callback)
+
+} catch (e: Exception) {
+println("💥 Erro fatal: ${e.message}")
+false
+}
+}
+
+private suspend fun tryDirectG9r6Api(videoId: String, originalUrl: String): String? {
+return try {
+println("🚀 Tentando API direta do g9r6.com...")
+
+// Construir headers
+val headers = mapOf(
+"accept" to "*/*",
+"accept-language" to "pt-BR,pt;q=0.9,en;q=0.8",
+"cache-control" to "no-cache",
+"pragma" to "no-cache",
+"priority" to "u=1, i",
+"referer" to "$G9R6_DOMAIN/bk2vx/$videoId",
+"sec-ch-ua" to "\"Chromium\";v=\"127\", \"Not)A;Brand\";v=\"99\", \"Microsoft Edge Simulate\";v=\"127\", \"Lemur\";v=\"127\"",
+"sec-ch-ua-mobile" to "?1",
+"sec-ch-ua-platform" to "\"Android\"",
+"sec-fetch-dest" to "empty",
+"sec-fetch-mode" to "cors",
+"sec-fetch-site" to "same-origin",
+"user-agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
+"x-embed-parent" to originalUrl,
+"cookie" to API_COOKIE
+)
+
+val apiUrl = "$G9R6_DOMAIN/api/videos/$videoId/embed/playback"
+println("📡 API URL: $apiUrl")
+
+val response = app.get(apiUrl, headers = headers)
+
+if (response.code != 200) {
+println("❌ API retornou ${response.code}: ${response.text.take(200)}")
+return null
+}
+
+println("✅ API respondeu com sucesso!")
+
+// Processar resposta criptografada
+processEncryptedResponse(response.text, videoId)
+
+} catch (e: Exception) {
+println("⚠️  Falha na API direta: ${e.message}")
+null
+}
+}
+
+private suspend fun tryFullFlow(shortVideoId: String, originalUrl: String): String? {
+return try {
+println("🔄 Iniciando fluxo completo...")
+
+// PASSO 1: Obter iframe do Fembed
+val iframeUrl = getFembedIframe(shortVideoId)
+if (iframeUrl == null) {
+println("❌ Falha ao obter iframe do Fembed")
+return null
+}
+
+println("✅ Iframe obtido: $iframeUrl")
+
+// PASSO 2: Acessar iframe para obter URL do Bysevepoin
+val bysevepoinUrl = getBysevepoinFromIframe(iframeUrl, shortVideoId)
+if (bysevepoinUrl == null) {
+println("❌ Falha ao obter URL do Bysevepoin")
+return null
+}
+
+println("✅ URL do Bysevepoin: $bysevepoinUrl")
+
+// PASSO 3: Extrair ID real do Bysevepoin
+val realVideoId = extractRealVideoId(bysevepoinUrl)
+if (realVideoId == null) {
+println("❌ Não consegui extrair ID real")
+return null
+}
+
+println("🎯 ID real encontrado: $realVideoId")
+
+// PASSO 4: Acessar API do g9r6.com com ID real
+tryDirectG9r6Api(realVideoId, bysevepoinUrl)
+
+} catch (e: Exception) {
+println("💥 Erro no fluxo completo: ${e.message}")
+null
+}
+}
+
+private suspend fun getFembedIframe(videoId: String): String? {
+return try {
+val apiUrl = "$FEMBED_DOMAIN/api.php?s=$videoId&c="
+println("📡 POST para Fembed: $apiUrl")
+
+val headers = mapOf(
+"Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8",
+"X-Requested-With" to "XMLHttpRequest",
+"Referer" to "$FEMBED_DOMAIN/e/$videoId",
+"User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
+"Cookie" to API_COOKIE
+)
+
+val postData = mapOf(
+"action" to "getPlayer",
+"lang" to "DUB",
+"key" to "MA=="
+)
+
+val response = app.post(apiUrl, headers = headers, data = postData)
+val text = response.text
+
+// Extrair URL do iframe
+val iframeRegex = Regex("""<iframe[^>]+src=["']([^"']+)["']""")
+val match = iframeRegex.find(text)
+
+if (match != null) {
+var url = match.groupValues[1]
+if (url.startsWith("/")) {
+url = "$FEMBED_DOMAIN$url"
+}
+url
+} else {
+null
+}
+
+} catch (e: Exception) {
+println("⚠️  Erro no Fembed: ${e.message}")
+null
+}
+}
+
+private suspend fun getBysevepoinFromIframe(iframeUrl: String, videoId: String): String? {
+return try {
+println("🔍 Acessando iframe: $iframeUrl")
+
+val headers = mapOf(
+"Referer" to "$FEMBED_DOMAIN/e/$videoId",
+"User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
+"Cookie" to API_COOKIE
+)
+
+val response = app.get(iframeUrl, headers = headers)
+val html = response.text
+
+// Procurar URL do Bysevepoin
+val pattern = Regex("""<iframe[^>]+src=["'](https?://bysevepoin\.com/[^"']+)["']""")
+val match = pattern.find(html)
+
+match?.groupValues?.get(1)
+
+} catch (e: Exception) {
+println("⚠️  Erro no iframe: ${e.message}")
+null
+}
+}
+
+private fun extractRealVideoId(bysevepoinUrl: String): String? {
+// Formato: /e/yziqjcntix6v/1497017-dub
+val pattern = Regex("""/e/([a-zA-Z0-9]+)(?:/|$)""")
+val match = pattern.find(bysevepoinUrl)
+return match?.groupValues?.get(1)
+}
+
+private fun extractVideoId(url: String): String? {
+val patterns = listOf(
+Regex("""/e/([a-zA-Z0-9]+)"""),
+Regex("""/v/([a-zA-Z0-9]+)"""),
+Regex("""fembed\.sx/e/([a-zA-Z0-9]+)"""),
+Regex("""bysevepoin\.com/e/([a-zA-Z0-9]+)"""),
+Regex("""/([0-9]+)$""")
+)
+
+for (pattern in patterns) {
+val match = pattern.find(url)
+if (match != null) {
+return match.groupValues[1]
+}
+}
+
+return null
+}
+
+private fun processEncryptedResponse(jsonText: String, videoId: String): String? {
+return try {
+println("🔧 Processando resposta da API...")
+
+val json = JSONObject(jsonText)
+val playback = json.getJSONObject("playback")
+
+println("📊 Algoritmo: ${playback.getString("algorithm")}")
+
+// FUNÇÃO PARA DECODIFICAR BASE64
+fun decodeBase64(base64Str: String): ByteArray {
+val cleanStr = base64Str.trim()
+println("   Decodificando: '$cleanStr' (${cleanStr.length} chars)")
+
+if (cleanStr.contains('-') || cleanStr.contains('_')) {
+println("   Usando Base64.URL_SAFE (contém - ou _)")
+return Base64.decode(cleanStr, Base64.URL_SAFE or Base64.NO_PADDING)
+}
+
+try {
+return Base64.decode(cleanStr, Base64.DEFAULT)
+} catch (e: IllegalArgumentException) {
+println("   Base64.DEFAULT falhou, tentando NO_PADDING...")
+return Base64.decode(cleanStr, Base64.NO_PADDING)
+}
+}
+
+// Decodificar dados
+val ivBase64 = playback.getString("iv")
+val payloadBase64 = playback.getString("payload")
+val keyParts = playback.getJSONArray("key_parts")
+
+println("🔐 Dados de criptografia:")
+println("   iv: $ivBase64")
+println("   payload (primeiros 20 chars): ${payloadBase64.take(20)}...")
+println("   key_parts: ${keyParts.length()} partes")
+
+val iv = decodeBase64(ivBase64)
+val payload = decodeBase64(payloadBase64)
+val key1 = decodeBase64(keyParts.getString(0))
+val key2 = decodeBase64(keyParts.getString(1))
+val key = key1 + key2
+
+println("✅ Base64 decodificado com sucesso!")
+println("   iv: ${iv.size} bytes")
+println("   payload: ${payload.size} bytes")
+println("   key1: ${key1.size} bytes")
+println("   key2: ${key2.size} bytes")
+println("   key total: ${key.size} bytes")
+
+// Descriptografar
+println("🔓 Iniciando descriptografia AES-256-GCM...")
+
+val decrypted = decryptAesGcm(payload, key, iv)
+if (decrypted == null) {
+println("❌ Falha na descriptografia AES")
+return null
+}
+
+val decryptedText = String(decrypted, Charsets.UTF_8)
+println("✅ Descriptografado com sucesso!")
+println("📝 Texto descriptografado: $decryptedText")
+
+// Parse JSON descriptografado
+val decryptedJson = JSONObject(decryptedText)
+
+println("📊 Parâmetros descriptografados:")
+for (keyParam in decryptedJson.keys()) {
+val value = decryptedJson.get(keyParam)
+println("   $keyParam = $value")
+}
+
+// Extrair URL do JSON descriptografado
+extractM3u8FromDecryptedJson(decryptedJson)
+
+} catch (e: Exception) {
+println("💥 Erro ao processar resposta: ${e.message}")
+e.printStackTrace()
+null
+}
+}
+
+private fun extractM3u8FromDecryptedJson(decryptedJson: JSONObject): String? {
+return try {
+println("🔍 Extraindo URL M3U8 do JSON...")
+
+// Opção 1: sources array
+if (decryptedJson.has("sources")) {
+val sources = decryptedJson.getJSONArray("sources")
+if (sources.length() > 0) {
+val firstSource = sources.getJSONObject(0)
+if (firstSource.has("url")) {
+var url = firstSource.getString("url")
+// Decodificar caracteres Unicode
+url = decodeUnicodeEscapes(url)
+println("🎯 URL encontrada em sources: $url")
+return url
+}
+}
+}
+
+println("❌ Nenhuma URL encontrada no JSON descriptografado")
+null
+
+} catch (e: Exception) {
+println("💥 Erro ao extrair URL do JSON: ${e.message}")
+null
+}
+}
+
+private fun decodeUnicodeEscapes(text: String): String {
+return text.replace("\\u0026", "&")
+}
+
+private fun decryptAesGcm(ciphertext: ByteArray, key: ByteArray, iv: ByteArray): ByteArray? {
+return try {
+println("   ciphertext: ${ciphertext.size} bytes")
+println("   key: ${key.size} bytes")
+println("   iv: ${iv.size} bytes")
+
+// AES/GCM/NoPadding é padrão para AES-GCM
+val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+
+// Para GCM, IV deve ter 12 bytes (96 bits)
+val actualIv = if (iv.size != 12) {
+println("⚠️  IV tem ${iv.size} bytes, usando primeiros 12 bytes")
+iv.copyOf(12) // Pegar os primeiros 12 bytes
+} else {
+iv
+}
+
+// Tag de autenticação de 128 bits
+val spec = GCMParameterSpec(128, actualIv)
+cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), spec)
+
+val result = cipher.doFinal(ciphertext)
+println("✅ Descriptografia bem-sucedida: ${result.size} bytes")
+result
+
+} catch (e: Exception) {
+println("💥 Erro na descriptografia: ${e.message}")
+
+// Tentar alternativa
+try {
+println("🔧 Tentando alternativa...")
+val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+
+// Tentar com IV original (sem truncar)
+val spec = GCMParameterSpec(128, iv)
+cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), spec)
+
+cipher.doFinal(ciphertext)
+} catch (e2: Exception) {
+println("💥 Alternativa também falhou: ${e2.message}")
+null
+}
+}
+}
+
+private suspend fun createExtractorLink(
+m3u8Url: String,
+name: String,
+callback: (ExtractorLink) -> Unit
+): Boolean {
+println("🚀 TESTE FINAL com headers do curl...")
+
+try {
+// Headers EXATAMENTE IGUAIS ao curl que funciona
+val headers = mapOf(
+"User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
+"Accept" to "*/*",
+"Accept-Language" to "pt-BR",
+"Cache-Control" to "no-cache",
+"Connection" to "keep-alive",
+"Pragma" to "no-cache",
+"Range" to "bytes=0-",
+"Referer" to m3u8Url,  // CRÍTICO: referer é a própria URL
+"Sec-Fetch-Dest" to "video",
+"Sec-Fetch-Mode" to "no-cors",
+"Sec-Fetch-Site" to "same-origin",
+"sec-ch-ua" to "\"Chromium\";v=\"127\", \"Not)A;Brand\";v=\"99\", \"Microsoft Edge Simulate\";v=\"127\", \"Lemur\";v=\"127\"",
+"sec-ch-ua-mobile" to "?1",
+"sec-ch-ua-platform" to "\"Android\""
+)
+
+println("🔗 URL: $m3u8Url")
+
+// TESTE DIRETO primeiro
+println("🧪 Testando acesso direto...")
+val testResponse = app.get(m3u8Url, headers = headers)
+println("📊 Status do teste: ${testResponse.code}")
+
+if (testResponse.code == 200) {
+println("🎉 URL FUNCIONA com headers do curl!")
+println("📄 Conteúdo (primeiros 200 chars): ${testResponse.text.take(200)}")
+} else {
+println("⚠️  URL deu ${testResponse.code}, mas vamos tentar mesmo assim")
+}
+
+// AGORA usar M3u8Helper CORRETAMENTE
+println("🔄 Usando M3u8Helper...")
+val links = M3u8Helper.generateM3u8(
+source = "SuperFlix",  // Nome do source
+streamUrl = m3u8Url,   // URL do stream
+referer = m3u8Url,     // Referer correto
+headers = headers      // Headers customizados
+)
+
+if (links.isEmpty()) {
+println("❌ M3u8Helper não gerou links")
+return false
+}
+
+println("✅ M3u8Helper gerou ${links.size} links!")
+links.forEach { link ->
+println("   📺 Link: ${link.name} - ${link.url.take(50)}...")
+callback(link)
+}
+
+return true
+
+} catch (e: Exception) {
+println("💥 ERRO fatal: ${e.message}")
+e.printStackTrace()
+return false
+}
   }
+}
