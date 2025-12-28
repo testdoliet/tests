@@ -51,8 +51,8 @@ object SuperFlixExtractor {
             
             println("🎬 URL M3U8 final: $m3u8Url")
             
-            // PASSO 3: Gerar links M3U8 (APENAS M3U8 HELPER)
-            return generateM3u8Only(m3u8Url, name, callback)
+            // PASSO 3: Gerar links M3U8
+            return generateM3u8Links(m3u8Url, name, callback)
             
         } catch (e: Exception) {
             println("💥 Erro fatal: ${e.message}")
@@ -396,46 +396,46 @@ object SuperFlixExtractor {
         }
     }
     
-    // FUNÇÃO SIMPLES - APENAS M3U8 HELPER
-    // FUNÇÃO SIMPLES - APENAS M3U8 HELPER
-private suspend fun generateM3u8Only(
-    m3u8Url: String,
-    name: String,
-    callback: (ExtractorLink) -> Unit
-): Boolean {
-    return try {
-        println("🔄 Usando apenas M3u8Helper...")
-        
-        // Headers EXATAMENTE como no código antigo que funcionava
-        val headers = mapOf(
-            "Referer" to "https://bysevepoin.com",
-            "Origin" to "https://superflix21.lol",
-            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        )
-        
-        println("🎯 URL M3U8: $m3u8Url")
-        println("📋 Headers:")
-        headers.forEach { (key, value) -> println("   $key: $value") }
-        
-        // Chamar M3u8Helper CORRETAMENTE
-        val links = M3u8Helper.generateM3u8(
-            name = name,
-            streamUrl = m3u8Url,  // CORREÇÃO: parâmetro correto é streamUrl
-            referer = "https://bysevepoin.com",
-            headers = headers
-        )
-        
-        if (links.isNotEmpty()) {
-            links.forEach(callback)
-            println("✅ SUCESSO! ${links.size} links gerados via M3u8Helper!")
-            true
-        } else {
-            println("❌ M3u8Helper retornou lista vazia")
+    // FUNÇÃO SIMPLES - APENAS M3U8 HELPER COM ASSINATURA CORRETA
+    private suspend fun generateM3u8Links(
+        m3u8Url: String,
+        name: String,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        return try {
+            println("🔄 Usando M3u8Helper...")
+            
+            // Headers EXATAMENTE como no código antigo que funcionava
+            val headers = mapOf(
+                "Referer" to "https://bysevepoin.com",
+                "Origin" to "https://superflix21.lol",
+                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            )
+            
+            println("🎯 URL M3U8: $m3u8Url")
+            println("📋 Headers:")
+            headers.forEach { (key, value) -> println("   $key: $value") }
+            
+            // ASSINATURA CORRETA DO M3u8Helper.generateM3u8
+            val links = M3u8Helper.generateM3u8(
+                source = "SuperFlix",           // Nome da fonte - OBRIGATÓRIO
+                streamUrl = m3u8Url,            // URL do stream - OBRIGATÓRIO
+                referer = "https://bysevepoin.com",  // Referer
+                headers = headers               // Headers
+            )
+            
+            if (links.isNotEmpty()) {
+                links.forEach(callback)
+                println("✅ SUCESSO! ${links.size} links gerados via M3u8Helper!")
+                true
+            } else {
+                println("❌ M3u8Helper retornou lista vazia")
+                false
+            }
+            
+        } catch (e: Exception) {
+            println("💥 M3u8Helper falhou: ${e.message}")
             false
         }
-        
-    } catch (e: Exception) {
-        println("💥 M3u8Helper falhou: ${e.message}")
-        false
     }
 }
