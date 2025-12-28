@@ -187,31 +187,71 @@ println("⚠️  Erro no Fembed: ${e.message}")
 null
 }
 }
-
 private suspend fun getBysevepoinFromIframe(iframeUrl: String, videoId: String): String? {
-return try {
-println("🔍 Acessando iframe: $iframeUrl")
+    return try {
+        println("🔍 [DEBUG 2º POST] Acessando: $iframeUrl")
+        
+        val headers = mapOf(
+            "Referer" to "$FEMBED_DOMAIN/e/$videoId",
+            "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
+            "Cookie" to API_COOKIE,
+            "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language" to "pt-BR,pt;q=0.9,en;q=0.8"
+        )
 
-val headers = mapOf(
-"Referer" to "$FEMBED_DOMAIN/e/$videoId",
-"User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
-"Cookie" to API_COOKIE
-)
-
-val response = app.get(iframeUrl, headers = headers)
-val html = response.text
-
-// Procurar URL do Bysevepoin
-val pattern = Regex("""<iframe[^>]+src=["'](https?://bysevepoin\.com/[^"']+)["']""")
-val match = pattern.find(html)
-
-match?.groupValues?.get(1)
-
-} catch (e: Exception) {
-println("⚠️  Erro no iframe: ${e.message}")
-null
+        println("📡 [DEBUG] Headers do 2º POST:")
+        headers.forEach { (k, v) -> println("   $k: $v") }
+        
+        val response = app.get(iframeUrl, headers = headers)
+        
+        println("📊 [DEBUG] Status do 2º POST: ${response.code}")
+        println("📊 [DEBUG] Tamanho da resposta: ${response.text.length} chars")
+        
+        // MOSTRA O CONTEÚDO COMPLETO para debug
+        println("🔍 [DEBUG] Conteúdo da resposta (primeiros 2000 chars):")
+        println("=" * 50)
+        println(response.text.take(2000))
+        println("=" * 50)
+        
+        val html = response.text
+        
+        // Tenta múltiplos padrões
+        val patterns = listOf(
+            // 1. Bysevepoin direto
+            Regex("""<iframe[^>]+src=["'](https?://bysevepoin\.com/[^"']+)["']"""),
+            
+            // 2. Qualquer iframe
+            Regex("""<iframe[^>]+src=["'](https?://[^"']+)["']"""),
+            
+            // 3. Meta refresh (às vezes usa redirect)
+            Regex("""<meta[^>]+content=["']\d+;\s*url=(https?://[^"']+)["']"""),
+            
+            // 4. window.location (JavaScript redirect)
+            Regex("""window\.location\s*=\s*["'](https?://[^"']+)["']""")
+        )
+        
+        for ((i, pattern) in patterns.withIndex()) {
+            val match = pattern.find(html)
+            if (match != null) {
+                val url = match.groupValues[1]
+                println("✅ [DEBUG] Padrão ${i+1} encontrou: $url")
+                return url
+            }
+        }
+        
+        println("❌ [DEBUG] Nenhum padrão encontrou iframe na resposta")
+        println("🔍 [DEBUG] HTML contém 'bysevepoin'? ${html.contains("bysevepoin")}")
+        println("🔍 [DEBUG] HTML contém 'iframe'? ${html.contains("iframe")}")
+        
+        null
+        
+    } catch (e: Exception) {
+        println("💥 [DEBUG] Erro no 2º POST: ${e.message}")
+        e.printStackTrace()
+        null
+    }
 }
-}
+
 
 private fun extractRealVideoId(bysevepoinUrl: String): String? {
 // Formato: /e/yziqjcntix6v/1497017-dub
