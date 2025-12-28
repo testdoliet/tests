@@ -18,25 +18,101 @@ class SuperFlix : MainAPI() {
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries, TvType.Anime)
     override val usesWebView = true
 
-    private val TMDB_PROXY_URL = "https://lawliet.euluan1912.workers.dev"
     private val tmdbImageUrl = "https://image.tmdb.org/t/p"
+    private val TMDB_API_KEY = BuildConfig.TMDB_API_KEY
+    private val TMDB_ACCESS_TOKEN = BuildConfig.TMDB_ACCESS_TOKEN
+
+    companion object {
+        private const val SEARCH_PATH = "/buscar"
+
+        private val FIXED_CATEGORIES = listOf(
+            "/lancamentos" to "Lançamentos",
+            "/filmes" to "Filmes",
+            "/series" to "Séries",
+            "/animes" to "Animes"
+        )
+
+        private val ALL_RANDOM_CATEGORIES = listOf(
+            "/categoria/acao?ft=all" to "Ação",
+            "/categoria/animacao?ft=all" to "Animação",
+            "/categoria/aventura?ft=all" to "Aventura",
+            "/categoria/comedia?ft=all" to "Comédia",
+            "/categoria/drama?ft=all" to "Drama",
+            "/categoria/fantasia?ft=all" to "Fantasia",
+            "/categoria/ficcao-cientifica?ft=all" to "Ficção Científica",
+            "/categoria/romance?ft=all" to "Romance",
+            "/categoria/suspense?ft=all" to "Suspense",
+            "/categoria/terror?ft=all" to "Terror",
+            "/categoria/crime?ft=all" to "Crime",
+            "/categoria/misterio?ft=all" to "Mistério",
+            "/categoria/documentario?ft=all" to "Documentário",
+            "/categoria/familia?ft=all" to "Família",
+            "/categoria/faroeste?ft=all" to "Faroeste",
+            "/categoria/guerra?ft=all" to "Guerra",
+            "/categoria/historia?ft=all" to "História",
+            "/categoria/musica?ft=all" to "Música",
+            "/categoria/politica?ft=all" to "Política",
+            "/categoria/reality?ft=all" to "Reality",
+            "/categoria/cinema-tv?ft=all" to "Cinema TV",
+            "/categoria/kids?ft=all" to "Kids",
+            "/categoria/soap?ft=all" to "Soap",
+            "/categoria/talk?ft=all" to "Talk"
+        )
+
+        private var cachedRandomTabs: List<Pair<String, String>>? = null
+        private var cacheTime: Long = 0
+        private const val CACHE_DURATION = 300000L // 5 minutos
+
+        fun getCombinedTabs(): List<Pair<String, String>> {
+            val currentTime = System.currentTimeMillis()
+
+            // Retorna cache se ainda for válido
+            if (cachedRandomTabs != null && (currentTime - cacheTime) < CACHE_DURATION) {
+                return FIXED_CATEGORIES + cachedRandomTabs!!
+            }
+
+            // Gera novas abas aleatórias (7 agora)
+            val randomTabs = ALL_RANDOM_CATEGORIES
+                .shuffled()
+                .take(7)
+                .distinctBy { it.first }
+
+            cachedRandomTabs = randomTabs
+            cacheTime = currentTime
+
+            return FIXED_CATEGORIES + randomTabs
+        }
+    }
 
     override val mainPage = mainPageOf(
-        "$mainUrl/lancamentos" to "Lançamentos",
-        "$mainUrl/filmes" to "Últimos Filmes",
-        "$mainUrl/series" to "Últimas Séries",
-        "$mainUrl/animes" to "Últimas Animes"
+        *getCombinedTabs().map { (path, name) -> 
+            "$mainUrl$path" to name 
+        }.toTypedArray()
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val url = request.data + if (page > 1) "?page=$page" else ""
+        val baseUrl = request.data
+        val url = if (page > 1) {
+            if (baseUrl.contains("?")) {
+                "$baseUrl&page=$page"
+            } else {
+                "$baseUrl?page=$page"
+            }
+        } else {
+            baseUrl
+        }
+        
         val document = app.get(url).document
 
         val home = document.select("a.card, div.recs-grid a.rec-card").mapNotNull { element ->
             element.toSearchResult()
         }
 
-        return newHomePageResponse(request.name, home.distinctBy { it.url })
+        // Verifica se há próxima página
+        val hasNextPage = document.select("a:contains(Próxima), .page-numbers a[href*='page']").isNotEmpty() ||
+                         document.select(".pagination").isNotEmpty()
+
+        return newHomePageResponse(request.name, home.distinctBy { it.url }, hasNextPage)
     }
 
     private fun Element.toSearchResult(): SearchResponse? {
@@ -78,7 +154,7 @@ class SuperFlix : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        val searchUrl = "$mainUrl/buscar?q=${java.net.URLEncoder.encode(query, "UTF-8")}"
+        val searchUrl = "$mainUrl$SEARCH_PATH?q=${java.net.URLEncoder.encode(query, "UTF-8")}"
         val document = app.get(searchUrl).document
 
         return document.select(".grid .card, a.card").mapNotNull { card ->
@@ -147,13 +223,21 @@ class SuperFlix : MainAPI() {
 
     private suspend fun searchOnTMDB(query: String, year: Int?, isTv: Boolean): TMDBInfo? {
         return try {
-            val type = if (isTv) "tv" else "movie"
             val encodedQuery = java.net.URLEncoder.encode(query, "UTF-8")
             val yearParam = year?.let { "&year=$it" } ?: ""
+            
+            val searchUrl = if (isTv) {
+                "https://api.themoviedb.org/3/search/tv?api_key=$TMDB_API_KEY&query=$encodedQuery&language=pt-BR$yearParam"
+            } else {
+                "https://api.themoviedb.org/3/search/movie?api_key=$TMDB_API_KEY&query=$encodedQuery&language=pt-BR$yearParam"
+            }
 
-            val searchUrl = "$TMDB_PROXY_URL/search?query=$encodedQuery&type=$type$yearParam"
+            val headers = mapOf(
+                "Authorization" to "Bearer $TMDB_ACCESS_TOKEN",
+                "accept" to "application/json"
+            )
 
-            val response = app.get(searchUrl, timeout = 10_000)
+            val response = app.get(searchUrl, headers = headers, timeout = 10_000)
             if (response.code != 200) return null
 
             val searchResult = response.parsedSafe<TMDBSearchResponse>() ?: return null
@@ -202,8 +286,13 @@ class SuperFlix : MainAPI() {
 
     private suspend fun getTMDBAllSeasons(seriesId: Int): Map<Int, List<TMDBEpisode>> {
         return try {
-            val seriesDetailsUrl = "$TMDB_PROXY_URL/tv/$seriesId"
-            val seriesResponse = app.get(seriesDetailsUrl, timeout = 10_000)
+            val headers = mapOf(
+                "Authorization" to "Bearer $TMDB_ACCESS_TOKEN",
+                "accept" to "application/json"
+            )
+            
+            val seriesDetailsUrl = "https://api.themoviedb.org/3/tv/$seriesId?api_key=$TMDB_API_KEY&language=pt-BR"
+            val seriesResponse = app.get(seriesDetailsUrl, headers = headers, timeout = 10_000)
 
             if (seriesResponse.code != 200) {
                 return emptyMap()
@@ -217,8 +306,8 @@ class SuperFlix : MainAPI() {
                 if (season.season_number > 0) {
                     val seasonNumber = season.season_number
 
-                    val seasonUrl = "$TMDB_PROXY_URL/tv/$seriesId/season/$seasonNumber"
-                    val seasonResponse = app.get(seasonUrl, timeout = 10_000)
+                    val seasonUrl = "https://api.themoviedb.org/3/tv/$seriesId/season/$seasonNumber?api_key=$TMDB_API_KEY&language=pt-BR"
+                    val seasonResponse = app.get(seasonUrl, headers = headers, timeout = 10_000)
 
                     if (seasonResponse.code == 200) {
                         val seasonData = seasonResponse.parsedSafe<TMDBSeasonResponse>()
@@ -237,9 +326,18 @@ class SuperFlix : MainAPI() {
 
     private suspend fun getTMDBDetails(id: Int, isTv: Boolean): TMDBDetailsResponse? {
         return try {
-            val type = if (isTv) "tv" else "movie"
-            val url = "$TMDB_PROXY_URL/$type/$id"
-            val response = app.get(url, timeout = 10_000)
+            val headers = mapOf(
+                "Authorization" to "Bearer $TMDB_ACCESS_TOKEN",
+                "accept" to "application/json"
+            )
+            
+            val url = if (isTv) {
+                "https://api.themoviedb.org/3/tv/$id?api_key=$TMDB_API_KEY&language=pt-BR&append_to_response=credits,videos"
+            } else {
+                "https://api.themoviedb.org/3/movie/$id?api_key=$TMDB_API_KEY&language=pt-BR&append_to_response=credits,videos"
+            }
+            
+            val response = app.get(url, headers = headers, timeout = 10_000)
 
             if (response.code != 200) return null
             response.parsedSafe<TMDBDetailsResponse>()
@@ -580,12 +678,12 @@ class SuperFlix : MainAPI() {
     }
 
     override suspend fun loadLinks(
-    data: String,
-    isCasting: Boolean,
-    subtitleCallback: (SubtitleFile) -> Unit,
-    callback: (ExtractorLink) -> Unit
-): Boolean {
-    return SuperFlixExtractor.extractVideoLinks(data, name, callback)
+        data: String,
+        isCasting: Boolean,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        return SuperFlixExtractor.extractVideoLinks(data, name, callback)
     }
 
     private data class TMDBInfo(
