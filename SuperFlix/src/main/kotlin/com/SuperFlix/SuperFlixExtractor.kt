@@ -236,49 +236,44 @@ object SuperFlixExtractor {
         
         return null
     }
+    
     private fun processEncryptedResponse(jsonText: String, videoId: String): String? {
-    return try {
-        println("🔧 Processando resposta da API...")
-        
-        val json = JSONObject(jsonText)
-        val playback = json.getJSONObject("playback")
-        
-        println("📊 Algoritmo: ${playback.getString("algorithm")}")
-        
-        // FUNÇÃO CORRIGIDA PARA DECODIFICAR BASE64
-        fun decodeBase64(base64Str: String): ByteArray {
-            // Primeiro, verificar se a string contém apenas caracteres Base64 válidos
-            val cleanStr = base64Str.trim()
+        return try {
+            println("🔧 Processando resposta da API...")
             
-            // Log para debug
-            println("   Decodificando: '$cleanStr' (${cleanStr.length} chars)")
+            val json = JSONObject(jsonText)
+            val playback = json.getJSONObject("playback")
             
-            // Para Base64 seguro para URL, usar URL_SAFE
-            if (cleanStr.contains('-') || cleanStr.contains('_')) {
-                println("   Usando Base64.URL_SAFE (contém - ou _)")
-                return Base64.decode(cleanStr, Base64.URL_SAFE or Base64.NO_PADDING)
+            println("📊 Algoritmo: ${playback.getString("algorithm")}")
+            
+            // FUNÇÃO PARA DECODIFICAR BASE64
+            fun decodeBase64(base64Str: String): ByteArray {
+                val cleanStr = base64Str.trim()
+                println("   Decodificando: '$cleanStr' (${cleanStr.length} chars)")
+                
+                if (cleanStr.contains('-') || cleanStr.contains('_')) {
+                    println("   Usando Base64.URL_SAFE (contém - ou _)")
+                    return Base64.decode(cleanStr, Base64.URL_SAFE or Base64.NO_PADDING)
+                }
+                
+                try {
+                    return Base64.decode(cleanStr, Base64.DEFAULT)
+                } catch (e: IllegalArgumentException) {
+                    println("   Base64.DEFAULT falhou, tentando NO_PADDING...")
+                    return Base64.decode(cleanStr, Base64.NO_PADDING)
+                }
             }
             
-            // Tentar diferentes flags
-            try {
-                return Base64.decode(cleanStr, Base64.DEFAULT)
-            } catch (e: IllegalArgumentException) {
-                println("   Base64.DEFAULT falhou, tentando NO_PADDING...")
-                return Base64.decode(cleanStr, Base64.NO_PADDING)
-            }
-        }
-        
-        // Decodificar dados
-        val ivBase64 = playback.getString("iv")
-        val payloadBase64 = playback.getString("payload")
-        val keyParts = playback.getJSONArray("key_parts")
-        
-        println("🔐 Dados de criptografia:")
-        println("   iv: $ivBase64")
-        println("   payload (primeiros 20 chars): ${payloadBase64.take(20)}...")
-        println("   key_parts: ${keyParts.length()} partes")
-        
-        try {
+            // Decodificar dados
+            val ivBase64 = playback.getString("iv")
+            val payloadBase64 = playback.getString("payload")
+            val keyParts = playback.getJSONArray("key_parts")
+            
+            println("🔐 Dados de criptografia:")
+            println("   iv: $ivBase64")
+            println("   payload (primeiros 20 chars): ${payloadBase64.take(20)}...")
+            println("   key_parts: ${keyParts.length()} partes")
+            
             val iv = decodeBase64(ivBase64)
             val payload = decodeBase64(payloadBase64)
             val key1 = decodeBase64(keyParts.getString(0))
@@ -310,58 +305,137 @@ object SuperFlixExtractor {
             
             println("📊 Parâmetros descriptografados:")
             for (keyParam in decryptedJson.keys()) {
-                println("   $keyParam = ${decryptedJson.get(keyParam)}")
+                val value = decryptedJson.get(keyParam)
+                println("   $keyParam = $value")
             }
             
-            // Construir URL M3U8
-            buildM3u8Url(videoId, decryptedJson)
+            // Extrair URL do JSON descriptografado
+            extractM3u8FromDecryptedJson(decryptedJson)
             
         } catch (e: Exception) {
-            println("💥 Erro ao decodificar Base64: ${e.message}")
+            println("💥 Erro ao processar resposta: ${e.message}")
             e.printStackTrace()
-            
-            // TENTATIVA ALTERNATIVA: Verificar se as strings são hex
-            println("🔧 Tentando interpretar como hexadecimal...")
-            try {
-                fun hexStringToByteArray(hex: String): ByteArray {
-                    val cleanHex = hex.replace("[^0-9a-fA-F]".toRegex(), "")
-                    return cleanHex.chunked(2)
-                        .map { it.toInt(16).toByte() }
-                        .toByteArray()
-                }
-                
-                val iv = hexStringToByteArray(ivBase64)
-                val key1 = hexStringToByteArray(keyParts.getString(0))
-                val key2 = hexStringToByteArray(keyParts.getString(1))
-                val key = key1 + key2
-                
-                // Payload é muito grande para hex, provavelmente é Base64 mesmo
-                val payload = Base64.decode(payloadBase64, Base64.URL_SAFE or Base64.NO_PADDING)
-                
-                println("✅ Hexadecimal decodificado!")
-                println("   iv: ${iv.size} bytes")
-                println("   key total: ${key.size} bytes")
-                println("   payload: ${payload.size} bytes")
-                
-                val decrypted = decryptAesGcm(payload, key, iv)
-                if (decrypted != null) {
-                    val decryptedText = String(decrypted, Charsets.UTF_8)
-                    println("✅ Descriptografado via hex!")
-                    val decryptedJson = JSONObject(decryptedText)
-                    return buildM3u8Url(videoId, decryptedJson)
-                }
-            } catch (e2: Exception) {
-                println("❌ Hexadecimal também falhou: ${e2.message}")
-            }
-            
             null
         }
-        
-    } catch (e: Exception) {
-        println("💥 Erro ao processar resposta: ${e.message}")
-        e.printStackTrace()
-        null
     }
+    
+    // FUNÇÃO NOVA: Extrair URL M3U8 do JSON descriptografado
+    private fun extractM3u8FromDecryptedJson(decryptedJson: JSONObject): String? {
+        return try {
+            println("🔍 Extraindo URL M3U8 do JSON...")
+            
+            // Opção 1: sources array
+            if (decryptedJson.has("sources")) {
+                val sources = decryptedJson.getJSONArray("sources")
+                if (sources.length() > 0) {
+                    val firstSource = sources.getJSONObject(0)
+                    if (firstSource.has("url")) {
+                        var url = firstSource.getString("url")
+                        // Decodificar caracteres Unicode
+                        url = decodeUnicodeEscapes(url)
+                        println("🎯 URL encontrada em sources: $url")
+                        return url
+                    }
+                }
+            }
+            
+            // Opção 2: data.sources
+            if (decryptedJson.has("data")) {
+                val data = decryptedJson.getJSONObject("data")
+                if (data.has("sources")) {
+                    val sources = data.getJSONArray("sources")
+                    if (sources.length() > 0) {
+                        val firstSource = sources.getJSONObject(0)
+                        if (firstSource.has("url")) {
+                            var url = firstSource.getString("url")
+                            url = decodeUnicodeEscapes(url)
+                            println("🎯 URL encontrada em data.sources: $url")
+                            return url
+                        }
+                    }
+                }
+            }
+            
+            // Opção 3: url direta
+            if (decryptedJson.has("url")) {
+                var url = decryptedJson.getString("url")
+                url = decodeUnicodeEscapes(url)
+                println("🎯 URL encontrada diretamente: $url")
+                return url
+            }
+            
+            // Opção 4: outros campos comuns
+            val possibleFields = listOf("m3u8", "m3u8_url", "playback_url", "stream_url")
+            for (field in possibleFields) {
+                if (decryptedJson.has(field)) {
+                    var url = decryptedJson.getString(field)
+                    url = decodeUnicodeEscapes(url)
+                    println("🎯 URL encontrada em $field: $url")
+                    return url
+                }
+            }
+            
+            println("❌ Nenhuma URL encontrada no JSON descriptografado")
+            
+            // Se não encontrou URL, tenta usar os parâmetros para construir
+            println("🛠️  Tentando construir URL a partir de parâmetros...")
+            buildM3u8UrlFromParams(decryptedJson)
+            
+        } catch (e: Exception) {
+            println("💥 Erro ao extrair URL do JSON: ${e.message}")
+            null
+        }
+    }
+    
+    // Função para decodificar caracteres Unicode escapados
+    private fun decodeUnicodeEscapes(text: String): String {
+        return text
+            .replace("\\u0026", "&")
+            .replace("\\u002F", "/")
+            .replace("\\u003D", "=")
+            .replace("\\u002B", "+")
+            .replace("\\u003A", ":")
+            .replace("\\u003F", "?")
+    }
+    
+    // Função auxiliar para construir URL se necessário
+    private fun buildM3u8UrlFromParams(params: JSONObject): String? {
+        try {
+            // Verificar se temos o ID necessário
+            if (!params.has("video_id") && !params.has("id")) {
+                println("❌ Sem ID para construir URL")
+                return null
+            }
+            
+            val videoId = params.optString("video_id", params.optString("id", ""))
+            if (videoId.isEmpty()) {
+                println("❌ ID vazio")
+                return null
+            }
+            
+            // Tentar extrair domínio dos dados disponíveis
+            val cdnBase = params.optString("cdn", "be2719.rcr22.ams01.i8yz83pn.com")
+            val token = params.optString("t", "default")
+            val timestamp = params.optString("s", System.currentTimeMillis().toString())
+            val expire = params.optString("e", (System.currentTimeMillis() + 10800000).toString())
+            
+            // Construir URL padrão
+            val url = "https://$cdnBase/hls2/02/10529/${videoId}_h/master.m3u8" +
+                     "?t=$token" +
+                     "&s=$timestamp" +
+                     "&e=$expire" +
+                     "&f=52646943" +
+                     "&srv=1060" +
+                     "&sp=4000" +
+                     "&p=0"
+            
+            println("🔗 URL construída a partir de parâmetros: $url")
+            return url
+            
+        } catch (e: Exception) {
+            println("💥 Erro ao construir URL: ${e.message}")
+            return null
+        }
     }
     
     private fun decryptAesGcm(ciphertext: ByteArray, key: ByteArray, iv: ByteArray): ByteArray? {
@@ -407,48 +481,6 @@ object SuperFlixExtractor {
                 null
             }
         }
-    }
-    
-    private fun buildM3u8Url(videoId: String, params: JSONObject): String {
-        println("🔧 Construindo URL M3U8...")
-        
-        // Log de todos os campos
-        for (key in params.keys()) {
-            println("   Campo '$key' = ${params.get(key)}")
-        }
-        
-        // Extrair parâmetros comuns
-        val token = when {
-            params.has("t") -> params.getString("t")
-            params.has("token") -> params.getString("token")
-            else -> {
-                println("⚠️  Token não encontrado, usando valor padrão")
-                "default"
-            }
-        }
-        
-        val timestamp = params.optString("s", System.currentTimeMillis().toString())
-        val expire = params.optString("e", (System.currentTimeMillis() + 10800000).toString())
-        val fileId = params.optString("f", "1")
-        val server = params.optString("srv", "1070")
-        val speed = params.optString("sp", "4000")
-        val quality = params.optString("p", "0")
-        
-        // Domínio CDN (pode variar)
-        val cdnBase = "be6721.rcr72.waw04.i8yz83pn.com"
-        
-        // Construir URL
-        val url = "https://$cdnBase/hls2/05/10459/${videoId}_h/master.m3u8" +
-                 "?t=$token" +
-                 "&s=$timestamp" +
-                 "&e=$expire" +
-                 "&f=$fileId" +
-                 "&srv=$server" +
-                 "&sp=$speed" +
-                 "&p=$quality"
-        
-        println("🔗 URL construída: $url")
-        return url
     }
     
     private suspend fun generateM3u8Links(
@@ -502,4 +534,7 @@ object SuperFlixExtractor {
             false
         }
     }
+    
+    // REMOVA esta função antiga se ainda existir:
+    // private fun buildM3u8Url(videoId: String, params: JSONObject): String { ... }
 }
