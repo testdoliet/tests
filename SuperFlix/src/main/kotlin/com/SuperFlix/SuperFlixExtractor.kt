@@ -404,65 +404,68 @@ private suspend fun createExtractorLink(
     name: String,
     callback: (ExtractorLink) -> Unit
 ): Boolean {
-    println("🎯 Criando ExtractorLink...")
+    println("🎯 Usando headers CORRETOS do curl...")
     
     try {
-        // PRIMEIRO: Acessar a URL com os mesmos headers que o navegador
-        println("🔍 Testando acesso à URL...")
-        val testResponse = app.get(m3u8Url, headers = mapOf(
-            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Referer" to "https://bysevepoin.com",
-            "Origin" to "https://superflix21.lol",
-            "Cookie" to API_COOKIE,
+        // Headers IDÊNTICOS ao curl que funciona!
+        val headers = mapOf(
+            "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
             "Accept" to "*/*",
-            "Accept-Language" to "pt-BR,pt;q=0.9,en;q=0.8"
-        ))
+            "Accept-Language" to "pt-BR",
+            "Cache-Control" to "no-cache",
+            "Connection" to "keep-alive",
+            "Pragma" to "no-cache",
+            "Range" to "bytes=0-",  // ← CRÍTICO PARA STREAMING
+            "Referer" to m3u8Url,   // ← Referer é a própria URL!
+            "Sec-Fetch-Dest" to "video",
+            "Sec-Fetch-Mode" to "no-cors",
+            "Sec-Fetch-Site" to "same-origin",
+            "sec-ch-ua" to "\"Chromium\";v=\"127\", \"Not)A;Brand\";v=\"99\", \"Microsoft Edge Simulate\";v=\"127\", \"Lemur\";v=\"127\"",
+            "sec-ch-ua-mobile" to "?1",
+            "sec-ch-ua-platform" to "\"Android\""
+        )
         
-        println("📊 Status do teste: ${testResponse.code}")
-        println("📊 Tamanho da resposta: ${testResponse.text.length} bytes")
+        println("🔗 URL: $m3u8Url")
         
-        if (testResponse.text.contains(".ts") || testResponse.text.contains("#EXTM3U")) {
-            println("✅ URL parece ser um M3U8 válido!")
+        // Teste rápido
+        val test = app.get(m3u8Url, headers = headers)
+        println("📊 Status: ${test.code}")
+        
+        if (test.code != 200) {
+            println("⚠️  Código ${test.code}, mas vamos tentar mesmo assim")
         }
         
-        // Criar ExtractorLink (usar VIDEO para M3U8)
         val extractorLink = newExtractorLink(
             source = "SuperFlix",
             name = "$name (720p)",
             url = m3u8Url,
             type = ExtractorLinkType.VIDEO
         ) {
-            this.referer = "https://bysevepoin.com"
+            this.referer = m3u8Url  // ← Referer correto!
             this.quality = 720
-            this.headers = mapOf(
-                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "Referer" to "https://bysevepoin.com",
-                "Origin" to "https://superflix21.lol",
-                "Cookie" to API_COOKIE
-            )
+            this.headers = headers
         }
         
         callback(extractorLink)
-        println("✅ ExtractorLink criado com sucesso!")
+        println("✅ Link criado com headers do curl!")
         return true
         
     } catch (e: Exception) {
         println("💥 Erro: ${e.message}")
         
-        // Fallback: criar mesmo sem teste
+        // Fallback simplificado
         val extractorLink = newExtractorLink(
             source = "SuperFlix",
             name = "$name (720p)",
             url = m3u8Url,
             type = ExtractorLinkType.VIDEO
         ) {
-            this.referer = "https://bysevepoin.com"
+            this.referer = m3u8Url
             this.quality = 720
         }
         
         callback(extractorLink)
-        println("✅ Link criado em modo fallback")
+        println("✅ Link criado em fallback")
         return true
     }
-  }
 }
