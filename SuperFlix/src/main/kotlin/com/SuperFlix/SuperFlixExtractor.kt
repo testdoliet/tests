@@ -493,7 +493,7 @@ object SuperFlixExtractor {
             println("⚠️  M3u8Helper não gerou links, usando fallback...")
             val fallbackLink = newExtractorLink(
                 source = "SuperFlix",
-                name = "$name (720p)",
+                name = "$name",
                 url = m3u8Url,
                 type = ExtractorLinkType.M3U8
             ) {
