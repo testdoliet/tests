@@ -9,6 +9,7 @@ import javax.crypto.Cipher
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
 import android.util.Base64
+import com.lagradost.cloudstream3.utils.M3u8Helper
 
 object SuperFlixExtractor {
     private const val API_COOKIE = "SITE_TOTAL_ID=aTYqe6GU65PNmeCXpelwJwAAAMi; __dtsu=104017651574995957BEB724C6373F9E; __cc_id=a44d1e52993b9c2Oaaf40eba24989a06; __cc_cc=ACZ4nGNQSDQXsTFMNTWyTDROskw2MkhMTDDMXSE1KNDKxtLBMNDBjAIJMC4fgVe%2B%2F%2BDngAHemT8XsDBKrv%2FF3%2F2F2%2F%2FF0ZGhFP15u.VnW-1Y0o8o6/84-1.2.1.1-4_OXh2hYevsbO8hINijDKB8O_SPowh.pNojloHEbwX_qZorbmW8u8zqV9B7UsV6bbRmCWx_dD17mA7vJJklpOD9WBh9DA0wMV2a1QSKuR2J3FN9.TRzOUM4AhnTGFd8dJH8bHfqQdY7uYuUg7Ny1TVQDF9kXqyEPtnmkZ9rFkqQ2KS6u0t2hhFdQvRBY7dqyGfdjmyjDqwc7ZOovHB0eqep.FPHrh8T9iz1LuucA; cf_clearance=rfIEldahI7B..Y4PpZhGgwi.QOJBqIRGdFP150.VnW-1766868784-1.1-"
@@ -397,47 +398,72 @@ object SuperFlixExtractor {
         }
     }
     
-    private suspend fun createExtractorLink(
+private suspend fun createExtractorLink(
     m3u8Url: String,
     name: String,
     callback: (ExtractorLink) -> Unit
 ): Boolean {
-    println("🎯 Usando URL modificada...")
+    println("🚀 TESTE FINAL com headers do curl...")
     
     try {
-        // Modificar a URL para forçar headers
-        val modifiedUrl = if (!m3u8Url.contains("user_agent=")) {
-            "$m3u8Url&user_agent=Mozilla%2F5.0%20(Linux%3B%20Android%2010%3B%20K)%20AppleWebKit%2F537.36"
-        } else {
-            m3u8Url
-        }
-        
-        println("🔗 URL modificada: $modifiedUrl")
-        
-        // Testar
-        val test = app.get(modifiedUrl, headers = mapOf(
+        // Headers EXATAMENTE IGUAIS ao curl que funciona
+        val headers = mapOf(
             "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
-            "Referer" to modifiedUrl
-        ))
-        println("🧪 Teste modificado: ${test.code}")
+            "Accept" to "*/*",
+            "Accept-Language" to "pt-BR",
+            "Cache-Control" to "no-cache",
+            "Connection" to "keep-alive",
+            "Pragma" to "no-cache",
+            "Range" to "bytes=0-",
+            "Referer" to m3u8Url,  // CRÍTICO: referer é a própria URL
+            "Sec-Fetch-Dest" to "video",
+            "Sec-Fetch-Mode" to "no-cors",
+            "Sec-Fetch-Site" to "same-origin",
+            "sec-ch-ua" to "\"Chromium\";v=\"127\", \"Not)A;Brand\";v=\"99\", \"Microsoft Edge Simulate\";v=\"127\", \"Lemur\";v=\"127\"",
+            "sec-ch-ua-mobile" to "?1",
+            "sec-ch-ua-platform" to "\"Android\""
+        )
         
-        // Link SUPER SIMPLES
-        val extractorLink = newExtractorLink(
-            source = "SuperFlix",
-            name = "$name (720p)",
-            url = modifiedUrl,
-            type = ExtractorLinkType.VIDEO
-        ) {
-            this.referer = modifiedUrl
-            this.quality = 720
+        println("🔗 URL: $m3u8Url")
+        println("📋 Headers: $headers")
+        
+        // TESTE DIRETO primeiro
+        println("🧪 Testando acesso direto...")
+        val testResponse = app.get(m3u8Url, headers = headers)
+        println("📊 Status do teste: ${testResponse.code}")
+        
+        if (testResponse.code == 200) {
+            println("🎉 URL FUNCIONA com headers do curl!")
+            println("📄 Conteúdo (primeiros 200 chars): ${testResponse.text.take(200)}")
+        } else {
+            println("⚠️  URL deu ${testResponse.code}, mas vamos tentar mesmo assim")
         }
         
-        callback(extractorLink)
+        // AGORA usar M3u8Helper que é a maneira CORRETA
+        println("🔄 Usando M3u8Helper...")
+        val links = M3u8Helper.generateM3u8(
+            name = name,
+            m3u8Url = m3u8Url,
+            referer = m3u8Url,  // Referer correto
+            headers = headers
+        )
+        
+        if (links.isEmpty()) {
+            println("❌ M3u8Helper não gerou links")
+            return false
+        }
+        
+        println("✅ M3u8Helper gerou ${links.size} links!")
+        links.forEach { link ->
+            println("   📺 Link: ${link.name} - ${link.url.take(50)}...")
+            callback(link)
+        }
+        
         return true
         
     } catch (e: Exception) {
-        println("💥 Erro: ${e.message}")
+        println("💥 ERRO fatal: ${e.message}")
+        e.printStackTrace()
         return false
-       }
-   }
+    }
 }
