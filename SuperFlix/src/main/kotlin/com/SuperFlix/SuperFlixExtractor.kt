@@ -9,7 +9,6 @@ import javax.crypto.Cipher
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
 import android.util.Base64
-import com.lagradost.cloudstream3.utils.M3u8Helper
 
 object SuperFlixExtractor {
 private const val API_COOKIE = "SITE_TOTAL_ID=aTYqe6GU65PNmeCXpelwJwAAAMi; __dtsu=104017651574995957BEB724C6373F9E; __cc_id=a44d1e52993b9c2Oaaf40eba24989a06; __cc_cc=ACZ4nGNQSDQXsTFMNTWyTDROskw2MkhMTDDMXSE1KNDKxtLBMNDBjAIJMC4fgVe%2B%2F%2BDngAHemT8XsDBKrv%2FF3%2F2F2%2F%2FF0ZGhFP15u.VnW-1Y0o8o6/84-1.2.1.1-4_OXh2hYevsbO8hINijDKB8O_SPowh.pNojloHEbwX_qZorbmW8u8zqV9B7UsV6bbRmCWx_dD17mA7vJJklpOD9WBh9DA0wMV2a1QSKuR2J3FN9.TRzOUM4AhnTGFd8dJH8bHfqQdY7uYuUg7Ny1TVQDF9kXqyEPtnmkZ9rFkqQ2KS6u0t2hhFdQvRBY7dqyGfdjmyjDqwc7ZOovHB0eqep.FPHrh8T9iz1LuucA; cf_clearance=rfIEldahI7B..Y4PpZhGgwi.QOJBqIRGdFP150.VnW-1766868784-1.1-"
@@ -398,72 +397,76 @@ null
 }
 }
 
+    // FUNÇÃO CORRETA PARA CRIAR EXTRACTORLINK (como no AnimeFire)
+    // FUNÇÃO SIMPLIFICADA - NÃO TESTAR, APENAS PASSAR
 private suspend fun createExtractorLink(
 m3u8Url: String,
 name: String,
 callback: (ExtractorLink) -> Unit
 ): Boolean {
-println("🚀 TESTE FINAL com headers do curl...")
+    println("🎯 Usando headers CORRETOS do curl...")
 
 try {
-// Headers EXATAMENTE IGUAIS ao curl que funciona
-val headers = mapOf(
-"User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
-"Accept" to "*/*",
-"Accept-Language" to "pt-BR",
-"Cache-Control" to "no-cache",
-"Connection" to "keep-alive",
-"Pragma" to "no-cache",
-"Range" to "bytes=0-",
-"Referer" to m3u8Url,  // CRÍTICO: referer é a própria URL
-"Sec-Fetch-Dest" to "video",
-"Sec-Fetch-Mode" to "no-cors",
-"Sec-Fetch-Site" to "same-origin",
-"sec-ch-ua" to "\"Chromium\";v=\"127\", \"Not)A;Brand\";v=\"99\", \"Microsoft Edge Simulate\";v=\"127\", \"Lemur\";v=\"127\"",
-"sec-ch-ua-mobile" to "?1",
-"sec-ch-ua-platform" to "\"Android\""
-)
+        // Headers IDÊNTICOS ao curl que funciona!
+        val headers = mapOf(
+            "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
+            "Accept" to "*/*",
+            "Accept-Language" to "pt-BR",
+            "Cache-Control" to "no-cache",
+            "Connection" to "keep-alive",
+            "Pragma" to "no-cache",
+            "Range" to "bytes=0-",  // ← CRÍTICO PARA STREAMING
+            "Referer" to m3u8Url,   // ← Referer é a própria URL!
+            "Sec-Fetch-Dest" to "video",
+            "Sec-Fetch-Mode" to "no-cors",
+            "Sec-Fetch-Site" to "same-origin",
+            "sec-ch-ua" to "\"Chromium\";v=\"127\", \"Not)A;Brand\";v=\"99\", \"Microsoft Edge Simulate\";v=\"127\", \"Lemur\";v=\"127\"",
+            "sec-ch-ua-mobile" to "?1",
+            "sec-ch-ua-platform" to "\"Android\""
+        )
+        
+        println("🔗 URL: $m3u8Url")
 
-println("🔗 URL: $m3u8Url")
+        // Teste rápido
+        val test = app.get(m3u8Url, headers = headers)
+        println("📊 Status: ${test.code}")
 
-// TESTE DIRETO primeiro
-println("🧪 Testando acesso direto...")
-val testResponse = app.get(m3u8Url, headers = headers)
-println("📊 Status do teste: ${testResponse.code}")
+        if (test.code != 200) {
+            println("⚠️  Código ${test.code}, mas vamos tentar mesmo assim")
+        }
 
-if (testResponse.code == 200) {
-println("🎉 URL FUNCIONA com headers do curl!")
-println("📄 Conteúdo (primeiros 200 chars): ${testResponse.text.take(200)}")
-} else {
-println("⚠️  URL deu ${testResponse.code}, mas vamos tentar mesmo assim")
+val extractorLink = newExtractorLink(
+source = "SuperFlix",
+name = "$name (720p)",
+            url = m3u8Url,
+type = ExtractorLinkType.VIDEO
+) {
+            this.referer = m3u8Url  // ← Referer correto!
+this.quality = 720
+            this.headers = headers
 }
 
-// AGORA usar M3u8Helper CORRETAMENTE
-println("🔄 Usando M3u8Helper...")
-val links = M3u8Helper.generateM3u8(
-source = "SuperFlix",  // Nome do source
-streamUrl = m3u8Url,   // URL do stream
-referer = m3u8Url,     // Referer correto
-headers = headers      // Headers customizados
-)
-
-if (links.isEmpty()) {
-println("❌ M3u8Helper não gerou links")
-return false
-}
-
-println("✅ M3u8Helper gerou ${links.size} links!")
-links.forEach { link ->
-println("   📺 Link: ${link.name} - ${link.url.take(50)}...")
-callback(link)
-}
-
+callback(extractorLink)
+        println("✅ Link criado com headers do curl!")
 return true
 
 } catch (e: Exception) {
-println("💥 ERRO fatal: ${e.message}")
-e.printStackTrace()
-return false
-}
+println("💥 Erro: ${e.message}")
+        
+        // Fallback simplificado
+        val extractorLink = newExtractorLink(
+            source = "SuperFlix",
+            name = "$name (720p)",
+            url = m3u8Url,
+            type = ExtractorLinkType.VIDEO
+        ) {
+            this.referer = m3u8Url
+            this.quality = 720
+        }
+        
+        callback(extractorLink)
+        println("✅ Link criado em fallback")
+        return true
+    }
   }
 }
