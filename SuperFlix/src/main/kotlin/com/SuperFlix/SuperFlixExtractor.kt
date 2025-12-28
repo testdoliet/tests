@@ -159,95 +159,53 @@ private suspend fun getFembedIframe(videoId: String): String? {
             "Cookie" to API_COOKIE
         )
 
-        // Tenta DUB primeiro (como está)
+        // ⭐ **USA APENAS LEG** - O Fembed vai retornar o correto automaticamente
+        // (Se o filme for dublado, o Fembed vai retornar DUB mesmo pedindo LEG)
         val postData = mapOf(
             "action" to "getPlayer",
-            "lang" to "DUB",
+            "lang" to "LEG",  // ← Usa LEG, o Fembed ajusta se necessário
             "key" to "MA=="
         )
 
         val response = app.post(apiUrl, headers = headers, data = postData)
         val text = response.text
         
-        // ⭐ **DEBUG CRÍTICO: Mostra o que realmente voltou**
-        println("🔍 [DEBUG] Resposta completa (primeiros 500 chars):")
+        // ⭐ **DEBUG: Mostra exatamente o que o Fembed retornou**
+        println("🔍 [POST1 RESPOSTA] (primeiros 500 chars):")
         println(text.take(500))
-        println("=".repeat(50))
         
-        val iframeRegex = Regex("""<iframe[^>]+src=["']([^"']+)["']""")
-        val match = iframeRegex.find(text)
+        // ⭐ **Pega QUALQUER SRC que estiver no iframe**
+        val iframePattern = Regex("""<iframe[^>]+src=["']([^"']+)["']""")
+        val match = iframePattern.find(text)
         
         if (match != null) {
             var url = match.groupValues[1]
-            println("✅ SRC do iframe encontrado: $url")
+            println("✅ SRC encontrado: $url")
             
-            // ⭐ **VERIFICA se realmente é DUB ou LEG**
-            if (url.contains("lang=LEG")) {
-                println("⚠️  ATENÇÃO: Pediu DUB mas Fembed retornou LEG!")
-                println("⚠️  O filme provavelmente só tem LEGENDADO")
-                
-                // Tenta forçar LEG
-                return tryLanguage(videoId, "LEG", headers, apiUrl)
+            // Verifica se não está vazio
+            if (url.isBlank()) {
+                println("❌ SRC está vazio!")
+                return null
             }
             
-            // Converter URL relativa para absoluta
+            // Converte URL relativa para absoluta
             if (url.startsWith("/")) {
                 url = "$FEMBED_DOMAIN$url"
-            } else if (!url.startsWith("http")) {
-                url = "$FEMBED_DOMAIN/$url"
             }
             
+            println("✅ URL final do POST1: $url")
             return url
-        } else {
-            println("❌ Não encontrou iframe na resposta")
-            // Tenta LEG como fallback
-            return tryLanguage(videoId, "LEG", headers, apiUrl)
         }
+        
+        println("❌ Nenhum iframe encontrado na resposta")
+        null
 
     } catch (e: Exception) {
         println("⚠️  Erro no Fembed: ${e.message}")
-        return tryLanguage(videoId, "LEG", headers, apiUrl)
+        null
     }
 }
 
-// Função auxiliar para testar linguagem
-private suspend fun tryLanguage(
-    videoId: String, 
-    lang: String, 
-    headers: Map<String, String>, 
-    apiUrl: String
-): String? {
-    println("🔄 Tentando idioma: $lang")
-    
-    val postData = mapOf(
-        "action" to "getPlayer",
-        "lang" to lang,
-        "key" to "MA=="
-    )
-    
-    try {
-        val response = app.post(apiUrl, headers = headers, data = postData)
-        val text = response.text
-        
-        val iframeRegex = Regex("""<iframe[^>]+src=["']([^"']+)["']""")
-        val match = iframeRegex.find(text)
-        
-        if (match != null) {
-            var url = match.groupValues[1]
-            println("✅ Idioma $lang funcionou! URL: $url")
-            
-            if (url.startsWith("/")) {
-                url = "$FEMBED_DOMAIN$url"
-            }
-            
-            return url
-        }
-    } catch (e: Exception) {
-        println("⚠️  Idioma $lang falhou: ${e.message}")
-    }
-    
-    return null
-}
 
 private suspend fun getBysevepoinFromIframe(iframeUrl: String, videoId: String): String? {
     return try {
