@@ -2,11 +2,9 @@ package com.SuperFlix
 
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.app
+import com.lagradost.cloudstream3.network.WebViewResolver
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.M3u8Helper
-import org.json.JSONObject
-import java.net.URLEncoder
-import java.util.*
 
 object SuperFlixExtractor {
     // Cookie atualizado para evitar bloqueios
@@ -18,42 +16,24 @@ object SuperFlixExtractor {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         return try {
-            println("🎯 SuperFlixExtractor: Iniciando extração...")
+            println("🎯 SuperFlixExtractor: Iniciando extração via WebView...")
             println("🔗 URL recebida: $url")
             
-            // 1. Extrair ID do vídeo
+            // 1. Extrair ID do vídeo para construir URL correta
             val videoId = extractVideoId(url)
             if (videoId == null) {
-                println("❌ Não consegui extrair ID da URL: $url")
+                println("❌ Não consegui extrair ID da URL")
                 return false
             }
             
             println("✅ ID extraído: $videoId")
             
-            // 2. Primeiro tentar método direto (se for URL do fembed/bysevepoin)
-            if (url.contains("fembed") || url.contains("bysevepoin")) {
-                println("🔍 Tentando método direto...")
-                val directResult = tryDirectMethod(url, videoId, name, callback)
-                if (directResult) {
-                    println("✅ Método direto funcionou!")
-                    return true
-                }
-                println("❌ Método direto falhou, tentando API...")
-            }
+            // 2. Construir URL correta para o player
+            val playerUrl = buildPlayerUrl(videoId, url)
+            println("🎬 URL do player: $playerUrl")
             
-            // 3. Tentar obter detalhes via API
-            val details = getVideoDetails(videoId)
-            if (details == null) {
-                println("❌ Não consegui obter detalhes do vídeo via API")
-                // Tentar fallback: usar URL original como referência
-                return tryFallbackMethod(url, videoId, name, callback)
-            }
-            
-            println("📊 Título: ${details.title}")
-            println("🔗 Embed URL: ${details.embedFrameUrl}")
-            
-            // 4. Gerar links usando a URL de embed
-            return generateM3u8FromEmbed(details.embedFrameUrl, name, callback)
+            // 3. Usar WebViewResolver para interceptar o m3u8
+            return interceptM3u8WithWebView(playerUrl, name, callback)
             
         } catch (e: Exception) {
             println("💥 Erro na extração: ${e.message}")
@@ -62,287 +42,139 @@ object SuperFlixExtractor {
         }
     }
     
-    private suspend fun tryDirectMethod(
-        url: String,
-        videoId: String,
-        name: String,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        return try {
-            // Se for URL do fembed ou bysevepoin, tentar extrair diretamente
-            val embedUrl = if (url.contains("fembed")) {
-                "https://fembed.sx/e/$videoId"
-            } else if (url.contains("bysevepoin")) {
-                "https://bysevepoin.com/e/$videoId"
-            } else {
-                url
-            }
-            
-            println("🎯 Tentando embed direto: $embedUrl")
-            
-            // Tentar fazer requisição para obter iframe
-            val headers = mapOf(
-                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-                "Accept-Language" to "pt-BR,pt;q=0.9,en;q=0.8",
-                "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
-                "Referer" to "https://superflix21.lol/",
-                "Cookie" to API_COOKIE
-            )
-            
-            val response = app.get(embedUrl, headers = headers)
-            
-            if (response.code == 200) {
-                val html = response.text
-                println("📥 HTML obtido (${html.length} chars)")
-                
-                // Procurar por iframe ou script que contenha a URL do vídeo
-                val videoUrl = extractVideoUrlFromHtml(html)
-                if (videoUrl != null && videoUrl.contains(".m3u8")) {
-                    println("🎬 URL M3U8 encontrada: $videoUrl")
-                    return generateM3u8Links(videoUrl, embedUrl, name, callback)
-                }
-                
-                // Procurar por iframe
-                val iframeUrl = extractIframeUrl(html)
-                if (iframeUrl != null) {
-                    println("🎬 Iframe encontrado: $iframeUrl")
-                    return generateM3u8FromEmbed(iframeUrl, name, callback)
-                }
-            }
-            
-            false
-        } catch (e: Exception) {
-            println("⚠️  Erro no método direto: ${e.message}")
-            false
-        }
-    }
-    
-    private suspend fun tryFallbackMethod(
-        url: String,
-        videoId: String,
-        name: String,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        return try {
-            println("🔄 Tentando fallback...")
-            
-            // Tentar diferentes domínios
-            val domains = listOf(
-                "https://bysevepoin.com",
-                "https://byseepoin.com",
-                "https://fembed.sx",
-                "https://g9r6.com"
-            )
-            
-            for (domain in domains) {
-                try {
-                    val apiUrl = "$domain/api/videos/$videoId/embed/details"
-                    println("📡 Testando domínio: $apiUrl")
-                    
-                    val headers = mapOf(
-                        "Accept" to "application/json, text/plain, */*",
-                        "User-Agent" to "Mozilla/5.0",
-                        "Referer" to "https://superflix21.lol/",
-                        "Cookie" to API_COOKIE
-                    )
-                    
-                    val response = app.get(apiUrl, headers = headers, timeout = 10000)
-                    
-                    if (response.code == 200) {
-                        val jsonText = response.text
-                        println("✅ Domínio funcionou: $domain")
-                        
-                        // Extrair embed_frame_url
-                        val embedUrl = extractFromJson(jsonText, "embed_frame_url")
-                        if (embedUrl != null) {
-                            return generateM3u8FromEmbed(embedUrl, name, callback)
-                        }
-                    }
-                } catch (e: Exception) {
-                    println("⚠️  Falha com domínio $domain: ${e.message}")
-                }
-            }
-            
-            false
-        } catch (e: Exception) {
-            println("💥 Erro no fallback: ${e.message}")
-            false
-        }
-    }
-    
-    private suspend fun generateM3u8FromEmbed(
-        embedUrl: String,
-        name: String,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        return try {
-            println("🎯 Gerando M3U8 do embed: $embedUrl")
-            
-            // Extrair ID do embed URL
-            val videoId = extractVideoId(embedUrl)
-            if (videoId == null) {
-                println("❌ Não consegui extrair ID do embed")
-                return false
-            }
-            
-            // Tentar diferentes padrões de URL de vídeo
-            val patterns = listOf(
-                "https://[server]/hls2/05/10459/${videoId}_h/master.m3u8",
-                "https://[server]/hls2/01/10459/${videoId}/master.m3u8",
-                "https://[server]/hls/${videoId}/master.m3u8",
-                "https://[server]/v/${videoId}/master.m3u8"
-            )
-            
-            // Servers conhecidos
-            val servers = listOf(
-                "be2719.rcr22.ams01.i8yz83pn.com",
-                "rcr22.ams01.i8yz83pn.com",
-                "ams01.i8yz83pn.com"
-            )
-            
-            val timestamp = (System.currentTimeMillis() / 1000).toString()
-            
-            for (pattern in patterns) {
-                for (server in servers) {
-                    val m3u8Url = pattern.replace("[server]", server) +
-                            "?t=temp_token&s=$timestamp&e=10800&f=0&srv=1070&sp=4000&p=0"
-                    
-                    println("🔗 Testando: ${m3u8Url.take(80)}...")
-                    
-                    try {
-                        val testResponse = app.get(m3u8Url, timeout = 5000)
-                        if (testResponse.code == 200 && testResponse.text.contains("#EXTM3U")) {
-                            println("✅ URL M3U8 válida encontrada!")
-                            return generateM3u8Links(m3u8Url, embedUrl, name, callback)
-                        }
-                    } catch (e: Exception) {
-                        // Ignorar e continuar testando
-                    }
-                }
-            }
-            
-            println("❌ Nenhuma URL M3U8 válida encontrada")
-            false
-            
-        } catch (e: Exception) {
-            println("💥 Erro ao gerar M3U8 do embed: ${e.message}")
-            false
-        }
-    }
-    
-    private suspend fun getVideoDetails(videoId: String): VideoDetails? {
-        return try {
-            // Tentar diferentes domínios e endpoints
-            val endpoints = listOf(
-                "https://bysevepoin.com/api/videos/$videoId/embed/details",
-                "https://g9r6.com/api/videos/$videoId/embed/details",
-                "https://fembed.sx/api/videos/$videoId/embed/details"
-            )
-            
-            for (apiUrl in endpoints) {
-                try {
-                    println("📡 Buscando detalhes: $apiUrl")
-                    
-                    val headers = mapOf(
-                        "Accept" to "application/json, text/plain, */*",
-                        "Accept-Language" to "pt-BR,pt;q=0.9,en;q=0.8",
-                        "Cache-Control" to "no-cache",
-                        "Pragma" to "no-cache",
-                        "Referer" to "https://superflix21.lol/",
-                        "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
-                        "Origin" to "https://superflix21.lol",
-                        "Cookie" to API_COOKIE
-                    )
-                    
-                    val response = app.get(apiUrl, headers = headers, timeout = 15000)
-                    
-                    if (response.code == 200) {
-                        val jsonText = response.text
-                        println("📥 Resposta detalhes (${response.code}): ${jsonText.take(200)}...")
-                        
-                        try {
-                            val json = JSONObject(jsonText)
-                            val fileId = if (json.has("id")) json.getInt("id") else 0
-                            val code = if (json.has("code")) json.getString("code") else videoId
-                            val title = if (json.has("title")) json.getString("title") else "Video $videoId"
-                            val embedFrameUrl = if (json.has("embed_frame_url")) json.getString("embed_frame_url") else apiUrl
-                            val posterUrl = if (json.has("poster_url")) json.getString("poster_url") else null
-                            
-                            return VideoDetails(
-                                videoId = code,
-                                fileId = fileId,
-                                title = title,
-                                embedFrameUrl = embedFrameUrl,
-                                posterUrl = posterUrl
-                            )
-                        } catch (e: Exception) {
-                            println("❌ Erro ao parsear JSON: ${e.message}")
-                            // Continuar para próximo endpoint
-                        }
-                    } else {
-                        println("⚠️  Status code: ${response.code}")
-                    }
-                } catch (e: Exception) {
-                    println("⚠️  Erro no endpoint $apiUrl: ${e.message}")
-                }
-            }
-            
-            null
-        } catch (e: Exception) {
-            println("💥 Erro ao buscar detalhes: ${e.message}")
-            null
-        }
-    }
-    
     private fun extractVideoId(url: String): String? {
+        // Extrair ID de várias formas possíveis
         val patterns = listOf(
             Regex("""/e/([a-zA-Z0-9]+)"""),
             Regex("""/v/([a-zA-Z0-9]+)"""),
             Regex("""/videos/([a-zA-Z0-9]+)"""),
-            Regex("""/embed/([a-zA-Z0-9]+)"""),
-            Regex("""/([a-zA-Z0-9]{8,})"""),
             Regex("""\?id=([a-zA-Z0-9]+)"""),
-            Regex("""&id=([a-zA-Z0-9]+)""")
+            Regex("""&id=([a-zA-Z0-9]+)"""),
+            Regex("""/([a-zA-Z0-9]{6,})""") // IDs geralmente têm 6+ caracteres
         )
         
         for (pattern in patterns) {
             val match = pattern.find(url)
             if (match != null) {
-                return match.groupValues[1]
+                val id = match.groupValues[1]
+                // Filtrar para evitar pegar partes da URL que não são IDs
+                if (id.length >= 6 && !id.contains("/") && !id.contains("?")) {
+                    return id
+                }
             }
         }
         
         return null
     }
     
-    private fun extractVideoUrlFromHtml(html: String): String? {
-        // Procurar por URLs .m3u8
-        val m3u8Pattern = Regex("""(https?://[^"'\s]+\.m3u8[^"'\s]*)""")
-        val m3u8Match = m3u8Pattern.find(html)
-        if (m3u8Match != null) {
-            return m3u8Match.groupValues[1]
+    private fun buildPlayerUrl(videoId: String, originalUrl: String): String {
+        // Verificar qual tipo de URL temos
+        return when {
+            originalUrl.contains("fembed") -> {
+                // URLs do Fembed
+                "https://fembed.sx/e/$videoId"
+            }
+            originalUrl.contains("bysevepoin") -> {
+                // URLs do Bysevepoin
+                "https://bysevepoin.com/e/$videoId"
+            }
+            originalUrl.contains("g9r6") -> {
+                // URLs do G9R6
+                "https://g9r6.com/2ur/$videoId"
+            }
+            else -> {
+                // URL padrão baseado no ID
+                if (videoId.matches(Regex("\\d+"))) {
+                    // ID numérico - provavelmente fembed
+                    "https://fembed.sx/e/$videoId"
+                } else {
+                    // ID alfanumérico - provavelmente bysevepoin
+                    "https://bysevepoin.com/e/$videoId"
+                }
+            }
         }
+    }
+    
+    private suspend fun interceptM3u8WithWebView(
+        playerUrl: String,
+        name: String,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        return try {
+            println("🌐 Iniciando WebView para interceptar m3u8...")
+            println("🎯 URL do player: $playerUrl")
+            
+            // Configurar WebViewResolver para interceptar URLs de m3u8
+            val streamResolver = WebViewResolver(
+                interceptUrl = Regex(""".*\.m3u8.*"""), // Interceptar qualquer URL com .m3u8
+                useOkhttp = false,
+                timeout = 30_000L, // 30 segundos timeout
+                additionalHeaders = mapOf(
+                    "Cookie" to API_COOKIE,
+                    "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
+                    "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+                    "Accept-Language" to "pt-BR,pt;q=0.9,en;q=0.8",
+                    "Referer" to "https://superflix21.lol/"
+                )
+            )
+            
+            // Fazer a requisição com o WebViewResolver
+            val response = app.get(playerUrl, interceptor = streamResolver)
+            val interceptedUrl = response.url
+            
+            println("📡 Resposta do WebView: ${response.code}")
+            println("🔗 URL interceptada: $interceptedUrl")
+            
+            // Verificar se interceptamos uma URL de m3u8
+            if (interceptedUrl.isNotEmpty() && interceptedUrl.contains(".m3u8")) {
+                println("✅ URL m3u8 interceptada com sucesso!")
+                println("🎬 M3U8: $interceptedUrl")
+                
+                // Gerar links M3U8
+                return generateM3u8Links(interceptedUrl, playerUrl, name, callback)
+            } else {
+                // Tentar extrair m3u8 do conteúdo da resposta
+                println("⚠️  Nenhuma URL m3u8 interceptada diretamente")
+                println("📄 Conteúdo da resposta (primeiros 500 chars): ${response.text.take(500)}")
+                
+                // Procurar por URLs m3u8 no conteúdo HTML
+                val m3u8Url = findM3u8InHtml(response.text)
+                if (m3u8Url != null) {
+                    println("🔍 URL m3u8 encontrada no HTML: $m3u8Url")
+                    return generateM3u8Links(m3u8Url, playerUrl, name, callback)
+                }
+                
+                println("❌ Não consegui encontrar URL m3u8")
+                return false
+            }
+            
+        } catch (e: Exception) {
+            println("💥 Erro no WebViewResolver: ${e.message}")
+            false
+        }
+    }
+    
+    private fun findM3u8InHtml(html: String): String? {
+        // Procurar por URLs .m3u8 no HTML
+        val patterns = listOf(
+            Regex("""(https?://[^"\s]+\.m3u8[^"\s]*)"""),
+            Regex("""["'](https?://[^"']+\.m3u8)["']"""),
+            Regex("""file["']?\s*:\s*["']([^"']+\.m3u8)["']"""),
+            Regex("""src["']?\s*:\s*["']([^"']+\.m3u8)["']"""),
+            Regex("""hls["']?\s*:\s*["']([^"']+\.m3u8)["']""")
+        )
         
-        // Procurar por sources de vídeo
-        val sourcePattern = Regex("""<source[^>]+src=["']([^"']+)["']""")
-        val sourceMatch = sourcePattern.find(html)
-        if (sourceMatch != null) {
-            return sourceMatch.groupValues[1]
+        for (pattern in patterns) {
+            val match = pattern.find(html)
+            if (match != null) {
+                var url = match.groupValues[1]
+                // Limpar a URL se necessário
+                url = url.replace("\\/", "/")
+                return url
+            }
         }
         
         return null
-    }
-    
-    private fun extractIframeUrl(html: String): String? {
-        val pattern = Regex("""<iframe[^>]+src=["']([^"']+)["']""")
-        val match = pattern.find(html)
-        return match?.groupValues?.get(1)
-    }
-    
-    private fun extractFromJson(json: String, key: String): String? {
-        val pattern = Regex("\"$key\"\\s*:\\s*\"([^\"]+)\"")
-        val match = pattern.find(json)
-        return match?.groupValues?.get(1)
     }
     
     private suspend fun generateM3u8Links(
@@ -353,7 +185,7 @@ object SuperFlixExtractor {
     ): Boolean {
         return try {
             println("🔄 Gerando links M3U8...")
-            println("🎯 URL: $m3u8Url")
+            println("🎯 URL M3U8: $m3u8Url")
             println("🔗 Referer: $referer")
             
             val links = M3u8Helper.generateM3u8(
@@ -365,7 +197,8 @@ object SuperFlixExtractor {
                     "Origin" to referer.removeSuffix("/"),
                     "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36",
                     "Accept" to "*/*",
-                    "Accept-Language" to "pt-BR,pt;q=0.9,en;q=0.8"
+                    "Accept-Language" to "pt-BR,pt;q=0.9,en;q=0.8",
+                    "Cookie" to API_COOKIE
                 )
             )
             
@@ -382,13 +215,4 @@ object SuperFlixExtractor {
             false
         }
     }
-    
-    // Data class
-    data class VideoDetails(
-        val videoId: String,
-        val fileId: Int,
-        val title: String,
-        val embedFrameUrl: String,
-        val posterUrl: String?
-    )
 }
