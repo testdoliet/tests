@@ -368,7 +368,7 @@ class Goyabu : MainAPI() {
 
                 val homeItems = if (request.name == "Lançamentos") {
                     // Para lançamentos, precisamos transformar episódios em itens de anime
-                    extractLancamentosItems(elements)
+                    extractLancamentosItems(document, elements)
                 } else {
                     elements.mapNotNull { it.toSearchResponse() }
                         .distinctBy { it.url }
@@ -390,9 +390,39 @@ class Goyabu : MainAPI() {
         }
     }
 
-    // NOVO: Função para extrair itens da página de lançamentos
-    private fun extractLancamentosItems(elements: List<Element>): List<AnimeSearchResponse> {
+    // MODIFICADO: Função para extrair itens da página de lançamentos
+    private fun extractLancamentosItems(document: org.jsoup.nodes.Document, elements: List<Element>): List<AnimeSearchResponse> {
         val items = mutableListOf<AnimeSearchResponse>()
+        
+        // Extrair todos os animes da página para pesquisa de thumbs
+        val allAnimeElements = document.select("article a, .boxAN a, a[href*='/anime/']")
+        val animeMap = mutableMapOf<String, AnimeInfo>()
+        
+        // Criar mapa de animes para pesquisa rápida
+        allAnimeElements.forEach { element ->
+            try {
+                val titleElement = element.selectFirst(".title, .hidden-text")
+                val rawTitle = titleElement?.text()?.trim() ?: return@forEach
+                val cleanedTitle = cleanTitle(rawTitle)
+                
+                if (cleanedTitle.isNotBlank()) {
+                    val posterUrl = element.extractPosterUrl()
+                    val hasDubBadge = element.selectFirst(".audio-box.dublado, .dublado") != null
+                    val href = element.attr("href")
+                    
+                    animeMap[cleanedTitle.lowercase()] = AnimeInfo(
+                        title = cleanedTitle,
+                        posterUrl = posterUrl,
+                        url = href,
+                        isDubbed = hasDubBadge
+                    )
+                }
+            } catch (e: Exception) {
+                println("⚠️ Erro ao mapear anime: ${e.message}")
+            }
+        }
+        
+        println("📊 Mapeados ${animeMap.size} animes para pesquisa de thumbs")
         
         elements.forEach { element ->
             try {
@@ -409,8 +439,8 @@ class Goyabu : MainAPI() {
                     match?.groupValues?.get(1)?.toIntOrNull() ?: 1
                 } ?: 1
                 
-                // Extrair thumb
-                val thumb = element.selectFirst(".coverImg")?.attr("style")?.let { style ->
+                // Extrair thumb do próprio elemento (fallback)
+                val localThumb = element.selectFirst(".coverImg")?.attr("style")?.let { style ->
                     val regex = Regex("""url\(['"]?([^'"()]+)['"]?\)""")
                     regex.find(style)?.groupValues?.get(1)?.let { fixUrl(it) }
                 }
@@ -418,38 +448,39 @@ class Goyabu : MainAPI() {
                 // Determinar se é dublado
                 val isDubbed = element.selectFirst(".audio-box.dublado") != null
                 
-                // Limpar título do anime (remover "Dublado" do final se existir)
-                var cleanedAnimeTitle = cleanTitle(rawTitle.replace("Dublado", "", ignoreCase = true).trim())
+                // Extrair título base do anime (remover - Ep X e Dublado)
+                val baseTitle = extractBaseAnimeTitle(rawTitle, isDubbed)
                 
-                // Se o título for muito curto, usar um título mais descritivo
-                if (cleanedAnimeTitle.length < 3) {
-                    cleanedAnimeTitle = "Episódio $episodeNumber"
-                }
+                // Procurar anime correspondente no mapa
+                val animeInfo = findBestMatchingAnime(baseTitle, animeMap)
                 
-                // Criar título mais descritivo
-                val displayTitle = "$cleanedAnimeTitle - Ep $episodeNumber${if (isDubbed) " (Dublado)" else ""}"
+                // Usar thumb do anime encontrado ou thumb local
+                val bestThumb = animeInfo?.posterUrl ?: localThumb
+                val animeUrl = animeInfo?.url ?: href
                 
-                // Tentar extrair o ID para criar um URL mais apropriado
-                val episodeId = href.substringAfterLast("/").toIntOrNull()
-                val animeUrl = if (episodeId != null) {
-                    // Tentar criar um URL que leve ao anime completo
-                    "$mainUrl/anime/${cleanedAnimeTitle.lowercase().replace(" ", "-")}"
-                } else {
-                    fixUrl(href)
-                }
+                // Limpar título final (remover episódio)
+                val cleanDisplayTitle = cleanTitle(baseTitle)
                 
-                items.add(newAnimeSearchResponse(displayTitle, animeUrl) {
-                    this.posterUrl = thumb
+                // Criar resposta
+                val searchResponse = newAnimeSearchResponse(cleanDisplayTitle, fixUrl(animeUrl)) {
+                    this.posterUrl = bestThumb
                     this.type = TvType.Anime
+                    
+                    // Adicionar badge do episódio
+                    this.episodes = listOf(newEpisode("") {
+                        this.episode = episodeNumber
+                    })
                     
                     if (isDubbed) {
                         addDubStatus(dubExist = true, subExist = false)
+                        println("🎭 Ep $episodeNumber Dublado: $cleanDisplayTitle")
                     } else {
                         addDubStatus(dubExist = false, subExist = true)
+                        println("🎭 Ep $episodeNumber Legendado: $cleanDisplayTitle")
                     }
-                })
+                }
                 
-                println("🎬 Lançamento: $displayTitle -> $href")
+                items.add(searchResponse)
                 
             } catch (e: Exception) {
                 println("❌ Erro ao processar item de lançamento: ${e.message}")
@@ -457,6 +488,70 @@ class Goyabu : MainAPI() {
         }
         
         return items.distinctBy { it.url }.take(30)
+    }
+    
+    // NOVO: Classe auxiliar para informações do anime
+    private data class AnimeInfo(
+        val title: String,
+        val posterUrl: String?,
+        val url: String,
+        val isDubbed: Boolean
+    )
+    
+    // NOVO: Extrair título base do anime
+    private fun extractBaseAnimeTitle(rawTitle: String, isDubbed: Boolean): String {
+        var title = rawTitle.trim()
+        
+        // Remover " - Ep X" ou " Episódio X"
+        title = title.replace(Regex("""\s*[-–]\s*Ep(?:is[oó]dio)?\s*\d+""", RegexOption.IGNORE_CASE), "")
+        
+        // Remover "(Dublado)" se já tivermos a informação
+        if (isDubbed) {
+            title = title.replace("(Dublado)", "", ignoreCase = true)
+            title = title.replace("Dublado", "", ignoreCase = true)
+        }
+        
+        // Remover " (Legendado)" se existir
+        title = title.replace("(Legendado)", "", ignoreCase = true)
+        title = title.replace("Legendado", "", ignoreCase = true)
+        
+        return title.trim()
+    }
+    
+    // NOVO: Encontrar melhor correspondência de anime
+    private fun findBestMatchingAnime(baseTitle: String, animeMap: Map<String, AnimeInfo>): AnimeInfo? {
+        val searchTitle = baseTitle.lowercase().trim()
+        
+        // Tentar correspondência exata primeiro
+        animeMap[searchTitle]?.let { return it }
+        
+        // Tentar correspondência parcial
+        for ((key, anime) in animeMap) {
+            if (searchTitle.contains(key, ignoreCase = true) || key.contains(searchTitle, ignoreCase = true)) {
+                return anime
+            }
+        }
+        
+        // Tentar remover palavras comuns e buscar novamente
+        val simplifiedTitle = searchTitle
+            .replace("(dublado)", "", ignoreCase = true)
+            .replace("(legendado)", "", ignoreCase = true)
+            .replace("online", "", ignoreCase = true)
+            .replace("anime", "", ignoreCase = true)
+            .replace("\\s+".toRegex(), " ")
+            .trim()
+        
+        if (simplifiedTitle.isNotBlank() && simplifiedTitle != searchTitle) {
+            animeMap[simplifiedTitle]?.let { return it }
+            
+            for ((key, anime) in animeMap) {
+                if (simplifiedTitle.contains(key, ignoreCase = true) || key.contains(simplifiedTitle, ignoreCase = true)) {
+                    return anime
+                }
+            }
+        }
+        
+        return null
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
