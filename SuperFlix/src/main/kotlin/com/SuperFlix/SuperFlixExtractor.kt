@@ -404,66 +404,64 @@ private suspend fun createExtractorLink(
     name: String,
     callback: (ExtractorLink) -> Unit
 ): Boolean {
-    println("🎯 Testando M3U8 antes de criar link...")
+    println("🎯 Criando ExtractorLink...")
     
     try {
-        // PRIMEIRO: Acessar a URL M3U8 (igual ao navegador faz)
+        // PRIMEIRO: Acessar a URL com os mesmos headers que o navegador
+        println("🔍 Testando acesso à URL...")
         val testResponse = app.get(m3u8Url, headers = mapOf(
-            "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Referer" to "https://bysevepoin.com",
             "Origin" to "https://superflix21.lol",
-            "Cookie" to API_COOKIE
+            "Cookie" to API_COOKIE,
+            "Accept" to "*/*",
+            "Accept-Language" to "pt-BR,pt;q=0.9,en;q=0.8"
         ))
         
-        println("   Status do teste: ${testResponse.code}")
+        println("📊 Status do teste: ${testResponse.code}")
+        println("📊 Tamanho da resposta: ${testResponse.text.length} bytes")
         
-        if (testResponse.code != 200) {
-            println("⚠️  URL deu ${testResponse.code}, tentando sem cookies...")
-            
-            // Tentar sem cookies
-            val test2 = app.get(m3u8Url, headers = mapOf(
-                "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
-                "Referer" to "https://bysevepoin.com"
-            ))
-            println("   Status sem cookies: ${test2.code}")
+        if (testResponse.text.contains(".ts") || testResponse.text.contains("#EXTM3U")) {
+            println("✅ URL parece ser um M3U8 válido!")
         }
         
-        // Criar link mesmo se der 404 (às vezes funciona no player)
+        // Criar ExtractorLink (usar VIDEO para M3U8)
         val extractorLink = newExtractorLink(
             source = "SuperFlix",
             name = "$name (720p)",
             url = m3u8Url,
-            type = ExtractorLinkType.HLS
+            type = ExtractorLinkType.VIDEO
         ) {
             this.referer = "https://bysevepoin.com"
             this.quality = 720
             this.headers = mapOf(
-                "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
+                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
                 "Referer" to "https://bysevepoin.com",
-                "Origin" to "https://superflix21.lol"
+                "Origin" to "https://superflix21.lol",
+                "Cookie" to API_COOKIE
             )
         }
         
         callback(extractorLink)
-        println("✅ Link criado após teste!")
+        println("✅ ExtractorLink criado com sucesso!")
         return true
         
     } catch (e: Exception) {
-        println("💥 Erro no teste: ${e.message}")
+        println("💥 Erro: ${e.message}")
         
-        // Criar mesmo assim (fallback)
+        // Fallback: criar mesmo sem teste
         val extractorLink = newExtractorLink(
             source = "SuperFlix",
             name = "$name (720p)",
             url = m3u8Url,
-            type = ExtractorLinkType.HLS
+            type = ExtractorLinkType.VIDEO
         ) {
             this.referer = "https://bysevepoin.com"
             this.quality = 720
         }
         
         callback(extractorLink)
-        println("✅ Link criado em modo fallback!")
+        println("✅ Link criado em modo fallback")
         return true
     }
   }
