@@ -403,65 +403,77 @@ private suspend fun createExtractorLink(
     name: String,
     callback: (ExtractorLink) -> Unit
 ): Boolean {
-    println("🚀 TESTE FINAL com headers do curl...")
+    println("🎯 VERSÃO CORRIGIDA - Teste deu 200 no navegador!")
     
     try {
-        // Headers EXATAMENTE IGUAIS ao curl que funciona
+        // Headers que FUNCIONAM no navegador (segundo seu teste)
         val headers = mapOf(
             "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
             "Accept" to "*/*",
             "Accept-Language" to "pt-BR",
-            "Cache-Control" to "no-cache",
-            "Connection" to "keep-alive",
-            "Pragma" to "no-cache",
-            "Range" to "bytes=0-",
-            "Referer" to m3u8Url,  // CRÍTICO: referer é a própria URL
-            "Sec-Fetch-Dest" to "video",
-            "Sec-Fetch-Mode" to "no-cors",
-            "Sec-Fetch-Site" to "same-origin",
-            "sec-ch-ua" to "\"Chromium\";v=\"127\", \"Not)A;Brand\";v=\"99\", \"Microsoft Edge Simulate\";v=\"127\", \"Lemur\";v=\"127\"",
-            "sec-ch-ua-mobile" to "?1",
-            "sec-ch-ua-platform" to "\"Android\""
+            "Referer" to m3u8Url,
+            "Range" to "bytes=0-"
         )
         
         println("🔗 URL: $m3u8Url")
         
-        // TESTE DIRETO primeiro
-        println("🧪 Testando acesso direto...")
+        // Teste NOVAMENTE no app (deve dar 200 agora)
+        println("🧪 Testando no app com headers corretos...")
         val testResponse = app.get(m3u8Url, headers = headers)
-        println("📊 Status do teste: ${testResponse.code}")
+        println("📊 Status no app: ${testResponse.code}")
+        println("📊 Tamanho: ${testResponse.text.length} chars")
+        println("📊 É M3U8? ${testResponse.text.contains("#EXTM3U")}")
         
-        if (testResponse.code == 200) {
-            println("🎉 URL FUNCIONA com headers do curl!")
-            println("📄 Conteúdo (primeiros 200 chars): ${testResponse.text.take(200)}")
-        } else {
-            println("⚠️  URL deu ${testResponse.code}, mas vamos tentar mesmo assim")
+        if (testResponse.text.contains("#EXTM3U")) {
+            println("🎉 AGORA FUNCIONA NO APP TAMBÉM!")
+            
+            // Conteúdo do M3U8 para debug
+            val lines = testResponse.text.split("\n")
+            println("📄 Primeiras linhas do M3U8:")
+            lines.take(5).forEachIndexed { i, line ->
+                println("   $i: $line")
+            }
         }
         
-        // AGORA usar M3u8Helper CORRETAMENTE
-        println("🔄 Usando M3u8Helper...")
+        // Criar link usando M3u8Helper (agora deve funcionar)
+        println("🔄 Gerando links com M3u8Helper...")
         val links = M3u8Helper.generateM3u8(
-            source = "SuperFlix",  // Nome do source
-            streamUrl = m3u8Url,   // URL do stream
-            referer = m3u8Url,     // Referer correto
-            headers = headers      // Headers customizados
+            source = "SuperFlix",
+            streamUrl = m3u8Url,
+            referer = m3u8Url,
+            headers = headers
         )
         
         if (links.isEmpty()) {
-            println("❌ M3u8Helper não gerou links")
-            return false
+            println("⚠️  M3u8Helper não gerou links, tentando fallback...")
+            
+            // Fallback: criar link manualmente
+            val fallbackLink = newExtractorLink(
+                source = "SuperFlix",
+                name = "$name (720p)",
+                url = m3u8Url,
+                type = ExtractorLinkType.M3U8
+            ) {
+                this.referer = m3u8Url
+                this.quality = 720
+                this.headers = headers
+            }
+            
+            callback(fallbackLink)
+            println("✅ Link fallback criado")
+            return true
         }
         
         println("✅ M3u8Helper gerou ${links.size} links!")
         links.forEach { link ->
-            println("   📺 Link: ${link.name} - ${link.url.take(50)}...")
+            println("   📺 ${link.name} - ${link.quality}p")
             callback(link)
         }
         
         return true
         
     } catch (e: Exception) {
-        println("💥 ERRO fatal: ${e.message}")
+        println("💥 ERRO: ${e.message}")
         e.printStackTrace()
         return false
     }
