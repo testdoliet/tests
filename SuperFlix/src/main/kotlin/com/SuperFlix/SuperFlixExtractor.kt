@@ -397,76 +397,47 @@ object SuperFlixExtractor {
         }
     }
     
-    // FUNÇÃO CORRETA PARA CRIAR EXTRACTORLINK (como no AnimeFire)
-    // FUNÇÃO SIMPLIFICADA - NÃO TESTAR, APENAS PASSAR
-private suspend fun createExtractorLink(
+    private suspend fun createExtractorLink(
     m3u8Url: String,
     name: String,
     callback: (ExtractorLink) -> Unit
 ): Boolean {
-    println("🎯 Usando headers CORRETOS do curl...")
+    println("🎯 Usando URL modificada...")
     
     try {
-        // Headers IDÊNTICOS ao curl que funciona!
-        val headers = mapOf(
-            "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
-            "Accept" to "*/*",
-            "Accept-Language" to "pt-BR",
-            "Cache-Control" to "no-cache",
-            "Connection" to "keep-alive",
-            "Pragma" to "no-cache",
-            "Range" to "bytes=0-",  // ← CRÍTICO PARA STREAMING
-            "Referer" to m3u8Url,   // ← Referer é a própria URL!
-            "Sec-Fetch-Dest" to "video",
-            "Sec-Fetch-Mode" to "no-cors",
-            "Sec-Fetch-Site" to "same-origin",
-            "sec-ch-ua" to "\"Chromium\";v=\"127\", \"Not)A;Brand\";v=\"99\", \"Microsoft Edge Simulate\";v=\"127\", \"Lemur\";v=\"127\"",
-            "sec-ch-ua-mobile" to "?1",
-            "sec-ch-ua-platform" to "\"Android\""
-        )
-        
-        println("🔗 URL: $m3u8Url")
-        
-        // Teste rápido
-        val test = app.get(m3u8Url, headers = headers)
-        println("📊 Status: ${test.code}")
-        
-        if (test.code != 200) {
-            println("⚠️  Código ${test.code}, mas vamos tentar mesmo assim")
+        // Modificar a URL para forçar headers
+        val modifiedUrl = if (!m3u8Url.contains("user_agent=")) {
+            "$m3u8Url&user_agent=Mozilla%2F5.0%20(Linux%3B%20Android%2010%3B%20K)%20AppleWebKit%2F537.36"
+        } else {
+            m3u8Url
         }
         
+        println("🔗 URL modificada: $modifiedUrl")
+        
+        // Testar
+        val test = app.get(modifiedUrl, headers = mapOf(
+            "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
+            "Referer" to modifiedUrl
+        ))
+        println("🧪 Teste modificado: ${test.code}")
+        
+        // Link SUPER SIMPLES
         val extractorLink = newExtractorLink(
             source = "SuperFlix",
             name = "$name (720p)",
-            url = m3u8Url,
+            url = modifiedUrl,
             type = ExtractorLinkType.VIDEO
         ) {
-            this.referer = m3u8Url  // ← Referer correto!
+            this.referer = modifiedUrl
             this.quality = 720
-            this.headers = headers
         }
         
         callback(extractorLink)
-        println("✅ Link criado com headers do curl!")
         return true
         
     } catch (e: Exception) {
         println("💥 Erro: ${e.message}")
-        
-        // Fallback simplificado
-        val extractorLink = newExtractorLink(
-            source = "SuperFlix",
-            name = "$name (720p)",
-            url = m3u8Url,
-            type = ExtractorLinkType.VIDEO
-        ) {
-            this.referer = m3u8Url
-            this.quality = 720
-        }
-        
-        callback(extractorLink)
-        println("✅ Link criado em fallback")
-        return true
-    }
-  }
+        return false
+       }
+   }
 }
