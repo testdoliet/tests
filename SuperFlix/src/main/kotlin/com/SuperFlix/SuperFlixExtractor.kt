@@ -66,56 +66,75 @@ object SuperFlixExtractor {
     }
 
     private fun extractVideoIdAndType(url: String): Triple<String, Boolean, String> {
-        // Retorna: (ID, isSeries, cParam)
+    println("🔍 Analisando URL: $url")
+    
+    // 1. Primeiro tenta detectar SÉRIES com parâmetro explícito: /e/ID?c=X-Y
+    val seriesPattern1 = Regex("""/e/([a-zA-Z0-9]+)\?c=(\d+-\d+)""")
+    val seriesMatch1 = seriesPattern1.find(url)
+    
+    if (seriesMatch1 != null) {
+        val id = seriesMatch1.groupValues[1]  // Ex: 283818
+        val cParam = seriesMatch1.groupValues[2]  // Ex: 1-1
+        println("✅ SÉRIE com parâmetro: ID=$id, c=$cParam")
+        return Triple(id, true, cParam)
+    }
+    
+    // 2. Tenta detectar SÉRIES com parâmetro no final: /ID-c=X-Y
+    val seriesPattern2 = Regex("""/([a-zA-Z0-9]+)-c=(\d+-\d+)""")
+    val seriesMatch2 = seriesPattern2.find(url)
+    
+    if (seriesMatch2 != null) {
+        val id = seriesMatch2.groupValues[1]
+        val cParam = seriesMatch2.groupValues[2]
+        println("✅ SÉRIE (formato 2): ID=$id, c=$cParam")
+        return Triple(id, true, cParam)
+    }
+    
+    // 3. FILMES ou séries sem parâmetro: /e/ID ou /v/ID
+    val filmPattern = Regex("""/(?:e|v)/([a-zA-Z0-9]+)(?:\?|$|/|#)""")
+    val filmMatch = filmPattern.find(url)
+    
+    if (filmMatch != null) {
+        val id = filmMatch.groupValues[1]
+        println("✅ FILME ou série sem parâmetro: ID=$id")
+        // ⭐ Verifica se tem parâmetro c= em outro lugar da URL
+        val cParamPattern = Regex("""[?&]c=(\d+-\d+)""")
+        val cParamMatch = cParamPattern.find(url)
         
-        println("🔍 Analisando URL: $url")
-        
-        // Padrão para séries: /e/ID?c=X-Y (ex: /e/85718?c=1-1)
-        val seriesPattern = Regex("""/e/([a-zA-Z0-9]+)\?c=(\d+-\d+)""")
-        val seriesMatch = seriesPattern.find(url)
-        
-        if (seriesMatch != null) {
-            val id = seriesMatch.groupValues[1]
-            val cParam = seriesMatch.groupValues[2]  // "1-1"
-            println("✅ SÉRIE detectada: ID=$id, c=$cParam")
+        if (cParamMatch != null) {
+            val cParam = cParamMatch.groupValues[1]
+            println("   ⭐ Tem parâmetro c= detectado: $cParam")
             return Triple(id, true, cParam)
         }
         
-        // Padrão para séries sem parâmetro explícito (às vezes vem no final)
-        val seriesPattern2 = Regex("""/(\d+)-(\d+)""")
-        val seriesMatch2 = seriesPattern2.find(url)
-        
-        if (seriesMatch2 != null) {
-            // Pode ser uma série com formato diferente
-            val id = seriesMatch2.groupValues[1]
-            println("⚠️  Possível série detectada (formato diferente): ID=$id")
-            return Triple(id, true, "1-1") // Assume temporada 1 episódio 1
-        }
-        
-        // Padrão para filmes: /e/ID ou /v/ID
-        val filmPattern = Regex("""/(?:e|v)/([a-zA-Z0-9]+)""")
-        val filmMatch = filmPattern.find(url)
-        
-        if (filmMatch != null) {
-            val id = filmMatch.groupValues[1]
-            println("✅ FILME detectado: ID=$id")
-            return Triple(id, false, "")
-        }
-        
-        // Último recurso: pegar qualquer número no final
-        val fallbackPattern = Regex("""/(\d+)$""")
-        val fallbackMatch = fallbackPattern.find(url)
-        
-        if (fallbackMatch != null) {
-            val id = fallbackMatch.groupValues[1]
-            println("⚠️  Fallback: ID=$id (assumindo filme)")
-            return Triple(id, false, "")
-        }
-        
-        println("❌ Padrão não reconhecido")
-        return Triple("", false, "")
+        return Triple(id, false, "")
     }
-
+    
+    // 4. Último recurso: número no final
+    val fallbackPattern = Regex("""/(\d+)(?:\?|$|/|#)""")
+    val fallbackMatch = fallbackPattern.find(url)
+    
+    if (fallbackMatch != null) {
+        val id = fallbackMatch.groupValues[1]
+        println("⚠️  Fallback: ID=$id")
+        
+        // Verifica se tem parâmetro c=
+        val cParamPattern = Regex("""[?&]c=(\d+-\d+)""")
+        val cParamMatch = cParamPattern.find(url)
+        
+        if (cParamMatch != null) {
+            val cParam = cParamMatch.groupValues[1]
+            println("   ⭐ Série detectada via parâmetro: c=$cParam")
+            return Triple(id, true, cParam)
+        }
+        
+        return Triple(id, false, "")
+    }
+    
+    println("❌ Não consegui extrair ID da URL")
+    return Triple("", false, "")
+    }
+    
     private suspend fun tryDirectG9r6Api(videoId: String, originalUrl: String): String? {
         return try {
             println("🚀 Tentando API direta do g9r6.com...")
