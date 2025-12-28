@@ -466,4 +466,5 @@ private suspend fun getFreshCookies(m3u8Url: String): String {
         println("⚠️  Erro ao obter cookies: ${e.message}")
         API_COOKIE
     }
+  }
 }
