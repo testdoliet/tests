@@ -398,54 +398,53 @@ object SuperFlixExtractor {
     }
     
     // FUNÇÃO CORRETA PARA CRIAR EXTRACTORLINK (como no AnimeFire)
-    private suspend fun createExtractorLink(
-        m3u8Url: String,
-        name: String,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        return try {
-            println("🎯 Criando ExtractorLink...")
-            
-            // Testar se a URL funciona
-            println("🔍 Testando URL...")
-            val headers = mapOf(
-                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "Referer" to "https://bysevepoin.com"
-            )
-            
-            val testResponse = app.get(m3u8Url, headers = headers)
-            
-            if (testResponse.code != 200) {
-                println("❌ URL não acessível: ${testResponse.code}")
-                return false
-            }
-            
-            println("✅ URL funciona! Status: ${testResponse.code}")
-            
-            // Criar ExtractorLink CORRETAMENTE (igual ao AnimeFire)
-            val extractorLink = newExtractorLink(
-                source = "SuperFlix",
-                name = "$name (720p)",
-                url = m3u8Url,
-                type = ExtractorLinkType.VIDEO  // Para M3U8
-            ) {
-                this.referer = "https://bysevepoin.com"
-                this.quality = 720
-                this.headers = mapOf(
-                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                    "Referer" to "https://bysevepoin.com",
-                    "Origin" to "https://superflix21.lol"
-                )
-            }
-            
-            // Chamar callback com o link
-            callback(extractorLink)
-            println("✅ ExtractorLink criado com sucesso!")
-            true
-            
-        } catch (e: Exception) {
-            println("💥 Erro ao criar ExtractorLink: ${e.message}")
-            false
+    // FUNÇÃO SIMPLIFICADA - NÃO TESTAR, APENAS PASSAR
+private suspend fun createExtractorLink(
+    m3u8Url: String,
+    name: String,
+    callback: (ExtractorLink) -> Unit
+): Boolean {
+    return try {
+        println("🎯 Criando ExtractorLink SEM TESTE...")
+        
+        // Headers completos como um navegador enviaria
+        val headers = mapOf(
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept" to "*/*",
+            "Accept-Language" to "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+            "Accept-Encoding" to "gzip, deflate, br",
+            "Referer" to "https://bysevepoin.com",
+            "Origin" to "https://superflix21.lol",
+            "Connection" to "keep-alive",
+            "Sec-Fetch-Dest" to "empty",
+            "Sec-Fetch-Mode" to "cors",
+            "Sec-Fetch-Site" to "cross-site",
+            "Pragma" to "no-cache",
+            "Cache-Control" to "no-cache"
+        )
+        
+        println("🔗 URL: $m3u8Url")
+        
+        // Criar ExtractorLink direto SEM TESTAR
+        val extractorLink = newExtractorLink(
+            source = "SuperFlix",
+            name = "$name (720p)",
+            url = m3u8Url,
+            type = ExtractorLinkType.VIDEO
+        ) {
+            this.referer = "https://bysevepoin.com"
+            this.quality = 720
+            this.headers = headers
         }
+        
+        // Chamar callback
+        callback(extractorLink)
+        println("✅ ExtractorLink criado!")
+        true
+        
+    } catch (e: Exception) {
+        println("💥 Erro: ${e.message}")
+        false
     }
+  }
 }
