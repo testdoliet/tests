@@ -609,4 +609,3 @@ object SuperFlixExtractor {
         UNKNOWN
     }
   }
-}
