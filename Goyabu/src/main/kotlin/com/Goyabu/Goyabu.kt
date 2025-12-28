@@ -461,22 +461,20 @@ class Goyabu : MainAPI() {
                 // Limpar título final (remover episódio)
                 val cleanDisplayTitle = cleanTitle(baseTitle)
                 
+                // Adicionar episódio ao título para exibição
+                val displayTitleWithEpisode = "$cleanDisplayTitle (Ep $episodeNumber)"
+                
                 // Criar resposta
-                val searchResponse = newAnimeSearchResponse(cleanDisplayTitle, fixUrl(animeUrl)) {
+                val searchResponse = newAnimeSearchResponse(displayTitleWithEpisode, fixUrl(animeUrl)) {
                     this.posterUrl = bestThumb
                     this.type = TvType.Anime
                     
-                    // Adicionar badge do episódio
-                    this.episodes = listOf(newEpisode("") {
-                        this.episode = episodeNumber
-                    })
-                    
                     if (isDubbed) {
                         addDubStatus(dubExist = true, subExist = false)
-                        println("🎭 Ep $episodeNumber Dublado: $cleanDisplayTitle")
+                        println("🎭 Lançamento Dublado: $cleanDisplayTitle - Ep $episodeNumber")
                     } else {
                         addDubStatus(dubExist = false, subExist = true)
-                        println("🎭 Ep $episodeNumber Legendado: $cleanDisplayTitle")
+                        println("🎭 Lançamento Legendado: $cleanDisplayTitle - Ep $episodeNumber")
                     }
                 }
                 
