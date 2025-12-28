@@ -404,21 +404,31 @@ private suspend fun createExtractorLink(
     name: String,
     callback: (ExtractorLink) -> Unit
 ): Boolean {
-    println("🎯 Tentando criar link com cookies...")
+    println("🎯 Testando M3U8 antes de criar link...")
     
     try {
-        // PRIMEIRO: Obter cookies frescos da API
-        val freshCookies = getFreshCookies(m3u8Url)
-        
-        // Headers COM cookies atualizados
-        val headers = mapOf(
+        // PRIMEIRO: Acessar a URL M3U8 (igual ao navegador faz)
+        val testResponse = app.get(m3u8Url, headers = mapOf(
             "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
             "Referer" to "https://bysevepoin.com",
             "Origin" to "https://superflix21.lol",
-            "Cookie" to freshCookies
-        )
+            "Cookie" to API_COOKIE
+        ))
         
-        // Criar ExtractorLink com headers personalizados
+        println("   Status do teste: ${testResponse.code}")
+        
+        if (testResponse.code != 200) {
+            println("⚠️  URL deu ${testResponse.code}, tentando sem cookies...")
+            
+            // Tentar sem cookies
+            val test2 = app.get(m3u8Url, headers = mapOf(
+                "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
+                "Referer" to "https://bysevepoin.com"
+            ))
+            println("   Status sem cookies: ${test2.code}")
+        }
+        
+        // Criar link mesmo se der 404 (às vezes funciona no player)
         val extractorLink = newExtractorLink(
             source = "SuperFlix",
             name = "$name (720p)",
@@ -427,44 +437,34 @@ private suspend fun createExtractorLink(
         ) {
             this.referer = "https://bysevepoin.com"
             this.quality = 720
-            this.headers = headers
+            this.headers = mapOf(
+                "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
+                "Referer" to "https://bysevepoin.com",
+                "Origin" to "https://superflix21.lol"
+            )
         }
         
         callback(extractorLink)
-        println("✅ Link criado com cookies frescos!")
+        println("✅ Link criado após teste!")
         return true
         
     } catch (e: Exception) {
-        println("💥 Erro: ${e.message}")
-        return false
-    }
-}
-
-private suspend fun getFreshCookies(m3u8Url: String): String {
-    return try {
-        println("🍪 Obtendo cookies frescos...")
+        println("💥 Erro no teste: ${e.message}")
         
-        // Tentar acessar uma página do domínio primeiro
-        val testUrl = "https://bysevepoin.com"
-        val response = app.get(testUrl, headers = mapOf(
-            "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36"
-        ))
-        
-        // Pegar cookies da resposta
-        val cookies = response.headers["Set-Cookie"] ?: ""
-        
-        if (cookies.isNotEmpty()) {
-            println("✅ Cookies obtidos: ${cookies.take(100)}...")
-        } else {
-            println("⚠️  Nenhum cookie obtido, usando padrão")
-            return API_COOKIE
+        // Criar mesmo assim (fallback)
+        val extractorLink = newExtractorLink(
+            source = "SuperFlix",
+            name = "$name (720p)",
+            url = m3u8Url,
+            type = ExtractorLinkType.HLS
+        ) {
+            this.referer = "https://bysevepoin.com"
+            this.quality = 720
         }
         
-        cookies
-        
-    } catch (e: Exception) {
-        println("⚠️  Erro ao obter cookies: ${e.message}")
-        API_COOKIE
+        callback(extractorLink)
+        println("✅ Link criado em modo fallback!")
+        return true
     }
   }
 }
