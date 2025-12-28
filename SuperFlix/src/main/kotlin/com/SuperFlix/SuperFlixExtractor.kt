@@ -203,76 +203,86 @@ object SuperFlixExtractor {
     }
 
     private suspend fun getFembedIframe(
-        videoId: String, 
-        isSeries: Boolean = false, 
-        cParam: String = ""
-    ): String? {
-        return try {
-            // ⭐ CORREÇÃO CRÍTICA: Séries usam c=1-1, filmes usam c= vazio
-            val effectiveCParam = if (isSeries && cParam.isNotEmpty()) cParam else ""
-            val apiUrl = "$FEMBED_DOMAIN/api.php?s=$videoId&c=$effectiveCParam"
+    videoId: String, 
+    isSeries: Boolean = false, 
+    cParam: String = ""
+): String? {
+    return try {
+        val effectiveCParam = if (isSeries && cParam.isNotEmpty()) cParam else ""
+        val apiUrl = "$FEMBED_DOMAIN/api.php?s=$videoId&c=$effectiveCParam"
+        
+        println("📡 [POST1] ${if (isSeries) "SÉRIE" else "FILME"}: $apiUrl")
+        
+        val headers = mapOf(
+            "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8",
+            "X-Requested-With" to "XMLHttpRequest",
+            "Referer" to "$FEMBED_DOMAIN/e/$videoId${if (isSeries && cParam.isNotEmpty()) "?c=$cParam" else ""}",
+            "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36",
+            "Cookie" to API_COOKIE
+        )
+        
+        // ⭐ DUB PRIMEIRO, depois LEG
+        val languages = listOf("DUB", "LEG")
+        
+        for (lang in languages) {
+            println("🔄 Tentando idioma: $lang")
             
-            println("📡 [POST1] ${if (isSeries) "SÉRIE" else "FILME"}: $apiUrl")
-            
-            val headers = mapOf(
-                "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8",
-                "X-Requested-With" to "XMLHttpRequest",
-                "Referer" to "$FEMBED_DOMAIN/e/$videoId${if (isSeries && cParam.isNotEmpty()) "?c=$cParam" else ""}",
-                "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36",
-                "Cookie" to API_COOKIE
-            )
-            
-            // Usa LEG - o Fembed ajusta automaticamente para DUB se necessário
             val postData = mapOf(
                 "action" to "getPlayer",
-                "lang" to "LEG",
+                "lang" to lang,
                 "key" to "MA=="
             )
             
-            val response = app.post(apiUrl, headers = headers, data = postData)
-            val html = response.text
-            
-            // DEBUG: Mostra resposta real
-            println("🔍 [POST1 RESPOSTA] (primeiros 300 chars):")
-            println(html.take(300))
-            
-            // Pega o SRC do iframe
-            val iframePattern = Regex("""<iframe[^>]+src=["']([^"']+)["']""")
-            val match = iframePattern.find(html)
-            
-            if (match != null) {
-                var url = match.groupValues[1]
-                println("✅ [POST1] SRC encontrado: $url")
+            try {
+                val response = app.post(apiUrl, headers = headers, data = postData)
+                val html = response.text
                 
-                // Verifica se não está vazio
-                if (url.isBlank()) {
-                    println("❌ [POST1] SRC está vazio!")
-                    return null
+                // Pega o SRC do iframe
+                val iframePattern = Regex("""<iframe[^>]+src=["']([^"']+)["']""")
+                val match = iframePattern.find(html)
+                
+                if (match != null) {
+                    var url = match.groupValues[1]
+                    
+                    // ⭐ VERIFICA: Não aceita iframes vazios
+                    if (url.isBlank() || url.isEmpty() || url == "\"\"" || url.contains("src=\"\"")) {
+                        println("❌ Idioma $lang retornou iframe VAZIO!")
+                        continue // Tenta próximo idioma
+                    }
+                    
+                    println("✅ Idioma $lang FUNCIONOU! SRC: $url")
+                    
+                    // Converte URL relativa
+                    if (url.startsWith("/")) {
+                        url = "$FEMBED_DOMAIN$url"
+                    }
+                    
+                    // Para séries: garante que mantém c=1-1
+                    if (isSeries && !url.contains("c=") && cParam.isNotEmpty()) {
+                        url = url.replace("&key=", "&c=$cParam&key=")
+                    }
+                    
+                    println("🎯 URL final: $url")
+                    return url
+                } else {
+                    println("❌ Idioma $lang não retornou iframe")
                 }
                 
-                // Converte URL relativa para absoluta
-                if (url.startsWith("/")) {
-                    url = "$FEMBED_DOMAIN$url"
-                }
-                
-                // ⭐ VERIFICAÇÃO: Se for série, o SRC deve manter c=1-1
-                if (isSeries && !url.contains("c=")) {
-                    println("⚠️  [POST1] SÉRIE mas SRC não tem c=, adicionando...")
-                    url = url.replace("&key=", "&c=$cParam&key=")
-                }
-                
-                println("🎯 [POST1] URL final: $url")
-                return url
+            } catch (e: Exception) {
+                println("⚠️  Idioma $lang falhou: ${e.message}")
+                // Continua para próximo idioma
             }
-            
-            println("❌ [POST1] Nenhum iframe encontrado")
-            null
-            
-        } catch (e: Exception) {
-            println("💥 [POST1] Erro: ${e.message}")
-            null
         }
+        
+        println("❌ Nenhum idioma funcionou (nem DUB nem LEG)")
+        null
+        
+    } catch (e: Exception) {
+        println("💥 Erro no POST1: ${e.message}")
+        null
     }
+    }
+    
 
     private suspend fun getBysevepoinFromIframe(
         iframeUrl: String, 
