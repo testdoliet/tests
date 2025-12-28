@@ -6,6 +6,7 @@ import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.M3u8Helper
 import org.json.JSONObject
 import java.net.URLEncoder
+import java.util.*
 
 object SuperFlixExtractor {
     // Cookie atualizado para evitar bloqueios
@@ -94,9 +95,12 @@ object SuperFlixExtractor {
             
             val response = app.get(apiUrl, headers = headers)
             
-            if (response.statusCode == 200) {
+            // CORREÇÃO: Usar response.code em vez de response.statusCode
+            val statusCode = response.code
+            
+            if (statusCode == 200) {
                 val jsonText = response.text
-                println("📥 Resposta detalhes (${response.statusCode}): ${jsonText.take(200)}...")
+                println("📥 Resposta detalhes ($statusCode): ${jsonText.take(200)}...")
                 
                 try {
                     val json = JSONObject(jsonText)
@@ -133,7 +137,8 @@ object SuperFlixExtractor {
                     }
                 }
             } else {
-                println("❌ Status code detalhes: ${response.statusCode}")
+                // CORREÇÃO: Usar response.code
+                println("❌ Status code detalhes: ${response.code}")
                 null
             }
         } catch (e: Exception) {
@@ -184,9 +189,12 @@ object SuperFlixExtractor {
             
             val response = app.get(apiUrl, headers = headers)
             
-            if (response.statusCode == 200) {
+            // CORREÇÃO: Usar response.code
+            val statusCode = response.code
+            
+            if (statusCode == 200) {
                 val jsonText = response.text
-                println("📥 Resposta playback (${response.statusCode}): ${jsonText.take(300)}...")
+                println("📥 Resposta playback ($statusCode): ${jsonText.take(300)}...")
                 
                 try {
                     val json = JSONObject(jsonText)
@@ -227,7 +235,8 @@ object SuperFlixExtractor {
                     null
                 }
             } else {
-                println("❌ Status code playback: ${response.statusCode}")
+                // CORREÇÃO: Usar response.code
+                println("❌ Status code playback: ${response.code}")
                 null
             }
         } catch (e: Exception) {
@@ -236,7 +245,7 @@ object SuperFlixExtractor {
         }
     }
     
-    private fun buildM3u8Url(videoId: String, fileId: Int, playbackData: PlaybackData): String? {
+    private suspend fun buildM3u8Url(videoId: String, fileId: Int, playbackData: PlaybackData): String? {
         return try {
             // Baseado na URL que vimos nas imagens
             // Padrão: https://[server]/hls2/05/10459/{videoId}_h/master.m3u8?t=TOKEN&s=TIMESTAMP&e=EXPIRATION&f=FILE_ID&srv=SERVER_ID&sp=SPEED&p=PART
@@ -280,7 +289,7 @@ object SuperFlixExtractor {
                 
                 println("🔗 Tentando URL: ${m3u8Url.take(80)}...")
                 
-                // Testar se a URL é válida
+                // Testar se a URL é válida (chamada suspend agora)
                 if (testUrl(m3u8Url)) {
                     return m3u8Url
                 }
@@ -303,7 +312,8 @@ object SuperFlixExtractor {
     private suspend fun testUrl(url: String): Boolean {
         return try {
             val response = app.get(url, timeout = 10000)
-            response.statusCode == 200 && response.text.contains("#EXTM3U")
+            // CORREÇÃO: Usar response.code
+            response.code == 200 && response.text.contains("#EXTM3U")
         } catch (e: Exception) {
             false
         }
