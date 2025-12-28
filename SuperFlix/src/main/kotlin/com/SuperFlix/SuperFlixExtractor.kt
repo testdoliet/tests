@@ -2,7 +2,8 @@ package com.SuperFlix
 
 import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.utils.ExtractorLink
-import com.lagradost.cloudstream3.utils.M3u8Helper
+import com.lagradost.cloudstream3.utils.newExtractorLink
+import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import org.json.JSONObject
 import javax.crypto.Cipher
 import javax.crypto.spec.GCMParameterSpec
@@ -51,8 +52,8 @@ object SuperFlixExtractor {
             
             println("🎬 URL M3U8 final: $m3u8Url")
             
-            // PASSO 3: Gerar links M3U8
-            return generateM3u8Links(m3u8Url, name, callback)
+            // PASSO 3: Criar ExtractorLink CORRETAMENTE (como no AnimeFire)
+            return createExtractorLink(m3u8Url, name, callback)
             
         } catch (e: Exception) {
             println("💥 Erro fatal: ${e.message}")
@@ -396,45 +397,54 @@ object SuperFlixExtractor {
         }
     }
     
-    // FUNÇÃO SIMPLES - APENAS M3U8 HELPER COM ASSINATURA CORRETA
-    private suspend fun generateM3u8Links(
+    // FUNÇÃO CORRETA PARA CRIAR EXTRACTORLINK (como no AnimeFire)
+    private suspend fun createExtractorLink(
         m3u8Url: String,
         name: String,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         return try {
-            println("🔄 Usando M3u8Helper...")
+            println("🎯 Criando ExtractorLink...")
             
-            // Headers EXATAMENTE como no código antigo que funcionava
+            // Testar se a URL funciona
+            println("🔍 Testando URL...")
             val headers = mapOf(
-                "Referer" to "https://bysevepoin.com",
-                "Origin" to "https://superflix21.lol",
-                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Referer" to "https://bysevepoin.com"
             )
             
-            println("🎯 URL M3U8: $m3u8Url")
-            println("📋 Headers:")
-            headers.forEach { (key, value) -> println("   $key: $value") }
+            val testResponse = app.get(m3u8Url, headers = headers)
             
-            // ASSINATURA CORRETA DO M3u8Helper.generateM3u8
-            val links = M3u8Helper.generateM3u8(
-                source = "SuperFlix",           // Nome da fonte - OBRIGATÓRIO
-                streamUrl = m3u8Url,            // URL do stream - OBRIGATÓRIO
-                referer = "https://bysevepoin.com",  // Referer
-                headers = headers               // Headers
-            )
-            
-            if (links.isNotEmpty()) {
-                links.forEach(callback)
-                println("✅ SUCESSO! ${links.size} links gerados via M3u8Helper!")
-                true
-            } else {
-                println("❌ M3u8Helper retornou lista vazia")
-                false
+            if (testResponse.code != 200) {
+                println("❌ URL não acessível: ${testResponse.code}")
+                return false
             }
             
+            println("✅ URL funciona! Status: ${testResponse.code}")
+            
+            // Criar ExtractorLink CORRETAMENTE (igual ao AnimeFire)
+            val extractorLink = newExtractorLink(
+                source = "SuperFlix",
+                name = "$name (720p)",
+                url = m3u8Url,
+                type = ExtractorLinkType.VIDEO  // Para M3U8
+            ) {
+                this.referer = "https://bysevepoin.com"
+                this.quality = 720
+                this.headers = mapOf(
+                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    "Referer" to "https://bysevepoin.com",
+                    "Origin" to "https://superflix21.lol"
+                )
+            }
+            
+            // Chamar callback com o link
+            callback(extractorLink)
+            println("✅ ExtractorLink criado com sucesso!")
+            true
+            
         } catch (e: Exception) {
-            println("💥 M3u8Helper falhou: ${e.message}")
+            println("💥 Erro ao criar ExtractorLink: ${e.message}")
             false
         }
     }
