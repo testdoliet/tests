@@ -468,4 +468,5 @@ private suspend fun createExtractorLink(
         println("✅ Link criado em fallback")
         return true
     }
+  }
 }
