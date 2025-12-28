@@ -242,28 +242,76 @@ object SuperFlixExtractor {
     }
     
     private fun processEncryptedResponse(jsonText: String, videoId: String): String? {
-        return try {
-            val json = JSONObject(jsonText)
+    return try {
+        println("🔧 Processando resposta da API...")
+        println("📄 JSON recebido: ${jsonText.take(500)}...")
+        
+        val json = JSONObject(jsonText)
+        
+        // Verificar se tem erro
+        if (json.has("error")) {
+            println("❌ Erro no JSON: ${json.getString("error")}")
+            return null
+        }
+        
+        if (!json.has("playback")) {
+            println("❌ JSON não tem campo 'playback'")
+            println("📊 JSON completo: ${json.toString().take(500)}")
+            return null
+        }
+        
+        val playback = json.getJSONObject("playback")
+        
+        // LOG DETALHADO para debug
+        println("📊 Campos do playback:")
+        for (key in playback.keys()) {
+            val value = playback.get(key)
+            println("   $key = ${if (value.toString().length > 100) "${value.toString().take(100)}..." else value}")
+        }
+        
+        // Verificar campos obrigatórios
+        if (!playback.has("iv") || !playback.has("payload") || !playback.has("key_parts")) {
+            println("❌ Campos de criptografia ausentes")
+            return null
+        }
+        
+        // EXTRAIR BASE64 CORRETAMENTE
+        val ivBase64 = playback.getString("iv")
+        val payloadBase64 = playback.getString("payload")
+        val keyParts = playback.getJSONArray("key_parts")
+        
+        println("🔐 Dados de criptografia:")
+        println("   iv (Base64): ${ivBase64.take(50)}... (${ivBase64.length} chars)")
+        println("   payload (Base64): ${payloadBase64.take(50)}... (${payloadBase64.length} chars)")
+        println("   key_parts: ${keyParts.length()} partes")
+        
+        for (i in 0 until keyParts.length()) {
+            val part = keyParts.getString(i)
+            println("     Parte $i: ${part.take(50)}... (${part.length} chars)")
+        }
+        
+        // DECODIFICAR BASE64 CORRETAMENTE
+        try {
+            val iv = Base64.decode(ivBase64, Base64.DEFAULT)
+            val payload = Base64.decode(payloadBase64, Base64.DEFAULT)
             
-            // Verificar se tem erro
-            if (json.has("error")) {
-                println("❌ Erro no JSON: ${json.getString("error")}")
-                return null
-            }
-            
-            val playback = json.getJSONObject("playback")
-            
-            // Extrair dados de criptografia
-            val iv = Base64.decode(playback.getString("iv"), Base64.DEFAULT)
-            val payload = Base64.decode(playback.getString("payload"), Base64.DEFAULT)
-            val keyParts = playback.getJSONArray("key_parts")
+            println("✅ Base64 decodificado:")
+            println("   iv: ${iv.size} bytes")
+            println("   payload: ${payload.size} bytes")
             
             // Juntar partes da chave
             val key1 = Base64.decode(keyParts.getString(0), Base64.DEFAULT)
             val key2 = Base64.decode(keyParts.getString(1), Base64.DEFAULT)
             val key = key1 + key2
             
-            println("🔐 Descriptografando: key=${key.size} bytes, iv=${iv.size} bytes")
+            println("   key1: ${key1.size} bytes")
+            println("   key2: ${key2.size} bytes")
+            println("   key total: ${key.size} bytes (esperado: 32 para AES-256)")
+            
+            // Verificar tamanhos
+            if (key.size != 32) {
+                println("⚠️  Atenção: chave tem ${key.size} bytes, esperado 32")
+            }
             
             // Descriptografar
             val decrypted = decryptAesGcm(payload, key, iv)
@@ -273,19 +321,68 @@ object SuperFlixExtractor {
             }
             
             val decryptedText = String(decrypted, Charsets.UTF_8)
-            println("✅ Descriptografado: ${decryptedText.take(200)}...")
+            println("✅ Descriptografado com sucesso!")
+            println("📝 Texto descriptografado: ${decryptedText.take(500)}...")
             
             // Parse JSON descriptografado
             val decryptedJson = JSONObject(decryptedText)
             
+            // LOG dos parâmetros
+            println("📊 Parâmetros descriptografados:")
+            for (keyParam in decryptedJson.keys()) {
+                val value = decryptedJson.get(keyParam)
+                println("   $keyParam = $value")
+            }
+            
             // Construir URL M3U8
-            buildM3u8Url(videoId, decryptedJson)
+            return buildM3u8Url(videoId, decryptedJson)
             
         } catch (e: Exception) {
-            println("💥 Erro ao processar resposta: ${e.message}")
-            null
+            println("💥 Erro ao decodificar Base64: ${e.message}")
+            println("🔍 Tentando Base64 com FLAGS diferentes...")
+            
+            // Tentar diferentes modos de Base64
+            val base64Variants = listOf(
+                Pair("DEFAULT", Base64.DEFAULT),
+                Pair("NO_WRAP", Base64.NO_WRAP),
+                Pair("NO_PADDING", Base64.NO_PADDING),
+                Pair("URL_SAFE", Base64.URL_SAFE),
+                Pair("NO_CLOSE", Base64.NO_CLOSE)
+            )
+            
+            for ((name, flags) in base64Variants) {
+                try {
+                    println("🔧 Tentando Base64.$name...")
+                    val iv = Base64.decode(ivBase64, flags)
+                    val payload = Base64.decode(payloadBase64, flags)
+                    println("✅ Base64.$name funcionou!")
+                    
+                    // Continuar com esta decodificação...
+                    val key1 = Base64.decode(keyParts.getString(0), flags)
+                    val key2 = Base64.decode(keyParts.getString(1), flags)
+                    val key = key1 + key2
+                    
+                    val decrypted = decryptAesGcm(payload, key, iv)
+                    if (decrypted != null) {
+                        val decryptedText = String(decrypted, Charsets.UTF_8)
+                        println("✅ Descriptografado com Base64.$name")
+                        val decryptedJson = JSONObject(decryptedText)
+                        return buildM3u8Url(videoId, decryptedJson)
+                    }
+                } catch (e2: Exception) {
+                    println("❌ Base64.$name falhou: ${e2.message}")
+                }
+            }
+            
+            return null
         }
+        
+    } catch (e: Exception) {
+        println("💥 Erro ao processar resposta: ${e.message}")
+        e.printStackTrace()
+        null
     }
+                    }
     
     private fun buildM3u8Url(videoId: String, params: JSONObject): String {
         // Extrair parâmetros
