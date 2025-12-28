@@ -56,7 +56,7 @@ object SuperFlixExtractor {
 
             println("🎬 URL M3U8 final: $m3u8Url")
 
-            // PASSO 3: Criar ExtractorLink CORRETAMENTE
+            // PASSO 3: Criar ExtractorLink
             return createExtractorLink(m3u8Url, name, callback)
 
         } catch (e: Exception) {
@@ -66,75 +66,35 @@ object SuperFlixExtractor {
     }
 
     private fun extractVideoIdAndType(url: String): Triple<String, Boolean, String> {
-    println("🔍 Analisando URL: $url")
-    
-    // 1. Primeiro tenta detectar SÉRIES com parâmetro explícito: /e/ID?c=X-Y
-    val seriesPattern1 = Regex("""/e/([a-zA-Z0-9]+)\?c=(\d+-\d+)""")
-    val seriesMatch1 = seriesPattern1.find(url)
-    
-    if (seriesMatch1 != null) {
-        val id = seriesMatch1.groupValues[1]  // Ex: 283818
-        val cParam = seriesMatch1.groupValues[2]  // Ex: 1-1
-        println("✅ SÉRIE com parâmetro: ID=$id, c=$cParam")
-        return Triple(id, true, cParam)
-    }
-    
-    // 2. Tenta detectar SÉRIES com parâmetro no final: /ID-c=X-Y
-    val seriesPattern2 = Regex("""/([a-zA-Z0-9]+)-c=(\d+-\d+)""")
-    val seriesMatch2 = seriesPattern2.find(url)
-    
-    if (seriesMatch2 != null) {
-        val id = seriesMatch2.groupValues[1]
-        val cParam = seriesMatch2.groupValues[2]
-        println("✅ SÉRIE (formato 2): ID=$id, c=$cParam")
-        return Triple(id, true, cParam)
-    }
-    
-    // 3. FILMES ou séries sem parâmetro: /e/ID ou /v/ID
-    val filmPattern = Regex("""/(?:e|v)/([a-zA-Z0-9]+)(?:\?|$|/|#)""")
-    val filmMatch = filmPattern.find(url)
-    
-    if (filmMatch != null) {
-        val id = filmMatch.groupValues[1]
-        println("✅ FILME ou série sem parâmetro: ID=$id")
-        // ⭐ Verifica se tem parâmetro c= em outro lugar da URL
+        println("🔍 Extraindo ID de: $url")
+        
+        // 1. Extrai o ID (números ou letras) depois de /e/ ou /v/
+        val idPattern = Regex("""/(?:e|v)/([a-zA-Z0-9]+)""")
+        val idMatch = idPattern.find(url)
+        
+        if (idMatch == null) {
+            println("❌ Não encontrei ID na URL")
+            return Triple("", false, "")
+        }
+        
+        val videoId = idMatch.groupValues[1]
+        println("✅ ID extraído: $videoId")
+        
+        // 2. Verifica se tem parâmetro c= (série)
         val cParamPattern = Regex("""[?&]c=(\d+-\d+)""")
         val cParamMatch = cParamPattern.find(url)
         
         if (cParamMatch != null) {
             val cParam = cParamMatch.groupValues[1]
-            println("   ⭐ Tem parâmetro c= detectado: $cParam")
-            return Triple(id, true, cParam)
+            println("📺 É UMA SÉRIE: c=$cParam")
+            return Triple(videoId, true, cParam)
         }
         
-        return Triple(id, false, "")
+        // 3. É filme
+        println("🎬 É UM FILME")
+        return Triple(videoId, false, "")
     }
-    
-    // 4. Último recurso: número no final
-    val fallbackPattern = Regex("""/(\d+)(?:\?|$|/|#)""")
-    val fallbackMatch = fallbackPattern.find(url)
-    
-    if (fallbackMatch != null) {
-        val id = fallbackMatch.groupValues[1]
-        println("⚠️  Fallback: ID=$id")
-        
-        // Verifica se tem parâmetro c=
-        val cParamPattern = Regex("""[?&]c=(\d+-\d+)""")
-        val cParamMatch = cParamPattern.find(url)
-        
-        if (cParamMatch != null) {
-            val cParam = cParamMatch.groupValues[1]
-            println("   ⭐ Série detectada via parâmetro: c=$cParam")
-            return Triple(id, true, cParam)
-        }
-        
-        return Triple(id, false, "")
-    }
-    
-    println("❌ Não consegui extrair ID da URL")
-    return Triple("", false, "")
-    }
-    
+
     private suspend fun tryDirectG9r6Api(videoId: String, originalUrl: String): String? {
         return try {
             println("🚀 Tentando API direta do g9r6.com...")
@@ -168,7 +128,7 @@ object SuperFlixExtractor {
             }
 
             println("✅ API respondeu com sucesso!")
-            processEncryptedResponse(response.text, videoId)
+            return processEncryptedResponse(response.text, videoId)
 
         } catch (e: Exception) {
             println("⚠️  Falha na API direta: ${e.message}")
@@ -185,25 +145,41 @@ object SuperFlixExtractor {
         return try {
             println("🔄 Iniciando fluxo completo...")
 
-            // PASSO 1: Obter iframe do Fembed (com parâmetro correto para séries)
-            val iframeUrl = getFembedIframe(shortVideoId, isSeries, cParam)
+            // ⭐ PRIMEIRO: Tenta com DUB
+            var iframeUrl = getFembedIframeWithLang(shortVideoId, isSeries, cParam, "DUB")
             if (iframeUrl == null) {
-                println("❌ Falha ao obter iframe do Fembed")
+                println("❌ Falha ao obter iframe do Fembed com DUB")
                 return null
             }
 
-            println("✅ Iframe obtido: $iframeUrl")
+            println("✅ Iframe obtido (DUB): $iframeUrl")
 
             // PASSO 2: Acessar iframe para obter URL do Bysevepoin
-            val bysevepoinUrl = getBysevepoinFromIframe(iframeUrl, shortVideoId, isSeries)
+            var bysevepoinUrl = getBysevepoinFromIframe(iframeUrl, shortVideoId, isSeries)
+            
+            // ⭐ SE NÃO ENCONTRAR BYSEVEPOIN COM DUB, TENTA LEG
             if (bysevepoinUrl == null) {
-                println("❌ Falha ao obter URL do Bysevepoin")
+                println("⚠️  Não encontrou Bysevepoin com DUB, tentando LEG...")
+                
+                // Tenta com LEG
+                iframeUrl = getFembedIframeWithLang(shortVideoId, isSeries, cParam, "LEG")
+                if (iframeUrl == null) {
+                    println("❌ Falha ao obter iframe com LEG também")
+                    return null
+                }
+                
+                println("✅ Iframe obtido (LEG): $iframeUrl")
+                bysevepoinUrl = getBysevepoinFromIframe(iframeUrl, shortVideoId, isSeries)
+            }
+
+            if (bysevepoinUrl == null) {
+                println("❌ Falha ao obter URL do Bysevepoin (nem DUB nem LEG funcionaram)")
                 return null
             }
 
             println("✅ URL do Bysevepoin: $bysevepoinUrl")
 
-            // PASSO 3: Extrair ID real do Bysevepoin
+            // Resto do código
             val realVideoId = extractRealVideoId(bysevepoinUrl)
             if (realVideoId == null) {
                 println("❌ Não consegui extrair ID real")
@@ -211,9 +187,7 @@ object SuperFlixExtractor {
             }
 
             println("🎯 ID real encontrado: $realVideoId")
-
-            // PASSO 4: Acessar API do g9r6.com com ID real
-            tryDirectG9r6Api(realVideoId, bysevepoinUrl)
+            return tryDirectG9r6Api(realVideoId, bysevepoinUrl)
 
         } catch (e: Exception) {
             println("💥 Erro no fluxo completo: ${e.message}")
@@ -221,30 +195,25 @@ object SuperFlixExtractor {
         }
     }
 
-    private suspend fun getFembedIframe(
-    videoId: String, 
-    isSeries: Boolean = false, 
-    cParam: String = ""
-): String? {
-    return try {
-        val effectiveCParam = if (isSeries && cParam.isNotEmpty()) cParam else ""
-        val apiUrl = "$FEMBED_DOMAIN/api.php?s=$videoId&c=$effectiveCParam"
-        
-        println("📡 [POST1] ${if (isSeries) "SÉRIE" else "FILME"}: $apiUrl")
-        
-        val headers = mapOf(
-            "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8",
-            "X-Requested-With" to "XMLHttpRequest",
-            "Referer" to "$FEMBED_DOMAIN/e/$videoId${if (isSeries && cParam.isNotEmpty()) "?c=$cParam" else ""}",
-            "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36",
-            "Cookie" to API_COOKIE
-        )
-        
-        // ⭐ DUB PRIMEIRO, depois LEG
-        val languages = listOf("DUB", "LEG")
-        
-        for (lang in languages) {
-            println("🔄 Tentando idioma: $lang")
+    private suspend fun getFembedIframeWithLang(
+        videoId: String, 
+        isSeries: Boolean = false, 
+        cParam: String = "",
+        lang: String
+    ): String? {
+        return try {
+            val effectiveCParam = if (isSeries && cParam.isNotEmpty()) cParam else ""
+            val apiUrl = "$FEMBED_DOMAIN/api.php?s=$videoId&c=$effectiveCParam"
+            
+            println("📡 [POST1-$lang] ${if (isSeries) "SÉRIE" else "FILME"}: $apiUrl")
+            
+            val headers = mapOf(
+                "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8",
+                "X-Requested-With" to "XMLHttpRequest",
+                "Referer" to "$FEMBED_DOMAIN/e/$videoId${if (isSeries && cParam.isNotEmpty()) "?c=$cParam" else ""}",
+                "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36",
+                "Cookie" to API_COOKIE
+            )
             
             val postData = mapOf(
                 "action" to "getPlayer",
@@ -252,137 +221,47 @@ object SuperFlixExtractor {
                 "key" to "MA=="
             )
             
-            try {
-                val response = app.post(apiUrl, headers = headers, data = postData)
-                val html = response.text
+            val response = app.post(apiUrl, headers = headers, data = postData)
+            val html = response.text
+            
+            // ⭐ DEBUG reduzido
+            println("🔍 [POST1-$lang] Resposta (primeiros 150 chars): ${html.take(150)}")
+            
+            val iframePattern = Regex("""<iframe[^>]+src=["']([^"']+)["']""")
+            val match = iframePattern.find(html)
+            
+            if (match != null) {
+                var url = match.groupValues[1]
                 
-private suspend fun tryFullFlow(
-    shortVideoId: String, 
-    isSeries: Boolean, 
-    cParam: String, 
-    originalUrl: String
-): String? {
-    return try {
-        println("🔄 Iniciando fluxo completo...")
-
-        // ⭐ PRIMEIRO: Tenta com DUB
-        var iframeUrl = getFembedIframeWithLang(shortVideoId, isSeries, cParam, "DUB")
-        if (iframeUrl == null) {
-            println("❌ Falha ao obter iframe do Fembed com DUB")
-            return null
-        }
-
-        println("✅ Iframe obtido (DUB): $iframeUrl")
-
-        // PASSO 2: Acessar iframe para obter URL do Bysevepoin
-        var bysevepoinUrl = getBysevepoinFromIframe(iframeUrl, shortVideoId, isSeries)
-        
-        // ⭐ SE NÃO ENCONTRAR BYSEVEPOIN COM DUB, TENTA LEG
-        if (bysevepoinUrl == null) {
-            println("⚠️  Não encontrou Bysevepoin com DUB, tentando LEG...")
-            
-            // Tenta com LEG
-            iframeUrl = getFembedIframeWithLang(shortVideoId, isSeries, cParam, "LEG")
-            if (iframeUrl == null) {
-                println("❌ Falha ao obter iframe com LEG também")
-                return null
+                // Rejeita iframes vazios
+                if (url.isBlank() || url == "\"\"" || url.contains("src=\"\"")) {
+                    println("❌ [POST1-$lang] Iframe VAZIO!")
+                    return null
+                }
+                
+                println("✅ [POST1-$lang] SRC válido: $url")
+                
+                // Converte URL relativa
+                if (url.startsWith("/")) {
+                    url = "$FEMBED_DOMAIN$url"
+                }
+                
+                // Para séries: garante c=1-1
+                if (isSeries && !url.contains("c=") && cParam.isNotEmpty()) {
+                    url = url.replace("&key=", "&c=$cParam&key=")
+                }
+                
+                return url
             }
             
-            println("✅ Iframe obtido (LEG): $iframeUrl")
-            bysevepoinUrl = getBysevepoinFromIframe(iframeUrl, shortVideoId, isSeries)
+            println("❌ [POST1-$lang] Nenhum iframe encontrado")
+            null
+            
+        } catch (e: Exception) {
+            println("💥 [POST1-$lang] Erro: ${e.message}")
+            null
         }
-
-        if (bysevepoinUrl == null) {
-            println("❌ Falha ao obter URL do Bysevepoin (nem DUB nem LEG funcionaram)")
-            return null
-        }
-
-        println("✅ URL do Bysevepoin: $bysevepoinUrl")
-
-        // Resto do código continua igual...
-        val realVideoId = extractRealVideoId(bysevepoinUrl)
-        if (realVideoId == null) {
-            println("❌ Não consegui extrair ID real")
-            return null
-        }
-
-        println("🎯 ID real encontrado: $realVideoId")
-        tryDirectG9r6Api(realVideoId, bysevepoinUrl)
-
-    } catch (e: Exception) {
-        println("💥 Erro no fluxo completo: ${e.message}")
-        null
     }
-}
-
-// ⭐ NOVO MÉTODO: getFembedIframe com idioma específico
-private suspend fun getFembedIframeWithLang(
-    videoId: String, 
-    isSeries: Boolean = false, 
-    cParam: String = "",
-    lang: String
-): String? {
-    return try {
-        val effectiveCParam = if (isSeries && cParam.isNotEmpty()) cParam else ""
-        val apiUrl = "$FEMBED_DOMAIN/api.php?s=$videoId&c=$effectiveCParam"
-        
-        println("📡 [POST1-$lang] ${if (isSeries) "SÉRIE" else "FILME"}: $apiUrl")
-        
-        val headers = mapOf(
-            "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8",
-            "X-Requested-With" to "XMLHttpRequest",
-            "Referer" to "$FEMBED_DOMAIN/e/$videoId${if (isSeries && cParam.isNotEmpty()) "?c=$cParam" else ""}",
-            "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36",
-            "Cookie" to API_COOKIE
-        )
-        
-        val postData = mapOf(
-            "action" to "getPlayer",
-            "lang" to lang,
-            "key" to "MA=="
-        )
-        
-        val response = app.post(apiUrl, headers = headers, data = postData)
-        val html = response.text
-        
-        // ⭐ DEBUG reduzido
-        println("🔍 [POST1-$lang] Resposta (primeiros 150 chars): ${html.take(150)}")
-        
-        val iframePattern = Regex("""<iframe[^>]+src=["']([^"']+)["']""")
-        val match = iframePattern.find(html)
-        
-        if (match != null) {
-            var url = match.groupValues[1]
-            
-            // Rejeita iframes vazios
-            if (url.isBlank() || url == "\"\"" || url.contains("src=\"\"")) {
-                println("❌ [POST1-$lang] Iframe VAZIO!")
-                return null
-            }
-            
-            println("✅ [POST1-$lang] SRC válido: $url")
-            
-            // Converte URL relativa
-            if (url.startsWith("/")) {
-                url = "$FEMBED_DOMAIN$url"
-            }
-            
-            // Para séries: garante c=1-1
-            if (isSeries && !url.contains("c=") && cParam.isNotEmpty()) {
-                url = url.replace("&key=", "&c=$cParam&key=")
-            }
-            
-            return url
-        }
-        
-        println("❌ [POST1-$lang] Nenhum iframe encontrado")
-        null
-        
-    } catch (e: Exception) {
-        println("💥 [POST1-$lang] Erro: ${e.message}")
-        null
-    }
-}
 
     private suspend fun getBysevepoinFromIframe(
         iframeUrl: String, 
@@ -395,24 +274,23 @@ private suspend fun getFembedIframeWithLang(
             val headers = mapOf(
                 "Referer" to "$FEMBED_DOMAIN/e/$videoId",
                 "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36",
-                "Cookie" to API_COOKIE,
-                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+                "Cookie" to API_COOKIE
             )
             
             val response = app.get(iframeUrl, headers = headers)
-            
-            println("📊 [POST2] Status: ${response.code}")
-            println("📊 [POST2] Tamanho: ${response.text.length} chars")
-            
-            // DEBUG reduzido para não poluir logs
             val html = response.text
-            if (html.length < 500) {
-                println("🔍 [POST2] Resposta completa: $html")
-            } else {
-                println("🔍 [POST2] Primeiros 500 chars: ${html.take(500)}")
+            
+            // ⭐ VERIFICAÇÃO RÁPIDA: Tem Bysevepoin?
+            val hasBysevepoin = html.contains("bysevepoin") || 
+                               html.contains("bysevepoin.com") ||
+                               Regex("""https?://bysevepoin\.com""").containsMatchIn(html)
+            
+            if (!hasBysevepoin) {
+                println("❌ [POST2] Resposta NÃO contém Bysevepoin")
+                return null
             }
             
-            // ⭐ Pega APENAS URL do Bysevepoin
+            // Procura o URL exato
             val bysevepoinPattern = Regex("""<iframe[^>]+src=["'](https?://bysevepoin\.com/[^"']+)["']""")
             val match = bysevepoinPattern.find(html)
             
@@ -422,17 +300,7 @@ private suspend fun getFembedIframeWithLang(
                 return url
             }
             
-            // Fallback: qualquer iframe
-            val fallbackPattern = Regex("""<iframe[^>]+src=["'](https?://[^"']+)["']""")
-            val fallbackMatch = fallbackPattern.find(html)
-            
-            if (fallbackMatch != null) {
-                val url = fallbackMatch.groupValues[1]
-                println("⚠️  [POST2] Iframe encontrado (não é Bysevepoin): $url")
-                return url
-            }
-            
-            println("❌ [POST2] Nenhum iframe encontrado")
+            println("❌ [POST2] Tem 'bysevepoin' no HTML mas não encontrou iframe")
             null
             
         } catch (e: Exception) {
@@ -471,7 +339,7 @@ private suspend fun getFembedIframeWithLang(
 
             println("📊 Algoritmo: ${playback.getString("algorithm")}")
 
-            // FUNÇÃO PARA DECODIFICAR BASE64
+            // Função local para decodificar Base64
             fun decodeBase64(base64Str: String): ByteArray {
                 val cleanStr = base64Str.trim()
                 if (cleanStr.contains('-') || cleanStr.contains('_')) {
