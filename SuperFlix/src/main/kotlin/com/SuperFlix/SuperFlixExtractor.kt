@@ -147,45 +147,63 @@ null
 }
 
 private suspend fun getFembedIframe(videoId: String): String? {
-return try {
-val apiUrl = "$FEMBED_DOMAIN/api.php?s=$videoId&c="
-println("📡 POST para Fembed: $apiUrl")
+    return try {
+        val apiUrl = "$FEMBED_DOMAIN/api.php?s=$videoId&c="
+        println("📡 POST para Fembed: $apiUrl")
 
-val headers = mapOf(
-"Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8",
-"X-Requested-With" to "XMLHttpRequest",
-"Referer" to "$FEMBED_DOMAIN/e/$videoId",
-"User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
-"Cookie" to API_COOKIE
-)
+        val headers = mapOf(
+            "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8",
+            "X-Requested-With" to "XMLHttpRequest",
+            "Referer" to "$FEMBED_DOMAIN/e/$videoId",
+            "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36",
+            "Cookie" to API_COOKIE
+        )
 
-val postData = mapOf(
-"action" to "getPlayer",
-"lang" to "DUB",
-"key" to "MA=="
-)
+        // Tenta múltiplas linguagens
+        val languages = listOf("DUB", "LEG", "SUB", "PT-BR", "EN")
+        
+        for (lang in languages) {
+            println("🔍 Tentando linguagem: $lang")
+            
+            val postData = mapOf(
+                "action" to "getPlayer",
+                "lang" to lang,
+                "key" to "MA=="
+            )
 
-val response = app.post(apiUrl, headers = headers, data = postData)
-val text = response.text
+            try {
+                val response = app.post(apiUrl, headers = headers, data = postData)
+                val text = response.text
+                
+                // Verifica se retornou iframe válido
+                val iframeRegex = Regex("""<iframe[^>]+src=["']([^"']+)["']""")
+                val match = iframeRegex.find(text)
+                
+                if (match != null) {
+                    var url = match.groupValues[1]
+                    println("✅ Idioma $lang funcionou! SRC: $url")
+                    
+                    // Converter URL relativa para absoluta
+                    if (url.startsWith("/")) {
+                        url = "$FEMBED_DOMAIN$url"
+                    } else if (!url.startsWith("http")) {
+                        url = "$FEMBED_DOMAIN/$url"
+                    }
+                    
+                    return url
+                }
+            } catch (e: Exception) {
+                println("⚠️  Idioma $lang falhou: ${e.message}")
+            }
+        }
+        
+        println("❌ Nenhum idioma funcionou")
+        null
 
-// Extrair URL do iframe
-val iframeRegex = Regex("""<iframe[^>]+src=["']([^"']+)["']""")
-val match = iframeRegex.find(text)
-
-if (match != null) {
-var url = match.groupValues[1]
-if (url.startsWith("/")) {
-url = "$FEMBED_DOMAIN$url"
-}
-url
-} else {
-null
-}
-
-} catch (e: Exception) {
-println("⚠️  Erro no Fembed: ${e.message}")
-null
-}
+    } catch (e: Exception) {
+        println("⚠️  Erro no Fembed: ${e.message}")
+        null
+    }
 }
 
 private suspend fun getBysevepoinFromIframe(iframeUrl: String, videoId: String): String? {
