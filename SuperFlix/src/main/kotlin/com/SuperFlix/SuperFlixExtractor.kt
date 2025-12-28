@@ -3,13 +3,11 @@ package com.SuperFlix
 import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.M3u8Helper
-import com.lagradost.cloudstream3.utils.newExtractorLink
 import org.json.JSONObject
 import javax.crypto.Cipher
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
 import android.util.Base64
-
 
 object SuperFlixExtractor {
     private const val API_COOKIE = "SITE_TOTAL_ID=aTYqe6GU65PNmeCXpelwJwAAAMi; __dtsu=104017651574995957BEB724C6373F9E; __cc_id=a44d1e52993b9c2Oaaf40eba24989a06; __cc_cc=ACZ4nGNQSDQXsTFMNTWyTDROskw2MkhMTDDMXSE1KNDKxtLBMNDBjAIJMC4fgVe%2B%2F%2BDngAHemT8XsDBKrv%2FF3%2F2F2%2F%2FF0ZGhFP15u.VnW-1Y0o8o6/84-1.2.1.1-4_OXh2hYevsbO8hINijDKB8O_SPowh.pNojloHEbwX_qZorbmW8u8zqV9B7UsV6bbRmCWx_dD17mA7vJJklpOD9WBh9DA0wMV2a1QSKuR2J3FN9.TRzOUM4AhnTGFd8dJH8bHfqQdY7uYuUg7Ny1TVQDF9kXqyEPtnmkZ9rFkqQ2KS6u0t2hhFdQvRBY7dqyGfdjmyjDqwc7ZOovHB0eqep.FPHrh8T9iz1LuucA; cf_clearance=rfIEldahI7B..Y4PpZhGgwi.QOJBqIRGdFP150.VnW-1766868784-1.1-"
@@ -53,8 +51,8 @@ object SuperFlixExtractor {
             
             println("🎬 URL M3U8 final: $m3u8Url")
             
-            // PASSO 3: Gerar links M3U8
-            generateM3u8Links(m3u8Url, name, callback)
+            // PASSO 3: Gerar links M3U8 (SIMPLIFICADO)
+            generateSimpleM3u8Links(m3u8Url, name, callback)
             
         } catch (e: Exception) {
             println("💥 Erro fatal: ${e.message}")
@@ -378,10 +376,7 @@ object SuperFlixExtractor {
             }
             
             println("❌ Nenhuma URL encontrada no JSON descriptografado")
-            
-            // Se não encontrou URL, tenta usar os parâmetros para construir
-            println("🛠️  Tentando construir URL a partir de parâmetros...")
-            buildM3u8UrlFromParams(decryptedJson)
+            null
             
         } catch (e: Exception) {
             println("💥 Erro ao extrair URL do JSON: ${e.message}")
@@ -398,46 +393,6 @@ object SuperFlixExtractor {
             .replace("\\u002B", "+")
             .replace("\\u003A", ":")
             .replace("\\u003F", "?")
-    }
-    
-    // Função auxiliar para construir URL se necessário
-    private fun buildM3u8UrlFromParams(params: JSONObject): String? {
-        try {
-            // Verificar se temos o ID necessário
-            if (!params.has("video_id") && !params.has("id")) {
-                println("❌ Sem ID para construir URL")
-                return null
-            }
-            
-            val videoId = params.optString("video_id", params.optString("id", ""))
-            if (videoId.isEmpty()) {
-                println("❌ ID vazio")
-                return null
-            }
-            
-            // Tentar extrair domínio dos dados disponíveis
-            val cdnBase = params.optString("cdn", "be2719.rcr22.ams01.i8yz83pn.com")
-            val token = params.optString("t", "default")
-            val timestamp = params.optString("s", System.currentTimeMillis().toString())
-            val expire = params.optString("e", (System.currentTimeMillis() + 10800000).toString())
-            
-            // Construir URL padrão
-            val url = "https://$cdnBase/hls2/02/10529/${videoId}_h/master.m3u8" +
-                     "?t=$token" +
-                     "&s=$timestamp" +
-                     "&e=$expire" +
-                     "&f=52646943" +
-                     "&srv=1060" +
-                     "&sp=4000" +
-                     "&p=0"
-            
-            println("🔗 URL construída a partir de parâmetros: $url")
-            return url
-            
-        } catch (e: Exception) {
-            println("💥 Erro ao construir URL: ${e.message}")
-            return null
-        }
     }
     
     private fun decryptAesGcm(ciphertext: ByteArray, key: ByteArray, iv: ByteArray): ByteArray? {
@@ -484,209 +439,106 @@ object SuperFlixExtractor {
             }
         }
     }
-private suspend fun testM3u8Url(m3u8Url: String): Boolean {
-    return try {
-        println("🧪 Testando URL M3U8: $m3u8Url")
-        
-        val headers = mapOf(
-            "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
-            "Accept" to "*/*",
-            "Accept-Language" to "pt-BR,pt;q=0.9,en;q=0.8",
-            "Origin" to "https://g9r6.com",
-            "Referer" to "https://g9r6.com/",
-            "Sec-Fetch-Dest" to "empty",
-            "Sec-Fetch-Mode" to "cors",
-            "Sec-Fetch-Site" to "cross-site"
-        )
-        
-        val response = app.get(m3u8Url, headers = headers)
-        
-        println("📊 Status: ${response.code}")
-        println("📄 Conteúdo (primeiros 200 chars): ${response.text.take(200)}")
-        
-        // Verificar se é um M3U8 válido
-        val content = response.text
-        val isM3u8 = content.contains("#EXTM3U") || 
-                     content.contains("#EXT-X-VERSION") || 
-                     content.contains("#EXT-X-STREAM-INF") ||
-                     content.contains("#EXTINF")
-        
-        if (isM3u8) {
-            println("✅ É um M3U8 válido!")
-            // Verificar tipo
-            if (content.contains("#EXT-X-STREAM-INF")) {
-                println("📋 Tipo: Master Playlist")
-            } else if (content.contains("#EXTINF")) {
-                println("📋 Tipo: Media Playlist")
-            } else {
-                println("📋 Tipo: M3U8 básico")
-            }
-            true
-        } else {
-            println("❌ Não parece ser um M3U8 válido")
-            // Talvez seja um redirecionamento ou JSON
-            println("🔍 Analisando conteúdo...")
-            if (content.contains("http") || content.contains("m3u8")) {
-                println("⚠️  Pode conter URL interna")
-                // Tentar extrair URL interna
-                val urlPattern = Regex("""https?://[^\s"']+\.m3u8[^\s"']*""")
-                val match = urlPattern.find(content)
-                if (match != null) {
-                    val innerUrl = match.value
-                    println("🔗 URL interna encontrada: $innerUrl")
-                    return testM3u8Url(innerUrl)
-                }
-            }
-            false
-        }
-        
-    } catch (e: Exception) {
-        println("💥 Erro ao testar M3U8: ${e.message}")
-        false
-    }
-}
-
-private suspend fun generateM3u8Links(
-    m3u8Url: String,
-    name: String,
-    callback: (ExtractorLink) -> Unit
-): Boolean {
-    return try {
-        println("🔄 Gerando links M3U8...")
-        
-        // Primeiro, testar se a URL é válida
-        if (!testM3u8Url(m3u8Url)) {
-            println("❌ URL M3U8 inválida")
-            return false
-        }
-        
-        // Agora tentar diferentes abordagens
-        
-        // ABORDAGEM 1: Usar M3u8Helper com headers mais completos
-        println("🔧 Tentando M3u8Helper com headers aprimorados...")
-        
-        val enhancedHeaders = mapOf(
-            "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
-            "Accept" to "*/*",
-            "Accept-Language" to "pt-BR,pt;q=0.9,en;q=0.8",
-            "Accept-Encoding" to "gzip, deflate, br",
-            "Origin" to "https://g9r6.com",
-            "Referer" to "https://g9r6.com/",
-            "Sec-Fetch-Dest" to "empty",
-            "Sec-Fetch-Mode" to "cors",
-            "Sec-Fetch-Site" to "cross-site",
-            "Connection" to "keep-alive",
-            "Cache-Control" to "no-cache",
-            "Pragma" to "no-cache"
-        )
-        
-        try {
-            val links = M3u8Helper.generateM3u8(
-                name,
-                m3u8Url,
-                referer = "https://g9r6.com/",
-                headers = enhancedHeaders,
-                quality = null
+    
+    // NOVA FUNÇÃO SIMPLIFICADA
+    private suspend fun generateSimpleM3u8Links(
+        m3u8Url: String,
+        name: String,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        return try {
+            println("🔄 Gerando links M3U8 (simplificado)...")
+            
+            // Primeiro, testar se a URL é acessível
+            println("🔍 Testando acesso à URL...")
+            
+            val testHeaders = mapOf(
+                "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
+                "Referer" to "https://g9r6.com/",
+                "Accept" to "*/*"
             )
             
-            if (links.isNotEmpty()) {
-                links.forEach(callback)
-                println("🎉 SUCESSO com M3u8Helper! ${links.size} links gerados!")
-                return true
+            val testResponse = app.get(m3u8Url, headers = testHeaders)
+            
+            println("📊 Status do teste: ${testResponse.code}")
+            
+            if (testResponse.code != 200) {
+                println("❌ URL não acessível: ${testResponse.code}")
+                return false
             }
-        } catch (e: Exception) {
-            println("⚠️  M3u8Helper falhou: ${e.message}")
-        }
-        
-        // ABORDAGEM 2: Criar ExtractorLink manualmente
-        println("🔧 Tentando criar ExtractorLink manual...")
-        
-        try {
-            // Primeiro verificar se podemos acessar diretamente
-            val testResponse = app.get(m3u8Url, headers = enhancedHeaders)
-            if (testResponse.code == 200) {
-                val extractorLink = ExtractorLink(
-                    source = "SuperFlix",
-                    name = name,
+            
+            // Verificar conteúdo
+            val content = testResponse.text
+            println("📏 Tamanho do conteúdo: ${content.length} caracteres")
+            
+            // Verificar se parece um M3U8
+            val isM3u8 = content.contains("#EXTM3U") || 
+                         content.contains("#EXTINF") || 
+                         content.contains(".ts") || 
+                         content.contains(".m3u8")
+            
+            if (!isM3u8) {
+                println("⚠️  Conteúdo não parece M3U8. Primeiras 200 chars:")
+                println(content.take(200))
+                // Mesmo assim vamos tentar
+            }
+            
+            // Headers para o player
+            val playerHeaders = mapOf(
+                "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
+                "Referer" to "https://g9r6.com/",
+                "Origin" to "https://g9r6.com",
+                "Accept" to "*/*",
+                "Accept-Language" to "pt-BR,pt;q=0.9,en;q=0.8"
+            )
+            
+            // Criar ExtractorLink simples
+            val extractorLink = ExtractorLink(
+                source = "SuperFlix",
+                name = "$name (720p)",
+                url = m3u8Url,
+                referer = "https://g9r6.com/",
+                quality = 720,
+                isM3u8 = true,
+                headers = playerHeaders
+            )
+            
+            // Usar M3u8Helper de forma simples
+            try {
+                println("🔧 Usando M3u8Helper...")
+                val links = M3u8Helper.generateM3u8(
+                    name = "$name (720p)",
                     url = m3u8Url,
                     referer = "https://g9r6.com/",
-                    quality = 720,
-                    isM3u8 = true,
-                    headers = enhancedHeaders
+                    headers = playerHeaders,
+                    quality = null
                 )
                 
-                callback(extractorLink)
-                println("🎉 SUCESSO com ExtractorLink manual!")
-                return true
-            }
-        } catch (e: Exception) {
-            println("⚠️  ExtractorLink manual falhou: ${e.message}")
-        }
-        
-        // ABORDAGEM 3: Tentar extrair URL de segmentos manualmente
-        println("🔧 Tentando extrair segmentos manualmente...")
-        
-        try {
-            val response = app.get(m3u8Url, headers = enhancedHeaders)
-            val content = response.text
-            
-            // Se for uma Master Playlist, extrair a melhor qualidade
-            if (content.contains("#EXT-X-STREAM-INF")) {
-                val lines = content.lines()
-                var bestQualityUrl = ""
-                var bestBandwidth = 0
-                
-                for (i in lines.indices) {
-                    if (lines[i].contains("#EXT-X-STREAM-INF")) {
-                        val bandwidthMatch = Regex("""BANDWIDTH=(\d+)""").find(lines[i])
-                        val bandwidth = bandwidthMatch?.groupValues?.get(1)?.toIntOrNull() ?: 0
-                        
-                        if (i + 1 < lines.size && !lines[i + 1].startsWith("#")) {
-                            val segmentUrl = lines[i + 1].trim()
-                            if (bandwidth > bestBandwidth) {
-                                bestBandwidth = bandwidth
-                                bestQualityUrl = segmentUrl
-                            }
-                        }
-                    }
-                }
-                
-                if (bestQualityUrl.isNotEmpty()) {
-                    // Tornar URL absoluta se for relativa
-                    val absoluteUrl = if (bestQualityUrl.startsWith("http")) {
-                        bestQualityUrl
-                    } else {
-                        val baseUrl = m3u8Url.substringBeforeLast("/") + "/"
-                        baseUrl + bestQualityUrl
-                    }
-                    
-                    println("🎯 Melhor qualidade encontrada: $absoluteUrl ($bestBandwidth bps)")
-                    
-                    val extractorLink = newExtractorLink(
-                        source = "SuperFlix",
-                        name = "$name (720p)",
-                        url = absoluteUrl,
-                        referer = "https://g9r6.com/",
-                        quality = 720,
-                        isM3u8 = true,
-                        headers = enhancedHeaders
-                    )
-                    
+                if (links.isNotEmpty()) {
+                    links.forEach(callback)
+                    println("🎉 SUCESSO! ${links.size} links gerados via M3u8Helper!")
+                    return true
+                } else {
+                    println("⚠️  M3u8Helper não gerou links, usando link direto")
+                    // Mesmo sem links do M3u8Helper, vamos passar o link direto
                     callback(extractorLink)
-                    println("🎉 SUCESSO com segmentos manuais!")
+                    println("✅ Link direto criado!")
                     return true
                 }
+                
+            } catch (e: Exception) {
+                println("⚠️  M3u8Helper falhou: ${e.message}")
+                println("🔧 Criando link direto como fallback...")
+                
+                // Fallback: criar link direto
+                callback(extractorLink)
+                println("✅ Link direto criado como fallback!")
+                return true
             }
+            
         } catch (e: Exception) {
-            println("⚠️  Extração manual falhou: ${e.message}")
+            println("💥 Erro ao gerar links: ${e.message}")
+            false
         }
-        
-        println("❌ Nenhum link gerado")
-        false
-        
-    } catch (e: Exception) {
-        println("💥 Erro ao gerar links: ${e.message}")
-        false
     }
-  }
 }
