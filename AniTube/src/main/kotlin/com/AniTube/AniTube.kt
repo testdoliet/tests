@@ -307,7 +307,7 @@ class AniTube : MainAPI() {
             this.showStatus = showStatus
             
             if (author.isNotBlank()) {
-                this.actors = listOf(Actor(author))  // CORRIGIDO: Actor em vez de ActorData
+                this.actors = listOf(ActorData(author))  // Usar ActorData
             }
             
             if (sortedEpisodes.isNotEmpty()) {
@@ -339,9 +339,9 @@ class AniTube : MainAPI() {
                     url = m3u8Url,
                     type = ExtractorLinkType.VIDEO
                 ) {
-                    this.referer = "$mainUrl/"
-                    this.quality = Qualities.P1080.value
-                    this.isM3u8 = m3u8Url.contains("m3u8", true)
+                    referer = "$mainUrl/"
+                    quality = Qualities.P1080.value
+                    isM3u8 = m3u8Url.contains("m3u8", true)
                 }
                 
                 callback(link)
@@ -354,15 +354,17 @@ class AniTube : MainAPI() {
         backupIframe?.let { iframe ->
             val src = iframe.attr("src")
             if (src.isNotBlank()) {
+                val isM3u8 = src.contains("m3u8", true)
+                
                 val link = newExtractorLink(
                     source = name,
                     name = "Backup",
                     url = src,
                     type = ExtractorLinkType.VIDEO
                 ) {
-                    this.referer = "$mainUrl/"
-                    this.quality = Qualities.P720.value
-                    this.isM3u8 = src.contains("m3u8", true)
+                    referer = "$mainUrl/"
+                    quality = Qualities.P720.value
+                    this.isM3u8 = isM3u8
                 }
                 
                 callback(link)
@@ -382,9 +384,9 @@ class AniTube : MainAPI() {
                     url = m3u8Url,
                     type = ExtractorLinkType.VIDEO
                 ) {
-                    this.referer = "$mainUrl/"
-                    this.quality = Qualities.Unknown.value
-                    this.isM3u8 = true
+                    referer = "$mainUrl/"
+                    quality = Qualities.Unknown.value
+                    isM3u8 = true
                 }
                 
                 callback(link)
