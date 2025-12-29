@@ -302,82 +302,82 @@ class AniTube : MainAPI() {
 
     // ============ CARREGAR LINKS (VÍDEO) ============
     override suspend fun loadLinks(
-        data: String,
-        isCasting: Boolean,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        val document = app.get(data).document
-        
-        // Tentar primeiro o player FHD (blog2)
-        val fhdIframe = document.selectFirst(PLAYER_FHD)
-        fhdIframe?.let { iframe ->
-            val src = iframe.attr("src")
-            if (src.isNotBlank()) {
-                val m3u8Url = extractM3u8FromUrl(src) ?: src
-                
-                // CORREÇÃO: newExtractorLink sem reassignment
-                val link = newExtractorLink(
-                    source = name,
-                    name = "1080p",
-                    url = m3u8Url,
-                    type = ExtractorLinkType.M3U8
-                ) {
-                    referer = "$mainUrl/"
-                    quality = Qualities.P1080.value
-                    isM3u8 = m3u8Url.contains("m3u8", true)
-                }
-                
-                callback(link)
-                return true
+    data: String,
+    isCasting: Boolean,
+    subtitleCallback: (SubtitleFile) -> Unit,
+    callback: (ExtractorLink) -> Unit
+): Boolean {
+    val document = app.get(data).document
+    
+    // Tentar primeiro o player FHD (blog2)
+    val fhdIframe = document.selectFirst(PLAYER_FHD)
+    fhdIframe?.let { iframe ->
+        val src = iframe.attr("src")
+        if (src.isNotBlank()) {
+            val m3u8Url = extractM3u8FromUrl(src) ?: src
+            
+            // EXATAMENTE como no Goyabu
+            val link = newExtractorLink(
+                source = name,
+                name = "1080p",
+                url = m3u8Url,
+                type = ExtractorLinkType.VIDEO  // Use VIDEO para m3u8 também
+            ) {
+                this.referer = "$mainUrl/"
+                this.quality = Qualities.P1080.value
+                this.isM3u8 = m3u8Url.contains("m3u8", true)
             }
+            
+            callback(link)
+            return true
         }
-        
-        // Fallback para player 1 (blog1)
-        val backupIframe = document.selectFirst(PLAYER_BACKUP)
-        backupIframe?.let { iframe ->
-            val src = iframe.attr("src")
-            if (src.isNotBlank()) {
-                val isM3u8 = src.contains("m3u8", true)
-                
-                val link = newExtractorLink(
-                    source = name,
-                    name = "Backup",
-                    url = src,
-                    type = if (isM3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                ) {
-                    referer = "$mainUrl/"
-                    quality = Qualities.P720.value
-                    this.isM3u8 = isM3u8
-                }
-                
-                callback(link)
-                return true
+    }
+    
+    // Fallback para player 1 (blog1)
+    val backupIframe = document.selectFirst(PLAYER_BACKUP)
+    backupIframe?.let { iframe ->
+        val src = iframe.attr("src")
+        if (src.isNotBlank()) {
+            val isM3u8 = src.contains("m3u8", true)
+            
+            val link = newExtractorLink(
+                source = name,
+                name = "Backup",
+                url = src,
+                type = ExtractorLinkType.VIDEO
+            ) {
+                this.referer = "$mainUrl/"
+                this.quality = Qualities.P720.value
+                this.isM3u8 = isM3u8
             }
+            
+            callback(link)
+            return true
         }
-        
-        // Procurar qualquer iframe com m3u8
-        document.select("iframe").forEach { iframe ->
-            val src = iframe.attr("src")
-            if (src.contains("m3u8", true)) {
-                val m3u8Url = extractM3u8FromUrl(src) ?: src
-                
-                val link = newExtractorLink(
-                    source = name,
-                    name = "Auto",
-                    url = m3u8Url,
-                    type = ExtractorLinkType.M3U8
-                ) {
-                    referer = "$mainUrl/"
-                    quality = Qualities.Unknown.value
-                    isM3u8 = true
-                }
-                
-                callback(link)
-                return true
+    }
+    
+    // Procurar qualquer iframe com m3u8
+    document.select("iframe").forEach { iframe ->
+        val src = iframe.attr("src")
+        if (src.contains("m3u8", true)) {
+            val m3u8Url = extractM3u8FromUrl(src) ?: src
+            
+            val link = newExtractorLink(
+                source = name,
+                name = "Auto",
+                url = m3u8Url,
+                type = ExtractorLinkType.VIDEO
+            ) {
+                this.referer = "$mainUrl/"
+                this.quality = Qualities.Unknown.value
+                this.isM3u8 = true
             }
+            
+            callback(link)
+            return true
         }
-        
-        return false
+    }
+    
+    return false
     }
 }
