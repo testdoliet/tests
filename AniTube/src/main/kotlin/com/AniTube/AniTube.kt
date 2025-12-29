@@ -1,13 +1,8 @@
 package com.AniTube
 
 import com.lagradost.cloudstream3.*
-import com.lagradost.cloudstream3.LoadResponse.Companion.addTrailer
-import com.lagradost.cloudstream3.mvvm.safeApiCall
+import com.lagradost.cloudstream3.LoadResponse.Companion.addActors
 import com.lagradost.cloudstream3.utils.*
-import com.lagradost.cloudstream3.utils.AppUtils.parseJson
-import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
-import org.jsoup.Jsoup
-import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import java.net.URLDecoder
 
@@ -32,8 +27,6 @@ class AniTube : MainAPI() {
         private const val TITLE_SELECTOR = ".aniItemNome, .epiItemNome"
         private const val POSTER_SELECTOR = ".aniItemImg img, .epiItemImg img"
         private const val AUDIO_BADGE_SELECTOR = ".aniCC, .epiCC"
-        private const val ANIME_LINK_SELECTOR = ".aniItem > a"
-        private const val EPISODE_LINK_SELECTOR = ".epiItem > a"
         
         // Página do anime
         private const val ANIME_TITLE = "h1"
@@ -108,15 +101,9 @@ class AniTube : MainAPI() {
         return badge?.text()?.contains("Dublado", true) ?: false
     }
     
-    private fun getAudioType(element: Element): String {
-        val badge = element.selectFirst(AUDIO_BADGE_SELECTOR)
-        return badge?.text()?.trim() ?: "Legendado"
-    }
-    
     private fun extractM3u8FromUrl(url: String): String? {
         return try {
             if (url.contains("d=")) {
-                // Formato: https://api.anivideo.net/videohls.php?d=URL_ENCODED
                 val encoded = url.substringAfter("d=").substringBefore("&")
                 URLDecoder.decode(encoded, "UTF-8")
             } else {
@@ -130,7 +117,6 @@ class AniTube : MainAPI() {
     private fun Element.toAnimeSearchResponse(): AnimeSearchResponse? {
         val href = this.selectFirst("a")?.attr("href") ?: return null
         
-        // Verificar se é uma página de anime válida
         if (!href.contains("/video/") && !href.contains("anitube.news")) {
             return null
         }
@@ -173,7 +159,6 @@ class AniTube : MainAPI() {
         
         val document = app.get(url).document
         
-        // Combinar animes e episódios da página inicial
         val allItems = mutableListOf<SearchResponse>()
         
         // Animes em destaque
@@ -190,7 +175,6 @@ class AniTube : MainAPI() {
             }
         }
         
-        // Remover duplicados por URL
         val uniqueItems = allItems.distinctBy { it.url }
         
         return newHomePageResponse(request.name, uniqueItems, hasNext = true)
@@ -255,7 +239,7 @@ class AniTube : MainAPI() {
             }
         }
         
-        // Detectar áudio baseado no título e metadados
+        // Detectar áudio
         val isDubbed = rawTitle.contains("dublado", true) || 
                       audioType.contains("dublado", true) ||
                       url.contains("dublado", true)
@@ -265,7 +249,6 @@ class AniTube : MainAPI() {
             val episodeTitle = element.text().trim()
             val episodeUrl = element.attr("href")
             
-            // Extrair número do episódio
             val episodeNumber = extractEpisodeNumber(episodeTitle) ?: 1
             
             newEpisode(episodeUrl) {
@@ -277,7 +260,6 @@ class AniTube : MainAPI() {
         
         // Se não encontrou episódios na lista, verificar se é uma página de episódio único
         val allEpisodes = if (episodesList.isEmpty() && url.contains("/video/")) {
-            // É uma página de episódio único
             listOf(
                 newEpisode(url) {
                     this.name = rawTitle
@@ -306,8 +288,9 @@ class AniTube : MainAPI() {
             this.tags = genres
             this.showStatus = showStatus
             
+            // CORREÇÃO: Usar addActors com Actor, não ActorData
             if (author.isNotBlank()) {
-                this.actors = listOf(ActorData(author))  // Usar ActorData
+                addActors(listOf(Actor(author)))  // CORRETO: Actor, não ActorData
             }
             
             if (sortedEpisodes.isNotEmpty()) {
@@ -333,11 +316,12 @@ class AniTube : MainAPI() {
             if (src.isNotBlank()) {
                 val m3u8Url = extractM3u8FromUrl(src) ?: src
                 
+                // CORREÇÃO: newExtractorLink sem reassignment
                 val link = newExtractorLink(
                     source = name,
                     name = "1080p",
                     url = m3u8Url,
-                    type = ExtractorLinkType.VIDEO
+                    type = ExtractorLinkType.M3U8
                 ) {
                     referer = "$mainUrl/"
                     quality = Qualities.P1080.value
@@ -360,7 +344,7 @@ class AniTube : MainAPI() {
                     source = name,
                     name = "Backup",
                     url = src,
-                    type = ExtractorLinkType.VIDEO
+                    type = if (isM3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
                 ) {
                     referer = "$mainUrl/"
                     quality = Qualities.P720.value
@@ -382,7 +366,7 @@ class AniTube : MainAPI() {
                     source = name,
                     name = "Auto",
                     url = m3u8Url,
-                    type = ExtractorLinkType.VIDEO
+                    type = ExtractorLinkType.M3U8
                 ) {
                     referer = "$mainUrl/"
                     quality = Qualities.Unknown.value
