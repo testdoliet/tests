@@ -5,9 +5,9 @@ import com.lagradost.cloudstream3.plugins.Plugin
 import android.content.Context
 
 @CloudstreamPlugin
-class AniTubePlugin: Plugin() {
+class AniTubePlugin : Plugin() {
     override fun load(context: Context) {
-
+        // Registra o provider AniTube
         registerMainAPI(AniTube())
     }
 }
