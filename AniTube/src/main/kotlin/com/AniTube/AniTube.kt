@@ -1,4 +1,4 @@
-package com.Anitube
+package com.AniTube
 
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.LoadResponse.Companion.addTrailer
@@ -11,9 +11,9 @@ import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import java.net.URLDecoder
 
-class Anitube : MainAPI() {
+class AniTube : MainAPI() {
     override var mainUrl = "https://www.anitube.news"
-    override var name = "Anitube"
+    override var name = "AniTube"
     override val hasMainPage = true
     override var lang = "pt-br"
     override val hasDownloadSupport = false
@@ -200,7 +200,7 @@ class Anitube : MainAPI() {
     override suspend fun search(query: String): List<SearchResponse> {
         if (query.length < 2) return emptyList()
         
-        val searchUrl = "$mainUrl$SEARCH_PATH${query.encodeUrl()}"
+        val searchUrl = "$mainUrl$SEARCH_PATH${query.replace(" ", "+")}"
         val document = app.get(searchUrl).document
         
         return document.select("$ANIME_CARD, $EPISODE_CARD")
@@ -268,24 +268,22 @@ class Anitube : MainAPI() {
             // Extrair número do episódio
             val episodeNumber = extractEpisodeNumber(episodeTitle) ?: 1
             
-            Episode(
-                data = episodeUrl,
-                name = episodeTitle,
-                episode = episodeNumber,
-                posterUrl = poster
-            )
+            newEpisode(episodeUrl) {
+                this.name = episodeTitle
+                this.episode = episodeNumber
+                this.posterUrl = poster
+            }
         }
         
         // Se não encontrou episódios na lista, verificar se é uma página de episódio único
         val allEpisodes = if (episodesList.isEmpty() && url.contains("/video/")) {
             // É uma página de episódio único
             listOf(
-                Episode(
-                    data = url,
-                    name = rawTitle,
-                    episode = 1,
-                    posterUrl = poster
-                )
+                newEpisode(url) {
+                    this.name = rawTitle
+                    this.episode = 1
+                    this.posterUrl = poster
+                }
             )
         } else {
             episodesList
@@ -309,7 +307,7 @@ class Anitube : MainAPI() {
             this.showStatus = showStatus
             
             if (author.isNotBlank()) {
-                actors = listOf(author)
+                this.actors = listOf(ActorData(author))
             }
             
             if (sortedEpisodes.isNotEmpty()) {
