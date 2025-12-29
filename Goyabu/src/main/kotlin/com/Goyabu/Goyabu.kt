@@ -17,14 +17,11 @@ class Goyabu : MainAPI() {
 
     companion object {
         private const val SEARCH_PATH = "/?s="
-        private const val LANCAMENTOS_PATH = "/lancamentos"
         private val loadingMutex = Mutex()
 
-        // LISTA COMPLETA DE GÊNEROS (REMOVIDOS: /18, /generos/gore, /generos/ecchi)
+        // LISTA REDUZIDA DE GÊNEROS (REMOVIDOS: Lançamentos, China, Artes Marciais, Família)
         private val ALL_GENRES = listOf(
-            "/generos/china" to "China",
             "/generos/aventura" to "Aventura",
-            "/generos/artes-marciais" to "Artes Marciais",
             "/generos/acao" to "Ação",
             "/generos/comedia" to "Comédia",
             "/generos/escolar" to "Escolar",
@@ -34,7 +31,6 @@ class Goyabu : MainAPI() {
             "/generos/ficcao-cientifica" to "Ficção Científica",
             "/generos/fantasia" to "Fantasia",
             "/generos/esporte" to "Esporte",
-            "/generos/familia" to "Família",
             "/generos/harem" to "Harém",
             "/generos/guerra" to "Guerra"
         )
@@ -79,11 +75,10 @@ class Goyabu : MainAPI() {
     }
 
     init {
-        println("🎬 GOYABU: Plugin inicializado - ${ALL_GENRES.size} gêneros + Lançamentos")
+        println("🎬 GOYABU: Plugin inicializado - ${ALL_GENRES.size} gêneros")
     }
 
     override val mainPage = mainPageOf(
-        "$mainUrl$LANCAMENTOS_PATH" to "Lançamentos",
         *ALL_GENRES.map { (path, name) -> 
             "$mainUrl$path" to name 
         }.toTypedArray()
@@ -356,193 +351,20 @@ class Goyabu : MainAPI() {
                 val url = if (page > 1) "${request.data}page/$page/" else request.data
                 val document = app.get(url, timeout = 20).document
 
-                // TRATAMENTO ESPECIAL PARA PÁGINA DE LANÇAMENTOS
-                val elements = if (request.name == "Lançamentos") {
-                    // Na página de lançamentos, extraímos episódios em vez de animes
-                    document.select(".boxEP.grid-view a")
-                } else {
-                    document.select("article a, .boxAN a, a[href*='/anime/']")
-                }
-
+                val elements = document.select("article a, .boxAN a, a[href*='/anime/']")
                 println("📊 ${elements.size} links encontrados em '${request.name}'")
 
-                val homeItems = if (request.name == "Lançamentos") {
-                    // Para lançamentos, precisamos transformar episódios em itens de anime
-                    extractLancamentosItems(document, elements)
-                } else {
-                    elements.mapNotNull { it.toSearchResponse() }
-                        .distinctBy { it.url }
-                        .take(30)
-                }
+                val homeItems = elements.mapNotNull { it.toSearchResponse() }
+                    .distinctBy { it.url }
+                    .take(30)
 
-                val hasNextPage = if (request.name == "Lançamentos") {
-                    // Verificar paginação para lançamentos
-                    document.select(".pagination .page-numbers a").any { it.text() != "1" }
-                } else {
-                    false
-                }
-
+                val hasNextPage = false
                 newHomePageResponse(request.name, homeItems, hasNextPage)
             } catch (e: Exception) {
                 println("❌ ERRO: ${request.name} - ${e.message}")
                 newHomePageResponse(request.name, emptyList(), false)
             }
         }
-    }
-
-    // MODIFICADO: Função para extrair itens da página de lançamentos
-    private fun extractLancamentosItems(document: org.jsoup.nodes.Document, elements: List<Element>): List<AnimeSearchResponse> {
-        val items = mutableListOf<AnimeSearchResponse>()
-        
-        // Extrair todos os animes da página para pesquisa de thumbs
-        val allAnimeElements = document.select("article a, .boxAN a, a[href*='/anime/']")
-        val animeMap = mutableMapOf<String, AnimeInfo>()
-        
-        // Criar mapa de animes para pesquisa rápida
-        allAnimeElements.forEach { element ->
-            try {
-                val titleElement = element.selectFirst(".title, .hidden-text")
-                val rawTitle = titleElement?.text()?.trim() ?: return@forEach
-                val cleanedTitle = cleanTitle(rawTitle)
-                
-                if (cleanedTitle.isNotBlank()) {
-                    val posterUrl = element.extractPosterUrl()
-                    val hasDubBadge = element.selectFirst(".audio-box.dublado, .dublado") != null
-                    val href = element.attr("href")
-                    
-                    animeMap[cleanedTitle.lowercase()] = AnimeInfo(
-                        title = cleanedTitle,
-                        posterUrl = posterUrl,
-                        url = href,
-                        isDubbed = hasDubBadge
-                    )
-                }
-            } catch (e: Exception) {
-                println("⚠️ Erro ao mapear anime: ${e.message}")
-            }
-        }
-        
-        println("📊 Mapeados ${animeMap.size} animes para pesquisa de thumbs")
-        
-        elements.forEach { element ->
-            try {
-                // Extrair informações do episódio
-                val titleElement = element.selectFirst(".title.hidden-text")
-                val rawTitle = titleElement?.text()?.trim() ?: return@forEach
-                
-                val epTypeElement = element.selectFirst(".ep-type b")
-                val episodeNumber = epTypeElement?.text()?.trim()?.let { text ->
-                    val regex = Regex("""Epis[oó]dio\s+(\d+)""", RegexOption.IGNORE_CASE)
-                    val match = regex.find(text)
-                    match?.groupValues?.get(1)?.toIntOrNull() ?: 1
-                } ?: 1
-                
-                // Determinar se é dublado
-                val isDubbed = element.selectFirst(".audio-box.dublado") != null
-                
-                // Extrair título base do anime (remover - Ep X e Dublado)
-                val baseTitle = extractBaseAnimeTitle(rawTitle, isDubbed)
-                
-                // Procurar anime correspondente no mapa
-                val animeInfo = findBestMatchingAnime(baseTitle, animeMap)
-                
-                // Usar thumb do anime encontrado
-                val bestThumb = animeInfo?.posterUrl
-                val animeUrl = animeInfo?.url ?: "https://goyabu.io/?s=${baseTitle.replace(" ", "+")}"
-                
-                // Limpar título final (remover episódio)
-                val cleanDisplayTitle = cleanTitle(baseTitle)
-                
-                // Criar badge com informação do episódio
-                val episodeBadge = "Ep $episodeNumber"
-                
-                // Criar resposta
-                val searchResponse = newAnimeSearchResponse(cleanDisplayTitle, fixUrl(animeUrl)) {
-                    this.posterUrl = bestThumb
-                    this.type = TvType.Anime
-                    
-                    // Adicionar status de dub/leg com contagem de episódios
-                    if (isDubbed) {
-                        addDubStatus(dubExist = true, subExist = false)
-                    } else {
-                        addDubStatus(dubExist = false, subExist = true)
-                    }
-                    
-                    println("🎬 Lançamento: $cleanDisplayTitle - $episodeBadge ${if (isDubbed) "(Dublado)" else "(Legendado)"}")
-                }
-                
-                items.add(searchResponse)
-                
-            } catch (e: Exception) {
-                println("❌ Erro ao processar item de lançamento: ${e.message}")
-            }
-        }
-        
-        return items.distinctBy { it.url }.take(30)
-    }
-    
-    // NOVO: Classe auxiliar para informações do anime
-    private data class AnimeInfo(
-        val title: String,
-        val posterUrl: String?,
-        val url: String,
-        val isDubbed: Boolean
-    )
-    
-    // NOVO: Extrair título base do anime
-    private fun extractBaseAnimeTitle(rawTitle: String, isDubbed: Boolean): String {
-        var title = rawTitle.trim()
-        
-        // Remover " - Ep X" ou " Episódio X"
-        title = title.replace(Regex("""\s*[-–]\s*Ep(?:is[oó]dio)?\s*\d+""", RegexOption.IGNORE_CASE), "")
-        
-        // Remover "(Dublado)" se já tivermos a informação
-        if (isDubbed) {
-            title = title.replace("(Dublado)", "", ignoreCase = true)
-            title = title.replace("Dublado", "", ignoreCase = true)
-        }
-        
-        // Remover " (Legendado)" se existir
-        title = title.replace("(Legendado)", "", ignoreCase = true)
-        title = title.replace("Legendado", "", ignoreCase = true)
-        
-        return title.trim()
-    }
-    
-    // NOVO: Encontrar melhor correspondência de anime
-    private fun findBestMatchingAnime(baseTitle: String, animeMap: Map<String, AnimeInfo>): AnimeInfo? {
-        val searchTitle = baseTitle.lowercase().trim()
-        
-        // Tentar correspondência exata primeiro
-        animeMap[searchTitle]?.let { return it }
-        
-        // Tentar correspondência parcial
-        for ((key, anime) in animeMap) {
-            if (searchTitle.contains(key, ignoreCase = true) || key.contains(searchTitle, ignoreCase = true)) {
-                return anime
-            }
-        }
-        
-        // Tentar remover palavras comuns e buscar novamente
-        val simplifiedTitle = searchTitle
-            .replace("(dublado)", "", ignoreCase = true)
-            .replace("(legendado)", "", ignoreCase = true)
-            .replace("online", "", ignoreCase = true)
-            .replace("anime", "", ignoreCase = true)
-            .replace("\\s+".toRegex(), " ")
-            .trim()
-        
-        if (simplifiedTitle.isNotBlank() && simplifiedTitle != searchTitle) {
-            animeMap[simplifiedTitle]?.let { return it }
-            
-            for ((key, anime) in animeMap) {
-                if (simplifiedTitle.contains(key, ignoreCase = true) || key.contains(simplifiedTitle, ignoreCase = true)) {
-                    return anime
-                }
-            }
-        }
-        
-        return null
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
@@ -789,6 +611,7 @@ class Goyabu : MainAPI() {
         return episodes
     }
 
+    // MODIFICADO: Extrair episódios via HTML com thumbnail
     private fun extractEpisodesFallback(document: org.jsoup.nodes.Document, baseUrl: String): List<Episode> {
         val episodes = mutableListOf<Episode>()
 
@@ -798,12 +621,14 @@ class Goyabu : MainAPI() {
 
         if (episodeItems.isEmpty()) {
             println("   ⚠️ Nenhum .episode-item encontrado")
+            
+            // AGORA TAMBÉM PROCURA .boxEP.grid-view (os mesmos seletores da página de lançamentos)
             val boxEPs = document.select(".boxEP.grid-view, .boxEP")
             println("   🔄 Fallback: ${boxEPs.size} .boxEP encontrados")
 
             boxEPs.forEachIndexed { index, boxEP ->
                 try {
-                    extractEpisodeFromBoxEP(boxEP, index, episodes)
+                    extractEpisodeFromBoxEPWithThumb(boxEP, index, episodes)
                 } catch (e: Exception) {
                     println("   ❌ Erro no boxEP ${index + 1}: ${e.message}")
                 }
@@ -814,7 +639,7 @@ class Goyabu : MainAPI() {
             episodeItems.forEachIndexed { index, episodeItem ->
                 try {
                     val boxEP = episodeItem.selectFirst(".boxEP") ?: episodeItem
-                    extractEpisodeFromBoxEP(boxEP, index, episodes)
+                    extractEpisodeFromBoxEPWithThumb(boxEP, index, episodes)
                 } catch (e: Exception) {
                     println("   ❌ Erro no episode-item ${index + 1}: ${e.message}")
                 }
@@ -835,16 +660,17 @@ class Goyabu : MainAPI() {
 
                     val episodeNum = extractEpisodeNumberFromHref(href, index + 1)
 
-                    // ADICIONADO: Tentar extrair thumb do link
-                    val thumb = link.selectFirst("img[src]")?.attr("src")?.let { fixUrl(it) }
+                    // ADICIONADO: Tentar extrair thumb do link (como na página de lançamentos)
+                    val thumb = extractThumbFromElement(link)
 
                     episodes.add(newEpisode(fixUrl(href)) {
                         this.name = "Episódio $episodeNum"
                         this.episode = episodeNum
                         this.season = 1
-                        // ADICIONA THUMB SE EXISTIR
+                        // ADICIONA THUMB SE ENCONTRADO
                         if (thumb != null) {
                             this.posterUrl = thumb
+                            println("   🖼️ Thumb encontrada para Ep $episodeNum via link direto")
                         }
                     })
 
@@ -859,13 +685,15 @@ class Goyabu : MainAPI() {
         return episodes
     }
 
-    private fun extractEpisodeFromBoxEP(boxEP: Element, index: Int, episodes: MutableList<Episode>) {
+    // NOVO: Função para extrair episódio com thumbnail (como na página de lançamentos)
+    private fun extractEpisodeFromBoxEPWithThumb(boxEP: Element, index: Int, episodes: MutableList<Episode>) {
         val linkElement = boxEP.selectFirst("a[href]") ?: return
         val href = linkElement.attr("href").trim()
         if (href.isBlank()) return
 
         var episodeNum = index + 1
 
+        // Tentar extrair número do episódio do título
         val epTypeElement = linkElement.selectFirst(".ep-type b")
         epTypeElement?.text()?.trim()?.let { text ->
             val regex = Regex("""Epis[oó]dio\s+(\d+)""", RegexOption.IGNORE_CASE)
@@ -873,45 +701,24 @@ class Goyabu : MainAPI() {
             match?.groupValues?.get(1)?.toIntOrNull()?.let { episodeNum = it }
         }
 
+        // Tentar extrair do data-episode-number do parent
         boxEP.parent()?.attr("data-episode-number")?.toIntOrNull()?.let { episodeNum = it }
+        
+        // Fallback: extrair do href
         episodeNum = extractEpisodeNumberFromHref(href, episodeNum)
 
-        // MELHORADO: Extrair thumb de mais lugares
-        var thumb: String? = null
-        
-        // Método 1: Do estilo background-image
-        linkElement.selectFirst(".coverImg")?.attr("style")?.let { style ->
-            val regex = Regex("""url\(['"]?([^'"()]+)['"]?\)""")
-            regex.find(style)?.groupValues?.get(1)?.replace("&quot;", "")?.trim()?.let { 
-                thumb = fixUrl(it)
-            }
-        }
-        
-        // Método 2: De imagem direta
-        if (thumb == null) {
-            linkElement.selectFirst("img[src]")?.attr("src")?.let { src ->
-                thumb = fixUrl(src.trim())
-            }
-        }
-        
-        // Método 3: Do boxEP pai
-        if (thumb == null) {
-            boxEP.selectFirst("img[src]")?.attr("src")?.let { src ->
-                thumb = fixUrl(src.trim())
-            }
-        }
-        
-        // Método 4: Do data-thumb
-        if (thumb == null) {
-            linkElement.selectFirst("[data-thumb]")?.attr("data-thumb")?.let { dataThumb ->
-                thumb = fixUrl(dataThumb.trim())
-            }
-        }
+        // EXTRAIR THUMBNAIL (como na página de lançamentos)
+        val thumb = extractThumbFromElement(linkElement)
 
+        // Determinar título do episódio
         val episodeTitle = epTypeElement?.text()?.trim() ?: "Episódio $episodeNum"
 
+        // Verificar se é dublado
+        val isDubbed = linkElement.selectFirst(".audio-box.dublado") != null
+        val titleWithDub = if (isDubbed) "$episodeTitle (Dublado)" else episodeTitle
+
         episodes.add(newEpisode(fixUrl(href)) {
-            this.name = episodeTitle
+            this.name = titleWithDub
             this.episode = episodeNum
             this.season = 1
             // ADICIONA THUMB SE ENCONTRADO
@@ -921,7 +728,50 @@ class Goyabu : MainAPI() {
             }
         })
 
-        println("   ✅ Ep $episodeNum: $episodeTitle -> $href")
+        println("   ✅ Ep $episodeNum: $titleWithDub -> $href")
+    }
+
+    // NOVO: Função para extrair thumbnail de elementos (como na página de lançamentos)
+    private fun extractThumbFromElement(element: Element): String? {
+        var thumb: String? = null
+        
+        // Método 1: Do estilo background-image (.coverImg)
+        element.selectFirst(".coverImg")?.attr("style")?.let { style ->
+            val regex = Regex("""url\(['"]?([^'"()]+)['"]?\)""")
+            regex.find(style)?.groupValues?.get(1)?.replace("&quot;", "")?.trim()?.let { 
+                thumb = fixUrl(it)
+            }
+        }
+        
+        // Método 2: De imagem direta
+        if (thumb == null) {
+            element.selectFirst("img[src]")?.attr("src")?.let { src ->
+                thumb = fixUrl(src.trim())
+            }
+        }
+        
+        // Método 3: Do data-thumb
+        if (thumb == null) {
+            element.selectFirst("[data-thumb]")?.attr("data-thumb")?.let { dataThumb ->
+                thumb = fixUrl(dataThumb.trim())
+            }
+        }
+        
+        // Método 4: Do data-miniature-b64
+        if (thumb == null) {
+            element.selectFirst("[data-miniature-b64]")?.attr("data-miniature-b64")?.let { base64Path ->
+                // Se o caminho for base64, converter
+                if (base64Path.startsWith("L")) { // Base64 para "/"
+                    try {
+                        thumb = "$mainUrl$base64Path"
+                    } catch (e: Exception) {
+                        // Ignorar erro de conversão
+                    }
+                }
+            }
+        }
+        
+        return thumb
     }
 
     private fun extractEpisodeNumberFromHref(href: String, default: Int): Int {
