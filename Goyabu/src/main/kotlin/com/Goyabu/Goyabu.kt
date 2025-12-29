@@ -69,7 +69,7 @@ class Goyabu : MainAPI() {
         return if (clean.isBlank()) dirtyTitle else clean
     }
 
-    // CORREÇÃO: Remover FRASES INTEIRAS que contenham palavras-chave
+    // CORREÇÃO: Remover FRASES INTEIRAS que contenham palavras-chave e que terminem com ...
     private fun cleanSynopsis(dirtySynopsis: String): String {
         var clean = dirtySynopsis.trim()
         
@@ -77,7 +77,7 @@ class Goyabu : MainAPI() {
             return "Sinopse não disponível."
         }
         
-        // Remover frases inteiras que contenham palavras-chave (até a vírgula ou ponto)
+        // Remover frases inteiras que contenham palavras-chave (até a vírgula, ponto ou reticências)
         val phrasesToRemove = listOf(
             "Assistir.*?Online",
             "Todos os Episodios.*?Online", 
@@ -90,9 +90,13 @@ class Goyabu : MainAPI() {
         )
         
         phrasesToRemove.forEach { phrasePattern ->
-            val regex = Regex("""[^.,]*$phrasePattern[^.,]*[.,]?\s*""", RegexOption.IGNORE_CASE)
+            // CORREÇÃO: Também capturar frases que terminam com reticências
+            val regex = Regex("""[^.,]*$phrasePattern[^.,]*([.,]|\.\.\.)?\s*""", RegexOption.IGNORE_CASE)
             clean = regex.replace(clean, "")
         }
+        
+        // CORREÇÃO: Remover frases que terminam com ... e estão incompletas
+        clean = clean.replace(Regex("""[^.!?]*\.\.\.\s*$"""), "")
         
         // Remover vírgulas seguidas de ponto
         clean = clean.replace(Regex(",\\.\\s*$"), ".")
@@ -103,6 +107,11 @@ class Goyabu : MainAPI() {
         
         // Limpar espaços extras
         clean = clean.replace(Regex("\\s+"), " ").trim()
+        
+        // CORREÇÃO: Se terminar com reticências sem sentido, remover
+        if (clean.endsWith("...") && clean.length < 50) {
+            clean = clean.replace(Regex("\\.\\.\\.\$"), ".")
+        }
         
         // Garantir ponto final se necessário
         if (clean.isNotEmpty() && !clean.endsWith(".") && !clean.endsWith("!") && !clean.endsWith("?") && clean.length > 10) {
@@ -311,7 +320,7 @@ class Goyabu : MainAPI() {
                 ?.trim()
                 ?: "Sinopse não disponível."
 
-            // USAR SINOPSE LIMPA (CORREÇÃO: remove frases inteiras)
+            // USAR SINOPSE LIMPA (CORREÇÃO: remove frases inteiras e ...)
             val synopsis = cleanSynopsis(rawSynopsis)
             if (rawSynopsis != synopsis && synopsis != "Sinopse não disponível.") {
                 println("🧹 Sinopse limpa (frases removidas):")
@@ -374,6 +383,9 @@ class Goyabu : MainAPI() {
                     sortedEpisodes.take(5).forEach { ep ->
                         val thumbInfo = if (ep.posterUrl != null) " [COM THUMB]" else " [SEM THUMB]"
                         println("   📺 Ep ${ep.episode}: ${ep.name} -> ${ep.data}$thumbInfo")
+                        if (ep.posterUrl != null) {
+                            println("      🖼️ Thumb URL: ${ep.posterUrl}")
+                        }
                     }
                     if (sortedEpisodes.size > 5) {
                         val withThumb = sortedEpisodes.count { it.posterUrl != null }
@@ -397,6 +409,29 @@ class Goyabu : MainAPI() {
                 this.plot = "Erro: ${e.message}"
             }
         }
+    }
+
+    // CORREÇÃO CRÍTICA: Consertar URLs de thumbnail com barras extras
+    private fun fixThumbnailUrl(thumbUrl: String?): String? {
+        if (thumbUrl.isNullOrBlank()) return null
+        
+        var fixed = thumbUrl.trim()
+        
+        // CORREÇÃO: Remover barras duplicadas do início
+        fixed = fixed.replace(Regex("""^(https?://[^/]+)//"""), "$1/")
+        
+        // CORREÇÃO: Remover \/ (barra escapada) - comum em JSON
+        fixed = fixed.replace("\\/", "/")
+        
+        // CORREÇÃO: Garantir que comece com http
+        if (!fixed.startsWith("http")) {
+            fixed = "$mainUrl/$fixed"
+        }
+        
+        // CORREÇÃO: Remover barras duplicadas no meio
+        fixed = fixed.replace(Regex("""(?<!:)/+"""), "/")
+        
+        return fixed
     }
 
     // CORREÇÃO PRINCIPAL: Extrair episódios com thumbnails do JavaScript
@@ -472,8 +507,9 @@ class Goyabu : MainAPI() {
                         // Extrair título
                         val epTitle = extractValueFromJson(jsonObj, "title", "name") ?: "Episódio $epNumber"
                         
-                        // CORREÇÃO CRÍTICA: Extrair thumbnail de várias chaves possíveis
-                        val epThumb = extractThumbnailFromJsonObject(jsonObj)
+                        // CORREÇÃO: Extrair thumbnail e CONCERTAR URL
+                        val rawThumb = extractThumbnailFromJsonObject(jsonObj)
+                        val epThumb = fixThumbnailUrl(rawThumb)
                         
                         // Construir URL
                         val epUrl = buildEpisodeUrl(epId, epNumber)
@@ -483,11 +519,11 @@ class Goyabu : MainAPI() {
                             this.episode = epNumber
                             this.season = 1
                             
-                            // ADICIONAR THUMB SE ENCONTRADA
+                            // ADICIONAR THUMB SE ENCONTRADA (AGORA CONCERTADA)
                             if (epThumb != null) {
-                                val fixedThumb = if (epThumb.startsWith("http")) epThumb else fixUrl(epThumb)
-                                this.posterUrl = fixedThumb
-                                println("   ✅ Ep $epNumber: Thumb encontrada -> $fixedThumb")
+                                this.posterUrl = epThumb
+                                println("   ✅ Ep $epNumber: Thumb CONCERTADA -> $epThumb")
+                                println("      Thumb original: $rawThumb")
                             } else {
                                 println("   ⚠️ Ep $epNumber: Thumb NÃO encontrada no JSON")
                             }
@@ -557,7 +593,8 @@ class Goyabu : MainAPI() {
                     val id = extractValueFromJson(fullMatch, "id") ?: ""
                     val epNum = extractValueFromJson(fullMatch, "episodio", "episode")?.toIntOrNull() ?: matchCount
                     val title = extractValueFromJson(fullMatch, "title", "name") ?: "Episódio $epNum"
-                    val thumb = extractThumbnailFromJsonObject(fullMatch)
+                    val rawThumb = extractThumbnailFromJsonObject(fullMatch)
+                    val thumb = fixThumbnailUrl(rawThumb)
 
                     if (id.isNotBlank()) {
                         episodes.add(newEpisode("$mainUrl/$id") {
@@ -566,9 +603,8 @@ class Goyabu : MainAPI() {
                             this.season = 1
                             
                             if (thumb != null) {
-                                val fixedThumb = if (thumb.startsWith("http")) thumb else fixUrl(thumb)
-                                this.posterUrl = fixedThumb
-                                println("   📺 Ep $epNum: Thumb via padrão individual -> $fixedThumb")
+                                this.posterUrl = thumb
+                                println("   📺 Ep $epNum: Thumb via padrão individual -> $thumb")
                             }
                         })
                     }
@@ -606,10 +642,13 @@ class Goyabu : MainAPI() {
             for (pattern in thumbPatterns) {
                 val matches = pattern.findAll(scriptContent)
                 matches.forEach { match ->
-                    val thumb = match.groupValues.getOrNull(1)
-                    if (!thumb.isNullOrBlank() && !foundThumbs.contains(thumb)) {
-                        foundThumbs.add(thumb)
-                        println("   🔍 Thumb encontrada em variável: $thumb")
+                    val rawThumb = match.groupValues.getOrNull(1)
+                    if (!rawThumb.isNullOrBlank()) {
+                        val thumb = fixThumbnailUrl(rawThumb)
+                        if (thumb != null && !foundThumbs.contains(thumb)) {
+                            foundThumbs.add(thumb)
+                            println("   🔍 Thumb encontrada em variável: $thumb")
+                        }
                     }
                 }
             }
@@ -622,7 +661,7 @@ class Goyabu : MainAPI() {
                         this.name = episode.name
                         this.episode = episode.episode
                         this.season = episode.season
-                        this.posterUrl = if (thumb.startsWith("http")) thumb else fixUrl(thumb)
+                        this.posterUrl = thumb
                     }
                 } else {
                     episode
@@ -685,7 +724,8 @@ class Goyabu : MainAPI() {
 
                     val episodeNum = extractEpisodeNumberFromHref(href, index + 1)
 
-                    val thumb = extractThumbFromElement(link)
+                    val rawThumb = extractThumbFromElement(link)
+                    val thumb = fixThumbnailUrl(rawThumb)
 
                     episodes.add(newEpisode(fixUrl(href)) {
                         this.name = "Episódio $episodeNum"
@@ -724,7 +764,8 @@ class Goyabu : MainAPI() {
         
         episodeNum = extractEpisodeNumberFromHref(href, episodeNum)
 
-        val thumb = extractThumbFromElement(linkElement)
+        val rawThumb = extractThumbFromElement(linkElement)
+        val thumb = fixThumbnailUrl(rawThumb)
 
         val episodeTitle = epTypeElement?.text()?.trim() ?: "Episódio $episodeNum"
 
@@ -745,35 +786,31 @@ class Goyabu : MainAPI() {
         element.selectFirst(".coverImg")?.attr("style")?.let { style ->
             val regex = Regex("""url\(['"]?([^'"()]+)['"]?\)""")
             regex.find(style)?.groupValues?.get(1)?.replace("&quot;", "")?.trim()?.let { 
-                return fixUrl(it)
+                return it
             }
         }
         
         element.selectFirst("img[src]")?.attr("src")?.let { src ->
             if (src.isNotBlank() && !src.contains("data:image")) {
-                return fixUrl(src.trim())
+                return src.trim()
             }
         }
         
         element.selectFirst("img[data-src]")?.attr("data-src")?.let { dataSrc ->
             if (dataSrc.isNotBlank() && !dataSrc.contains("data:image")) {
-                return fixUrl(dataSrc.trim())
+                return dataSrc.trim()
             }
         }
         
         element.selectFirst("[data-thumb]")?.attr("data-thumb")?.let { dataThumb ->
             if (dataThumb.isNotBlank()) {
-                return fixUrl(dataThumb.trim())
+                return dataThumb.trim()
             }
         }
         
         element.selectFirst("[data-miniature-b64]")?.attr("data-miniature-b64")?.let { base64Path ->
             if (base64Path.isNotBlank()) {
-                return if (!base64Path.startsWith("http")) {
-                    "$mainUrl$base64Path"
-                } else {
-                    base64Path
-                }
+                return base64Path
             }
         }
         
