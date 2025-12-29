@@ -19,7 +19,7 @@ class Goyabu : MainAPI() {
         private const val SEARCH_PATH = "/?s="
         private val loadingMutex = Mutex()
 
-        // LISTA REDUZIDA DE GÊNEROS (REMOVIDOS: Lançamentos, China, Artes Marciais, Família)
+        // LISTA REDUZIDA DE GÊNEROS
         private val ALL_GENRES = listOf(
             "/generos/aventura" to "Aventura",
             "/generos/acao" to "Ação",
@@ -35,27 +35,6 @@ class Goyabu : MainAPI() {
             "/generos/guerra" to "Guerra"
         )
 
-        // ADICIONADO: Padrões para limpar sinopse
-        private val SYNOPSIS_JUNK_PATTERNS = listOf(
-            Regex("""(?i)assistir.*?online"""),
-            Regex("""(?i)anime completo"""),
-            Regex("""(?i)todos os episodios"""),
-            Regex("""(?i)dublado.*?online"""),
-            Regex("""(?i)legendado.*?online"""),
-            Regex("""(?i)assista.*?gratis"""),
-            Regex("""(?i)veja.*?de graça"""),
-            Regex("""(?i)streaming.*?(online|gratis)"""),
-            Regex("""(?i)assistir anime"""),
-            Regex("""(?i)epis[oó]dio.*?dublado"""),
-            Regex("""(?i)baixar.*?(torrent|mega)"""),
-            Regex("""(?i)download.*?anime"""),
-            Regex("""Visite.*?site""", RegexOption.IGNORE_CASE),
-            Regex("""Confira.*?canal""", RegexOption.IGNORE_CASE),
-            Regex("""(?i)\bhd\b.*?(720p|1080p)"""),
-            Regex("""(?i)qualidade.*?(alta|hd)"""),
-            Regex("""(?i)sinopse.*?:""", RegexOption.IGNORE_CASE)
-        )
-
         private val TITLE_CLEANUP_PATTERNS = listOf(
             "(?i)\\s*\\(dublado\\)".toRegex(),
             "(?i)\\s*\\(legendado\\)".toRegex(),
@@ -69,9 +48,6 @@ class Goyabu : MainAPI() {
             "(?i)\\s*-\\s*completo".toRegex(),
             "(?i)\\s*\\|.*".toRegex()
         )
-        
-        private val ADULT_GENRES = setOf("+18", "Hentai", "Adulto", "Erótico", "Yaoi", "Yuri")
-        private val SUGGESTIVE_GENRES = setOf("Ecchi", "Harém", "Harem")
     }
 
     init {
@@ -93,99 +69,46 @@ class Goyabu : MainAPI() {
         return if (clean.isBlank()) dirtyTitle else clean
     }
 
-    // CORRIGIDO: Função para limpar sinopse MELHORADA
+    // FUNÇÃO LIMPA PARA SINOPSE - CORRIGINDO ,.
     private fun cleanSynopsis(dirtySynopsis: String): String {
         var clean = dirtySynopsis.trim()
         
-        // ========== REMOVER SPAM NO INÍCIO ==========
-        // Encontra onde começa a sinopse real (procura por palavras-chave de início de história)
-        val synopsisStartKeywords = listOf(
-            "Era uma vez",
-            "Em um mundo",
-            "A história",
-            "Acompanhe",
-            "Descubra",
-            "Conheça",
-            "Em uma época",
-            "Ambientado",
-            "Situado",
-            "Baseado",
-            "Adaptado",
-            "Conta a história",
-            "Narra",
-            "Um dia",
-            "Certa vez",
-            "Há muito tempo",
-            "Num futuro",
-            "Num passado",
-            "Num universo"
+        if (clean.isBlank()) {
+            return "Sinopse não disponível."
+        }
+        
+        // Remover frases específicas de spam
+        val spamPhrases = listOf(
+            "Assistir Dublado Online",
+            "Todos os Episodios Online", 
+            "Anime Completo",
+            "assistir dublado online",
+            "todos os episodios online",
+            "anime completo"
         )
         
-        // Procura o ponto onde começa a sinopse real
-        var realSynopsisStart = -1
-        for (keyword in synopsisStartKeywords) {
-            val index = clean.indexOf(keyword, ignoreCase = true)
-            if (index > 0 && (realSynopsisStart == -1 || index < realSynopsisStart)) {
-                realSynopsisStart = index
-            }
+        spamPhrases.forEach { phrase ->
+            clean = clean.replace(phrase, "", ignoreCase = true)
         }
         
-        // Se encontrou onde começa a sinopse real, corta o spam do início
-        if (realSynopsisStart > 0) {
-            clean = clean.substring(realSynopsisStart).trim()
-        }
+        // CORREÇÃO: Remover vírgulas seguidas de ponto no final
+        clean = clean.replace(Regex(",\\.\\s*$"), ".")
         
-        // ========== REMOVER PADRÕES DE SPAM ==========
-        SYNOPSIS_JUNK_PATTERNS.forEach { pattern ->
-            clean = pattern.replace(clean, "")
-        }
+        // Remover pontos múltiplos no final
+        clean = clean.replace(Regex("\\.\\.+\$"), ".")
+        clean = clean.replace(Regex("\\.\\s+\\.\$"), ".")
         
-        // ========== REMOVER FRASES DE SPAM ==========
-        val sentences = clean.split(".").map { it.trim() }
-        val filteredSentences = sentences.filter { sentence ->
-            // Remove frases que são spam
-            val lowerSentence = sentence.lowercase()
-            !(lowerSentence.contains("assistir") && 
-              (lowerSentence.contains("online") || 
-               lowerSentence.contains("dublado") || 
-               lowerSentence.contains("legendado"))) &&
-            !lowerSentence.contains("anime completo") &&
-            !lowerSentence.contains("todos os episodios") &&
-            !lowerSentence.contains("baixar") &&
-            !lowerSentence.contains("download") &&
-            !lowerSentence.contains("streaming") &&
-            !lowerSentence.contains("gratis") &&
-            !lowerSentence.contains("de graça") &&
-            !lowerSentence.matches(Regex("""(?i)^(visite|confira|acesse|clique|veja|assista).*"""))
-        }
+        // Limpar espaços extras
+        clean = clean.replace(Regex("\\s+"), " ").trim()
         
-        clean = filteredSentences.joinToString(". ")
-        
-        // ========== CORREÇÃO: LIMPAR PONTOS DUPLOS E PONTOS SOZINHOS ==========
-        // Remove pontos duplos (..) mantendo apenas um ponto
-        clean = clean.replace(Regex("\\.\\.+"), ".")
-        
-        // Remove pontos sozinhos no final de frases (que não fazem sentido)
-        clean = clean.replace(Regex("""\s+\.\s*"""), " ")
-        
-        // Remove pontos no início de frases
-        clean = clean.replace(Regex("""^\.+\s*"""), "")
-        
-        // Garante que tenha apenas um espaço entre palavras
-        clean = clean.replace(Regex("\\s+"), " ")
-        
-        // Remove pontos que ficaram soltos no meio do texto
-        clean = clean.replace(Regex("""\.\s*\.\s*"""), ". ")
-        
-        // Adiciona ponto final se não tiver
-        clean = clean.trim()
-        if (clean.isNotEmpty() && !clean.endsWith(".") && !clean.endsWith("!") && !clean.endsWith("?") && clean.length > 10) {
-            clean += "."
-        }
-        
-        // Remove ponto final se estiver muito próximo do início
+        // Remover ponto final se estiver muito curto
         if (clean.length < 30 && clean.endsWith(".")) {
             clean = clean.dropLast(1)
+        }
+        
+        // Garantir que tenha ponto final se for uma sinopse válida
+        if (clean.isNotEmpty() && !clean.endsWith(".") && !clean.endsWith("!") && !clean.endsWith("?") && clean.length > 10) {
+            clean += "."
         }
         
         return when {
@@ -249,20 +172,6 @@ class Goyabu : MainAPI() {
         }
     }
 
-    private fun hasAdultContent(genres: List<String>): Boolean {
-        val lowerGenres = genres.map { it.lowercase().trim() }
-        val hasExplicit = ADULT_GENRES.any { explicitGenre ->
-            lowerGenres.any { it == explicitGenre.lowercase() }
-        }
-        
-        if (hasExplicit) {
-            println("🔞 CONTEÚDO ADULTO DETECTADO: $genres")
-            return true
-        }
-        
-        return false
-    }
-
     private fun parseScore(text: String?): Score? {
         if (text.isNullOrBlank()) {
             println("📊 Score: Nenhum score encontrado")
@@ -306,12 +215,6 @@ class Goyabu : MainAPI() {
         val hasDubBadge = selectFirst(".audio-box.dublado, .dublado") != null
 
         if (cleanedTitle.isBlank()) return null
-
-        val genreElement = selectFirst(".genre-tag, .tag")
-        val genres = genreElement?.text()?.split(",")?.map { it.trim() } ?: emptyList()
-        if (hasAdultContent(genres)) {
-            println("⚠️ Anime adulto na lista: $cleanedTitle")
-        }
 
         return newAnimeSearchResponse(cleanedTitle, fixUrl(href)) {
             this.posterUrl = posterUrl
@@ -409,7 +312,7 @@ class Goyabu : MainAPI() {
                 ?.trim()
                 ?: "Sinopse não disponível."
 
-            // CORRIGIDO: Usar sinopse limpa
+            // USAR SINOPSE LIMPA
             val synopsis = cleanSynopsis(rawSynopsis)
             if (rawSynopsis != synopsis && synopsis != "Sinopse não disponível.") {
                 println("🧹 Sinopse limpa:")
@@ -431,11 +334,6 @@ class Goyabu : MainAPI() {
                 }
             }
             println("🏷️ Gêneros: ${genres.size}")
-
-            val isAdultContent = hasAdultContent(genres)
-            if (isAdultContent) {
-                println("⚠️ AVISO: Este anime contém conteúdo adulto (+18)")
-            }
 
             val scoreElement = document.selectFirst(".rating-total, .rating-score")
             val scoreText = scoreElement?.text()?.trim()
@@ -464,7 +362,7 @@ class Goyabu : MainAPI() {
             val response = newAnimeLoadResponse(title, url, TvType.Anime) {
                 this.posterUrl = poster
                 this.year = year
-                this.plot = synopsis // USANDO SINOPSE LIMPA
+                this.plot = synopsis
                 this.tags = genres
                 this.score = score
                 this.showStatus = status
@@ -535,16 +433,18 @@ class Goyabu : MainAPI() {
 
                                     val epUrl = buildEpisodeUrl(epId, epNumber)
 
-                                    // ADICIONADO: Thumb para episódios do JavaScript
-                                    val epThumb = extractValueFromJson(jsonObj, "thumb", "image", "poster")
-                                    
+                                    // CORREÇÃO: Garantir que a thumb seja extraída corretamente
+                                    val epThumb = extractValueFromJson(jsonObj, "thumb", "image", "poster", "thumbnail", "miniature")
+
                                     episodes.add(newEpisode(epUrl) {
                                         this.name = epTitle
                                         this.episode = epNumber
                                         this.season = 1
-                                        // ADICIONA THUMB SE EXISTIR
-                                        if (epThumb != null) {
-                                            this.posterUrl = fixUrl(epThumb)
+                                        // GARANTIR QUE A THUMB SEJA ADICIONADA
+                                        if (!epThumb.isNullOrBlank()) {
+                                            val fixedThumb = if (epThumb.startsWith("http")) epThumb else fixUrl(epThumb)
+                                            this.posterUrl = fixedThumb
+                                            println("   🖼️ Thumb para Ep $epNumber: $fixedThumb")
                                         }
                                     })
 
@@ -566,7 +466,7 @@ class Goyabu : MainAPI() {
                     if (episodes.isEmpty()) {
                         println("🔍 Tentando extrair episódios individualmente...")
 
-                        val episodePattern = Regex("""\{"id":"(\d+)","episodio":"(\d+)".*?"(thumb|image)":"([^"]*)".*?\}""")
+                        val episodePattern = Regex("""\{"id":"(\d+)","episodio":"(\d+)".*?"(thumb|image|poster|thumbnail)":"([^"]*)".*?\}""")
                         val episodeMatches = episodePattern.findAll(scriptContent)
 
                         var matchCount = 0
@@ -583,8 +483,9 @@ class Goyabu : MainAPI() {
                                         this.episode = epNum
                                         this.season = 1
                                         // ADICIONA THUMB SE EXISTIR
-                                        if (thumb != null) {
-                                            this.posterUrl = fixUrl(thumb)
+                                        if (!thumb.isNullOrBlank()) {
+                                            val fixedThumb = if (thumb.startsWith("http")) thumb else fixUrl(thumb)
+                                            this.posterUrl = fixedThumb
                                         }
                                     })
 
@@ -611,7 +512,7 @@ class Goyabu : MainAPI() {
         return episodes
     }
 
-    // MODIFICADO: Extrair episódios via HTML com thumbnail
+    // CORREÇÃO: Melhor extração de episódios com thumbnail
     private fun extractEpisodesFallback(document: org.jsoup.nodes.Document, baseUrl: String): List<Episode> {
         val episodes = mutableListOf<Episode>()
 
@@ -622,7 +523,7 @@ class Goyabu : MainAPI() {
         if (episodeItems.isEmpty()) {
             println("   ⚠️ Nenhum .episode-item encontrado")
             
-            // AGORA TAMBÉM PROCURA .boxEP.grid-view (os mesmos seletores da página de lançamentos)
+            // PROCURA .boxEP.grid-view
             val boxEPs = document.select(".boxEP.grid-view, .boxEP")
             println("   🔄 Fallback: ${boxEPs.size} .boxEP encontrados")
 
@@ -660,7 +561,7 @@ class Goyabu : MainAPI() {
 
                     val episodeNum = extractEpisodeNumberFromHref(href, index + 1)
 
-                    // ADICIONADO: Tentar extrair thumb do link (como na página de lançamentos)
+                    // CORREÇÃO: Tentar extrair thumb do link
                     val thumb = extractThumbFromElement(link)
 
                     episodes.add(newEpisode(fixUrl(href)) {
@@ -670,7 +571,6 @@ class Goyabu : MainAPI() {
                         // ADICIONA THUMB SE ENCONTRADO
                         if (thumb != null) {
                             this.posterUrl = thumb
-                            println("   🖼️ Thumb encontrada para Ep $episodeNum via link direto")
                         }
                     })
 
@@ -685,7 +585,7 @@ class Goyabu : MainAPI() {
         return episodes
     }
 
-    // NOVO: Função para extrair episódio com thumbnail (como na página de lançamentos)
+    // CORREÇÃO: Função melhorada para extrair episódio com thumbnail
     private fun extractEpisodeFromBoxEPWithThumb(boxEP: Element, index: Int, episodes: MutableList<Episode>) {
         val linkElement = boxEP.selectFirst("a[href]") ?: return
         val href = linkElement.attr("href").trim()
@@ -707,7 +607,7 @@ class Goyabu : MainAPI() {
         // Fallback: extrair do href
         episodeNum = extractEpisodeNumberFromHref(href, episodeNum)
 
-        // EXTRAIR THUMBNAIL (como na página de lançamentos)
+        // CORREÇÃO: Extrair thumbnail com mais métodos
         val thumb = extractThumbFromElement(linkElement)
 
         // Determinar título do episódio
@@ -724,54 +624,66 @@ class Goyabu : MainAPI() {
             // ADICIONA THUMB SE ENCONTRADO
             if (thumb != null) {
                 this.posterUrl = thumb
-                println("   🖼️ Thumb encontrada para Ep $episodeNum")
+                println("   🖼️ Thumb encontrada para Ep $episodeNum: $thumb")
+            } else {
+                println("   ⚠️ Thumb NÃO encontrada para Ep $episodeNum")
             }
         })
 
         println("   ✅ Ep $episodeNum: $titleWithDub -> $href")
     }
 
-    // NOVO: Função para extrair thumbnail de elementos (como na página de lançamentos)
+    // CORREÇÃO: Função melhorada para extrair thumbnail
     private fun extractThumbFromElement(element: Element): String? {
-        var thumb: String? = null
-        
         // Método 1: Do estilo background-image (.coverImg)
         element.selectFirst(".coverImg")?.attr("style")?.let { style ->
             val regex = Regex("""url\(['"]?([^'"()]+)['"]?\)""")
             regex.find(style)?.groupValues?.get(1)?.replace("&quot;", "")?.trim()?.let { 
-                thumb = fixUrl(it)
+                return fixUrl(it)
             }
         }
         
-        // Método 2: De imagem direta
-        if (thumb == null) {
-            element.selectFirst("img[src]")?.attr("src")?.let { src ->
-                thumb = fixUrl(src.trim())
+        // Método 2: De imagem direta (com src)
+        element.selectFirst("img[src]")?.attr("src")?.let { src ->
+            if (src.isNotBlank() && !src.contains("data:image")) {
+                return fixUrl(src.trim())
             }
         }
         
-        // Método 3: Do data-thumb
-        if (thumb == null) {
-            element.selectFirst("[data-thumb]")?.attr("data-thumb")?.let { dataThumb ->
-                thumb = fixUrl(dataThumb.trim())
+        // Método 3: Do data-src
+        element.selectFirst("img[data-src]")?.attr("data-src")?.let { dataSrc ->
+            if (dataSrc.isNotBlank() && !dataSrc.contains("data:image")) {
+                return fixUrl(dataSrc.trim())
             }
         }
         
-        // Método 4: Do data-miniature-b64
-        if (thumb == null) {
-            element.selectFirst("[data-miniature-b64]")?.attr("data-miniature-b64")?.let { base64Path ->
-                // Se o caminho for base64, converter
-                if (base64Path.startsWith("L")) { // Base64 para "/"
-                    try {
-                        thumb = "$mainUrl$base64Path"
-                    } catch (e: Exception) {
-                        // Ignorar erro de conversão
-                    }
+        // Método 4: Do data-thumb
+        element.selectFirst("[data-thumb]")?.attr("data-thumb")?.let { dataThumb ->
+            if (dataThumb.isNotBlank()) {
+                return fixUrl(dataThumb.trim())
+            }
+        }
+        
+        // Método 5: Do data-miniature-b64
+        element.selectFirst("[data-miniature-b64]")?.attr("data-miniature-b64")?.let { base64Path ->
+            if (base64Path.isNotBlank()) {
+                // Se não começar com http, adicionar o mainUrl
+                return if (!base64Path.startsWith("http")) {
+                    "$mainUrl$base64Path"
+                } else {
+                    base64Path
                 }
             }
         }
         
-        return thumb
+        // Método 6: Do parent que pode ter a thumb
+        element.parent()?.selectFirst("img[src]")?.attr("src")?.let { src ->
+            if (src.isNotBlank() && !src.contains("data:image")) {
+                return fixUrl(src.trim())
+            }
+        }
+        
+        return null
     }
 
     private fun extractEpisodeNumberFromHref(href: String, default: Int): Int {
