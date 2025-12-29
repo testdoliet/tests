@@ -69,7 +69,7 @@ class Goyabu : MainAPI() {
         return if (clean.isBlank()) dirtyTitle else clean
     }
 
-    // CORREÇÃO: Remover FRASES INTEIRAS que contenham palavras-chave e que terminem com ...
+    // CORREÇÃO MELHORADA: Remover frases inteiras e corrigir repetições
     private fun cleanSynopsis(dirtySynopsis: String): String {
         var clean = dirtySynopsis.trim()
         
@@ -91,12 +91,30 @@ class Goyabu : MainAPI() {
         
         phrasesToRemove.forEach { phrasePattern ->
             // CORREÇÃO: Também capturar frases que terminam com reticências
-            val regex = Regex("""[^.,]*$phrasePattern[^.,]*([.,]|\.\.\.)?\s*""", RegexOption.IGNORE_CASE)
+            val regex = Regex("""[^.!?]*$phrasePattern[^.!?]*([.!?]|\.\.\.)?\s*""", RegexOption.IGNORE_CASE)
             clean = regex.replace(clean, "")
         }
         
         // CORREÇÃO: Remover frases que terminam com ... e estão incompletas
         clean = clean.replace(Regex("""[^.!?]*\.\.\.\s*$"""), "")
+        
+        // CORREÇÃO CRÍTICA: Remover repetições de frases inteiras
+        val sentences = clean.split(Regex("""[.!?]+""")).map { it.trim() }.filter { it.isNotBlank() }
+        val uniqueSentences = mutableListOf<String>()
+        
+        sentences.forEach { sentence ->
+            // Verificar se a frase já existe (ignorando variações menores)
+            val normalizedSentence = sentence.lowercase().replace(Regex("\\s+"), " ")
+            if (uniqueSentences.none { existing -> 
+                existing.lowercase().replace(Regex("\\s+"), " ").contains(normalizedSentence) ||
+                normalizedSentence.contains(existing.lowercase().replace(Regex("\\s+"), " "))
+            }) {
+                uniqueSentences.add(sentence)
+            }
+        }
+        
+        // Reconstruir sinopse sem repetições
+        clean = uniqueSentences.joinToString(". ") + "."
         
         // Remover vírgulas seguidas de ponto
         clean = clean.replace(Regex(",\\.\\s*$"), ".")
@@ -320,10 +338,10 @@ class Goyabu : MainAPI() {
                 ?.trim()
                 ?: "Sinopse não disponível."
 
-            // USAR SINOPSE LIMPA (CORREÇÃO: remove frases inteiras e ...)
+            // USAR SINOPSE LIMPA (CORREÇÃO: remove repetições)
             val synopsis = cleanSynopsis(rawSynopsis)
             if (rawSynopsis != synopsis && synopsis != "Sinopse não disponível.") {
-                println("🧹 Sinopse limpa (frases removidas):")
+                println("🧹 Sinopse limpa (frases removidas e sem repetições):")
                 println("   ANTES: ${rawSynopsis.take(100)}...")
                 println("   DEPOIS: ${synopsis.take(100)}...")
             }
@@ -411,7 +429,7 @@ class Goyabu : MainAPI() {
         }
     }
 
-    // CORREÇÃO CRÍTICA: Consertar URLs de thumbnail com barras extras
+    // CORREÇÃO CRÍTICA: Consertar URLs de thumbnail
     private fun fixThumbnailUrl(thumbUrl: String?): String? {
         if (thumbUrl.isNullOrBlank()) return null
         
@@ -425,17 +443,37 @@ class Goyabu : MainAPI() {
         
         // CORREÇÃO: Garantir que comece com http
         if (!fixed.startsWith("http")) {
+            // CORREÇÃO IMPORTANTE: As thumbnails podem ser caminhos relativos
+            // No log vimos: \/miniatures\/68eab069925df.webp
+            // Isso precisa virar: https://goyabu.io/miniatures/68eab069925df.webp
+            fixed = fixed.trimStart('/')
             fixed = "$mainUrl/$fixed"
         }
         
         // CORREÇÃO: Remover barras duplicadas no meio
         fixed = fixed.replace(Regex("""(?<!:)/+"""), "/")
         
+        // CORREÇÃO: Verificar se a URL parece válida
+        if (!fixed.contains("miniatures") && !fixed.contains("thumb") && !fixed.contains("image")) {
+            println("   ⚠️ URL de thumbnail suspeita: $fixed")
+            return null
+        }
+        
         return fixed
     }
 
+    // NOVA FUNÇÃO: Testar se a thumbnail existe
+    private suspend fun testThumbnailUrl(thumbUrl: String): Boolean {
+        return try {
+            val response = app.get(thumbUrl, timeout = 10)
+            response.isSuccessful
+        } catch (e: Exception) {
+            false
+        }
+    }
+
     // CORREÇÃO PRINCIPAL: Extrair episódios com thumbnails do JavaScript
-    private fun extractEpisodesFromJavaScript(document: org.jsoup.nodes.Document, baseUrl: String): List<Episode> {
+    private suspend fun extractEpisodesFromJavaScript(document: org.jsoup.nodes.Document, baseUrl: String): List<Episode> {
         val episodes = mutableListOf<Episode>()
 
         try {
@@ -463,10 +501,9 @@ class Goyabu : MainAPI() {
                         episodes.addAll(extractIndividualEpisodesFromScript(scriptContent))
                     }
 
-                    // TERCEIRO: Tentar encontrar thumbnails em variáveis separadas
-                    if (episodes.isNotEmpty() && episodes.any { it.posterUrl == null }) {
-                        println("🔍 Procurando thumbnails adicionais no script...")
-                        episodes.addAll(extractThumbnailsFromScriptVariables(scriptContent, episodes))
+                    // CORREÇÃO: Tentar encontrar thumbnails alternativas se as atuais não funcionarem
+                    if (episodes.isNotEmpty()) {
+                        episodes.addAll(tryAlternativeThumbnails(episodes, document))
                     }
 
                     if (episodes.isNotEmpty()) {
@@ -484,7 +521,7 @@ class Goyabu : MainAPI() {
     }
 
     // CORREÇÃO: Função específica para extrair do array allEpisodes
-    private fun extractEpisodesFromAllEpisodesArray(scriptContent: String): List<Episode> {
+    private suspend fun extractEpisodesFromAllEpisodesArray(scriptContent: String): List<Episode> {
         val episodes = mutableListOf<Episode>()
         
         try {
@@ -509,7 +546,19 @@ class Goyabu : MainAPI() {
                         
                         // CORREÇÃO: Extrair thumbnail e CONCERTAR URL
                         val rawThumb = extractThumbnailFromJsonObject(jsonObj)
-                        val epThumb = fixThumbnailUrl(rawThumb)
+                        var epThumb = fixThumbnailUrl(rawThumb)
+                        
+                        // CORREÇÃO: Testar se a thumbnail funciona
+                        var isValidThumb = false
+                        if (epThumb != null) {
+                            println("   🔍 Testando thumbnail para Ep $epNumber: $epThumb")
+                            isValidThumb = testThumbnailUrl(epThumb)
+                            
+                            if (!isValidThumb) {
+                                println("   ❌ Thumbnail não acessível (404): $epThumb")
+                                epThumb = null
+                            }
+                        }
                         
                         // Construir URL
                         val epUrl = buildEpisodeUrl(epId, epNumber)
@@ -519,13 +568,12 @@ class Goyabu : MainAPI() {
                             this.episode = epNumber
                             this.season = 1
                             
-                            // ADICIONAR THUMB SE ENCONTRADA (AGORA CONCERTADA)
-                            if (epThumb != null) {
+                            // ADICIONAR THUMB SE ENCONTRADA E VÁLIDA
+                            if (epThumb != null && isValidThumb) {
                                 this.posterUrl = epThumb
-                                println("   ✅ Ep $epNumber: Thumb CONCERTADA -> $epThumb")
-                                println("      Thumb original: $rawThumb")
+                                println("   ✅ Ep $epNumber: Thumb VÁLIDA -> $epThumb")
                             } else {
-                                println("   ⚠️ Ep $epNumber: Thumb NÃO encontrada no JSON")
+                                println("   ⚠️ Ep $epNumber: Sem thumbnail válida")
                             }
                         })
 
@@ -539,6 +587,56 @@ class Goyabu : MainAPI() {
         }
         
         return episodes
+    }
+
+    // CORREÇÃO: Tentar thumbnails alternativas
+    private suspend fun tryAlternativeThumbnails(existingEpisodes: List<Episode>, document: org.jsoup.nodes.Document): List<Episode> {
+        val updatedEpisodes = mutableListOf<Episode>()
+        
+        println("🔍 Procurando thumbnails alternativas...")
+        
+        // Tentar extrair thumbnails da página HTML
+        val htmlThumbs = mutableListOf<String>()
+        
+        // Procurar imagens que possam ser thumbnails de episódios
+        document.select("img[src*='miniature'], img[src*='thumb'], .episode-item img, .boxEP img").forEach { img ->
+            val src = img.attr("src") ?: img.attr("data-src")
+            if (!src.isNullOrBlank() && src.contains(Regex("""miniature|thumb|episodio""", RegexOption.IGNORE_CASE))) {
+                val thumb = fixUrl(src)
+                if (!htmlThumbs.contains(thumb)) {
+                    htmlThumbs.add(thumb)
+                    println("   🔍 Thumb alternativa encontrada no HTML: $thumb")
+                }
+            }
+        }
+        
+        // Associar thumbnails alternativas aos episódios
+        existingEpisodes.forEachIndexed { index, episode ->
+            var updatedEpisode = episode
+            
+            // Se o episódio não tem thumbnail, tentar uma alternativa
+            if (episode.posterUrl == null && index < htmlThumbs.size) {
+                val alternativeThumb = htmlThumbs[index]
+                println("   🔄 Tentando thumbnail alternativa para Ep ${episode.episode}: $alternativeThumb")
+                
+                // Testar se a thumbnail alternativa funciona
+                val isValid = testThumbnailUrl(alternativeThumb)
+                
+                if (isValid) {
+                    updatedEpisode = newEpisode(episode.data) {
+                        this.name = episode.name
+                        this.episode = episode.episode
+                        this.season = episode.season
+                        this.posterUrl = alternativeThumb
+                    }
+                    println("   ✅ Thumb alternativa VÁLIDA para Ep ${episode.episode}")
+                }
+            }
+            
+            updatedEpisodes.add(updatedEpisode)
+        }
+        
+        return updatedEpisodes
     }
 
     // NOVO: Função específica para extrair thumbnail de objeto JSON
@@ -577,7 +675,7 @@ class Goyabu : MainAPI() {
     }
 
     // CORREÇÃO: Extrair episódios individuais do script
-    private fun extractIndividualEpisodesFromScript(scriptContent: String): List<Episode> {
+    private suspend fun extractIndividualEpisodesFromScript(scriptContent: String): List<Episode> {
         val episodes = mutableListOf<Episode>()
         
         try {
@@ -595,6 +693,11 @@ class Goyabu : MainAPI() {
                     val title = extractValueFromJson(fullMatch, "title", "name") ?: "Episódio $epNum"
                     val rawThumb = extractThumbnailFromJsonObject(fullMatch)
                     val thumb = fixThumbnailUrl(rawThumb)
+                    
+                    var isValidThumb = false
+                    if (thumb != null) {
+                        isValidThumb = testThumbnailUrl(thumb)
+                    }
 
                     if (id.isNotBlank()) {
                         episodes.add(newEpisode("$mainUrl/$id") {
@@ -602,7 +705,7 @@ class Goyabu : MainAPI() {
                             this.episode = epNum
                             this.season = 1
                             
-                            if (thumb != null) {
+                            if (thumb != null && isValidThumb) {
                                 this.posterUrl = thumb
                                 println("   📺 Ep $epNum: Thumb via padrão individual -> $thumb")
                             }
@@ -624,60 +727,7 @@ class Goyabu : MainAPI() {
         return episodes
     }
 
-    // NOVO: Extrair thumbnails de variáveis do script
-    private fun extractThumbnailsFromScriptVariables(scriptContent: String, existingEpisodes: List<Episode>): List<Episode> {
-        val updatedEpisodes = mutableListOf<Episode>()
-        
-        try {
-            // Procurar por variáveis que possam conter thumbnails
-            val thumbPatterns = listOf(
-                Regex("""thumb(?:nail)?\s*=\s*['"]([^'"]+)['"]"""),
-                Regex("""image(?:Url)?\s*=\s*['"]([^'"]+)['"]"""),
-                Regex("""poster(?:Url)?\s*=\s*['"]([^'"]+)['"]"""),
-                Regex("""var\s+\w+Thumb\s*=\s*['"]([^'"]+)['"]""")
-            )
-            
-            val foundThumbs = mutableListOf<String>()
-            
-            for (pattern in thumbPatterns) {
-                val matches = pattern.findAll(scriptContent)
-                matches.forEach { match ->
-                    val rawThumb = match.groupValues.getOrNull(1)
-                    if (!rawThumb.isNullOrBlank()) {
-                        val thumb = fixThumbnailUrl(rawThumb)
-                        if (thumb != null && !foundThumbs.contains(thumb)) {
-                            foundThumbs.add(thumb)
-                            println("   🔍 Thumb encontrada em variável: $thumb")
-                        }
-                    }
-                }
-            }
-            
-            // Associar thumbs encontradas aos episódios
-            existingEpisodes.forEachIndexed { index, episode ->
-                val updatedEpisode = if (episode.posterUrl == null && index < foundThumbs.size) {
-                    val thumb = foundThumbs[index]
-                    newEpisode(episode.data) {
-                        this.name = episode.name
-                        this.episode = episode.episode
-                        this.season = episode.season
-                        this.posterUrl = thumb
-                    }
-                } else {
-                    episode
-                }
-                updatedEpisodes.add(updatedEpisode)
-            }
-            
-        } catch (e: Exception) {
-            println("❌ Erro ao extrair thumbnails de variáveis: ${e.message}")
-            return existingEpisodes
-        }
-        
-        return updatedEpisodes
-    }
-
-    private fun extractEpisodesFallback(document: org.jsoup.nodes.Document, baseUrl: String): List<Episode> {
+    private suspend fun extractEpisodesFallback(document: org.jsoup.nodes.Document, baseUrl: String): List<Episode> {
         val episodes = mutableListOf<Episode>()
 
         println("🔍 Fallback: Procurando episódios via HTML...")
@@ -726,12 +776,17 @@ class Goyabu : MainAPI() {
 
                     val rawThumb = extractThumbFromElement(link)
                     val thumb = fixThumbnailUrl(rawThumb)
+                    
+                    var isValidThumb = false
+                    if (thumb != null) {
+                        isValidThumb = testThumbnailUrl(thumb)
+                    }
 
                     episodes.add(newEpisode(fixUrl(href)) {
                         this.name = "Episódio $episodeNum"
                         this.episode = episodeNum
                         this.season = 1
-                        if (thumb != null) {
+                        if (thumb != null && isValidThumb) {
                             this.posterUrl = thumb
                         }
                     })
@@ -746,7 +801,7 @@ class Goyabu : MainAPI() {
         return episodes
     }
 
-    private fun extractEpisodeFromBoxEPWithThumb(boxEP: Element, index: Int, episodes: MutableList<Episode>) {
+    private suspend fun extractEpisodeFromBoxEPWithThumb(boxEP: Element, index: Int, episodes: MutableList<Episode>) {
         val linkElement = boxEP.selectFirst("a[href]") ?: return
         val href = linkElement.attr("href").trim()
         if (href.isBlank()) return
@@ -766,6 +821,11 @@ class Goyabu : MainAPI() {
 
         val rawThumb = extractThumbFromElement(linkElement)
         val thumb = fixThumbnailUrl(rawThumb)
+        
+        var isValidThumb = false
+        if (thumb != null) {
+            isValidThumb = testThumbnailUrl(thumb)
+        }
 
         val episodeTitle = epTypeElement?.text()?.trim() ?: "Episódio $episodeNum"
 
@@ -776,7 +836,7 @@ class Goyabu : MainAPI() {
             this.name = titleWithDub
             this.episode = episodeNum
             this.season = 1
-            if (thumb != null) {
+            if (thumb != null && isValidThumb) {
                 this.posterUrl = thumb
             }
         })
