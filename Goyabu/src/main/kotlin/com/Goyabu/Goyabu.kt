@@ -426,8 +426,6 @@ class Goyabu : MainAPI() {
         
         elements.forEach { element ->
             try {
-                val href = element.attr("href") ?: return@forEach
-                
                 // Extrair informações do episódio
                 val titleElement = element.selectFirst(".title.hidden-text")
                 val rawTitle = titleElement?.text()?.trim() ?: return@forEach
@@ -439,12 +437,6 @@ class Goyabu : MainAPI() {
                     match?.groupValues?.get(1)?.toIntOrNull() ?: 1
                 } ?: 1
                 
-                // Extrair thumb do próprio elemento (fallback)
-                val localThumb = element.selectFirst(".coverImg")?.attr("style")?.let { style ->
-                    val regex = Regex("""url\(['"]?([^'"()]+)['"]?\)""")
-                    regex.find(style)?.groupValues?.get(1)?.let { fixUrl(it) }
-                }
-                
                 // Determinar se é dublado
                 val isDubbed = element.selectFirst(".audio-box.dublado") != null
                 
@@ -454,28 +446,29 @@ class Goyabu : MainAPI() {
                 // Procurar anime correspondente no mapa
                 val animeInfo = findBestMatchingAnime(baseTitle, animeMap)
                 
-                // Usar thumb do anime encontrado ou thumb local
-                val bestThumb = animeInfo?.posterUrl ?: localThumb
-                val animeUrl = animeInfo?.url ?: href
+                // Usar thumb do anime encontrado
+                val bestThumb = animeInfo?.posterUrl
+                val animeUrl = animeInfo?.url ?: "https://goyabu.io/?s=${baseTitle.replace(" ", "+")}"
                 
                 // Limpar título final (remover episódio)
                 val cleanDisplayTitle = cleanTitle(baseTitle)
                 
-                // Adicionar episódio ao título para exibição
-                val displayTitleWithEpisode = "$cleanDisplayTitle (Ep $episodeNumber)"
+                // Criar badge com informação do episódio
+                val episodeBadge = "Ep $episodeNumber"
                 
                 // Criar resposta
-                val searchResponse = newAnimeSearchResponse(displayTitleWithEpisode, fixUrl(animeUrl)) {
+                val searchResponse = newAnimeSearchResponse(cleanDisplayTitle, fixUrl(animeUrl)) {
                     this.posterUrl = bestThumb
                     this.type = TvType.Anime
                     
+                    // Adicionar status de dub/leg com contagem de episódios
                     if (isDubbed) {
                         addDubStatus(dubExist = true, subExist = false)
-                        println("🎭 Lançamento Dublado: $cleanDisplayTitle - Ep $episodeNumber")
                     } else {
                         addDubStatus(dubExist = false, subExist = true)
-                        println("🎭 Lançamento Legendado: $cleanDisplayTitle - Ep $episodeNumber")
                     }
+                    
+                    println("🎬 Lançamento: $cleanDisplayTitle - $episodeBadge ${if (isDubbed) "(Dublado)" else "(Legendado)"}")
                 }
                 
                 items.add(searchResponse)
