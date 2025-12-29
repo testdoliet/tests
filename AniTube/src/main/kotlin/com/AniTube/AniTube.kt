@@ -16,21 +16,27 @@ class AniTube : MainAPI() {
 
     companion object {
         private const val SEARCH_PATH = "/?s="
-        private const val LATEST_EPISODES_PATH = "/?episodios"
-        private const val POPULAR_ANIME_PATH = "/?populares"
         
+        // Seletores específicos para cada seção
         private const val ANIME_CARD = ".aniItem"
         private const val EPISODE_CARD = ".epiItem"
         private const val TITLE_SELECTOR = ".aniItemNome, .epiItemNome"
         private const val POSTER_SELECTOR = ".aniItemImg img, .epiItemImg img"
         private const val AUDIO_BADGE_SELECTOR = ".aniCC, .epiCC"
         
+        // Para página inicial - seletores das diferentes seções
+        private const val LATEST_EPISODES_SECTION = ".epiContainer"
+        private const val POPULAR_ANIME_SECTION = ".aniContainer"
+        private const val RECENT_ANIME_SECTION = ".main-carousel-an"
+        
+        // Para página de anime
         private const val ANIME_TITLE = "h1"
         private const val ANIME_POSTER = "#capaAnime img"
         private const val ANIME_SYNOPSIS = "#sinopse2"
         private const val ANIME_METADATA = ".boxAnimeSobre .boxAnimeSobreLinha"
         private const val EPISODE_LIST = ".pagAniListaContainer > a"
         
+        // Para player
         private const val PLAYER_FHD = "#blog2 iframe"
         private const val PLAYER_BACKUP = "#blog1 iframe"
         
@@ -76,8 +82,9 @@ class AniTube : MainAPI() {
     )
 
     override val mainPage = mainPageOf(
-        "$mainUrl$LATEST_EPISODES_PATH" to "Últimos Episódios",
-        "$mainUrl$POPULAR_ANIME_PATH" to "Mais Populares",
+        "$mainUrl" to "Últimos Episódios",
+        "$mainUrl" to "Mais Populares",
+        "$mainUrl" to "Animes Recentes",
         *genresMap.map { (genre, slug) -> "$mainUrl/?s=$slug" to genre }.toTypedArray()
     )
 
@@ -150,30 +157,49 @@ class AniTube : MainAPI() {
     ): HomePageResponse {
         val baseUrl = request.data
         
-        // Construir URL com paginação apropriada
-        val url = when {
-            page > 1 && baseUrl.contains("/?s=") -> {
-                // Para gêneros: /page/X/?s=genero
+        // Se for uma página de gênero
+        if (baseUrl.contains("/?s=")) {
+            val url = if (page > 1) {
                 baseUrl.replace("/?s=", "/page/$page/?s=")
+            } else {
+                baseUrl
             }
-            page > 1 && baseUrl.contains(LATEST_EPISODES_PATH) -> {
-                // Para últimos episódios: /page/X/?episodios
-                baseUrl.replace(LATEST_EPISODES_PATH, "/page/$page/?episodios")
-            }
-            page > 1 && baseUrl.contains(POPULAR_ANIME_PATH) -> {
-                // Para mais populares: /page/X/?populares
-                baseUrl.replace(POPULAR_ANIME_PATH, "/page/$page/?populares")
-            }
-            else -> baseUrl
+            
+            val document = app.get(url).document
+            
+            val allItems = document.select("$ANIME_CARD, $EPISODE_CARD")
+                .mapNotNull { it.toAnimeSearchResponse() }
+                .distinctBy { it.url }
+            
+            return newHomePageResponse(request.name, allItems, hasNext = true)
         }
         
-        val document = app.get(url).document
+        // Para página inicial (primeira página)
+        val document = app.get(baseUrl).document
         
-        val allItems = document.select("$ANIME_CARD, $EPISODE_CARD")
-            .mapNotNull { it.toAnimeSearchResponse() }
-            .distinctBy { it.url }
+        val items = when (request.name) {
+            "Últimos Episódios" -> {
+                // Extrair episódios da seção específica
+                document.select("$LATEST_EPISODES_SECTION $EPISODE_CARD")
+                    .mapNotNull { it.toAnimeSearchResponse() }
+                    .distinctBy { it.url }
+            }
+            "Mais Populares" -> {
+                // Extrair animes populares da primeira seção aniContainer
+                document.select("$POPULAR_ANIME_SECTION:first-child $ANIME_CARD")
+                    .mapNotNull { it.toAnimeSearchResponse() }
+                    .distinctBy { it.url }
+            }
+            "Animes Recentes" -> {
+                // Extrair animes recentes da segunda seção aniContainer
+                document.select("$POPULAR_ANIME_SECTION:nth-child(3) $ANIME_CARD")
+                    .mapNotNull { it.toAnimeSearchResponse() }
+                    .distinctBy { it.url }
+            }
+            else -> emptyList()
+        }
         
-        return newHomePageResponse(request.name, allItems, hasNext = true)
+        return newHomePageResponse(request.name, items, hasNext = false)
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
