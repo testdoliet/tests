@@ -309,54 +309,49 @@ class AniTube : MainAPI() {
 ): Boolean {
     val document = app.get(data).document
     
-    // Tentar primeiro o player FHD (blog2)
-    val fhdIframe = document.selectFirst(PLAYER_FHD)
-    fhdIframe?.let { iframe ->
-        val src = iframe.attr("src")
-        if (src.isNotBlank()) {
-            val m3u8Url = extractM3u8FromUrl(src) ?: src
-            
-            // EXATAMENTE como no Goyabu
-            val link = newExtractorLink(
-                source = name,
-                name = "1080p",
-                url = m3u8Url,
-                type = ExtractorLinkType.VIDEO  // Use VIDEO para m3u8 também
-            ) {
-                this.referer = "$mainUrl/"
-                this.quality = Qualities.P1080.value
-                this.isM3u8 = m3u8Url.contains("m3u8", true)
-            }
-            
-            callback(link)
-            return true
+    // Player FHD (blog2)
+    document.selectFirst(PLAYER_FHD)?.let { iframe ->
+        val src = iframe.attr("src").takeIf { it.isNotBlank() } ?: return@let
+        val m3u8Url = extractM3u8FromUrl(src) ?: src
+        
+        val link = newExtractorLink(
+            source = name,
+            name = "1080p",
+            url = m3u8Url,
+            type = ExtractorLinkType.M3U8  // Use M3U8, não VIDEO
+        ) {
+            this.referer = "$mainUrl/"
+            this.quality = 1080  // Número direto, não Qualities.P1080.value
+            // Não precisa de this.isM3u8 quando type é M3U8
         }
+        
+        callback(link)
+        return true
     }
     
-    // Fallback para player 1 (blog1)
-    val backupIframe = document.selectFirst(PLAYER_BACKUP)
-    backupIframe?.let { iframe ->
-        val src = iframe.attr("src")
-        if (src.isNotBlank()) {
-            val isM3u8 = src.contains("m3u8", true)
-            
-            val link = newExtractorLink(
-                source = name,
-                name = "Backup",
-                url = src,
-                type = ExtractorLinkType.VIDEO
-            ) {
-                this.referer = "$mainUrl/"
-                this.quality = Qualities.P720.value
-                this.isM3u8 = isM3u8
-            }
-            
-            callback(link)
-            return true
+    // Player backup (blog1)
+    document.selectFirst(PLAYER_BACKUP)?.let { iframe ->
+        val src = iframe.attr("src").takeIf { it.isNotBlank() } ?: return@let
+        val isM3u8 = src.contains("m3u8", true)
+        
+        val linkType = if (isM3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+        
+        val link = newExtractorLink(
+            source = name,
+            name = "Backup",
+            url = src,
+            type = linkType
+        ) {
+            this.referer = "$mainUrl/"
+            this.quality = 720  // Número direto
+            // Se for M3U8, não precisa de isM3u8
         }
+        
+        callback(link)
+        return true
     }
     
-    // Procurar qualquer iframe com m3u8
+    // Qualquer iframe com m3u8
     document.select("iframe").forEach { iframe ->
         val src = iframe.attr("src")
         if (src.contains("m3u8", true)) {
@@ -366,11 +361,10 @@ class AniTube : MainAPI() {
                 source = name,
                 name = "Auto",
                 url = m3u8Url,
-                type = ExtractorLinkType.VIDEO
+                type = ExtractorLinkType.M3U8
             ) {
                 this.referer = "$mainUrl/"
-                this.quality = Qualities.Unknown.value
-                this.isM3u8 = true
+                this.quality = 720  // Número direto
             }
             
             callback(link)
@@ -379,5 +373,5 @@ class AniTube : MainAPI() {
     }
     
     return false
-    }
+  }
 }
