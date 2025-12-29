@@ -531,13 +531,3 @@ class Goyabu : MainAPI() {
         )
     }
 }
-
-object GoyabuExtractor {
-    suspend fun extractVideoLinks(
-        url: String,
-        name: String,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        return true
-    }
-}
