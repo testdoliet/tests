@@ -26,8 +26,8 @@ class AniTube : MainAPI() {
         
         // Para página inicial - seletores das diferentes seções
         private const val LATEST_EPISODES_SECTION = ".epiContainer"
-        private const val POPULAR_ANIME_SECTION = ".aniContainer"
-        private const val RECENT_ANIME_SECTION = ".main-carousel-an"
+        private const val POPULAR_ANIME_SECTION = "#splide01 .aniItem"  // Primeiro carousel
+        private const val RECENT_ANIME_SECTION = "#splide02 .aniItem"    // Segundo carousel
         
         // Para página de anime
         private const val ANIME_TITLE = "h1"
@@ -185,14 +185,14 @@ class AniTube : MainAPI() {
                     .distinctBy { it.url }
             }
             "Mais Populares" -> {
-                // Extrair animes populares da primeira seção aniContainer
-                document.select("$POPULAR_ANIME_SECTION:first-child $ANIME_CARD")
+                // Extrair animes populares do primeiro carousel (splide01)
+                document.select(POPULAR_ANIME_SECTION)
                     .mapNotNull { it.toAnimeSearchResponse() }
                     .distinctBy { it.url }
             }
             "Animes Recentes" -> {
-                // Extrair animes recentes da segunda seção aniContainer
-                document.select("$POPULAR_ANIME_SECTION:nth-child(3) $ANIME_CARD")
+                // Extrair animes recentes do segundo carousel (splide02)
+                document.select(RECENT_ANIME_SECTION)
                     .mapNotNull { it.toAnimeSearchResponse() }
                     .distinctBy { it.url }
             }
