@@ -23,11 +23,12 @@ class AniTube : MainAPI() {
         private const val TITLE_SELECTOR = ".aniItemNome, .epiItemNome"
         private const val POSTER_SELECTOR = ".aniItemImg img, .epiItemImg img"
         private const val AUDIO_BADGE_SELECTOR = ".aniCC, .epiCC"
+        private const val EPISODE_NUMBER_SELECTOR = ".epiItemInfos .epiItemNome"
         
         // Para página inicial - seletores das diferentes seções
         private const val LATEST_EPISODES_SECTION = ".epiContainer"
-        private const val POPULAR_ANIME_SECTION = "#splide01 .aniItem"  // Primeiro carousel
-        private const val RECENT_ANIME_SECTION = "#splide02 .aniItem"    // Segundo carousel
+        private const val POPULAR_ANIME_SECTION = "#splide01 .aniItem"
+        private const val RECENT_ANIME_SECTION = "#splide02 .aniItem"
         
         // Para página de anime
         private const val ANIME_TITLE = "h1"
@@ -100,7 +101,8 @@ class AniTube : MainAPI() {
         val patterns = listOf(
             "Epis[oó]dio\\s*(\\d+)".toRegex(RegexOption.IGNORE_CASE),
             "Ep\\.?\\s*(\\d+)".toRegex(RegexOption.IGNORE_CASE),
-            "E(\\d+)".toRegex(RegexOption.IGNORE_CASE)
+            "E(\\d+)".toRegex(RegexOption.IGNORE_CASE),
+            "\\b(\\d+)\\b".toRegex()
         )
         
         return patterns.firstNotNullOfOrNull { pattern ->
@@ -129,6 +131,42 @@ class AniTube : MainAPI() {
         }
     }
     
+    // Método específico para episódios (estilo AnimesDigital)
+    private fun Element.toEpisodeSearchResponse(): AnimeSearchResponse? {
+        val href = selectFirst("a")?.attr("href") ?: return null
+        if (!href.contains("/video/")) return null
+        
+        // Extrair título do episódio
+        val episodeTitle = selectFirst(EPISODE_NUMBER_SELECTOR)?.text()?.trim() ?: return null
+        
+        // Extrair título do anime (limpar número do episódio)
+        val animeTitle = cleanTitle(episodeTitle)
+        val episodeNumber = extractEpisodeNumber(episodeTitle) ?: 1
+        
+        val posterUrl = selectFirst(POSTER_SELECTOR)?.attr("src")?.let { fixUrl(it) }
+        val isDubbed = isDubbed(this)
+        
+        // Nome no estilo AnimesDigital: "Anime - Episódio X"
+        val displayName = if (animeTitle.isNotBlank()) {
+            "$animeTitle - Episódio $episodeNumber"
+        } else {
+            "Episódio $episodeNumber"
+        }
+        
+        return newAnimeSearchResponse(displayName, fixUrl(href)) {
+            this.posterUrl = posterUrl
+            this.type = TvType.Anime
+            this.extraName = "Episódio $episodeNumber"  // Extra name para mostrar como badge
+            
+            if (isDubbed) {
+                addDubStatus(dubExist = true, subExist = false)
+            } else {
+                addDubStatus(dubExist = false, subExist = true)
+            }
+        }
+    }
+    
+    // Método para animes (sem episódios específicos)
     private fun Element.toAnimeSearchResponse(): AnimeSearchResponse? {
         val href = selectFirst("a")?.attr("href") ?: return null
         if (!href.contains("/video/")) return null
@@ -179,19 +217,19 @@ class AniTube : MainAPI() {
         
         val items = when (request.name) {
             "Últimos Episódios" -> {
-                // Extrair episódios da seção específica
+                // Extrair episódios da seção específica - usar estilo AnimesDigital
                 document.select("$LATEST_EPISODES_SECTION $EPISODE_CARD")
-                    .mapNotNull { it.toAnimeSearchResponse() }
+                    .mapNotNull { it.toEpisodeSearchResponse() }
                     .distinctBy { it.url }
             }
             "Mais Populares" -> {
-                // Extrair animes populares do primeiro carousel (splide01)
+                // Extrair animes populares do primeiro carousel
                 document.select(POPULAR_ANIME_SECTION)
                     .mapNotNull { it.toAnimeSearchResponse() }
                     .distinctBy { it.url }
             }
             "Animes Recentes" -> {
-                // Extrair animes recentes do segundo carousel (splide02)
+                // Extrair animes recentes do segundo carousel
                 document.select(RECENT_ANIME_SECTION)
                     .mapNotNull { it.toAnimeSearchResponse() }
                     .distinctBy { it.url }
@@ -199,7 +237,15 @@ class AniTube : MainAPI() {
             else -> emptyList()
         }
         
-        return newHomePageResponse(request.name, items, hasNext = false)
+        // Para Últimos Episódios, usar layout horizontal como AnimesDigital
+        val isHorizontal = request.name == "Últimos Episódios"
+        
+        return newHomePageResponse(
+            request.name, 
+            items, 
+            hasNext = false,
+            isHorizontalImages = isHorizontal
+        )
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
@@ -208,7 +254,15 @@ class AniTube : MainAPI() {
         val document = app.get("$mainUrl$SEARCH_PATH${query.replace(" ", "+")}").document
         
         return document.select("$ANIME_CARD, $EPISODE_CARD")
-            .mapNotNull { it.toAnimeSearchResponse() }
+            .mapNotNull { 
+                // Tentar identificar se é episódio ou anime completo
+                val isEpisode = it.selectFirst(EPISODE_NUMBER_SELECTOR) != null
+                if (isEpisode) {
+                    it.toEpisodeSearchResponse()
+                } else {
+                    it.toAnimeSearchResponse()
+                }
+            }
             .distinctBy { it.url }
     }
 
@@ -250,9 +304,11 @@ class AniTube : MainAPI() {
         }
         
         val allEpisodes = if (episodesList.isEmpty() && url.contains("/video/")) {
+            // Se for uma página de episódio individual
+            val episodeNumber = extractEpisodeNumber(rawTitle) ?: 1
             listOf(newEpisode(url) {
                 this.name = rawTitle
-                this.episode = 1
+                this.episode = episodeNumber
                 this.posterUrl = poster
             })
         } else {
