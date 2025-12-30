@@ -1,6 +1,8 @@
 package com.AniTube
 
 import com.lagradost.cloudstream3.*
+import com.lagradost.cloudstream3.metaproviders.*
+import com.lagradost.cloudstream3.syncproviders.*
 import com.lagradost.cloudstream3.utils.*
 import org.jsoup.nodes.Element
 import java.net.URLDecoder
@@ -14,28 +16,36 @@ class AniTube : MainAPI() {
     override val supportedTypes = setOf(TvType.Anime)
     override val usesWebView = false
 
+    // 🔧 INTEGRAÇÃO COM ANIZIP/ANILIST
+    private val anizipProvider = AniZipMetaProvider()
+    private val anilistProvider = AniListMetaProvider()
+
     companion object {
         private const val SEARCH_PATH = "/?s="
-        
         private const val ANIME_CARD = ".aniItem"
         private const val EPISODE_CARD = ".epiItem"
         private const val TITLE_SELECTOR = ".aniItemNome, .epiItemNome"
         private const val POSTER_SELECTOR = ".aniItemImg img, .epiItemImg img"
         private const val AUDIO_BADGE_SELECTOR = ".aniCC, .epiCC"
         private const val EPISODE_NUMBER_SELECTOR = ".epiItemInfos .epiItemNome"
-        
         private const val LATEST_EPISODES_SECTION = ".epiContainer"
-        
         private const val ANIME_TITLE = "h1"
         private const val ANIME_POSTER = "#capaAnime img"
         private const val ANIME_SYNOPSIS = "#sinopse2"
         private const val ANIME_METADATA = ".boxAnimeSobre .boxAnimeSobreLinha"
         private const val EPISODE_LIST = ".pagAniListaContainer > a"
-        
         private const val PLAYER_FHD = "#blog2 iframe"
         private const val PLAYER_BACKUP = "#blog1 iframe"
+
+        // 📌 Lista de palavras para remover durante a busca
+        private val REMOVE_WORDS = listOf(
+            "dublado", "legendado", "episodio", "ep", "ep.", "temporada",
+            "season", "part", "parte", "filme", "movie", "ova", "special",
+            "especial", "complete", "completo"
+        )
     }
 
+    // 📊 Mapa de gêneros para a página principal
     private val genresMap = mapOf(
         "Ação" to "acao", "Artes Marciais" to "artes%20marciais", "Aventura" to "aventura",
         "Comédia" to "comedia", "Comédia Romântica" to "comedia%20romantica", "Drama" to "drama",
@@ -60,6 +70,94 @@ class AniTube : MainAPI() {
         *genresMap.map { (genre, slug) -> "$mainUrl/?s=$slug" to genre }.toTypedArray()
     )
 
+    // 🔧 FUNÇÃO: Limpar título para busca no AniZip/AniList
+    private fun cleanTitleForSearch(dirtyTitle: String): String {
+        var clean = dirtyTitle
+            .replace("(?i)\\s*–\\s*todos os epis[oó]dios".toRegex(), "")
+            .replace("(?i)\\s*\\(dublado\\)".toRegex(), "")
+            .replace("(?i)\\s*\\(legendado\\)".toRegex(), "")
+            .replace("(?i)\\s*dublado\\s*$".toRegex(), "")
+            .replace("(?i)\\s*legendado\\s*$".toRegex(), "")
+            .replace("(?i)\\s*-\\s*epis[oó]dio\\s*\\d+".toRegex(), "")
+            .replace("(?i)\\s*–\\s*Epis[oó]dio\\s*\\d+".toRegex(), "")
+            .replace("(?i)\\s*epis[oó]dio\\s*\\d+".toRegex(), "")
+            .replace("(?i)\\s*Ep\\.\\s*\\d+".toRegex(), "")
+            .replace("\\s+".toRegex(), " ")
+            .trim()
+
+        // Remove números no final
+        clean = clean.replace("\\s*\\d+\\s*$".toRegex(), "").trim()
+
+        // Remove palavras comuns que atrapalham a busca
+        REMOVE_WORDS.forEach { word ->
+            val regex = "(?i)\\b$word\\b".toRegex()
+            clean = clean.replace(regex, "").trim()
+        }
+
+        return clean.ifBlank { dirtyTitle }
+    }
+
+    // 🔧 FUNÇÃO: Buscar metadados de alta qualidade
+    private suspend fun getEnhancedMetadata(animeTitle: String): EnhancedMetadata? {
+        val searchTitle = cleanTitleForSearch(animeTitle)
+        
+        if (searchTitle.length < 3) return null
+
+        try {
+            // 1. Primeiro tenta o AniZip (melhor integração com CloudStream)
+            val anizipResult = anizipProvider.search(searchTitle)
+            if (anizipResult != null && anizipResult.poster != null) {
+                return EnhancedMetadata(
+                    title = anizipResult.title ?: animeTitle,
+                    posterUrl = anizipResult.poster,
+                    bannerUrl = anizipResult.banner,
+                    description = anizipResult.description,
+                    year = anizipResult.year,
+                    genres = anizipResult.genres?.toList() ?: emptyList(),
+                    status = anizipResult.status,
+                    rating = anizipResult.rating
+                )
+            }
+
+            // 2. Fallback para AniList (maior cobertura)
+            val anilistResult = anilistProvider.search(searchTitle)
+            if (anilistResult != null) {
+                // AniList retorna SearchResponse, precisamos converter
+                val anilistData = anilistResult as? AnimeSearchResponse
+                if (anilistData != null && anilistData.posterUrl != null) {
+                    return EnhancedMetadata(
+                        title = anilistData.name,
+                        posterUrl = anilistData.posterUrl,
+                        bannerUrl = anilistData.posterUrl, // AniList não tem banner direto na busca
+                        description = null,
+                        year = anilistData.year,
+                        genres = emptyList(),
+                        status = null,
+                        rating = null
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            // Silenciosamente falha e usa os metadados do site
+            println("Erro ao buscar metadados: ${e.message}")
+        }
+
+        return null
+    }
+
+    // 📦 Classe para armazenar metadados melhorados
+    data class EnhancedMetadata(
+        val title: String,
+        val posterUrl: String?,
+        val bannerUrl: String?,
+        val description: String?,
+        val year: Int?,
+        val genres: List<String>,
+        val status: String?,
+        val rating: Float?
+    )
+
+    // 🔧 FUNÇÕES ORIGINAIS (mantidas)
     private fun cleanTitle(dirtyTitle: String): String {
         return dirtyTitle
             .replace("(?i)\\s*–\\s*todos os epis[oó]dios".toRegex(), "")
@@ -160,6 +258,7 @@ class AniTube : MainAPI() {
         }
     }
 
+    // 🏠 FUNÇÃO: Página principal (MODIFICADA)
     override suspend fun getMainPage(
         page: Int,
         request: MainPageRequest
@@ -264,6 +363,7 @@ class AniTube : MainAPI() {
         }
     }
 
+    // 🔍 FUNÇÃO: Busca
     override suspend fun search(query: String): List<SearchResponse> {
         if (query.length < 2) return emptyList()
         
@@ -281,6 +381,7 @@ class AniTube : MainAPI() {
             .distinctBy { it.url }
     }
 
+    // 📥 FUNÇÃO: Carregar anime (MODIFICADA com imagens de alta qualidade)
     override suspend fun load(url: String): LoadResponse {
         val parts = url.split("|poster=")
         val actualUrl = parts[0]
@@ -292,30 +393,67 @@ class AniTube : MainAPI() {
         val episodeNumber = extractEpisodeNumber(rawTitle) ?: 1
         val title = cleanTitle(rawTitle)
         
-        val poster = thumbPoster ?: document.selectFirst(ANIME_POSTER)?.attr("src")?.let { fixUrl(it) }
+        // 🔧 MUDANÇA PRINCIPAL: Busca imagens de alta qualidade
+        var poster = thumbPoster ?: document.selectFirst(ANIME_POSTER)?.attr("src")?.let { fixUrl(it) }
+        var banner: String? = null
+        var enhancedSynopsis: String? = null
+        var enhancedYear: Int? = null
+        var enhancedGenres = emptyList<String>()
         
+        // Busca metadados melhorados
+        val enhancedMetadata = getEnhancedMetadata(title)
+        
+        if (enhancedMetadata != null) {
+            // Usa imagens do AniZip/AniList (alta qualidade)
+            if (enhancedMetadata.posterUrl != null) {
+                poster = enhancedMetadata.posterUrl
+            }
+            banner = enhancedMetadata.bannerUrl
+            enhancedSynopsis = enhancedMetadata.description
+            enhancedYear = enhancedMetadata.year
+            enhancedGenres = enhancedMetadata.genres
+            
+            // Se tiver rating, adiciona à sinopse
+            val ratingText = enhancedMetadata.rating?.let { "⭐ ${String.format("%.1f", it)}" } ?: ""
+            if (ratingText.isNotEmpty()) {
+                enhancedSynopsis = "$ratingText\n\n${enhancedSynopsis ?: ""}"
+            }
+        }
     
         val siteSynopsis = document.selectFirst(ANIME_SYNOPSIS)?.text()?.trim()
         
-        val synopsis = if (actualUrl.contains("/video/")) {
-            
-            siteSynopsis ?: "Episódio $episodeNumber de $title"
-        } else {
-            siteSynopsis ?: "Sinopse não disponível."
+        // Usa sinopse melhorada se disponível, senão usa a do site
+        val synopsis = when {
+            actualUrl.contains("/video/") -> {
+                siteSynopsis ?: "Episódio $episodeNumber de $title"
+            }
+            enhancedSynopsis != null -> {
+                enhancedSynopsis
+            }
+            else -> {
+                siteSynopsis ?: "Sinopse não disponível."
+            }
         }
         
-        var year: Int? = null
+        var year: Int? = enhancedYear
         var episodes: Int? = null
-        var genres = emptyList<String>()
+        var genres = enhancedGenres
         var audioType = ""
         
-        document.select(ANIME_METADATA).forEach { element ->
-            val text = element.text()
-            when {
-                text.contains("Gênero:", true) -> genres = text.substringAfter("Gênero:").split(",").map { it.trim() }
-                text.contains("Ano:", true) -> year = text.substringAfter("Ano:").trim().toIntOrNull()
-                text.contains("Episódios:", true) -> episodes = text.substringAfter("Episódios:").trim().toIntOrNull()
-                text.contains("Tipo de Episódio:", true) -> audioType = text.substringAfter("Tipo de Episódio:").trim()
+        // Complementa com dados do site se necessário
+        if (genres.isEmpty() || year == null) {
+            document.select(ANIME_METADATA).forEach { element ->
+                val text = element.text()
+                when {
+                    text.contains("Gênero:", true) && genres.isEmpty() -> 
+                        genres = text.substringAfter("Gênero:").split(",").map { it.trim() }
+                    text.contains("Ano:", true) && year == null -> 
+                        year = text.substringAfter("Ano:").trim().toIntOrNull()
+                    text.contains("Episódios:", true) -> 
+                        episodes = text.substringAfter("Episódios:").trim().toIntOrNull()
+                    text.contains("Tipo de Episódio:", true) -> 
+                        audioType = text.substringAfter("Tipo de Episódio:").trim()
+                }
             }
         }
         
@@ -346,8 +484,10 @@ class AniTube : MainAPI() {
         val sortedEpisodes = allEpisodes.sortedBy { it.episode }
         val showStatus = if (episodes != null && sortedEpisodes.size >= episodes) ShowStatus.Completed else ShowStatus.Ongoing
         
+        // 🔧 RETORNA COM IMAGENS DE ALTA QUALIDADE
         return newAnimeLoadResponse(title, actualUrl, TvType.Anime) {
             this.posterUrl = poster
+            this.backgroundPosterUrl = banner // BANNER DE ALTA QUALIDADE
             this.year = year
             this.plot = synopsis
             this.tags = genres
@@ -357,6 +497,7 @@ class AniTube : MainAPI() {
         }
     }
 
+    // ▶️ FUNÇÃO: Carregar links (MANTIDA)
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
