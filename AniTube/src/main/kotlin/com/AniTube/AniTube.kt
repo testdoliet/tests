@@ -294,14 +294,13 @@ class AniTube : MainAPI() {
         
         val poster = thumbPoster ?: document.selectFirst(ANIME_POSTER)?.attr("src")?.let { fixUrl(it) }
         
-        // Extrair sinopse do site quando disponível
+    
         val siteSynopsis = document.selectFirst(ANIME_SYNOPSIS)?.text()?.trim()
         
         val synopsis = if (actualUrl.contains("/video/")) {
-            // Para episódios, usar sinopse do site ou criar descrição com episódio
+            
             siteSynopsis ?: "Episódio $episodeNumber de $title"
         } else {
-            // Para animes completos, usar sinopse do site
             siteSynopsis ?: "Sinopse não disponível."
         }
         
