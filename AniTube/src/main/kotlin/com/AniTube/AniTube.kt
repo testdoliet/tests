@@ -62,8 +62,8 @@ class AniTube : MainAPI() {
             "Epis[oó]dio\\s*(\\d+)".toRegex(RegexOption.IGNORE_CASE),
             "Ep\\.?\\s*(\\d+)".toRegex(RegexOption.IGNORE_CASE),
             "E(\\d+)".toRegex(RegexOption.IGNORE_CASE),
-            "\\b(\\d{3,})\\b".toRegex(),  // Para números altos como 1155
-            "\\b(\\d{1,2})\\b".toRegex()   // Para números baixos como 10, 22
+            "\\b(\\d{3,})\\b".toRegex(),
+            "\\b(\\d{1,2})\\b".toRegex()
         ).firstNotNullOfOrNull { it.find(title)?.groupValues?.get(1)?.toIntOrNull() }
     }
     
@@ -95,7 +95,7 @@ class AniTube : MainAPI() {
         } else { url }
     }
     
-    // TENTATIVA 1: Usando o método do AnimesDigital - criar um tipo especial
+    // MÉTODO CORRIGIDO: Usando newAnimeSearchResponse corretamente
     private fun Element.toEpisodeSearchResponse(): AnimeSearchResponse? {
         val href = selectFirst("a")?.attr("href") ?: return null
         if (!href.contains("/video/")) return null
@@ -106,7 +106,6 @@ class AniTube : MainAPI() {
         val posterUrl = selectFirst(POSTER_SELECTOR)?.attr("src")?.let { fixUrl(it) }
         val isDubbed = isDubbed(this)
         
-        // DEBUG
         println("=== ANITUBE DEBUG ===")
         println("Título original: $episodeTitle")
         println("Anime extraído: $animeTitle")
@@ -114,71 +113,29 @@ class AniTube : MainAPI() {
         println("É dublado: $isDubbed")
         println("=====================")
         
-        // TENTATIVA FORTE: Formatar de várias maneiras diferentes
-        val displayName = when {
-            // Tentativa 1: Formato com "EP" (funciona em muitos plugins)
-            animeTitle.isNotBlank() -> "$animeTitle EP$episodeNumber"
-            else -> "EP$episodeNumber"
-        }
-        
-        // CRIANDO A RESPOSTA COM METADATA ESPECIAL
-        return object : AnimeSearchResponse() {
-            override var name = displayName
-            override var url = fixUrl(href)
-            override var posterUrl = posterUrl
-            override var type = TvType.Anime
-            override var id = null
-            
-            // TENTATIVA: Sobrescrever o método que gera as badges
-            init {
-                // Adicionar status de áudio
-                addDubStatus(dubExist = isDubbed, subExist = !isDubbed)
-                
-                // Tentativa de forçar badge de episódio através de metadados
-                try {
-                    // Algumas versões do CloudStream usam isso
-                    this.metadata = AnimeSearchMetadata().apply {
-                        this.episode = episodeNumber
-                    }
-                } catch (e: Exception) {
-                    // Ignorar se não funcionar
-                }
-            }
-            
-            // TENTATIVA: Adicionar propriedades personalizadas
-            val episode = episodeNumber
-        }
-    }
-    
-    // Método alternativo: Usar a mesma abordagem do AnimesDigital
-    private fun Element.toEpisodeSearchResponseAlt(): AnimeSearchResponse? {
-        val href = selectFirst("a")?.attr("href") ?: return null
-        if (!href.contains("/video/")) return null
-        
-        val episodeTitle = selectFirst(EPISODE_NUMBER_SELECTOR)?.text()?.trim() ?: return null
-        val episodeNumber = extractEpisodeNumber(episodeTitle) ?: 1
-        val animeTitle = extractAnimeTitle(episodeTitle)
-        val posterUrl = selectFirst(POSTER_SELECTOR)?.attr("src")?.let { fixUrl(it) }
-        val isDubbed = isDubbed(this)
-        
-        // EXATAMENTE como o AnimesDigital faz:
-        // Ele mostra "Anime - X" onde X é o número do episódio
+        // TENTATIVA: Formatar de várias maneiras
+        // 1. Primeiro tentamos com "EP" no nome
         val displayName = if (animeTitle.isNotBlank() && animeTitle != "Anime") {
-            "$animeTitle - $episodeNumber"
+            "$animeTitle EP$episodeNumber"
         } else {
-            episodeNumber.toString()
+            "EP$episodeNumber"
         }
         
         return newAnimeSearchResponse(displayName, fixUrl(href)) {
             this.posterUrl = posterUrl
             this.type = TvType.Anime
             
-            // IMPORTANTE: O AnimesDigital passa o episodeNumber como segundo parâmetro
-            // Vamos tentar replicar isso
-            addDubStatus(dubExist = isDubbed, subExist = !isDubbed, episodeNum = episodeNumber)
+            // IMPORTANTE: Tentar passar o número de episódios de formas diferentes
+            // O CloudStream tem várias sobrecargas de addDubStatus
             
-            // DEBUG
-            println("ANITUBE ALT: $displayName | Ep: $episodeNumber | Dub: $isDubbed")
+            // TENTATIVA 1: Passando DubStatus e episódios
+            val dubStatus = if (isDubbed) DubStatus.Dubbed else DubStatus.Subbed
+            addDubStatus(dubStatus, episodeNumber)
+            
+            // TENTATIVA 2: Também usar a versão booleana
+            addDubStatus(isDubbed, episodeNumber)
+            
+            println("DEBUG: Criado - $displayName | Ep: $episodeNumber")
         }
     }
     
@@ -194,7 +151,7 @@ class AniTube : MainAPI() {
         return newAnimeSearchResponse(cleanedTitle, fixUrl(href)) {
             this.posterUrl = posterUrl
             this.type = TvType.Anime
-            addDubStatus(dubExist = isDubbed, subExist = !isDubbed)
+            addDubStatus(isDubbed, null)
         }
     }
 
@@ -212,8 +169,7 @@ class AniTube : MainAPI() {
                 .mapNotNull { 
                     val isEpisode = it.selectFirst(EPISODE_NUMBER_SELECTOR) != null
                     if (isEpisode) {
-                        // Testar com método alternativo
-                        it.toEpisodeSearchResponseAlt()
+                        it.toEpisodeSearchResponse()
                     } else {
                         it.toAnimeSearchResponse()
                     }
@@ -229,10 +185,7 @@ class AniTube : MainAPI() {
             "Últimos Episódios" -> {
                 val episodeElements = document.select("$LATEST_EPISODES_SECTION $EPISODE_CARD")
                 val items = episodeElements
-                    .mapNotNull { 
-                        // Usar o método alternativo
-                        it.toEpisodeSearchResponseAlt() 
-                    }
+                    .mapNotNull { it.toEpisodeSearchResponse() }
                     .distinctBy { it.url }
                 
                 println("ANITUBE: ${items.size} episódios processados")
@@ -275,7 +228,7 @@ class AniTube : MainAPI() {
             .mapNotNull { 
                 val isEpisode = it.selectFirst(EPISODE_NUMBER_SELECTOR) != null
                 if (isEpisode) {
-                    it.toEpisodeSearchResponseAlt()
+                    it.toEpisodeSearchResponse()
                 } else {
                     it.toAnimeSearchResponse()
                 }
