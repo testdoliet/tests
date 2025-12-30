@@ -25,8 +25,8 @@ class AniTube : MainAPI() {
         private const val EPISODE_NUMBER_SELECTOR = ".epiItemInfos .epiItemNome"
         
         private const val LATEST_EPISODES_SECTION = ".epiContainer"
-        private const val POPULAR_ANIME_SECTION = "#splide01 .splide__list .aniItem"
-        private const val RECENT_ANIME_SECTION = "#splide02 .splide__list .aniItem"
+        private const val POPULAR_ANIME_SECTION = "#splide01 .splide__list .splide__slide:not(.splide__slide--clone) .aniItem"
+        private const val RECENT_ANIME_SECTION = "#splide02 .splide__list .splide__slide:not(.splide__slide--clone) .aniItem"
         
         private const val ANIME_TITLE = "h1"
         private const val ANIME_POSTER = "#capaAnime img"
@@ -205,116 +205,69 @@ class AniTube : MainAPI() {
                 )
             }
             "Animes Mais Vistos" -> {
-                // DEBUG: Vamos ver o que está no documento
-                println("DEBUG: Procurando #splide01")
-                val splide01 = document.selectFirst("#splide01")
-                println("DEBUG: #splide01 encontrado: ${splide01 != null}")
+                // Estratégia específica para o carrossel de "Mais Vistos"
+                val items = mutableListOf<AnimeSearchResponse>()
                 
-                if (splide01 != null) {
-                    // Vamos tentar diferentes seletores
-                    val itemsFromSplide = splide01.select(".aniItem")
-                    println("DEBUG: aniItem dentro de #splide01: ${itemsFromSplide.size}")
-                    
-                    if (itemsFromSplide.isNotEmpty()) {
-                        val items = itemsFromSplide
-                            .mapNotNull { it.toAnimeSearchResponse() }
-                            .distinctBy { it.url }
+                // 1. Tentar pelo seletor específico
+                val specificItems = document.select(POPULAR_ANIME_SECTION)
+                if (specificItems.isNotEmpty()) {
+                    items.addAll(specificItems.mapNotNull { it.toAnimeSearchResponse() })
+                } else {
+                    // 2. Fallback: buscar os primeiros .aniItem após a seção "Animes Mais Vistos"
+                    val popularSection = document.selectFirst(".aniContainer:contains(Animes Mais Vistos)")
+                    if (popularSection != null) {
+                        // Buscar todos os .aniItem após esta seção até encontrar outra seção
+                        val allElements = document.select(".aniItem")
+                        val startIndex = allElements.indexOfFirst { 
+                            it.parents().any { parent -> parent == popularSection } 
+                        }
                         
-                        return newHomePageResponse(
-                            list = HomePageList(request.name, items, isHorizontalImages = true),
-                            hasNext = false
-                        )
-                    }
-                    
-                    // Tentar pegar de .splide__slide
-                    val slides = splide01.select(".splide__slide")
-                    println("DEBUG: splide__slide dentro de #splide01: ${slides.size}")
-                    
-                    if (slides.isNotEmpty()) {
-                        val items = slides
-                            .filter { !it.hasClass("splide__slide--clone") } // Ignorar clones
-                            .mapNotNull { slide ->
-                                slide.selectFirst(".aniItem")?.toAnimeSearchResponse()
+                        if (startIndex != -1) {
+                            // Pegar até 10 itens a partir daqui
+                            val endIndex = minOf(startIndex + 10, allElements.size)
+                            for (i in startIndex until endIndex) {
+                                allElements[i].toAnimeSearchResponse()?.let { items.add(it) }
                             }
-                            .filterNotNull()
-                            .distinctBy { it.url }
-                        
-                        println("DEBUG: Items extraídos: ${items.size}")
-                        return newHomePageResponse(
-                            list = HomePageList(request.name, items, isHorizontalImages = true),
-                            hasNext = false
-                        )
+                        }
                     }
                 }
                 
-                // Fallback: buscar todos os .aniItem na página
-                val allAniItems = document.select(".aniItem")
-                println("DEBUG: Todos os .aniItem na página: ${allAniItems.size}")
-                
-                val items = allAniItems
-                    .mapNotNull { it.toAnimeSearchResponse() }
-                    .distinctBy { it.url }
-                    .take(20) // Limitar para não pegar demais
-                
                 newHomePageResponse(
-                    list = HomePageList(request.name, items, isHorizontalImages = true),
+                    list = HomePageList(request.name, items.distinctBy { it.url }, isHorizontalImages = true),
                     hasNext = false
                 )
             }
             "Animes Recentes" -> {
-                // DEBUG: Vamos ver o que está no documento
-                println("DEBUG: Procurando #splide02")
-                val splide02 = document.selectFirst("#splide02")
-                println("DEBUG: #splide02 encontrado: ${splide02 != null}")
+                // Estratégia específica para o carrossel de "Recentemente Adicionados"
+                val items = mutableListOf<AnimeSearchResponse>()
                 
-                if (splide02 != null) {
-                    // Vamos tentar diferentes seletores
-                    val itemsFromSplide = splide02.select(".aniItem")
-                    println("DEBUG: aniItem dentro de #splide02: ${itemsFromSplide.size}")
+                // 1. Tentar pelo seletor específico
+                val specificItems = document.select(RECENT_ANIME_SECTION)
+                if (specificItems.isNotEmpty()) {
+                    items.addAll(specificItems.mapNotNull { it.toAnimeSearchResponse() })
+                } else {
+                    // 2. Fallback: buscar .aniItem que NÃO estão na seção "Mais Vistos"
+                    val allAniItems = document.select(".aniItem")
                     
-                    if (itemsFromSplide.isNotEmpty()) {
-                        val items = itemsFromSplide
-                            .mapNotNull { it.toAnimeSearchResponse() }
-                            .distinctBy { it.url }
-                        
-                        return newHomePageResponse(
-                            list = HomePageList(request.name, items, isHorizontalImages = true),
-                            hasNext = false
-                        )
+                    // Tentar identificar os itens recentes (normalmente são os últimos adicionados)
+                    // Vamos pegar um subconjunto diferente dos "Mais Vistos"
+                    val popularItems = document.select(POPULAR_ANIME_SECTION).map { it.attr("href") }
+                    
+                    // Filtrar itens que não estão nos "Mais Vistos"
+                    val recentItems = allAniItems.filterNot { 
+                        val href = it.selectFirst("a")?.attr("href") ?: ""
+                        href in popularItems
                     }
                     
-                    // Tentar pegar de .splide__slide
-                    val slides = splide02.select(".splide__slide")
-                    println("DEBUG: splide__slide dentro de #splide02: ${slides.size}")
-                    
-                    if (slides.isNotEmpty()) {
-                        val items = slides
-                            .filter { !it.hasClass("splide__slide--clone") } // Ignorar clones
-                            .mapNotNull { slide ->
-                                slide.selectFirst(".aniItem")?.toAnimeSearchResponse()
-                            }
-                            .filterNotNull()
-                            .distinctBy { it.url }
-                        
-                        println("DEBUG: Items extraídos: ${items.size}")
-                        return newHomePageResponse(
-                            list = HomePageList(request.name, items, isHorizontalImages = true),
-                            hasNext = false
-                        )
-                    }
+                    // Pegar os primeiros 10 itens únicos
+                    items.addAll(recentItems
+                        .mapNotNull { it.toAnimeSearchResponse() }
+                        .distinctBy { it.url }
+                        .take(10))
                 }
                 
-                // Fallback: buscar todos os .aniItem na página (exceto os que já são "Mais Vistos")
-                val allAniItems = document.select(".aniItem")
-                println("DEBUG: Todos os .aniItem na página: ${allAniItems.size}")
-                
-                val items = allAniItems
-                    .mapNotNull { it.toAnimeSearchResponse() }
-                    .distinctBy { it.url }
-                    .take(20) // Limitar para não pegar demais
-                
                 newHomePageResponse(
-                    list = HomePageList(request.name, items, isHorizontalImages = true),
+                    list = HomePageList(request.name, items.distinctBy { it.url }, isHorizontalImages = true),
                     hasNext = false
                 )
             }
