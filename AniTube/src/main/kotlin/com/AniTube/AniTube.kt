@@ -40,48 +40,20 @@ class AniTube : MainAPI() {
 
     // Mapeamento de gêneros COMPLETO
     private val genresMap = mapOf(
-        "Ação" to "acao",
-        "Artes Marciais" to "artes%20marciais",
-        "Aventura" to "aventura",
-        "Comédia" to "comedia",
-        "Comédia Romântica" to "comedia%20romantica",
-        "Drama" to "drama",
-        "Ecchi" to "ecchi",
-        "Esporte" to "esporte",
-        "Fantasia" to "fantasia",
-        "Ficção Científica" to "ficcao%20cientifica",
-        "Jogos" to "jogos",
-        "Magia" to "magia",
-        "Mecha" to "mecha",
-        "Mistério" to "misterio",
-        "Musical" to "musical",
-        "Romance" to "romance",
-        "Seinen" to "seinen",
-        "Shoujo-ai" to "shoujo%20ai",
-        "Shounen" to "shounen",
-        "Slice Of Life" to "slice%20of%20life",
-        "Sobrenatural" to "sobrenatural",
-        "Superpoder" to "superpoder",
-        "Terror" to "terror",
-        "Vida Escolar" to "vida%20escolar",
-        "Shoujo" to "shoujo",
-        "Shounen-ai" to "shounen%20ai",
-        "Yaoi" to "yaoi",
-        "Yuri" to "yuri",
-        "Harem" to "harem",
-        "Isekai" to "isekai",
-        "Militar" to "militar",
-        "Policial" to "policial",
-        "Psicológico" to "psicologico",
-        "Samurai" to "samurai",
-        "Vampiros" to "vampiros",
-        "Zumbi" to "zumbi",
-        "Histórico" to "historico",
-        "Mágica" to "magica",
-        "Cyberpunk" to "cyberpunk",
-        "Espaço" to "espaco",
-        "Demônios" to "demônios",
-        "Vida Cotidiana" to "vida%20cotidiana"
+        "Ação" to "acao", "Artes Marciais" to "artes%20marciais", "Aventura" to "aventura",
+        "Comédia" to "comedia", "Comédia Romântica" to "comedia%20romantica", "Drama" to "drama",
+        "Ecchi" to "ecchi", "Esporte" to "esporte", "Fantasia" to "fantasia",
+        "Ficção Científica" to "ficcao%20cientifica", "Jogos" to "jogos", "Magia" to "magia",
+        "Mecha" to "mecha", "Mistério" to "misterio", "Musical" to "musical",
+        "Romance" to "romance", "Seinen" to "seinen", "Shoujo-ai" to "shoujo%20ai",
+        "Shounen" to "shounen", "Slice Of Life" to "slice%20of%20life", "Sobrenatural" to "sobrenatural",
+        "Superpoder" to "superpoder", "Terror" to "terror", "Vida Escolar" to "vida%20escolar",
+        "Shoujo" to "shoujo", "Shounen-ai" to "shounen%20ai", "Yaoi" to "yaoi",
+        "Yuri" to "yuri", "Harem" to "harem", "Isekai" to "isekai", "Militar" to "militar",
+        "Policial" to "policial", "Psicológico" to "psicologico", "Samurai" to "samurai",
+        "Vampiros" to "vampiros", "Zumbi" to "zumbi", "Histórico" to "historico",
+        "Mágica" to "magica", "Cyberpunk" to "cyberpunk", "Espaço" to "espaco",
+        "Demônios" to "demônios", "Vida Cotidiana" to "vida%20cotidiana"
     )
 
     override val mainPage = mainPageOf(
@@ -129,7 +101,6 @@ class AniTube : MainAPI() {
             .replace("\\s+".toRegex(), " ")
             .trim()
         
-        // Remove qualquer número solto no final
         clean = clean.replace("\\s*\\d+\\s*$".toRegex(), "").trim()
         
         return clean.ifBlank { "Anime" }
@@ -149,7 +120,7 @@ class AniTube : MainAPI() {
         } else { url }
     }
     
-    // Método para episódios - NOME LIMPO SEM NÚMERO, NÚMERO SÓ NA BADGE
+    // MÉTODO MODIFICADO: Adiciona a imagem da thumb na URL como parâmetro
     private fun Element.toEpisodeSearchResponse(): AnimeSearchResponse? {
         val href = selectFirst("a")?.attr("href") ?: return null
         if (!href.contains("/video/")) return null
@@ -160,20 +131,25 @@ class AniTube : MainAPI() {
         val posterUrl = selectFirst(POSTER_SELECTOR)?.attr("src")?.let { fixUrl(it) }
         val isDubbed = isDubbed(this)
         
-        // NOME LIMPO - SEM NÚMERO, SEM "EP"
+        // Nome limpo sem número
         val displayName = cleanTitle(animeTitle)
         
-        return newAnimeSearchResponse(displayName, fixUrl(href)) {
+        // MODIFICAÇÃO: Adiciona a imagem como parâmetro na URL
+        val urlWithPoster = if (posterUrl != null) {
+            "$href|poster=$posterUrl"
+        } else {
+            href
+        }
+        
+        return newAnimeSearchResponse(displayName, fixUrl(urlWithPoster)) {
             this.posterUrl = posterUrl
             this.type = TvType.Anime
             
-            // AQUI ESTÁ O SEGREDO: adiciona o número do episódio como segundo parâmetro
             val dubStatus = if (isDubbed) DubStatus.Dubbed else DubStatus.Subbed
             addDubStatus(dubStatus, episodeNumber)
         }
     }
     
-    // Método para animes completos
     private fun Element.toAnimeSearchResponse(): AnimeSearchResponse? {
         val href = selectFirst("a")?.attr("href") ?: return null
         
@@ -270,15 +246,22 @@ class AniTube : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse {
-        val document = app.get(url).document
+        // SEPARAR: URL original da imagem da thumb
+        val parts = url.split("|poster=")
+        val actualUrl = parts[0]
+        val thumbPoster = parts.getOrNull(1)?.let { if (it.isNotBlank()) fixUrl(it) else null }
+        
+        val document = app.get(actualUrl).document
         
         val rawTitle = document.selectFirst(ANIME_TITLE)?.text()?.trim() ?: "Sem Título"
         val episodeNumber = extractEpisodeNumber(rawTitle) ?: 1
         val title = cleanTitle(rawTitle)
-        val poster = document.selectFirst(ANIME_POSTER)?.attr("src")?.let { fixUrl(it) }
+        
+        // PRIORIDADE: 1. Imagem da thumb passada | 2. Imagem da página
+        val poster = thumbPoster ?: document.selectFirst(ANIME_POSTER)?.attr("src")?.let { fixUrl(it) }
         
         // Para episódios individuais, criar sinopse personalizada
-        val synopsis = if (url.contains("/video/")) {
+        val synopsis = if (actualUrl.contains("/video/")) {
             "Episódio $episodeNumber de $title"
         } else {
             document.selectFirst(ANIME_SYNOPSIS)?.text()?.trim() ?: "Sinopse não disponível."
@@ -313,9 +296,8 @@ class AniTube : MainAPI() {
             }
         }
         
-        val allEpisodes = if (episodesList.isEmpty() && url.contains("/video/")) {
-            // Para página de episódio individual
-            listOf(newEpisode(url) {
+        val allEpisodes = if (episodesList.isEmpty() && actualUrl.contains("/video/")) {
+            listOf(newEpisode(actualUrl) {
                 this.name = "Episódio $episodeNumber"
                 this.episode = episodeNumber
                 this.posterUrl = poster
@@ -327,7 +309,7 @@ class AniTube : MainAPI() {
         val sortedEpisodes = allEpisodes.sortedBy { it.episode }
         val showStatus = if (episodes != null && sortedEpisodes.size >= episodes) ShowStatus.Completed else ShowStatus.Ongoing
         
-        return newAnimeLoadResponse(title, url, TvType.Anime) {
+        return newAnimeLoadResponse(title, actualUrl, TvType.Anime) {
             this.posterUrl = poster
             this.year = year
             this.plot = synopsis
@@ -344,7 +326,9 @@ class AniTube : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val document = app.get(data).document
+        // Remover parâmetro da imagem da URL antes de fazer a requisição
+        val actualUrl = data.split("|poster=")[0]
+        val document = app.get(actualUrl).document
         
         document.selectFirst(PLAYER_FHD)?.let { iframe ->
             val src = iframe.attr("src").takeIf { it.isNotBlank() } ?: return@let
