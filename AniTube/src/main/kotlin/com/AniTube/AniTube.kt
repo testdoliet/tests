@@ -164,7 +164,7 @@ class AniTube : MainAPI() {
         
         // Formato igual ao AnimesDigital: "Anime - Episódio X"
         val episodeText = if (isDubbed) "Dublado Episódio $episodeNumber" else "Legendado Episódio $episodeNumber"
-        val displayName = "$animeTitle ($episodeNumber)"
+        val displayName = "$animeTitle EP$episodeNumber
         
         return newAnimeSearchResponse(displayName, fixUrl(href)) {
             this.posterUrl = posterUrl
