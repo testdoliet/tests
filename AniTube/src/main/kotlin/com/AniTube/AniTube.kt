@@ -156,7 +156,6 @@ class AniTube : MainAPI() {
         return newAnimeSearchResponse(displayName, fixUrl(href)) {
             this.posterUrl = posterUrl
             this.type = TvType.Anime
-            this.extraName = "Episódio $episodeNumber"  // Extra name para mostrar como badge
             
             if (isDubbed) {
                 addDubStatus(dubExist = true, subExist = false)
@@ -237,15 +236,21 @@ class AniTube : MainAPI() {
             else -> emptyList()
         }
         
-        // Para Últimos Episódios, usar layout horizontal como AnimesDigital
-        val isHorizontal = request.name == "Últimos Episódios"
-        
-        return newHomePageResponse(
-            request.name, 
-            items, 
-            hasNext = false,
-            isHorizontalImages = isHorizontal
-        )
+        // Para Últimos Episódios, retornar HomePageList com layout horizontal
+        return if (request.name == "Últimos Episódios") {
+            HomePageResponse(
+                list = listOf(
+                    HomePageList(
+                        name = request.name,
+                        list = items,
+                        isHorizontalImages = true
+                    )
+                ),
+                hasNext = false
+            )
+        } else {
+            newHomePageResponse(request.name, items, hasNext = false)
+        }
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
