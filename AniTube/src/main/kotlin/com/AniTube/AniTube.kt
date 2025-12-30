@@ -155,7 +155,7 @@ class AniTube : MainAPI() {
         // Extrair título do episódio
         val episodeTitle = selectFirst(EPISODE_NUMBER_SELECTOR)?.text()?.trim() ?: return null
         
-        // Extrair título do anime e número do episódio
+        // Extrair título do aime e número do episódio
         val animeTitle = extractAnimeTitleFromEpisode(episodeTitle)
         val episodeNumber = extractEpisodeNumber(episodeTitle) ?: 1
         
@@ -164,7 +164,7 @@ class AniTube : MainAPI() {
         
         // Formato igual ao AnimesDigital: "Anime - Episódio X"
         val episodeText = if (isDubbed) "Dublado Episódio $episodeNumber" else "Legendado Episódio $episodeNumber"
-        val displayName = "$animeTitle - $episodeText"
+        val displayName = "$animeTitle ($episodeNumber)"
         
         return newAnimeSearchResponse(displayName, fixUrl(href)) {
             this.posterUrl = posterUrl
