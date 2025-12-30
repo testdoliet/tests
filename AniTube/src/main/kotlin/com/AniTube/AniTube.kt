@@ -1,8 +1,6 @@
 package com.AniTube
 
 import com.lagradost.cloudstream3.*
-import com.lagradost.cloudstream3.metaproviders.*
-import com.lagradost.cloudstream3.syncproviders.*
 import com.lagradost.cloudstream3.utils.*
 import org.jsoup.nodes.Element
 import java.net.URLDecoder
@@ -15,10 +13,6 @@ class AniTube : MainAPI() {
     override val hasDownloadSupport = true
     override val supportedTypes = setOf(TvType.Anime)
     override val usesWebView = false
-
-    // 🔧 INTEGRAÇÃO COM ANIZIP/ANILIST
-    private val anizipProvider = AniZipMetaProvider()
-    private val anilistProvider = AniListMetaProvider()
 
     companion object {
         private const val SEARCH_PATH = "/?s="
@@ -37,7 +31,11 @@ class AniTube : MainAPI() {
         private const val PLAYER_FHD = "#blog2 iframe"
         private const val PLAYER_BACKUP = "#blog1 iframe"
 
-        // 📌 Lista de palavras para remover durante a busca
+        // URL base para busca de imagens de alta qualidade
+        private const val ANILIST_API = "https://graphql.anilist.co"
+        private const val TMDB_API = "https://api.themoviedb.org/3"
+        
+        // Lista de palavras para remover durante a busca
         private val REMOVE_WORDS = listOf(
             "dublado", "legendado", "episodio", "ep", "ep.", "temporada",
             "season", "part", "parte", "filme", "movie", "ova", "special",
@@ -70,7 +68,7 @@ class AniTube : MainAPI() {
         *genresMap.map { (genre, slug) -> "$mainUrl/?s=$slug" to genre }.toTypedArray()
     )
 
-    // 🔧 FUNÇÃO: Limpar título para busca no AniZip/AniList
+    // 🔧 FUNÇÃO: Limpar título para busca
     private fun cleanTitleForSearch(dirtyTitle: String): String {
         var clean = dirtyTitle
             .replace("(?i)\\s*–\\s*todos os epis[oó]dios".toRegex(), "")
@@ -97,55 +95,149 @@ class AniTube : MainAPI() {
         return clean.ifBlank { dirtyTitle }
     }
 
-    // 🔧 FUNÇÃO: Buscar metadados de alta qualidade
-    private suspend fun getEnhancedMetadata(animeTitle: String): EnhancedMetadata? {
+    // 🔧 FUNÇÃO: Buscar imagens no AniList (GraphQL)
+    private suspend fun searchAniList(animeTitle: String): AniListResult? {
         val searchTitle = cleanTitleForSearch(animeTitle)
-        
-        if (searchTitle.length < 3) return null
+        if (searchTitle.length < 2) return null
 
         try {
-            // 1. Primeiro tenta o AniZip (melhor integração com CloudStream)
-            val anizipResult = anizipProvider.search(searchTitle)
-            if (anizipResult != null && anizipResult.poster != null) {
-                return EnhancedMetadata(
-                    title = anizipResult.title ?: animeTitle,
-                    posterUrl = anizipResult.poster,
-                    bannerUrl = anizipResult.banner,
-                    description = anizipResult.description,
-                    year = anizipResult.year,
-                    genres = anizipResult.genres?.toList() ?: emptyList(),
-                    status = anizipResult.status,
-                    rating = anizipResult.rating
-                )
-            }
-
-            // 2. Fallback para AniList (maior cobertura)
-            val anilistResult = anilistProvider.search(searchTitle)
-            if (anilistResult != null) {
-                // AniList retorna SearchResponse, precisamos converter
-                val anilistData = anilistResult as? AnimeSearchResponse
-                if (anilistData != null && anilistData.posterUrl != null) {
-                    return EnhancedMetadata(
-                        title = anilistData.name,
-                        posterUrl = anilistData.posterUrl,
-                        bannerUrl = anilistData.posterUrl, // AniList não tem banner direto na busca
-                        description = null,
-                        year = anilistData.year,
-                        genres = emptyList(),
-                        status = null,
-                        rating = null
-                    )
+            val query = """
+                query {
+                    Page(page: 1, perPage: 5) {
+                        media(search: "$searchTitle", type: ANIME) {
+                            id
+                            title {
+                                romaji
+                                english
+                                native
+                            }
+                            coverImage {
+                                extraLarge
+                                large
+                                medium
+                            }
+                            bannerImage
+                            description
+                            seasonYear
+                            genres
+                            status
+                            averageScore
+                        }
+                    }
                 }
+            """.trimIndent()
+
+            val response = app.post(
+                ANILIST_API,
+                data = mapOf("query" to query),
+                headers = mapOf("Content-Type" to "application/json")
+            )
+
+            val json = response.parsedSafe<AniListResponse>()
+            val media = json?.data?.page?.media?.firstOrNull()
+            
+            return if (media != null) {
+                AniListResult(
+                    title = media.title.romaji ?: media.title.english ?: media.title.native ?: animeTitle,
+                    posterUrl = media.coverImage?.extraLarge ?: media.coverImage?.large ?: media.coverImage?.medium,
+                    bannerUrl = media.bannerImage,
+                    description = media.description?.replace(Regex("<.*?>"), ""),
+                    year = media.seasonYear,
+                    genres = media.genres ?: emptyList(),
+                    status = media.status,
+                    rating = media.averageScore?.toFloat()?.div(10f)
+                )
+            } else {
+                null
             }
         } catch (e: Exception) {
-            // Silenciosamente falha e usa os metadados do site
-            println("Erro ao buscar metadados: ${e.message}")
+            return null
+        }
+    }
+
+    // 🔧 FUNÇÃO: Buscar imagens no TMDB (fallback)
+    private suspend fun searchTMDB(animeTitle: String): TMDBResult? {
+        val searchTitle = cleanTitleForSearch(animeTitle)
+        if (searchTitle.length < 2) return null
+
+        try {
+            // TMDB não precisa de API key para busca básica
+            val searchUrl = "$TMDB_API/search/tv?query=${searchTitle.replace(" ", "+")}&language=pt-BR"
+            val response = app.get(searchUrl)
+            val json = response.parsedSafe<TMDBSearchResponse>()
+            
+            val result = json?.results?.firstOrNull()
+            return if (result != null) {
+                TMDBResult(
+                    title = result.name ?: animeTitle,
+                    posterUrl = if (result.poster_path != null) "https://image.tmdb.org/t/p/w500${result.poster_path}" else null,
+                    bannerUrl = if (result.backdrop_path != null) "https://image.tmdb.org/t/p/original${result.backdrop_path}" else null,
+                    year = result.first_air_date?.substring(0, 4)?.toIntOrNull(),
+                    rating = result.vote_average
+                )
+            } else {
+                null
+            }
+        } catch (e: Exception) {
+            return null
+        }
+    }
+
+    // 🔧 FUNÇÃO: Buscar metadados de alta qualidade
+    private suspend fun getEnhancedMetadata(animeTitle: String): EnhancedMetadata? {
+        // 1. Tenta AniList primeiro (melhor para animes)
+        val anilistResult = searchAniList(animeTitle)
+        if (anilistResult != null && anilistResult.posterUrl != null) {
+            return EnhancedMetadata(
+                title = anilistResult.title,
+                posterUrl = anilistResult.posterUrl,
+                bannerUrl = anilistResult.bannerUrl,
+                description = anilistResult.description,
+                year = anilistResult.year,
+                genres = anilistResult.genres,
+                status = anilistResult.status,
+                rating = anilistResult.rating
+            )
+        }
+
+        // 2. Fallback para TMDB
+        val tmdbResult = searchTMDB(animeTitle)
+        if (tmdbResult != null && tmdbResult.posterUrl != null) {
+            return EnhancedMetadata(
+                title = tmdbResult.title,
+                posterUrl = tmdbResult.posterUrl,
+                bannerUrl = tmdbResult.bannerUrl,
+                description = null,
+                year = tmdbResult.year,
+                genres = emptyList(),
+                status = null,
+                rating = tmdbResult.rating
+            )
         }
 
         return null
     }
 
-    // 📦 Classe para armazenar metadados melhorados
+    // 📦 Classes para armazenar resultados
+    data class AniListResult(
+        val title: String,
+        val posterUrl: String?,
+        val bannerUrl: String?,
+        val description: String?,
+        val year: Int?,
+        val genres: List<String>,
+        val status: String?,
+        val rating: Float?
+    )
+
+    data class TMDBResult(
+        val title: String,
+        val posterUrl: String?,
+        val bannerUrl: String?,
+        val year: Int?,
+        val rating: Float?
+    )
+
     data class EnhancedMetadata(
         val title: String,
         val posterUrl: String?,
@@ -155,6 +247,56 @@ class AniTube : MainAPI() {
         val genres: List<String>,
         val status: String?,
         val rating: Float?
+    )
+
+    // Classes para parse do JSON
+    data class AniListResponse(
+        val data: AniListData?
+    )
+
+    data class AniListData(
+        val page: AniListPage?
+    )
+
+    data class AniListPage(
+        val media: List<AniListMedia>?
+    )
+
+    data class AniListMedia(
+        val id: Int,
+        val title: AniListTitle,
+        val coverImage: AniListCoverImage?,
+        val bannerImage: String?,
+        val description: String?,
+        val seasonYear: Int?,
+        val genres: List<String>?,
+        val status: String?,
+        val averageScore: Int?
+    )
+
+    data class AniListTitle(
+        val romaji: String?,
+        val english: String?,
+        val native: String?
+    )
+
+    data class AniListCoverImage(
+        val extraLarge: String?,
+        val large: String?,
+        val medium: String?
+    )
+
+    data class TMDBSearchResponse(
+        val results: List<TMDBResultItem>?
+    )
+
+    data class TMDBResultItem(
+        val id: Int,
+        val name: String?,
+        val poster_path: String?,
+        val backdrop_path: String?,
+        val first_air_date: String?,
+        val vote_average: Float?
     )
 
     // 🔧 FUNÇÕES ORIGINAIS (mantidas)
@@ -258,7 +400,7 @@ class AniTube : MainAPI() {
         }
     }
 
-    // 🏠 FUNÇÃO: Página principal (MODIFICADA)
+    // 🏠 FUNÇÃO: Página principal
     override suspend fun getMainPage(
         page: Int,
         request: MainPageRequest
@@ -393,30 +535,34 @@ class AniTube : MainAPI() {
         val episodeNumber = extractEpisodeNumber(rawTitle) ?: 1
         val title = cleanTitle(rawTitle)
         
-        // 🔧 MUDANÇA PRINCIPAL: Busca imagens de alta qualidade
+        // 🔧 BUSCA IMAGENS DE ALTA QUALIDADE
         var poster = thumbPoster ?: document.selectFirst(ANIME_POSTER)?.attr("src")?.let { fixUrl(it) }
         var banner: String? = null
         var enhancedSynopsis: String? = null
         var enhancedYear: Int? = null
         var enhancedGenres = emptyList<String>()
         
-        // Busca metadados melhorados
-        val enhancedMetadata = getEnhancedMetadata(title)
-        
-        if (enhancedMetadata != null) {
-            // Usa imagens do AniZip/AniList (alta qualidade)
-            if (enhancedMetadata.posterUrl != null) {
-                poster = enhancedMetadata.posterUrl
-            }
-            banner = enhancedMetadata.bannerUrl
-            enhancedSynopsis = enhancedMetadata.description
-            enhancedYear = enhancedMetadata.year
-            enhancedGenres = enhancedMetadata.genres
-            
-            // Se tiver rating, adiciona à sinopse
-            val ratingText = enhancedMetadata.rating?.let { "⭐ ${String.format("%.1f", it)}" } ?: ""
-            if (ratingText.isNotEmpty()) {
-                enhancedSynopsis = "$ratingText\n\n${enhancedSynopsis ?: ""}"
+        // Busca metadados melhorados (apenas se o título for razoável)
+        if (title.length >= 3 && !title.matches(Regex(".*\\d+.*"))) {
+            val enhancedMetadata = getEnhancedMetadata(title)
+            if (enhancedMetadata != null) {
+                // Usa imagens de alta qualidade se disponíveis
+                if (enhancedMetadata.posterUrl != null) {
+                    poster = enhancedMetadata.posterUrl
+                }
+                banner = enhancedMetadata.bannerUrl
+                enhancedSynopsis = enhancedMetadata.description
+                enhancedYear = enhancedMetadata.year
+                enhancedGenres = enhancedMetadata.genres
+                
+                // Adiciona rating à sinopse se disponível
+                val ratingText = enhancedMetadata.rating?.let { 
+                    "⭐ **Avaliação:** ${String.format("%.1f", it)}/10\n\n" 
+                } ?: ""
+                
+                if (ratingText.isNotEmpty() && enhancedSynopsis != null) {
+                    enhancedSynopsis = ratingText + enhancedSynopsis
+                }
             }
         }
     
@@ -497,7 +643,7 @@ class AniTube : MainAPI() {
         }
     }
 
-    // ▶️ FUNÇÃO: Carregar links (MANTIDA)
+    // ▶️ FUNÇÃO: Carregar links
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
