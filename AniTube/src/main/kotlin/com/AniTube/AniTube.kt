@@ -84,8 +84,8 @@ class AniTube : MainAPI() {
 
     override val mainPage = mainPageOf(
         "$mainUrl" to "Últimos Episódios",
-        "$mainUrl" to "Animes Mais Vistos",  // Renomeado de "Mais Populares"
-        "$mainUrl" to "Animes Recentes",     // Já estava certo
+        "$mainUrl" to "Animes Mais Vistos",
+        "$mainUrl" to "Animes Recentes",
         *genresMap.map { (genre, slug) -> "$mainUrl/?s=$slug" to genre }.toTypedArray()
     )
 
@@ -147,7 +147,34 @@ class AniTube : MainAPI() {
         }
     }
     
-    // Método específico para episódios (estilo AnimesDigital)
+    // MÉTODO 1: Criar uma classe personalizada com badge de episódio
+    private fun createEpisodeResponse(
+        title: String,
+        url: String,
+        posterUrl: String?,
+        episodeNumber: Int,
+        isDubbed: Boolean
+    ): AnimeSearchResponse {
+        // Formato para mostrar badge: colocar o número no título
+        val displayName = if (title.contains("$episodeNumber")) {
+            title // Já tem o número
+        } else {
+            "$title ($episodeNumber)" // Adiciona o número entre parênteses
+        }
+        
+        return newAnimeSearchResponse(displayName, url) {
+            this.posterUrl = posterUrl
+            this.type = TvType.Anime
+            
+            // Forçar badge de dublado/legendado
+            addDubStatus(dubExist = isDubbed, subExist = !isDubbed)
+            
+            // Adicionar metadata para badge de episódio
+            // CloudStream detecta automaticamente "(X)" no título
+        }
+    }
+    
+    // Método específico para episódios
     private fun Element.toEpisodeSearchResponse(): AnimeSearchResponse? {
         val href = selectFirst("a")?.attr("href") ?: return null
         if (!href.contains("/video/")) return null
@@ -155,34 +182,42 @@ class AniTube : MainAPI() {
         // Extrair título do episódio
         val episodeTitle = selectFirst(EPISODE_NUMBER_SELECTOR)?.text()?.trim() ?: return null
         
-        // Extrair título do aime e número do episódio
+        // Extrair título do anime e número do episódio
         val animeTitle = extractAnimeTitleFromEpisode(episodeTitle)
         val episodeNumber = extractEpisodeNumber(episodeTitle) ?: 1
         
         val posterUrl = selectFirst(POSTER_SELECTOR)?.attr("src")?.let { fixUrl(it) }
         val isDubbed = isDubbed(this)
         
-        // Formato igual ao AnimesDigital: "Anime - Episódio X"
-        val episodeText = if (isDubbed) "Dublado Episódio $episodeNumber" else "Legendado Episódio $episodeNumber"
-        val displayName = "$animeTitle EP$episodeNumber
+        // Formato que força badge: "Anime (1155)" ou "Anime - Episódio 1155"
+        val displayName = if (animeTitle.contains("$episodeNumber")) {
+            animeTitle
+        } else {
+            "$animeTitle ($episodeNumber)"
+        }
         
         return newAnimeSearchResponse(displayName, fixUrl(href)) {
             this.posterUrl = posterUrl
             this.type = TvType.Anime
             
-            // CORREÇÃO: Não podemos acessar 'episode' diretamente no AnimeSearchResponse
-            // Em vez disso, formatamos o nome para incluir o episódio
-            // O CloudStream vai detectar automaticamente "Episódio X" no nome
-            
-            // Usando o mesmo padrão do AnimesDigital
+            // Forçar badge de dublado/legendado
             addDubStatus(dubExist = isDubbed, subExist = !isDubbed)
+            
+            // Tentar adicionar metadata (algumas versões do CloudStream suportam)
+            try {
+                // Alguns plugins usam isso:
+                // this.metadata = AnimeSearchMetadata().apply { 
+                //     this.episode = episodeNumber 
+                // }
+            } catch (e: Exception) {
+                // Ignorar se não funcionar
+            }
         }
     }
     
     // Método para animes (sem episódios específicos)
     private fun Element.toAnimeSearchResponse(): AnimeSearchResponse? {
         val href = selectFirst("a")?.attr("href") ?: return null
-        // Não filtrar por /video/ aqui, pois pode ser página de anime completo
         
         val rawTitle = selectFirst(TITLE_SELECTOR)?.text()?.trim() ?: return null
         val cleanedTitle = cleanTitle(rawTitle).ifBlank { return null }
@@ -215,7 +250,15 @@ class AniTube : MainAPI() {
             val document = app.get(url).document
             
             val allItems = document.select("$ANIME_CARD, $EPISODE_CARD")
-                .mapNotNull { it.toAnimeSearchResponse() }
+                .mapNotNull { 
+                    // Identificar se é episódio
+                    val isEpisode = it.selectFirst(EPISODE_NUMBER_SELECTOR) != null
+                    if (isEpisode) {
+                        it.toEpisodeSearchResponse()
+                    } else {
+                        it.toAnimeSearchResponse()
+                    }
+                }
                 .distinctBy { it.url }
             
             return newHomePageResponse(request.name, allItems, hasNext = true)
@@ -226,13 +269,11 @@ class AniTube : MainAPI() {
         
         return when (request.name) {
             "Últimos Episódios" -> {
-                // Extrair episódios da seção específica - usar estilo AnimesDigital
                 val episodeElements = document.select("$LATEST_EPISODES_SECTION $EPISODE_CARD")
                 val items = episodeElements
                     .mapNotNull { it.toEpisodeSearchResponse() }
                     .distinctBy { it.url }
                 
-                // Para Últimos Episódios, usar layout horizontal como AnimesDigital
                 newHomePageResponse(
                     list = HomePageList(
                         name = request.name,
@@ -243,7 +284,6 @@ class AniTube : MainAPI() {
                 )
             }
             "Animes Mais Vistos" -> {
-                // Extrair animes populares do primeiro carousel
                 val items = document.select(POPULAR_ANIME_SECTION)
                     .mapNotNull { it.toAnimeSearchResponse() }
                     .distinctBy { it.url }
@@ -252,13 +292,12 @@ class AniTube : MainAPI() {
                     list = HomePageList(
                         name = request.name,
                         list = items,
-                        isHorizontalImages = true  // Também horizontal
+                        isHorizontalImages = true
                     ),
                     hasNext = false
                 )
             }
             "Animes Recentes" -> {
-                // Extrair animes recentes do segundo carousel
                 val items = document.select(RECENT_ANIME_SECTION)
                     .mapNotNull { it.toAnimeSearchResponse() }
                     .distinctBy { it.url }
@@ -267,7 +306,7 @@ class AniTube : MainAPI() {
                     list = HomePageList(
                         name = request.name,
                         list = items,
-                        isHorizontalImages = true  // Também horizontal
+                        isHorizontalImages = true
                     ),
                     hasNext = false
                 )
@@ -283,7 +322,6 @@ class AniTube : MainAPI() {
         
         return document.select("$ANIME_CARD, $EPISODE_CARD")
             .mapNotNull { 
-                // Tentar identificar se é episódio ou anime completo
                 val isEpisode = it.selectFirst(EPISODE_NUMBER_SELECTOR) != null
                 if (isEpisode) {
                     it.toEpisodeSearchResponse()
@@ -332,7 +370,6 @@ class AniTube : MainAPI() {
         }
         
         val allEpisodes = if (episodesList.isEmpty() && url.contains("/video/")) {
-            // Se for uma página de episódio individual
             val episodeNumber = extractEpisodeNumber(rawTitle) ?: 1
             listOf(newEpisode(url) {
                 this.name = rawTitle
@@ -365,63 +402,39 @@ class AniTube : MainAPI() {
     ): Boolean {
         val document = app.get(data).document
         
-        // Player FHD (blog2)
         document.selectFirst(PLAYER_FHD)?.let { iframe ->
             val src = iframe.attr("src").takeIf { it.isNotBlank() } ?: return@let
             val m3u8Url = extractM3u8FromUrl(src) ?: src
             
-            val link = newExtractorLink(
-                source = name,
-                name = "1080p",
-                url = m3u8Url,
-                type = ExtractorLinkType.M3U8
-            ) {
-                this.referer = "$mainUrl/"
-                this.quality = 1080
-            }
-            
-            callback(link)
+            callback(newExtractorLink(name, "1080p", m3u8Url, ExtractorLinkType.M3U8) {
+                referer = "$mainUrl/"
+                quality = 1080
+            })
             return true
         }
         
-        // Player backup (blog1)
         document.selectFirst(PLAYER_BACKUP)?.let { iframe ->
             val src = iframe.attr("src").takeIf { it.isNotBlank() } ?: return@let
             val isM3u8 = src.contains("m3u8", true)
             
             val linkType = if (isM3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
             
-            val link = newExtractorLink(
-                source = name,
-                name = "Backup",
-                url = src,
-                type = linkType
-            ) {
-                this.referer = "$mainUrl/"
-                this.quality = 720
-            }
-            
-            callback(link)
+            callback(newExtractorLink(name, "Backup", src, linkType) {
+                referer = "$mainUrl/"
+                quality = 720
+            })
             return true
         }
         
-        // Qualquer iframe com m3u8
         document.select("iframe").forEach { iframe ->
             val src = iframe.attr("src")
             if (src.contains("m3u8", true)) {
                 val m3u8Url = extractM3u8FromUrl(src) ?: src
                 
-                val link = newExtractorLink(
-                    source = name,
-                    name = "Auto",
-                    url = m3u8Url,
-                    type = ExtractorLinkType.M3U8
-                ) {
-                    this.referer = "$mainUrl/"
-                    this.quality = 720
-                }
-                
-                callback(link)
+                callback(newExtractorLink(name, "Auto", m3u8Url, ExtractorLinkType.M3U8) {
+                    referer = "$mainUrl/"
+                    quality = 720
+                })
                 return true
             }
         }
