@@ -194,7 +194,7 @@ class AniTube : MainAPI() {
                     .distinctBy { it.url }
                 
                 newHomePageResponse(
-                    list = HomePageList(request.name, items, isHorizontalImages = false),
+                    list = HomePageList(request.name, items, isHorizontalImages = true),
                     hasNext = false
                 )
             }
@@ -294,10 +294,15 @@ class AniTube : MainAPI() {
         
         val poster = thumbPoster ?: document.selectFirst(ANIME_POSTER)?.attr("src")?.let { fixUrl(it) }
         
+        // Extrair sinopse do site quando disponível
+        val siteSynopsis = document.selectFirst(ANIME_SYNOPSIS)?.text()?.trim()
+        
         val synopsis = if (actualUrl.contains("/video/")) {
-            "Episódio $episodeNumber"
+            // Para episódios, usar sinopse do site ou criar descrição com episódio
+            siteSynopsis ?: "Episódio $episodeNumber de $title"
         } else {
-            document.selectFirst(ANIME_SYNOPSIS)?.text()?.trim() ?: "Sinopse não disponível."
+            // Para animes completos, usar sinopse do site
+            siteSynopsis ?: "Sinopse não disponível."
         }
         
         var year: Int? = null
