@@ -169,7 +169,10 @@ class AniTube : MainAPI() {
         return newAnimeSearchResponse(displayName, fixUrl(href)) {
             this.posterUrl = posterUrl
             this.type = TvType.Anime
-            this.episode = episodeNumber
+            
+            // CORREÇÃO: Não podemos acessar 'episode' diretamente no AnimeSearchResponse
+            // Em vez disso, formatamos o nome para incluir o episódio
+            // O CloudStream vai detectar automaticamente "Episódio X" no nome
             
             // Usando o mesmo padrão do AnimesDigital
             addDubStatus(dubExist = isDubbed, subExist = !isDubbed)
@@ -180,7 +183,6 @@ class AniTube : MainAPI() {
     private fun Element.toAnimeSearchResponse(): AnimeSearchResponse? {
         val href = selectFirst("a")?.attr("href") ?: return null
         // Não filtrar por /video/ aqui, pois pode ser página de anime completo
-        // if (!href.contains("/video/")) return null
         
         val rawTitle = selectFirst(TITLE_SELECTOR)?.text()?.trim() ?: return null
         val cleanedTitle = cleanTitle(rawTitle).ifBlank { return null }
