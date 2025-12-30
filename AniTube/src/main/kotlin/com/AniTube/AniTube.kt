@@ -38,16 +38,50 @@ class AniTube : MainAPI() {
         private const val PLAYER_BACKUP = "#blog1 iframe"
     }
 
-    // Mapeamento de gêneros
+    // Mapeamento de gêneros COMPLETO
     private val genresMap = mapOf(
-        "Ação" to "acao", "Artes Marciais" to "artes%20marciais", "Aventura" to "aventura",
-        "Comédia" to "comedia", "Comédia Romântica" to "comedia%20romantica", "Drama" to "drama",
-        "Ecchi" to "ecchi", "Esporte" to "esporte", "Fantasia" to "fantasia",
-        "Ficção Científica" to "ficcao%20cientifica", "Jogos" to "jogos", "Magia" to "magia",
-        "Mecha" to "mecha", "Mistério" to "misterio", "Musical" to "musical",
-        "Romance" to "romance", "Seinen" to "seinen", "Shoujo-ai" to "shoujo%20ai",
-        "Shounen" to "shounen", "Slice Of Life" to "slice%20of%20life", "Sobrenatural" to "sobrenatural",
-        "Superpoder" to "superpoder", "Terror" to "terror", "Vida Escolar" to "vida%20escolar"
+        "Ação" to "acao",
+        "Artes Marciais" to "artes%20marciais",
+        "Aventura" to "aventura",
+        "Comédia" to "comedia",
+        "Comédia Romântica" to "comedia%20romantica",
+        "Drama" to "drama",
+        "Ecchi" to "ecchi",
+        "Esporte" to "esporte",
+        "Fantasia" to "fantasia",
+        "Ficção Científica" to "ficcao%20cientifica",
+        "Jogos" to "jogos",
+        "Magia" to "magia",
+        "Mecha" to "mecha",
+        "Mistério" to "misterio",
+        "Musical" to "musical",
+        "Romance" to "romance",
+        "Seinen" to "seinen",
+        "Shoujo-ai" to "shoujo%20ai",
+        "Shounen" to "shounen",
+        "Slice Of Life" to "slice%20of%20life",
+        "Sobrenatural" to "sobrenatural",
+        "Superpoder" to "superpoder",
+        "Terror" to "terror",
+        "Vida Escolar" to "vida%20escolar",
+        "Shoujo" to "shoujo",
+        "Shounen-ai" to "shounen%20ai",
+        "Yaoi" to "yaoi",
+        "Yuri" to "yuri",
+        "Harem" to "harem",
+        "Isekai" to "isekai",
+        "Militar" to "militar",
+        "Policial" to "policial",
+        "Psicológico" to "psicologico",
+        "Samurai" to "samurai",
+        "Vampiros" to "vampiros",
+        "Zumbi" to "zumbi",
+        "Histórico" to "historico",
+        "Mágica" to "magica",
+        "Cyberpunk" to "cyberpunk",
+        "Espaço" to "espaco",
+        "Demônios" to "demônios",
+        "Vida Cotidiana" to "vida%20cotidiana"
     )
 
     override val mainPage = mainPageOf(
@@ -57,6 +91,22 @@ class AniTube : MainAPI() {
         *genresMap.map { (genre, slug) -> "$mainUrl/?s=$slug" to genre }.toTypedArray()
     )
 
+    private fun cleanTitle(dirtyTitle: String): String {
+        return dirtyTitle
+            .replace("(?i)\\s*–\\s*todos os epis[oó]dios".toRegex(), "")
+            .replace("(?i)\\s*\\(dublado\\)".toRegex(), "")
+            .replace("(?i)\\s*\\(legendado\\)".toRegex(), "")
+            .replace("(?i)\\s*dublado\\s*$".toRegex(), "")
+            .replace("(?i)\\s*legendado\\s*$".toRegex(), "")
+            .replace("(?i)\\s*-\\s*epis[oó]dio\\s*\\d+".toRegex(), "")
+            .replace("(?i)\\s*–\\s*Epis[oó]dio\\s*\\d+".toRegex(), "")
+            .replace("(?i)\\s*epis[oó]dio\\s*\\d+".toRegex(), "")
+            .replace("(?i)\\s*Ep\\.\\s*\\d+".toRegex(), "")
+            .replace("\\s+".toRegex(), " ")
+            .trim()
+            .ifBlank { dirtyTitle }
+    }
+    
     private fun extractEpisodeNumber(title: String): Int? {
         return listOf(
             "Epis[oó]dio\\s*(\\d+)".toRegex(RegexOption.IGNORE_CASE),
@@ -67,8 +117,8 @@ class AniTube : MainAPI() {
         ).firstNotNullOfOrNull { it.find(title)?.groupValues?.get(1)?.toIntOrNull() }
     }
     
-    private fun extractAnimeTitle(title: String): String {
-        return title
+    private fun extractAnimeTitleFromEpisode(episodeTitle: String): String {
+        var clean = episodeTitle
             .replace("(?i)Epis[oó]dio\\s*\\d+".toRegex(), "")
             .replace("(?i)Ep\\.?\\s*\\d+".toRegex(), "")
             .replace("(?i)E\\d+".toRegex(), "")
@@ -78,7 +128,11 @@ class AniTube : MainAPI() {
             .replace("(?i)\\s*\\(legendado\\)".toRegex(), "")
             .replace("\\s+".toRegex(), " ")
             .trim()
-            .ifBlank { "Anime" }
+        
+        // Remove qualquer número solto no final
+        clean = clean.replace("\\s*\\d+\\s*$".toRegex(), "").trim()
+        
+        return clean.ifBlank { "Anime" }
     }
     
     private fun isDubbed(element: Element): Boolean {
@@ -95,55 +149,36 @@ class AniTube : MainAPI() {
         } else { url }
     }
     
-    // MÉTODO CORRIGIDO: Usando newAnimeSearchResponse corretamente
+    // Método para episódios - NOME LIMPO SEM NÚMERO, NÚMERO SÓ NA BADGE
     private fun Element.toEpisodeSearchResponse(): AnimeSearchResponse? {
         val href = selectFirst("a")?.attr("href") ?: return null
         if (!href.contains("/video/")) return null
         
         val episodeTitle = selectFirst(EPISODE_NUMBER_SELECTOR)?.text()?.trim() ?: return null
         val episodeNumber = extractEpisodeNumber(episodeTitle) ?: 1
-        val animeTitle = extractAnimeTitle(episodeTitle)
+        val animeTitle = extractAnimeTitleFromEpisode(episodeTitle)
         val posterUrl = selectFirst(POSTER_SELECTOR)?.attr("src")?.let { fixUrl(it) }
         val isDubbed = isDubbed(this)
         
-        println("=== ANITUBE DEBUG ===")
-        println("Título original: $episodeTitle")
-        println("Anime extraído: $animeTitle")
-        println("Episódio: $episodeNumber")
-        println("É dublado: $isDubbed")
-        println("=====================")
-        
-        // TENTATIVA: Formatar de várias maneiras
-        // 1. Primeiro tentamos com "EP" no nome
-        val displayName = if (animeTitle.isNotBlank() && animeTitle != "Anime") {
-            "$animeTitle EP$episodeNumber"
-        } else {
-            "EP$episodeNumber"
-        }
+        // NOME LIMPO - SEM NÚMERO, SEM "EP"
+        val displayName = cleanTitle(animeTitle)
         
         return newAnimeSearchResponse(displayName, fixUrl(href)) {
             this.posterUrl = posterUrl
             this.type = TvType.Anime
             
-            // IMPORTANTE: Tentar passar o número de episódios de formas diferentes
-            // O CloudStream tem várias sobrecargas de addDubStatus
-            
-            // TENTATIVA 1: Passando DubStatus e episódios
+            // AQUI ESTÁ O SEGREDO: adiciona o número do episódio como segundo parâmetro
             val dubStatus = if (isDubbed) DubStatus.Dubbed else DubStatus.Subbed
             addDubStatus(dubStatus, episodeNumber)
-            
-            // TENTATIVA 2: Também usar a versão booleana
-            addDubStatus(isDubbed, episodeNumber)
-            
-            println("DEBUG: Criado - $displayName | Ep: $episodeNumber")
         }
     }
     
+    // Método para animes completos
     private fun Element.toAnimeSearchResponse(): AnimeSearchResponse? {
         val href = selectFirst("a")?.attr("href") ?: return null
         
         val rawTitle = selectFirst(TITLE_SELECTOR)?.text()?.trim() ?: return null
-        val cleanedTitle = extractAnimeTitle(rawTitle).ifBlank { return null }
+        val cleanedTitle = cleanTitle(rawTitle).ifBlank { return null }
         
         val posterUrl = selectFirst(POSTER_SELECTOR)?.attr("src")?.let { fixUrl(it) }
         val isDubbed = isDubbed(this)
@@ -187,8 +222,6 @@ class AniTube : MainAPI() {
                 val items = episodeElements
                     .mapNotNull { it.toEpisodeSearchResponse() }
                     .distinctBy { it.url }
-                
-                println("ANITUBE: ${items.size} episódios processados")
                 
                 newHomePageResponse(
                     list = HomePageList(request.name, items, isHorizontalImages = true),
@@ -240,9 +273,16 @@ class AniTube : MainAPI() {
         val document = app.get(url).document
         
         val rawTitle = document.selectFirst(ANIME_TITLE)?.text()?.trim() ?: "Sem Título"
-        val title = extractAnimeTitle(rawTitle)
+        val episodeNumber = extractEpisodeNumber(rawTitle) ?: 1
+        val title = cleanTitle(rawTitle)
         val poster = document.selectFirst(ANIME_POSTER)?.attr("src")?.let { fixUrl(it) }
-        val synopsis = document.selectFirst(ANIME_SYNOPSIS)?.text()?.trim() ?: "Sinopse não disponível."
+        
+        // Para episódios individuais, criar sinopse personalizada
+        val synopsis = if (url.contains("/video/")) {
+            "Episódio $episodeNumber de $title"
+        } else {
+            document.selectFirst(ANIME_SYNOPSIS)?.text()?.trim() ?: "Sinopse não disponível."
+        }
         
         var year: Int? = null
         var episodes: Int? = null
@@ -264,19 +304,19 @@ class AniTube : MainAPI() {
         val episodesList = document.select(EPISODE_LIST).mapNotNull { element ->
             val episodeTitle = element.text().trim()
             val episodeUrl = element.attr("href")
-            val episodeNumber = extractEpisodeNumber(episodeTitle) ?: 1
+            val epNumber = extractEpisodeNumber(episodeTitle) ?: 1
             
             newEpisode(episodeUrl) {
                 this.name = episodeTitle
-                this.episode = episodeNumber
+                this.episode = epNumber
                 this.posterUrl = poster
             }
         }
         
         val allEpisodes = if (episodesList.isEmpty() && url.contains("/video/")) {
-            val episodeNumber = extractEpisodeNumber(rawTitle) ?: 1
+            // Para página de episódio individual
             listOf(newEpisode(url) {
-                this.name = rawTitle
+                this.name = "Episódio $episodeNumber"
                 this.episode = episodeNumber
                 this.posterUrl = poster
             })
