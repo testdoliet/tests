@@ -194,7 +194,7 @@ class AniTube : MainAPI() {
                     .distinctBy { it.url }
                 
                 newHomePageResponse(
-                    list = HomePageList(request.name, items, isHorizontalImages = true),
+                    list = HomePageList(request.name, items, isHorizontalImages = false),
                     hasNext = false
                 )
             }
@@ -225,7 +225,7 @@ class AniTube : MainAPI() {
                 }
                 
                 newHomePageResponse(
-                    list = HomePageList(request.name, popularItems, isHorizontalImages = true),
+                    list = HomePageList(request.name, popularItems, isHorizontalImages = false),
                     hasNext = false
                 )
             }
@@ -256,7 +256,7 @@ class AniTube : MainAPI() {
                 }
                 
                 newHomePageResponse(
-                    list = HomePageList(request.name, recentItems, isHorizontalImages = true),
+                    list = HomePageList(request.name, recentItems, isHorizontalImages = false),
                     hasNext = false
                 )
             }
