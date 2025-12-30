@@ -10,7 +10,7 @@ class AniTube : MainAPI() {
     override var name = "AniTube"
     override val hasMainPage = true
     override var lang = "pt-br"
-    override val hasDownloadSupport = true
+    override val hasDownloadSupport = false
     override val supportedTypes = setOf(TvType.Anime)
     override val usesWebView = false
 
@@ -25,8 +25,8 @@ class AniTube : MainAPI() {
         private const val EPISODE_NUMBER_SELECTOR = ".epiItemInfos .epiItemNome"
         
         private const val LATEST_EPISODES_SECTION = ".epiContainer"
-        private const val POPULAR_ANIME_SECTION = "#splide01 .aniItem"
-        private const val RECENT_ANIME_SECTION = "#splide02 .aniItem"
+        private const val POPULAR_ANIME_SECTION = "#splide01 .splide__list .aniItem"
+        private const val RECENT_ANIME_SECTION = "#splide02 .splide__list .aniItem"
         
         private const val ANIME_TITLE = "h1"
         private const val ANIME_POSTER = "#capaAnime img"
@@ -205,19 +205,56 @@ class AniTube : MainAPI() {
                 )
             }
             "Animes Mais Vistos" -> {
-                // CORREÇÃO: Buscar os elementos dentro do carrossel
-                val popularContainer = document.selectFirst("#splide01")
-                val items = if (popularContainer != null) {
-                    // Se o carrossel existe, pegar os elementos .aniItem dentro dele
-                    popularContainer.select(".aniItem")
-                        .mapNotNull { it.toAnimeSearchResponse() }
-                        .distinctBy { it.url }
-                } else {
-                    // Fallback: buscar de qualquer lugar
-                    document.select(POPULAR_ANIME_SECTION)
-                        .mapNotNull { it.toAnimeSearchResponse() }
-                        .distinctBy { it.url }
+                // DEBUG: Vamos ver o que está no documento
+                println("DEBUG: Procurando #splide01")
+                val splide01 = document.selectFirst("#splide01")
+                println("DEBUG: #splide01 encontrado: ${splide01 != null}")
+                
+                if (splide01 != null) {
+                    // Vamos tentar diferentes seletores
+                    val itemsFromSplide = splide01.select(".aniItem")
+                    println("DEBUG: aniItem dentro de #splide01: ${itemsFromSplide.size}")
+                    
+                    if (itemsFromSplide.isNotEmpty()) {
+                        val items = itemsFromSplide
+                            .mapNotNull { it.toAnimeSearchResponse() }
+                            .distinctBy { it.url }
+                        
+                        return newHomePageResponse(
+                            list = HomePageList(request.name, items, isHorizontalImages = true),
+                            hasNext = false
+                        )
+                    }
+                    
+                    // Tentar pegar de .splide__slide
+                    val slides = splide01.select(".splide__slide")
+                    println("DEBUG: splide__slide dentro de #splide01: ${slides.size}")
+                    
+                    if (slides.isNotEmpty()) {
+                        val items = slides
+                            .filter { !it.hasClass("splide__slide--clone") } // Ignorar clones
+                            .mapNotNull { slide ->
+                                slide.selectFirst(".aniItem")?.toAnimeSearchResponse()
+                            }
+                            .filterNotNull()
+                            .distinctBy { it.url }
+                        
+                        println("DEBUG: Items extraídos: ${items.size}")
+                        return newHomePageResponse(
+                            list = HomePageList(request.name, items, isHorizontalImages = true),
+                            hasNext = false
+                        )
+                    }
                 }
+                
+                // Fallback: buscar todos os .aniItem na página
+                val allAniItems = document.select(".aniItem")
+                println("DEBUG: Todos os .aniItem na página: ${allAniItems.size}")
+                
+                val items = allAniItems
+                    .mapNotNull { it.toAnimeSearchResponse() }
+                    .distinctBy { it.url }
+                    .take(20) // Limitar para não pegar demais
                 
                 newHomePageResponse(
                     list = HomePageList(request.name, items, isHorizontalImages = true),
@@ -225,19 +262,56 @@ class AniTube : MainAPI() {
                 )
             }
             "Animes Recentes" -> {
-                // CORREÇÃO: Buscar os elementos dentro do carrossel
-                val recentContainer = document.selectFirst("#splide02")
-                val items = if (recentContainer != null) {
-                    // Se o carrossel existe, pegar os elementos .aniItem dentro dele
-                    recentContainer.select(".aniItem")
-                        .mapNotNull { it.toAnimeSearchResponse() }
-                        .distinctBy { it.url }
-                } else {
-                    // Fallback: buscar de qualquer lugar
-                    document.select(RECENT_ANIME_SECTION)
-                        .mapNotNull { it.toAnimeSearchResponse() }
-                        .distinctBy { it.url }
+                // DEBUG: Vamos ver o que está no documento
+                println("DEBUG: Procurando #splide02")
+                val splide02 = document.selectFirst("#splide02")
+                println("DEBUG: #splide02 encontrado: ${splide02 != null}")
+                
+                if (splide02 != null) {
+                    // Vamos tentar diferentes seletores
+                    val itemsFromSplide = splide02.select(".aniItem")
+                    println("DEBUG: aniItem dentro de #splide02: ${itemsFromSplide.size}")
+                    
+                    if (itemsFromSplide.isNotEmpty()) {
+                        val items = itemsFromSplide
+                            .mapNotNull { it.toAnimeSearchResponse() }
+                            .distinctBy { it.url }
+                        
+                        return newHomePageResponse(
+                            list = HomePageList(request.name, items, isHorizontalImages = true),
+                            hasNext = false
+                        )
+                    }
+                    
+                    // Tentar pegar de .splide__slide
+                    val slides = splide02.select(".splide__slide")
+                    println("DEBUG: splide__slide dentro de #splide02: ${slides.size}")
+                    
+                    if (slides.isNotEmpty()) {
+                        val items = slides
+                            .filter { !it.hasClass("splide__slide--clone") } // Ignorar clones
+                            .mapNotNull { slide ->
+                                slide.selectFirst(".aniItem")?.toAnimeSearchResponse()
+                            }
+                            .filterNotNull()
+                            .distinctBy { it.url }
+                        
+                        println("DEBUG: Items extraídos: ${items.size}")
+                        return newHomePageResponse(
+                            list = HomePageList(request.name, items, isHorizontalImages = true),
+                            hasNext = false
+                        )
+                    }
                 }
+                
+                // Fallback: buscar todos os .aniItem na página (exceto os que já são "Mais Vistos")
+                val allAniItems = document.select(".aniItem")
+                println("DEBUG: Todos os .aniItem na página: ${allAniItems.size}")
+                
+                val items = allAniItems
+                    .mapNotNull { it.toAnimeSearchResponse() }
+                    .distinctBy { it.url }
+                    .take(20) // Limitar para não pegar demais
                 
                 newHomePageResponse(
                     list = HomePageList(request.name, items, isHorizontalImages = true),
