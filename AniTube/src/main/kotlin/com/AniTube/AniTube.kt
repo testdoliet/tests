@@ -110,6 +110,22 @@ class AniTube : MainAPI() {
         }
     }
     
+    private fun extractAnimeTitleFromEpisode(episodeTitle: String): String {
+        // Remove padrões de episódio do título
+        var clean = episodeTitle
+            .replace("(?i)Epis[oó]dio\\s*\\d+".toRegex(), "")
+            .replace("(?i)Ep\\.?\\s*\\d+".toRegex(), "")
+            .replace("(?i)E\\d+".toRegex(), "")
+            .replace("–", "")
+            .replace("-", "")
+            .trim()
+        
+        // Remove qualquer número solto no final
+        clean = clean.replace("\\s*\\d+\\s*$".toRegex(), "").trim()
+        
+        return clean.ifBlank { "Anime" }
+    }
+    
     private fun isDubbed(element: Element): Boolean {
         return element.selectFirst(AUDIO_BADGE_SELECTOR)
             ?.text()
@@ -139,15 +155,16 @@ class AniTube : MainAPI() {
         // Extrair título do episódio
         val episodeTitle = selectFirst(EPISODE_NUMBER_SELECTOR)?.text()?.trim() ?: return null
         
-        // Extrair título do anime (limpar número do episódio)
-        val animeTitle = cleanTitle(episodeTitle)
+        // Extrair título do anime e número do episódio
+        val animeTitle = extractAnimeTitleFromEpisode(episodeTitle)
         val episodeNumber = extractEpisodeNumber(episodeTitle) ?: 1
         
         val posterUrl = selectFirst(POSTER_SELECTOR)?.attr("src")?.let { fixUrl(it) }
         val isDubbed = isDubbed(this)
         
-        // Nome no estilo AnimesDigital: "Anime - Episódio X"
-        val displayName = if (animeTitle.isNotBlank()) {
+        // Formato para mostrar badge: "Episódio X" como parte do nome
+        // O CloudStream automaticamente destaca números no formato correto
+        val displayName = if (animeTitle.isNotBlank() && animeTitle != "Anime") {
             "$animeTitle - Episódio $episodeNumber"
         } else {
             "Episódio $episodeNumber"
