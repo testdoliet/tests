@@ -35,8 +35,11 @@ class AniTube : MainAPI() {
         private val REMOVE_WORDS = listOf(
             "dublado", "legendado", "episodio", "ep", "ep.", "temporada",
             "season", "part", "parte", "filme", "movie", "ova", "special",
-            "especial", "complete", "completo"
+            "especial", "complete", "completo", "todos", "os", "online"
         )
+        
+        // Cache para evitar múltiplas requisições
+        private val metadataCache = mutableMapOf<String, EnhancedMetadata?>()
     }
 
     // 📊 Mapa de gêneros para a página principal
@@ -69,20 +72,25 @@ class AniTube : MainAPI() {
         println("🔍 [AniTube DEBUG] $message")
     }
 
-    // 🔧 FUNÇÃO: Limpar título para busca
+    // 🔧 FUNÇÃO: Limpar título para busca (AGORA MAIS AGRESSIVA)
     private fun cleanTitleForSearch(dirtyTitle: String): String {
         debugLog("Limpando título: '$dirtyTitle'")
         
         var clean = dirtyTitle
-            .replace("(?i)\\s*–\\s*todos os epis[oó]dios".toRegex(), "")
+            .replace("(?i)\\s*[–\\-]\\s*todos os epis[oó]dios".toRegex(), "")
             .replace("(?i)\\s*\\(dublado\\)".toRegex(), "")
             .replace("(?i)\\s*\\(legendado\\)".toRegex(), "")
+            .replace("(?i)\\s*\\[dublado\\]".toRegex(), "")
+            .replace("(?i)\\s*\\[legendado\\]".toRegex(), "")
             .replace("(?i)\\s*dublado\\s*$".toRegex(), "")
             .replace("(?i)\\s*legendado\\s*$".toRegex(), "")
-            .replace("(?i)\\s*-\\s*epis[oó]dio\\s*\\d+".toRegex(), "")
-            .replace("(?i)\\s*–\\s*Epis[oó]dio\\s*\\d+".toRegex(), "")
+            .replace("(?i)\\s*[–\\-]\\s*epis[oó]dio\\s*\\d+".toRegex(), "")
             .replace("(?i)\\s*epis[oó]dio\\s*\\d+".toRegex(), "")
-            .replace("(?i)\\s*Ep\\.\\s*\\d+".toRegex(), "")
+            .replace("(?i)\\s*Ep\\.?\\s*\\d+".toRegex(), "")
+            .replace("(?i)\\s*E\\d+".toRegex(), "")
+            .replace("(?i)\\s*\\(\\d{4}\\)".toRegex(), "") // Remove anos
+            .replace("(?i)\\s*assistir\\s*online".toRegex(), "")
+            .replace("(?i)\\s*baixar".toRegex(), "")
             .replace("\\s+".toRegex(), " ")
             .trim()
 
@@ -102,6 +110,9 @@ class AniTube : MainAPI() {
             }
         }
 
+        // Remove caracteres especiais e pontuação no final
+        clean = clean.replace("[\\-\\.\\,;:]\\s*$".toRegex(), "").trim()
+        
         debugLog("Título final limpo: '$clean'")
         return clean.ifBlank { 
             debugLog("Título ficou vazio, usando original")
@@ -109,22 +120,60 @@ class AniTube : MainAPI() {
         }
     }
 
-    // 🔧 FUNÇÃO: Buscar imagens no AniList - VERSÃO CORRIGIDA
-    private suspend fun searchAniListSimple(animeTitle: String): AniListResult? {
-        debugLog("=== BUSCANDO NO ANILIST ===")
-        debugLog("Título para busca: '$animeTitle'")
+    // 🔧 FUNÇÃO: Buscar no AniList com múltiplas tentativas
+    private suspend fun searchAniListWithFallbacks(animeTitle: String): AniListResult? {
+        debugLog("=== BUSCANDO NO ANILIST COM FALLBACKS ===")
         
-        val searchTitle = cleanTitleForSearch(animeTitle)
-        if (searchTitle.length < 2) {
-            debugLog("Título muito curto para busca")
-            return null
+        // Lista de variações do título para tentar
+        val searchVariations = mutableListOf<String>()
+        
+        // 1. Título original limpo
+        val cleanTitle = cleanTitleForSearch(animeTitle)
+        searchVariations.add(cleanTitle)
+        
+        // 2. Remove ":" e outros caracteres
+        val withoutColon = cleanTitle.replace(":", "").trim()
+        if (withoutColon != cleanTitle) {
+            searchVariations.add(withoutColon)
         }
+        
+        // 3. Remove "!" e "?"
+        val withoutPunctuation = cleanTitle.replace("[!?]".toRegex(), "").trim()
+        if (withoutPunctuation != cleanTitle) {
+            searchVariations.add(withoutPunctuation)
+        }
+        
+        // 4. Tenta dividir por " - " ou " – "
+        val parts = cleanTitle.split(Regex("[–\\-]")).map { it.trim() }.filter { it.isNotEmpty() }
+        if (parts.size > 1) {
+            searchVariations.addAll(parts.take(2))
+        }
+        
+        debugLog("Variações de busca: $searchVariations")
+        
+        // Tenta cada variação
+        for (variation in searchVariations.distinct()) {
+            if (variation.length < 2) continue
+            
+            debugLog("Tentando variação: '$variation'")
+            val result = trySearchAniList(variation)
+            if (result != null) {
+                debugLog("✅ Encontrado com variação: '$variation'")
+                return result
+            }
+        }
+        
+        debugLog("❌ Nenhuma variação funcionou")
+        return null
+    }
 
+    // 🔧 FUNÇÃO: Tentar buscar no AniList
+    private suspend fun trySearchAniList(searchTitle: String): AniListResult? {
         try {
             // Query GraphQL para AniList
             val query = """
                 {
-                    Page(page: 1, perPage: 3) {
+                    Page(page: 1, perPage: 5) {
                         media(search: "$searchTitle", type: ANIME) {
                             id
                             title {
@@ -135,19 +184,19 @@ class AniTube : MainAPI() {
                             coverImage {
                                 extraLarge
                                 large
+                                medium
                             }
                             bannerImage
                             description
                             seasonYear
                             genres
                             averageScore
+                            status
                         }
                     }
                 }
             """.trimIndent()
 
-            debugLog("Enviando requisição para AniList...")
-            
             val response = app.post(
                 "https://graphql.anilist.co",
                 data = mapOf("query" to query),
@@ -158,27 +207,31 @@ class AniTube : MainAPI() {
                 timeout = 30
             )
 
-            debugLog("Resposta recebida do AniList")
-            
             val responseText = response.text
-            debugLog("Resposta completa (1000 chars): ${responseText.take(1000)}...")
-
-            // 🔧 CORREÇÃO: Parse MANUAL MELHORADO
+            
             if (!responseText.contains("\"media\"")) {
-                debugLog("Resposta não contém 'media'")
                 return null
             }
 
-            // Encontra o array de media
+            // Parse da resposta
+            return parseAniListResponse(responseText)
+            
+        } catch (e: Exception) {
+            debugLog("Erro na busca AniList: ${e.message}")
+            return null
+        }
+    }
+
+    // 🔧 FUNÇÃO: Parse da resposta do AniList
+    private fun parseAniListResponse(responseText: String): AniListResult? {
+        try {
+            // Extrai o array de media
             val mediaStart = responseText.indexOf("\"media\":[")
-            if (mediaStart == -1) {
-                debugLog("Não encontrou 'media':[")
-                return null
-            }
-
-            // Pega todo o conteúdo do array de media
+            if (mediaStart == -1) return null
+            
+            // Encontra o final do array
             var bracketCount = 0
-            var i = mediaStart + 8 // após "["
+            var i = mediaStart + 8
             var mediaContent = ""
             
             while (i < responseText.length) {
@@ -189,50 +242,45 @@ class AniTube : MainAPI() {
                     '[' -> bracketCount++
                     ']' -> {
                         bracketCount--
-                        if (bracketCount == 0) {
-                            break
-                        }
+                        if (bracketCount == 0) break
                     }
                 }
                 i++
             }
 
-            debugLog("Media content (simplificado): ${mediaContent.take(500)}...")
-
-            // Remove os colchetes externos
-            val mediaItems = mediaContent.substring(1, mediaContent.length - 1)
+            if (mediaContent.isEmpty()) return null
             
-            // Pega o primeiro item (remove {} externos)
-            val firstItemStart = mediaItems.indexOf('{')
-            val firstItemEnd = findMatchingBrace(mediaItems, firstItemStart)
+            // Remove colchetes externos
+            val mediaArray = mediaContent.substring(1, mediaContent.length - 1)
             
-            if (firstItemStart == -1 || firstItemEnd == -1) {
-                debugLog("Não conseguiu extrair primeiro item")
-                return null
-            }
-
-            val firstItem = mediaItems.substring(firstItemStart, firstItemEnd + 1)
-            debugLog("Primeiro item completo: $firstItem")
-
-            // 🔧 EXTRAÇÃO CORRETA DOS DADOS
+            // Pega o primeiro item
+            val firstItem = extractFirstJsonObject(mediaArray) ?: return null
+            
+            // Extrai dados
             val title = extractJsonValue(firstItem, "romaji", "title") ?: 
                        extractJsonValue(firstItem, "english", "title") ?: 
-                       extractJsonValue(firstItem, "native", "title") ?: searchTitle
+                       extractJsonValue(firstItem, "native", "title") ?: ""
             
-            // CORREÇÃO: extraLarge está dentro de coverImage
-            val coverImageContent = extractJsonObject(firstItem, "coverImage")
-            val posterUrl = if (coverImageContent != null) {
-                extractJsonValue(coverImageContent, "extraLarge") ?: 
-                extractJsonValue(coverImageContent, "large")
+            if (title.isEmpty()) return null
+            
+            // Extrai coverImage
+            val coverImageObj = extractJsonObject(firstItem, "coverImage")
+            val posterUrl = if (coverImageObj != null) {
+                extractJsonValue(coverImageObj, "extraLarge") ?: 
+                extractJsonValue(coverImageObj, "large") ?:
+                extractJsonValue(coverImageObj, "medium")
             } else {
                 null
             }
             
-            // Remove barras invertidas da URL
+            // Remove barras invertidas
             val cleanPosterUrl = posterUrl?.replace("\\/", "/")
-            
             val bannerUrl = extractJsonValue(firstItem, "bannerImage")?.replace("\\/", "/")
-            val description = extractJsonValue(firstItem, "description")?.replace("\\/", "/")?.replace("<br>", "\n")?.replace(Regex("<.*?>"), "")
+            val description = extractJsonValue(firstItem, "description")
+                ?.replace("\\/", "/")
+                ?.replace("<br>", "\n")
+                ?.replace(Regex("<.*?>"), "")
+            
             val yearStr = extractJsonValue(firstItem, "seasonYear")
             val year = yearStr?.toIntOrNull()
             
@@ -247,16 +295,12 @@ class AniTube : MainAPI() {
             // Extrai rating
             val ratingStr = extractJsonValue(firstItem, "averageScore")
             val rating = ratingStr?.toFloatOrNull()?.div(10f)
-
-            debugLog("✅✅✅ DADOS EXTRAÍDOS COM SUCESSO:")
-            debugLog("  Título: $title")
-            debugLog("  Poster URL: ${cleanPosterUrl?.take(50)}...")
-            debugLog("  Banner URL: ${bannerUrl?.take(50)}...")
-            debugLog("  Ano: $year")
-            debugLog("  Gêneros: $genres")
-            debugLog("  Rating: $rating")
-            debugLog("  Descrição: ${description?.take(50)}...")
-
+            
+            // Extrai status
+            val status = extractJsonValue(firstItem, "status")
+            
+            debugLog("✅ AniList parseado com sucesso: $title")
+            
             return AniListResult(
                 title = title,
                 posterUrl = cleanPosterUrl,
@@ -264,109 +308,113 @@ class AniTube : MainAPI() {
                 description = description,
                 year = year,
                 genres = genres,
-                rating = rating
+                rating = rating,
+                status = status
             )
             
         } catch (e: Exception) {
-            debugLog("❌ ERRO na busca AniList: ${e.message}")
-            e.printStackTrace()
+            debugLog("Erro parsing AniList: ${e.message}")
+            return null
         }
-        
-        return null
     }
 
-    // 🔧 FUNÇÃO AUXILIAR: Encontrar chave correspondente
-    private fun findMatchingBrace(text: String, startIndex: Int): Int {
-        var count = 0
-        for (i in startIndex until text.length) {
-            when (text[i]) {
-                '{' -> count++
+    // 🔧 FUNÇÕES AUXILIARES PARA MANIPULAÇÃO DE JSON
+    private fun extractFirstJsonObject(jsonArray: String): String? {
+        var braceCount = 0
+        var startIndex = -1
+        
+        for (i in jsonArray.indices) {
+            when (jsonArray[i]) {
+                '{' -> {
+                    if (braceCount == 0) startIndex = i
+                    braceCount++
+                }
                 '}' -> {
-                    count--
-                    if (count == 0) {
-                        return i
+                    braceCount--
+                    if (braceCount == 0 && startIndex != -1) {
+                        return jsonArray.substring(startIndex, i + 1)
                     }
                 }
             }
         }
-        return -1
+        return null
     }
-
-    // 🔧 FUNÇÃO AUXILIAR: Extrair valor JSON
+    
+    private fun extractJsonObject(json: String, fieldName: String): String? {
+        val pattern = "\"$fieldName\"\\s*:\\s*\\{"
+        val regex = Regex(pattern)
+        val match = regex.find(json) ?: return null
+        
+        var braceCount = 0
+        val startIndex = match.range.first + match.value.length - 1
+        
+        for (i in startIndex until json.length) {
+            when (json[i]) {
+                '{' -> braceCount++
+                '}' -> {
+                    braceCount--
+                    if (braceCount == 0) {
+                        return json.substring(startIndex, i + 1)
+                    }
+                }
+            }
+        }
+        return null
+    }
+    
     private fun extractJsonValue(json: String, fieldName: String, parentField: String? = null): String? {
         val pattern = if (parentField != null) {
-            "\"$parentField\"\\s*:\\s*\\{[^}]*?\"$fieldName\"\\s*:\\s*\"([^\"]*)\""
+            "\"$parentField\"\\s*:[^{]*?\"$fieldName\"\\s*:\\s*\"([^\"]*)\""
         } else {
             "\"$fieldName\"\\s*:\\s*\"([^\"]*)\""
         }
         
-        val regex = Regex(pattern, RegexOption.DOT_MATCHES_ALL)
-        return regex.find(json)?.groupValues?.get(1)
+        return Regex(pattern, RegexOption.DOT_MATCHES_ALL)
+            .find(json)
+            ?.groupValues
+            ?.get(1)
     }
 
-    // 🔧 FUNÇÃO AUXILIAR: Extrair objeto JSON
-    private fun extractJsonObject(json: String, fieldName: String): String? {
-        val pattern = "\"$fieldName\"\\s*:\\s*(\\{[^}]*\\})"
-        val regex = Regex(pattern, RegexOption.DOT_MATCHES_ALL)
-        val match = regex.find(json)
-        
-        if (match != null) {
-            return match.groupValues[1]
-        }
-        
-        // Tenta padrão mais flexível
-        val flexPattern = "\"$fieldName\"\\s*:\\s*\\{"
-        val flexRegex = Regex(flexPattern)
-        val flexMatch = flexRegex.find(json)
-        
-        if (flexMatch != null) {
-            val startIndex = flexMatch.range.first + flexMatch.value.length - 1
-            val endIndex = findMatchingBrace(json, startIndex)
-            if (endIndex != -1) {
-                return json.substring(startIndex, endIndex + 1)
-            }
-        }
-        
-        return null
-    }
-
-    // 🔧 FUNÇÃO: Buscar metadados de alta qualidade (APENAS ANILIST)
+    // 🔧 FUNÇÃO: Buscar metadados com CACHE
     private suspend fun getEnhancedMetadata(animeTitle: String): EnhancedMetadata? {
         debugLog("\n🔍 === BUSCA DE METADADOS PARA: '$animeTitle' ===")
         
-        if (animeTitle.length < 3) {
-            debugLog("Título muito curto, pulando busca")
+        if (animeTitle.length < 2) {
+            debugLog("Título muito curto")
             return null
         }
-
-        // Apenas AniList
-        debugLog("\n1. Tentando AniList...")
-        val anilistResult = searchAniListSimple(animeTitle)
         
-        if (anilistResult != null) {
-            if (anilistResult.posterUrl != null) {
-                debugLog("🎉🎉🎉 ANILIST ENCONTROU IMAGENS HD! 🎉🎉🎉")
-                debugLog("📸 Poster HD: ${anilistResult.posterUrl.take(50)}...")
-                debugLog("🎬 Banner HD: ${anilistResult.bannerUrl?.take(50) ?: "null"}...")
-            } else {
-                debugLog("⚠️ AniList encontrou anime mas sem imagens")
-            }
+        // Verifica cache primeiro
+        val cacheKey = animeTitle.lowercase().trim()
+        if (metadataCache.containsKey(cacheKey)) {
+            debugLog("Usando resultado do cache")
+            return metadataCache[cacheKey]
+        }
+        
+        debugLog("Buscando no AniList...")
+        val anilistResult = searchAniListWithFallbacks(animeTitle)
+        
+        val result = if (anilistResult != null) {
+            debugLog("✅✅✅ METADADOS ENCONTRADOS NO ANILIST! ✅✅✅")
             
-            return EnhancedMetadata(
+            EnhancedMetadata(
                 title = anilistResult.title,
                 posterUrl = anilistResult.posterUrl,
                 bannerUrl = anilistResult.bannerUrl,
                 description = anilistResult.description,
                 year = anilistResult.year,
                 genres = anilistResult.genres,
-                rating = anilistResult.rating
+                rating = anilistResult.rating,
+                status = anilistResult.status
             )
         } else {
-            debugLog("❌ AniList não encontrou nada")
+            debugLog("❌ Nenhum metadado encontrado")
+            null
         }
-
-        debugLog("❌ Nenhuma fonte encontrou metadados")
-        return null
+        
+        // Armazena no cache
+        metadataCache[cacheKey] = result
+        return result
     }
 
     // 📦 Classes para armazenar resultados
@@ -377,7 +425,8 @@ class AniTube : MainAPI() {
         val description: String?,
         val year: Int?,
         val genres: List<String>,
-        val rating: Float?
+        val rating: Float?,
+        val status: String?
     )
 
     data class EnhancedMetadata(
@@ -387,8 +436,91 @@ class AniTube : MainAPI() {
         val description: String?,
         val year: Int?,
         val genres: List<String>,
-        val rating: Float?
+        val rating: Float?,
+        val status: String?
     )
+
+    // 🔧 FUNÇÃO: Obter poster para item da lista (PRIORIDADE ANILIST)
+    private suspend fun getPosterForListItem(animeTitle: String): String? {
+        debugLog("Buscando poster para lista: '$animeTitle'")
+        
+        val metadata = getEnhancedMetadata(animeTitle)
+        return metadata?.posterUrl
+    }
+
+    // 🔧 FUNÇÃO: Criar SearchResponse com metadados
+    private suspend fun Element.toAnimeSearchResponseWithMetadata(): AnimeSearchResponse? {
+        val href = selectFirst("a")?.attr("href") ?: return null
+        
+        val rawTitle = selectFirst(TITLE_SELECTOR)?.text()?.trim() ?: return null
+        val cleanedTitle = cleanTitleForSearch(rawTitle).ifBlank { return null }
+        
+        val isDubbed = isDubbed(this)
+        
+        debugLog("Criando SearchResponse para: '$cleanedTitle'")
+        
+        // 🔥 PRIORIDADE ABSOLUTA: Busca poster no AniList primeiro
+        var posterUrl: String? = null
+        try {
+            posterUrl = getPosterForListItem(cleanedTitle)
+            debugLog("Poster do AniList: ${posterUrl?.take(30)}...")
+        } catch (e: Exception) {
+            debugLog("Erro buscando poster do AniList: ${e.message}")
+        }
+        
+        // Se não encontrou no AniList, usa do site
+        if (posterUrl == null) {
+            posterUrl = selectFirst(POSTER_SELECTOR)?.attr("src")?.let { fixUrl(it) }
+            debugLog("Usando poster do site: ${posterUrl?.take(30)}...")
+        }
+        
+        return newAnimeSearchResponse(cleanedTitle, fixUrl(href)) {
+            this.posterUrl = posterUrl
+            this.type = TvType.Anime
+            addDubStatus(isDubbed, null)
+        }
+    }
+    
+    private suspend fun Element.toEpisodeSearchResponseWithMetadata(): AnimeSearchResponse? {
+        val href = selectFirst("a")?.attr("href") ?: return null
+        if (!href.contains("/video/")) return null
+        
+        val episodeTitle = selectFirst(EPISODE_NUMBER_SELECTOR)?.text()?.trim() ?: return null
+        val episodeNumber = extractEpisodeNumber(episodeTitle) ?: 1
+        val animeTitle = extractAnimeTitleFromEpisode(episodeTitle)
+        val displayName = cleanTitleForSearch(animeTitle)
+        val isDubbed = isDubbed(this)
+        
+        debugLog("Criando Episode SearchResponse para: '$displayName' (Ep $episodeNumber)")
+        
+        // 🔥 PRIORIDADE ABSOLUTA: Busca poster no AniList primeiro
+        var posterUrl: String? = null
+        try {
+            posterUrl = getPosterForListItem(displayName)
+            debugLog("Poster do AniList para episódio: ${posterUrl?.take(30)}...")
+        } catch (e: Exception) {
+            debugLog("Erro buscando poster: ${e.message}")
+        }
+        
+        // Se não encontrou no AniList, usa do site
+        if (posterUrl == null) {
+            posterUrl = selectFirst(POSTER_SELECTOR)?.attr("src")?.let { fixUrl(it) }
+        }
+        
+        val urlWithPoster = if (posterUrl != null) {
+            "$href|poster=$posterUrl"
+        } else {
+            href
+        }
+        
+        return newAnimeSearchResponse(displayName, fixUrl(urlWithPoster)) {
+            this.posterUrl = posterUrl
+            this.type = TvType.Anime
+            
+            val dubStatus = if (isDubbed) DubStatus.Dubbed else DubStatus.Subbed
+            addDubStatus(dubStatus, episodeNumber)
+        }
+    }
 
     // 🔧 FUNÇÕES ORIGINAIS (mantidas)
     private fun cleanTitle(dirtyTitle: String): String {
@@ -447,56 +579,13 @@ class AniTube : MainAPI() {
             } catch (e: Exception) { null }
         } else { url }
     }
-    
-    private fun Element.toEpisodeSearchResponse(): AnimeSearchResponse? {
-        val href = selectFirst("a")?.attr("href") ?: return null
-        if (!href.contains("/video/")) return null
-        
-        val episodeTitle = selectFirst(EPISODE_NUMBER_SELECTOR)?.text()?.trim() ?: return null
-        val episodeNumber = extractEpisodeNumber(episodeTitle) ?: 1
-        val animeTitle = extractAnimeTitleFromEpisode(episodeTitle)
-        val posterUrl = selectFirst(POSTER_SELECTOR)?.attr("src")?.let { fixUrl(it) }
-        val isDubbed = isDubbed(this)
-        
-        val displayName = cleanTitle(animeTitle)
-        
-        val urlWithPoster = if (posterUrl != null) {
-            "$href|poster=$posterUrl"
-        } else {
-            href
-        }
-        
-        return newAnimeSearchResponse(displayName, fixUrl(urlWithPoster)) {
-            this.posterUrl = posterUrl
-            this.type = TvType.Anime
-            
-            val dubStatus = if (isDubbed) DubStatus.Dubbed else DubStatus.Subbed
-            addDubStatus(dubStatus, episodeNumber)
-        }
-    }
-    
-    private fun Element.toAnimeSearchResponse(): AnimeSearchResponse? {
-        val href = selectFirst("a")?.attr("href") ?: return null
-        
-        val rawTitle = selectFirst(TITLE_SELECTOR)?.text()?.trim() ?: return null
-        val cleanedTitle = cleanTitle(rawTitle).ifBlank { return null }
-        
-        val posterUrl = selectFirst(POSTER_SELECTOR)?.attr("src")?.let { fixUrl(it) }
-        val isDubbed = isDubbed(this)
-        
-        return newAnimeSearchResponse(cleanedTitle, fixUrl(href)) {
-            this.posterUrl = posterUrl
-            this.type = TvType.Anime
-            addDubStatus(isDubbed, null)
-        }
-    }
 
-    // 🏠 FUNÇÃO: Página principal
+    // 🏠 FUNÇÃO: Página principal (COM METADADOS)
     override suspend fun getMainPage(
         page: Int,
         request: MainPageRequest
     ): HomePageResponse {
-        debugLog("\n📱=== GET MAIN PAGE ===")
+        debugLog("\n📱=== GET MAIN PAGE COM METADADOS ===")
         debugLog("Página: $page | Seção: ${request.name}")
         
         val baseUrl = request.data
@@ -511,14 +600,14 @@ class AniTube : MainAPI() {
                 .mapNotNull { 
                     val isEpisode = it.selectFirst(EPISODE_NUMBER_SELECTOR) != null
                     if (isEpisode) {
-                        it.toEpisodeSearchResponse()
+                        it.toEpisodeSearchResponseWithMetadata()
                     } else {
-                        it.toAnimeSearchResponse()
+                        it.toAnimeSearchResponseWithMetadata()
                     }
                 }
                 .distinctBy { it.url }
             
-            debugLog("✅ Encontrados ${allItems.size} itens")
+            debugLog("✅ Encontrados ${allItems.size} itens COM METADADOS")
             return newHomePageResponse(request.name, allItems, hasNext = true)
         }
         
@@ -527,29 +616,29 @@ class AniTube : MainAPI() {
         
         return when (request.name) {
             "Últimos Episódios" -> {
-                debugLog("Carregando últimos episódios...")
+                debugLog("Carregando últimos episódios COM METADADOS...")
                 val episodeElements = document.select("$LATEST_EPISODES_SECTION $EPISODE_CARD")
                 val items = episodeElements
-                    .mapNotNull { it.toEpisodeSearchResponse() }
+                    .mapNotNull { it.toEpisodeSearchResponseWithMetadata() }
                     .distinctBy { it.url }
                 
-                debugLog("✅ ${items.size} episódios encontrados")
+                debugLog("✅ ${items.size} episódios com metadados encontrados")
                 newHomePageResponse(
                     list = HomePageList(request.name, items, isHorizontalImages = true),
                     hasNext = false
                 )
             }
             "Animes Mais Vistos" -> {
-                debugLog("Carregando animes mais vistos...")
+                debugLog("Carregando animes mais vistos COM METADADOS...")
                 var popularItems = listOf<AnimeSearchResponse>()
                 
                 for (container in document.select(".aniContainer")) {
                     val titleElement = container.selectFirst(".aniContainerTitulo")
                     if (titleElement != null && titleElement.text().contains("Animes Mais Vistos", true)) {
                         popularItems = container.select(".aniItem")
-                            .mapNotNull { it.toAnimeSearchResponse() }
+                            .mapNotNull { it.toAnimeSearchResponseWithMetadata() }
                             .distinctBy { it.url }
-                            .take(10)
+                            .take(15)
                         break
                     }
                 }
@@ -561,29 +650,29 @@ class AniTube : MainAPI() {
                     
                     popularItems = slides
                         .mapNotNull { slide ->
-                            slide.selectFirst(".aniItem")?.toAnimeSearchResponse()
+                            slide.selectFirst(".aniItem")?.toAnimeSearchResponseWithMetadata()
                         }
                         .distinctBy { it.url }
-                        .take(10)
+                        .take(15)
                 }
                 
-                debugLog("✅ ${popularItems.size} animes populares encontrados")
+                debugLog("✅ ${popularItems.size} animes populares com metadados")
                 newHomePageResponse(
                     list = HomePageList(request.name, popularItems, isHorizontalImages = false),
                     hasNext = false
                 )
             }
             "Animes Recentes" -> {
-                debugLog("Carregando animes recentes...")
+                debugLog("Carregando animes recentes COM METADADOS...")
                 var recentItems = listOf<AnimeSearchResponse>()
                 
                 for (container in document.select(".aniContainer")) {
                     val titleElement = container.selectFirst(".aniContainerTitulo")
                     if (titleElement != null && titleElement.text().contains("ANIMES RECENTES", true)) {
                         recentItems = container.select(".aniItem")
-                            .mapNotNull { it.toAnimeSearchResponse() }
+                            .mapNotNull { it.toAnimeSearchResponseWithMetadata() }
                             .distinctBy { it.url }
-                            .take(10)
+                            .take(15)
                         break
                     }
                 }
@@ -595,13 +684,13 @@ class AniTube : MainAPI() {
                     
                     recentItems = slides
                         .mapNotNull { slide ->
-                            slide.selectFirst(".aniItem")?.toAnimeSearchResponse()
+                            slide.selectFirst(".aniItem")?.toAnimeSearchResponseWithMetadata()
                         }
                         .distinctBy { it.url }
-                        .take(10)
+                        .take(15)
                 }
                 
-                debugLog("✅ ${recentItems.size} animes recentes encontrados")
+                debugLog("✅ ${recentItems.size} animes recentes com metadados")
                 newHomePageResponse(
                     list = HomePageList(request.name, recentItems, isHorizontalImages = false),
                     hasNext = false
@@ -614,9 +703,9 @@ class AniTube : MainAPI() {
         }
     }
 
-    // 🔍 FUNÇÃO: Busca
+    // 🔍 FUNÇÃO: Busca (COM METADADOS)
     override suspend fun search(query: String): List<SearchResponse> {
-        debugLog("\n🔍=== SEARCH ===")
+        debugLog("\n🔍=== SEARCH COM METADADOS ===")
         debugLog("Query: '$query'")
         
         if (query.length < 2) {
@@ -633,25 +722,24 @@ class AniTube : MainAPI() {
             .mapNotNull { 
                 val isEpisode = it.selectFirst(EPISODE_NUMBER_SELECTOR) != null
                 if (isEpisode) {
-                    it.toEpisodeSearchResponse()
+                    it.toEpisodeSearchResponseWithMetadata()
                 } else {
-                    it.toAnimeSearchResponse()
+                    it.toAnimeSearchResponseWithMetadata()
                 }
             }
             .distinctBy { it.url }
         
-        debugLog("✅ Encontrados ${results.size} resultados para '$query'")
+        debugLog("✅ Encontrados ${results.size} resultados COM METADADOS para '$query'")
         return results
     }
 
-    // 📥 FUNÇÃO: Carregar anime
+    // 📥 FUNÇÃO: Carregar anime (PRIORIDADE ABSOLUTA PARA METADADOS)
     override suspend fun load(url: String): LoadResponse {
-        debugLog("\n🎬=== LOAD ANIME ===")
+        debugLog("\n🎬=== LOAD ANIME COM PRIORIDADE METADADOS ===")
         debugLog("URL recebida: $url")
         
         val parts = url.split("|poster=")
         val actualUrl = parts[0]
-        val thumbPoster = parts.getOrNull(1)?.let { if (it.isNotBlank()) fixUrl(it) else null }
         
         debugLog("URL real: $actualUrl")
         
@@ -659,94 +747,74 @@ class AniTube : MainAPI() {
         
         val rawTitle = document.selectFirst(ANIME_TITLE)?.text()?.trim() ?: "Sem Título"
         val episodeNumber = extractEpisodeNumber(rawTitle) ?: 1
-        val title = cleanTitle(rawTitle)
+        val title = cleanTitleForSearch(rawTitle)
         
         debugLog("📝 Título bruto: '$rawTitle'")
-        debugLog("📝 Título limpo: '$title'")
+        debugLog("📝 Título para busca: '$title'")
         
-        // Primeiro, pega a imagem do site
-        val sitePoster = document.selectFirst(ANIME_POSTER)?.attr("src")?.let { fixUrl(it) }
-        var poster = thumbPoster ?: sitePoster
-        debugLog("🖼️ Poster do site: ${sitePoster?.take(30)}...")
+        // 🔥🔥🔥 PRIORIDADE 1: Busca TODOS os metadados no AniList
+        debugLog("\n🚀 BUSCANDO METADADOS COMPLETOS NO ANILIST...")
+        val enhancedMetadata = getEnhancedMetadata(title)
         
+        var poster: String? = null
         var banner: String? = null
-        var enhancedSynopsis: String? = null
-        var enhancedYear: Int? = null
-        var enhancedGenres = emptyList<String>()
-        var enhancedRating: Float? = null
+        var synopsis: String? = null
+        var year: Int? = null
+        var genres = emptyList<String>()
+        var rating: Float? = null
+        var status: String? = null
         
-        // 🔧 TENTA BUSCAR IMAGENS DE ALTA QUALIDADE
-        debugLog("\n🚀 INICIANDO BUSCA DE IMAGENS HD")
-        
-        if (title.length >= 3 && !title.matches(Regex(".*\\d{3,}.*"))) {
-            debugLog("✅ Título válido para busca HD: '$title'")
+        if (enhancedMetadata != null) {
+            debugLog("🎉🎉🎉 METADADOS COMPLETOS ENCONTRADOS! 🎉🎉🎉")
             
-            val enhancedMetadata = getEnhancedMetadata(title)
+            poster = enhancedMetadata.posterUrl
+            banner = enhancedMetadata.bannerUrl
+            synopsis = enhancedMetadata.description
+            year = enhancedMetadata.year
+            genres = enhancedMetadata.genres
+            rating = enhancedMetadata.rating
+            status = enhancedMetadata.status
             
-            if (enhancedMetadata != null) {
-                debugLog("📊 RESULTADO DA BUSCA HD:")
-                debugLog("  - Poster encontrado: ${enhancedMetadata.posterUrl != null}")
-                debugLog("  - Banner encontrado: ${enhancedMetadata.bannerUrl != null}")
-                debugLog("  - Poster URL: ${enhancedMetadata.posterUrl?.take(50)}...")
-                debugLog("  - Banner URL: ${enhancedMetadata.bannerUrl?.take(50)}...")
-                
-                // Usa imagens de alta qualidade se disponíveis
-                if (enhancedMetadata.posterUrl != null) {
-                    poster = enhancedMetadata.posterUrl
-                    debugLog("✅✅✅ POSTER HD DEFINIDO!")
-                } else {
-                    debugLog("⚠️ Poster HD é null, mantendo original")
-                }
-                
-                if (enhancedMetadata.bannerUrl != null) {
-                    banner = enhancedMetadata.bannerUrl
-                    debugLog("✅✅✅ BANNER HD DEFINIDO!")
-                }
-                
-                enhancedSynopsis = enhancedMetadata.description
-                enhancedYear = enhancedMetadata.year
-                enhancedGenres = enhancedMetadata.genres
-                enhancedRating = enhancedMetadata.rating
-                
-                // Adiciona rating à sinopse se disponível
-                if (enhancedRating != null) {
-                    val ratingText = "⭐ **Avaliação:** ${String.format("%.1f", enhancedRating)}/10\n\n"
-                    enhancedSynopsis = if (enhancedSynopsis != null) {
-                        ratingText + enhancedSynopsis
-                    } else {
-                        ratingText
-                    }
-                    debugLog("⭐ Rating adicionado: $enhancedRating")
-                }
-            } else {
-                debugLog("😞 Nenhum metadado HD encontrado")
-            }
+            debugLog("📊 DADOS DO ANILIST:")
+            debugLog("  - Poster: ${poster?.take(50)}...")
+            debugLog("  - Banner: ${banner?.take(50)}...")
+            debugLog("  - Ano: $year")
+            debugLog("  - Gêneros: $genres")
+            debugLog("  - Rating: $rating")
+            debugLog("  - Status: $status")
         } else {
-            debugLog("⏭️ Pulando busca HD - título inválido")
-        }
-    
-        val siteSynopsis = document.selectFirst(ANIME_SYNOPSIS)?.text()?.trim()
-        
-        // Usa sinopse melhorada se disponível, senão usa a do site
-        val synopsis = when {
-            actualUrl.contains("/video/") -> {
-                siteSynopsis ?: "Episódio $episodeNumber de $title"
-            }
-            enhancedSynopsis != null -> {
-                enhancedSynopsis
-            }
-            else -> {
-                siteSynopsis ?: "Sinopse não disponível."
-            }
+            debugLog("⚠️ Nenhum metadado encontrado no AniList")
         }
         
-        var year: Int? = enhancedYear
-        var episodes: Int? = null
-        var genres = enhancedGenres
-        var audioType = ""
+        // 🔥 PRIORIDADE 2: Se não tem poster do AniList, tenta do site
+        if (poster == null) {
+            debugLog("Buscando poster do site...")
+            poster = document.selectFirst(ANIME_POSTER)?.attr("src")?.let { fixUrl(it) }
+            debugLog("Poster do site: ${poster?.take(30)}...")
+        }
         
-        // Complementa com dados do site se necessário
+        // Se não tem sinopse do AniList, usa do site
+        if (synopsis == null || synopsis.isBlank()) {
+            synopsis = document.selectFirst(ANIME_SYNOPSIS)?.text()?.trim()
+        }
+        
+        // Se não tem sinopse ainda
+        synopsis = when {
+            synopsis != null && synopsis.isNotBlank() -> synopsis
+            actualUrl.contains("/video/") -> "Episódio $episodeNumber de $title"
+            else -> "Sinopse não disponível."
+        }
+        
+        // Adiciona rating à sinopse se disponível
+        if (rating != null) {
+            synopsis = "⭐ **Avaliação:** ${String.format("%.1f", rating)}/10\n\n$synopsis"
+        }
+        
+        // Se não tem dados do AniList, tenta do site
         if (genres.isEmpty() || year == null) {
+            var audioType = ""
+            var episodes: Int? = null
+            
             document.select(ANIME_METADATA).forEach { element ->
                 val text = element.text()
                 
@@ -765,10 +833,56 @@ class AniTube : MainAPI() {
                     }
                 }
             }
+            
+            val isDubbed = rawTitle.contains("dublado", true) || audioType.contains("dublado", true)
+            
+            val episodesList = document.select(EPISODE_LIST).mapNotNull { element ->
+                val episodeTitle = element.text().trim()
+                val episodeUrl = element.attr("href")
+                val epNumber = extractEpisodeNumber(episodeTitle) ?: 1
+                
+                newEpisode(episodeUrl) {
+                    this.name = "Episódio $epNumber"
+                    this.episode = epNumber
+                    this.posterUrl = poster
+                }
+            }
+            
+            val allEpisodes = if (episodesList.isEmpty() && actualUrl.contains("/video/")) {
+                listOf(newEpisode(actualUrl) {
+                    this.name = "Episódio $episodeNumber"
+                    this.episode = episodeNumber
+                    this.posterUrl = poster
+                })
+            } else {
+                episodesList
+            }
+            
+            val sortedEpisodes = allEpisodes.sortedBy { it.episode }
+            val showStatus = if (episodes != null && sortedEpisodes.size >= episodes) ShowStatus.Completed else ShowStatus.Ongoing
+            
+            debugLog("\n📋 RESUMO FINAL (com fallback do site):")
+            debugLog("  - Poster: ${poster?.take(30)}...")
+            debugLog("  - Banner: ${banner?.take(30)}...")
+            debugLog("  - Episódios: ${sortedEpisodes.size}")
+            debugLog("  - Status: $showStatus")
+            
+            return newAnimeLoadResponse(title, actualUrl, TvType.Anime) {
+                this.posterUrl = poster
+                this.backgroundPosterUrl = banner
+                this.year = year
+                this.plot = synopsis
+                this.tags = genres
+                this.showStatus = showStatus
+                
+                if (sortedEpisodes.isNotEmpty()) {
+                    addEpisodes(if (isDubbed) DubStatus.Dubbed else DubStatus.Subbed, sortedEpisodes)
+                }
+            }
         }
         
-        val isDubbed = rawTitle.contains("dublado", true) || audioType.contains("dublado", true)
-        
+        // Se tem dados do AniList, completa com episódios do site
+        val isDubbed = rawTitle.contains("dublado", true)
         val episodesList = document.select(EPISODE_LIST).mapNotNull { element ->
             val episodeTitle = element.text().trim()
             val episodeUrl = element.attr("href")
@@ -792,14 +906,22 @@ class AniTube : MainAPI() {
         }
         
         val sortedEpisodes = allEpisodes.sortedBy { it.episode }
-        val showStatus = if (episodes != null && sortedEpisodes.size >= episodes) ShowStatus.Completed else ShowStatus.Ongoing
+        val showStatus = when {
+            status?.contains("FINISHED", true) == true -> ShowStatus.Completed
+            status?.contains("RELEASING", true) == true -> ShowStatus.Ongoing
+            sortedEpisodes.size >= 24 -> ShowStatus.Completed
+            else -> ShowStatus.Ongoing
+        }
         
-        debugLog("\n📋 RESUMO FINAL:")
-        debugLog("  - Poster: ${poster?.take(30)}...")
-        debugLog("  - Banner: ${banner?.take(30)}...")
-        debugLog("  - HD encontrado? ${banner != null || poster != sitePoster}")
+        debugLog("\n🎯 RESUMO FINAL (COM PRIORIDADE ANILIST):")
+        debugLog("  - Poster: ${poster?.take(50)}...")
+        debugLog("  - Banner: ${banner?.take(50)}...")
+        debugLog("  - Ano: $year")
+        debugLog("  - Gêneros: $genres")
+        debugLog("  - Rating: $rating")
+        debugLog("  - Episódios: ${sortedEpisodes.size}")
+        debugLog("  - Status: $showStatus (AniList: $status)")
         
-        // 🔧 RETORNA COM IMAGENS DE ALTA QUALIDADE
         return newAnimeLoadResponse(title, actualUrl, TvType.Anime) {
             this.posterUrl = poster
             this.backgroundPosterUrl = banner
@@ -821,8 +943,6 @@ class AniTube : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        debugLog("\n▶️=== LOAD LINKS ===")
-        
         val actualUrl = data.split("|poster=")[0]
         
         val document = app.get(actualUrl).document
