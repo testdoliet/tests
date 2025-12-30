@@ -36,7 +36,6 @@ class AniTube : MainAPI() {
         private const val PLAYER_BACKUP = "#blog1 iframe"
     }
 
-    // Mapeamento de gêneros COMPLETO
     private val genresMap = mapOf(
         "Ação" to "acao", "Artes Marciais" to "artes%20marciais", "Aventura" to "aventura",
         "Comédia" to "comedia", "Comédia Romântica" to "comedia%20romantica", "Drama" to "drama",
@@ -118,7 +117,6 @@ class AniTube : MainAPI() {
         } else { url }
     }
     
-    // MÉTODO MODIFICADO: Adiciona a imagem da thumb na URL como parâmetro
     private fun Element.toEpisodeSearchResponse(): AnimeSearchResponse? {
         val href = selectFirst("a")?.attr("href") ?: return null
         if (!href.contains("/video/")) return null
@@ -129,10 +127,8 @@ class AniTube : MainAPI() {
         val posterUrl = selectFirst(POSTER_SELECTOR)?.attr("src")?.let { fixUrl(it) }
         val isDubbed = isDubbed(this)
         
-        // Nome limpo sem número
         val displayName = cleanTitle(animeTitle)
         
-        // MODIFICAÇÃO: Adiciona a imagem como parâmetro na URL
         val urlWithPoster = if (posterUrl != null) {
             "$href|poster=$posterUrl"
         } else {
@@ -203,28 +199,19 @@ class AniTube : MainAPI() {
                 )
             }
             "Animes Mais Vistos" -> {
-                // Vamos buscar os animes na primeira seção após "Animes Mais Vistos"
-                // Primeiro, vamos pegar todos os containers .aniContainer
-                val allContainers = document.select(".aniContainer")
-                
-                // Encontrar o container com "Animes Mais Vistos"
                 var popularItems = listOf<AnimeSearchResponse>()
                 
-                for (container in allContainers) {
+                for (container in document.select(".aniContainer")) {
                     val titleElement = container.selectFirst(".aniContainerTitulo")
                     if (titleElement != null && titleElement.text().contains("Animes Mais Vistos", true)) {
-                        // Encontrar os .aniItem dentro deste container
-                        val items = container.select(".aniItem")
+                        popularItems = container.select(".aniItem")
                             .mapNotNull { it.toAnimeSearchResponse() }
                             .distinctBy { it.url }
-                            .take(10) // Limitar a 10 itens
-                        
-                        popularItems = items
+                            .take(10)
                         break
                     }
                 }
                 
-                // Se não encontrou, buscar nos slides do primeiro splide
                 if (popularItems.isEmpty()) {
                     val slides = document.select("#splide01 .splide__slide")
                         .filterNot { it.hasClass("splide__slide--clone") }
@@ -243,27 +230,19 @@ class AniTube : MainAPI() {
                 )
             }
             "Animes Recentes" -> {
-                // Vamos buscar os animes na seção "ANIMES RECENTES"
-                val allContainers = document.select(".aniContainer")
-                
-                // Encontrar o container com "ANIMES RECENTES"
                 var recentItems = listOf<AnimeSearchResponse>()
                 
-                for (container in allContainers) {
+                for (container in document.select(".aniContainer")) {
                     val titleElement = container.selectFirst(".aniContainerTitulo")
                     if (titleElement != null && titleElement.text().contains("ANIMES RECENTES", true)) {
-                        // Encontrar os .aniItem dentro deste container
-                        val items = container.select(".aniItem")
+                        recentItems = container.select(".aniItem")
                             .mapNotNull { it.toAnimeSearchResponse() }
                             .distinctBy { it.url }
-                            .take(10) // Limitar a 10 itens
-                        
-                        recentItems = items
+                            .take(10)
                         break
                     }
                 }
                 
-                // Se não encontrou, buscar nos slides do segundo splide
                 if (recentItems.isEmpty()) {
                     val slides = document.select("#splide02 .splide__slide")
                         .filterNot { it.hasClass("splide__slide--clone") }
@@ -274,16 +253,6 @@ class AniTube : MainAPI() {
                         }
                         .distinctBy { it.url }
                         .take(10)
-                }
-                
-                // Se ainda não encontrou, buscar todos os .aniItem e filtrar
-                if (recentItems.isEmpty()) {
-                    val allAnimeItems = document.select(".aniItem")
-                        .mapNotNull { it.toAnimeSearchResponse() }
-                        .distinctBy { it.url }
-                    
-                    // Tentar encontrar itens diferentes (talvez mais recentes vêm primeiro)
-                    recentItems = allAnimeItems.take(15) // Pegar mais itens
                 }
                 
                 newHomePageResponse(
@@ -313,7 +282,6 @@ class AniTube : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse {
-        // SEPARAR: URL original da imagem da thumb
         val parts = url.split("|poster=")
         val actualUrl = parts[0]
         val thumbPoster = parts.getOrNull(1)?.let { if (it.isNotBlank()) fixUrl(it) else null }
@@ -324,12 +292,10 @@ class AniTube : MainAPI() {
         val episodeNumber = extractEpisodeNumber(rawTitle) ?: 1
         val title = cleanTitle(rawTitle)
         
-        // PRIORIDADE: 1. Imagem da thumb passada | 2. Imagem da página
         val poster = thumbPoster ?: document.selectFirst(ANIME_POSTER)?.attr("src")?.let { fixUrl(it) }
         
-        // Para episódios individuais, criar sinopse personalizada
         val synopsis = if (actualUrl.contains("/video/")) {
-            "Episódio $episodeNumber de $title"
+            "Episódio $episodeNumber"
         } else {
             document.selectFirst(ANIME_SYNOPSIS)?.text()?.trim() ?: "Sinopse não disponível."
         }
@@ -357,7 +323,7 @@ class AniTube : MainAPI() {
             val epNumber = extractEpisodeNumber(episodeTitle) ?: 1
             
             newEpisode(episodeUrl) {
-                this.name = episodeTitle
+                this.name = "Episódio $epNumber"
                 this.episode = epNumber
                 this.posterUrl = poster
             }
@@ -393,7 +359,6 @@ class AniTube : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // Remover parâmetro da imagem da URL antes de fazer a requisição
         val actualUrl = data.split("|poster=")[0]
         val document = app.get(actualUrl).document
         
