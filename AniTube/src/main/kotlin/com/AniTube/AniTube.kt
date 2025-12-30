@@ -214,42 +214,40 @@ class AniTube : MainAPI() {
         // Para página inicial (primeira página)
         val document = app.get(baseUrl).document
         
-        val items = when (request.name) {
+        return when (request.name) {
             "Últimos Episódios" -> {
                 // Extrair episódios da seção específica - usar estilo AnimesDigital
-                document.select("$LATEST_EPISODES_SECTION $EPISODE_CARD")
+                val items = document.select("$LATEST_EPISODES_SECTION $EPISODE_CARD")
                     .mapNotNull { it.toEpisodeSearchResponse() }
                     .distinctBy { it.url }
-            }
-            "Mais Populares" -> {
-                // Extrair animes populares do primeiro carousel
-                document.select(POPULAR_ANIME_SECTION)
-                    .mapNotNull { it.toAnimeSearchResponse() }
-                    .distinctBy { it.url }
-            }
-            "Animes Recentes" -> {
-                // Extrair animes recentes do segundo carousel
-                document.select(RECENT_ANIME_SECTION)
-                    .mapNotNull { it.toAnimeSearchResponse() }
-                    .distinctBy { it.url }
-            }
-            else -> emptyList()
-        }
-        
-        // Para Últimos Episódios, retornar HomePageList com layout horizontal
-        return if (request.name == "Últimos Episódios") {
-            HomePageResponse(
-                list = listOf(
-                    HomePageList(
+                
+                // Para Últimos Episódios, usar layout horizontal como AnimesDigital
+                newHomePageResponse(
+                    list = HomePageList(
                         name = request.name,
                         list = items,
                         isHorizontalImages = true
-                    )
-                ),
-                hasNext = false
-            )
-        } else {
-            newHomePageResponse(request.name, items, hasNext = false)
+                    ),
+                    hasNext = false
+                )
+            }
+            "Mais Populares" -> {
+                // Extrair animes populares do primeiro carousel
+                val items = document.select(POPULAR_ANIME_SECTION)
+                    .mapNotNull { it.toAnimeSearchResponse() }
+                    .distinctBy { it.url }
+                
+                newHomePageResponse(request.name, items, hasNext = false)
+            }
+            "Animes Recentes" -> {
+                // Extrair animes recentes do segundo carousel
+                val items = document.select(RECENT_ANIME_SECTION)
+                    .mapNotNull { it.toAnimeSearchResponse() }
+                    .distinctBy { it.url }
+                
+                newHomePageResponse(request.name, items, hasNext = false)
+            }
+            else -> newHomePageResponse(request.name, emptyList(), hasNext = false)
         }
     }
 
