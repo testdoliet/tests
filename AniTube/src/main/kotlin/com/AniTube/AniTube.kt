@@ -109,7 +109,7 @@ class AniTube : MainAPI() {
         }
     }
 
-    // 🔧 FUNÇÃO: Buscar imagens no AniList (versão SIMPLIFICADA sem parse complexo)
+    // 🔧 FUNÇÃO: Buscar imagens no AniList - VERSÃO CORRIGIDA
     private suspend fun searchAniListSimple(animeTitle: String): AniListResult? {
         debugLog("=== BUSCANDO NO ANILIST ===")
         debugLog("Título para busca: '$animeTitle'")
@@ -148,7 +148,6 @@ class AniTube : MainAPI() {
 
             debugLog("Enviando requisição para AniList...")
             
-            // Faz a requisição POST para a API do AniList
             val response = app.post(
                 "https://graphql.anilist.co",
                 data = mapOf("query" to query),
@@ -161,80 +160,113 @@ class AniTube : MainAPI() {
 
             debugLog("Resposta recebida do AniList")
             
-            // Obtém o texto da resposta
             val responseText = response.text
-            debugLog("Resposta AniList (primeiros 200 chars): ${responseText.take(200)}...")
+            debugLog("Resposta completa (1000 chars): ${responseText.take(1000)}...")
 
-            // Parse MANUAL SIMPLES da resposta JSON
-            if (responseText.contains("\"media\"")) {
-                debugLog("Resposta contém 'media', tentando parse...")
+            // 🔧 CORREÇÃO: Parse MANUAL MELHORADO
+            if (!responseText.contains("\"media\"")) {
+                debugLog("Resposta não contém 'media'")
+                return null
+            }
+
+            // Encontra o array de media
+            val mediaStart = responseText.indexOf("\"media\":[")
+            if (mediaStart == -1) {
+                debugLog("Não encontrou 'media':[")
+                return null
+            }
+
+            // Pega todo o conteúdo do array de media
+            var bracketCount = 0
+            var i = mediaStart + 8 // após "["
+            var mediaContent = ""
+            
+            while (i < responseText.length) {
+                val char = responseText[i]
+                mediaContent += char
                 
-                // Tenta extrair o primeiro item de media
-                val mediaStart = responseText.indexOf("\"media\":[")
-                if (mediaStart != -1) {
-                    val mediaContent = responseText.substring(mediaStart + 9)
-                    val mediaEnd = mediaContent.indexOf("]")
-                    if (mediaEnd != -1) {
-                        val mediaArray = mediaContent.substring(0, mediaEnd + 1)
-                        debugLog("Media array: $mediaArray")
-                        
-                        // Tenta extrair o primeiro objeto
-                        val firstObjectStart = mediaArray.indexOf("{")
-                        val firstObjectEnd = mediaArray.indexOf("}", firstObjectStart)
-                        
-                        if (firstObjectStart != -1 && firstObjectEnd != -1) {
-                            val firstObject = mediaArray.substring(firstObjectStart, firstObjectEnd + 1)
-                            debugLog("Primeiro objeto media: $firstObject")
-                            
-                            // Extrai dados manualmente
-                            val title = extractJsonField(firstObject, "romaji") ?: 
-                                       extractJsonField(firstObject, "english") ?: 
-                                       extractJsonField(firstObject, "native") ?: searchTitle
-                            
-                            val posterUrl = extractJsonField(firstObject, "extraLarge", "coverImage") ?:
-                                          extractJsonField(firstObject, "large", "coverImage")
-                            
-                            val bannerUrl = extractJsonField(firstObject, "bannerImage")
-                            val description = extractJsonField(firstObject, "description")
-                            val year = extractJsonField(firstObject, "seasonYear")?.toIntOrNull()
-                            
-                            // Extrai gêneros
-                            val genresMatch = Regex("\"genres\"\\s*:\\s*\\[([^\\]]*?)\\]").find(firstObject)
-                            val genres = genresMatch?.groupValues?.get(1)
-                                ?.split(",")
-                                ?.map { it.trim().replace("\"", "") }
-                                ?.filter { it.isNotEmpty() }
-                                ?: emptyList()
-                            
-                            // Extrai rating
-                            val ratingStr = extractJsonField(firstObject, "averageScore")
-                            val rating = ratingStr?.toFloatOrNull()?.div(10f)
-                            
-                            debugLog("✅ Dados extraídos do AniList:")
-                            debugLog("  Título: $title")
-                            debugLog("  Poster: ${posterUrl?.take(30)}...")
-                            debugLog("  Banner: ${bannerUrl?.take(30)}...")
-                            debugLog("  Ano: $year")
-                            debugLog("  Gêneros: $genres")
-                            debugLog("  Rating: $rating")
-                            
-                            return AniListResult(
-                                title = title,
-                                posterUrl = posterUrl,
-                                bannerUrl = bannerUrl,
-                                description = description,
-                                year = year,
-                                genres = genres,
-                                rating = rating
-                            )
+                when (char) {
+                    '[' -> bracketCount++
+                    ']' -> {
+                        bracketCount--
+                        if (bracketCount == 0) {
+                            break
                         }
                     }
                 }
+                i++
+            }
+
+            debugLog("Media content (simplificado): ${mediaContent.take(500)}...")
+
+            // Remove os colchetes externos
+            val mediaItems = mediaContent.substring(1, mediaContent.length - 1)
+            
+            // Pega o primeiro item (remove {} externos)
+            val firstItemStart = mediaItems.indexOf('{')
+            val firstItemEnd = findMatchingBrace(mediaItems, firstItemStart)
+            
+            if (firstItemStart == -1 || firstItemEnd == -1) {
+                debugLog("Não conseguiu extrair primeiro item")
+                return null
+            }
+
+            val firstItem = mediaItems.substring(firstItemStart, firstItemEnd + 1)
+            debugLog("Primeiro item completo: $firstItem")
+
+            // 🔧 EXTRAÇÃO CORRETA DOS DADOS
+            val title = extractJsonValue(firstItem, "romaji", "title") ?: 
+                       extractJsonValue(firstItem, "english", "title") ?: 
+                       extractJsonValue(firstItem, "native", "title") ?: searchTitle
+            
+            // CORREÇÃO: extraLarge está dentro de coverImage
+            val coverImageContent = extractJsonObject(firstItem, "coverImage")
+            val posterUrl = if (coverImageContent != null) {
+                extractJsonValue(coverImageContent, "extraLarge") ?: 
+                extractJsonValue(coverImageContent, "large")
             } else {
-                debugLog("Resposta não contém 'media'")
+                null
             }
             
-            debugLog("Não foi possível extrair dados do AniList")
+            // Remove barras invertidas da URL
+            val cleanPosterUrl = posterUrl?.replace("\\/", "/")
+            
+            val bannerUrl = extractJsonValue(firstItem, "bannerImage")?.replace("\\/", "/")
+            val description = extractJsonValue(firstItem, "description")?.replace("\\/", "/")?.replace("<br>", "\n")?.replace(Regex("<.*?>"), "")
+            val yearStr = extractJsonValue(firstItem, "seasonYear")
+            val year = yearStr?.toIntOrNull()
+            
+            // Extrai gêneros
+            val genresMatch = Regex("\"genres\"\\s*:\\s*\\[([^\\]]*?)\\]").find(firstItem)
+            val genres = genresMatch?.groupValues?.get(1)
+                ?.split(",")
+                ?.map { it.trim().replace("\"", "").replace("\\/", "/") }
+                ?.filter { it.isNotEmpty() }
+                ?: emptyList()
+            
+            // Extrai rating
+            val ratingStr = extractJsonValue(firstItem, "averageScore")
+            val rating = ratingStr?.toFloatOrNull()?.div(10f)
+
+            debugLog("✅✅✅ DADOS EXTRAÍDOS COM SUCESSO:")
+            debugLog("  Título: $title")
+            debugLog("  Poster URL: ${cleanPosterUrl?.take(50)}...")
+            debugLog("  Banner URL: ${bannerUrl?.take(50)}...")
+            debugLog("  Ano: $year")
+            debugLog("  Gêneros: $genres")
+            debugLog("  Rating: $rating")
+            debugLog("  Descrição: ${description?.take(50)}...")
+
+            return AniListResult(
+                title = title,
+                posterUrl = cleanPosterUrl,
+                bannerUrl = bannerUrl,
+                description = description,
+                year = year,
+                genres = genres,
+                rating = rating
+            )
+            
         } catch (e: Exception) {
             debugLog("❌ ERRO na busca AniList: ${e.message}")
             e.printStackTrace()
@@ -243,90 +275,62 @@ class AniTube : MainAPI() {
         return null
     }
 
-    // 🔧 FUNÇÃO AUXILIAR: Extrair campo do JSON
-    private fun extractJsonField(json: String, fieldName: String, parentField: String? = null): String? {
-        val searchPattern = if (parentField != null) {
-            "\"$parentField\"\\s*:\\s*\\{[^}]*\"$fieldName\"\\s*:\\s*\"([^\"]*)\""
+    // 🔧 FUNÇÃO AUXILIAR: Encontrar chave correspondente
+    private fun findMatchingBrace(text: String, startIndex: Int): Int {
+        var count = 0
+        for (i in startIndex until text.length) {
+            when (text[i]) {
+                '{' -> count++
+                '}' -> {
+                    count--
+                    if (count == 0) {
+                        return i
+                    }
+                }
+            }
+        }
+        return -1
+    }
+
+    // 🔧 FUNÇÃO AUXILIAR: Extrair valor JSON
+    private fun extractJsonValue(json: String, fieldName: String, parentField: String? = null): String? {
+        val pattern = if (parentField != null) {
+            "\"$parentField\"\\s*:\\s*\\{[^}]*?\"$fieldName\"\\s*:\\s*\"([^\"]*)\""
         } else {
             "\"$fieldName\"\\s*:\\s*\"([^\"]*)\""
         }
         
-        return Regex(searchPattern).find(json)?.groupValues?.get(1)
+        val regex = Regex(pattern, RegexOption.DOT_MATCHES_ALL)
+        return regex.find(json)?.groupValues?.get(1)
     }
 
-    // 🔧 FUNÇÃO: Buscar no TMDB (fallback simplificado)
-    private suspend fun searchTMDBSimple(animeTitle: String): TMDBResult? {
-        debugLog("=== TENTANDO TMDB ===")
+    // 🔧 FUNÇÃO AUXILIAR: Extrair objeto JSON
+    private fun extractJsonObject(json: String, fieldName: String): String? {
+        val pattern = "\"$fieldName\"\\s*:\\s*(\\{[^}]*\\})"
+        val regex = Regex(pattern, RegexOption.DOT_MATCHES_ALL)
+        val match = regex.find(json)
         
-        try {
-            val searchQuery = animeTitle.replace(" ", "%20")
-            val url = "https://api.themoviedb.org/3/search/tv?query=$searchQuery&language=pt-BR&page=1"
-            
-            debugLog("URL TMDB: $url")
-            
-            val response = app.get(url, timeout = 30)
-            val responseText = response.text
-            debugLog("Resposta TMDB (primeiros 200 chars): ${responseText.take(200)}...")
-            
-            if (responseText.contains("\"results\"")) {
-                // Parse manual simples
-                val resultsStart = responseText.indexOf("\"results\":[")
-                if (resultsStart != -1) {
-                    val resultsContent = responseText.substring(resultsStart + 10)
-                    val resultsEnd = resultsContent.indexOf("]")
-                    if (resultsEnd != -1) {
-                        val resultsArray = resultsContent.substring(0, resultsEnd + 1)
-                        
-                        // Pega primeiro resultado
-                        val firstResultStart = resultsArray.indexOf("{")
-                        val firstResultEnd = resultsArray.indexOf("}", firstResultStart)
-                        
-                        if (firstResultStart != -1 && firstResultEnd != -1) {
-                            val firstResult = resultsArray.substring(firstResultStart, firstResultEnd + 1)
-                            debugLog("Primeiro resultado TMDB: $firstResult")
-                            
-                            // Extrai dados
-                            val name = extractJsonField(firstResult, "name") ?: animeTitle
-                            val posterPath = extractJsonField(firstResult, "poster_path")
-                            val backdropPath = extractJsonField(firstResult, "backdrop_path")
-                            val firstAirDate = extractJsonField(firstResult, "first_air_date")
-                            val voteAverage = extractJsonField(firstResult, "vote_average")
-                            
-                            val posterUrl = if (posterPath != null && posterPath != "null" && posterPath.isNotEmpty()) 
-                                "https://image.tmdb.org/t/p/w500$posterPath" else null
-                            
-                            val bannerUrl = if (backdropPath != null && backdropPath != "null" && backdropPath.isNotEmpty())
-                                "https://image.tmdb.org/t/p/original$backdropPath" else null
-                            
-                            val year = firstAirDate?.substring(0, 4)?.toIntOrNull()
-                            val rating = voteAverage?.toFloatOrNull()
-                            
-                            debugLog("✅ Dados TMDB extraídos:")
-                            debugLog("  Nome: $name")
-                            debugLog("  Poster: ${posterUrl?.take(30)}...")
-                            debugLog("  Banner: ${bannerUrl?.take(30)}...")
-                            debugLog("  Ano: $year")
-                            debugLog("  Rating: $rating")
-                            
-                            return TMDBResult(
-                                title = name,
-                                posterUrl = posterUrl,
-                                bannerUrl = bannerUrl,
-                                year = year,
-                                rating = rating
-                            )
-                        }
-                    }
-                }
+        if (match != null) {
+            return match.groupValues[1]
+        }
+        
+        // Tenta padrão mais flexível
+        val flexPattern = "\"$fieldName\"\\s*:\\s*\\{"
+        val flexRegex = Regex(flexPattern)
+        val flexMatch = flexRegex.find(json)
+        
+        if (flexMatch != null) {
+            val startIndex = flexMatch.range.first + flexMatch.value.length - 1
+            val endIndex = findMatchingBrace(json, startIndex)
+            if (endIndex != -1) {
+                return json.substring(startIndex, endIndex + 1)
             }
-        } catch (e: Exception) {
-            debugLog("❌ ERRO TMDB: ${e.message}")
         }
         
         return null
     }
 
-    // 🔧 FUNÇÃO: Buscar metadados de alta qualidade
+    // 🔧 FUNÇÃO: Buscar metadados de alta qualidade (APENAS ANILIST)
     private suspend fun getEnhancedMetadata(animeTitle: String): EnhancedMetadata? {
         debugLog("\n🔍 === BUSCA DE METADADOS PARA: '$animeTitle' ===")
         
@@ -335,12 +339,19 @@ class AniTube : MainAPI() {
             return null
         }
 
-        // 1. Tenta AniList primeiro
+        // Apenas AniList
         debugLog("\n1. Tentando AniList...")
         val anilistResult = searchAniListSimple(animeTitle)
         
-        if (anilistResult != null && anilistResult.posterUrl != null) {
-            debugLog("✅✅✅ ANILIST ENCONTROU IMAGENS!")
+        if (anilistResult != null) {
+            if (anilistResult.posterUrl != null) {
+                debugLog("🎉🎉🎉 ANILIST ENCONTROU IMAGENS HD! 🎉🎉🎉")
+                debugLog("📸 Poster HD: ${anilistResult.posterUrl.take(50)}...")
+                debugLog("🎬 Banner HD: ${anilistResult.bannerUrl?.take(50) ?: "null"}...")
+            } else {
+                debugLog("⚠️ AniList encontrou anime mas sem imagens")
+            }
+            
             return EnhancedMetadata(
                 title = anilistResult.title,
                 posterUrl = anilistResult.posterUrl,
@@ -351,29 +362,10 @@ class AniTube : MainAPI() {
                 rating = anilistResult.rating
             )
         } else {
-            debugLog("❌ AniList não encontrou imagens")
+            debugLog("❌ AniList não encontrou nada")
         }
 
-        // 2. Tenta TMDB como fallback
-        debugLog("\n2. Tentando TMDB...")
-        val tmdbResult = searchTMDBSimple(animeTitle)
-        
-        if (tmdbResult != null && tmdbResult.posterUrl != null) {
-            debugLog("✅✅✅ TMDB ENCONTROU IMAGENS!")
-            return EnhancedMetadata(
-                title = tmdbResult.title,
-                posterUrl = tmdbResult.posterUrl,
-                bannerUrl = tmdbResult.bannerUrl,
-                description = null,
-                year = tmdbResult.year,
-                genres = emptyList(),
-                rating = tmdbResult.rating
-            )
-        } else {
-            debugLog("❌ TMDB também não encontrou")
-        }
-
-        debugLog("❌❌❌ NENHUMA FONTE ENCONTROU IMAGENS")
+        debugLog("❌ Nenhuma fonte encontrou metadados")
         return null
     }
 
@@ -385,14 +377,6 @@ class AniTube : MainAPI() {
         val description: String?,
         val year: Int?,
         val genres: List<String>,
-        val rating: Float?
-    )
-
-    data class TMDBResult(
-        val title: String,
-        val posterUrl: String?,
-        val bannerUrl: String?,
-        val year: Int?,
         val rating: Float?
     )
 
@@ -482,8 +466,6 @@ class AniTube : MainAPI() {
             href
         }
         
-        debugLog("Episode: $displayName (Ep $episodeNumber) - Dublado: $isDubbed")
-        
         return newAnimeSearchResponse(displayName, fixUrl(urlWithPoster)) {
             this.posterUrl = posterUrl
             this.type = TvType.Anime
@@ -501,8 +483,6 @@ class AniTube : MainAPI() {
         
         val posterUrl = selectFirst(POSTER_SELECTOR)?.attr("src")?.let { fixUrl(it) }
         val isDubbed = isDubbed(this)
-        
-        debugLog("Anime: $cleanedTitle - Dublado: $isDubbed")
         
         return newAnimeSearchResponse(cleanedTitle, fixUrl(href)) {
             this.posterUrl = posterUrl
@@ -674,7 +654,6 @@ class AniTube : MainAPI() {
         val thumbPoster = parts.getOrNull(1)?.let { if (it.isNotBlank()) fixUrl(it) else null }
         
         debugLog("URL real: $actualUrl")
-        debugLog("Thumb poster: ${thumbPoster?.take(30)}...")
         
         val document = app.get(actualUrl).document
         
@@ -684,13 +663,11 @@ class AniTube : MainAPI() {
         
         debugLog("📝 Título bruto: '$rawTitle'")
         debugLog("📝 Título limpo: '$title'")
-        debugLog("📝 Episódio: $episodeNumber")
         
         // Primeiro, pega a imagem do site
         val sitePoster = document.selectFirst(ANIME_POSTER)?.attr("src")?.let { fixUrl(it) }
         var poster = thumbPoster ?: sitePoster
         debugLog("🖼️ Poster do site: ${sitePoster?.take(30)}...")
-        debugLog("🖼️ Poster inicial: ${poster?.take(30)}...")
         
         var banner: String? = null
         var enhancedSynopsis: String? = null
@@ -700,15 +677,18 @@ class AniTube : MainAPI() {
         
         // 🔧 TENTA BUSCAR IMAGENS DE ALTA QUALIDADE
         debugLog("\n🚀 INICIANDO BUSCA DE IMAGENS HD")
-        debugLog("Título para busca HD: '$title'")
         
         if (title.length >= 3 && !title.matches(Regex(".*\\d{3,}.*"))) {
-            debugLog("✅ Título válido para busca HD")
+            debugLog("✅ Título válido para busca HD: '$title'")
             
             val enhancedMetadata = getEnhancedMetadata(title)
             
             if (enhancedMetadata != null) {
-                debugLog("🎉🎉🎉 METADADOS HD ENCONTRADOS! 🎉🎉🎉")
+                debugLog("📊 RESULTADO DA BUSCA HD:")
+                debugLog("  - Poster encontrado: ${enhancedMetadata.posterUrl != null}")
+                debugLog("  - Banner encontrado: ${enhancedMetadata.bannerUrl != null}")
+                debugLog("  - Poster URL: ${enhancedMetadata.posterUrl?.take(50)}...")
+                debugLog("  - Banner URL: ${enhancedMetadata.bannerUrl?.take(50)}...")
                 
                 // Usa imagens de alta qualidade se disponíveis
                 if (enhancedMetadata.posterUrl != null) {
@@ -718,7 +698,11 @@ class AniTube : MainAPI() {
                     debugLog("⚠️ Poster HD é null, mantendo original")
                 }
                 
-                banner = enhancedMetadata.bannerUrl
+                if (enhancedMetadata.bannerUrl != null) {
+                    banner = enhancedMetadata.bannerUrl
+                    debugLog("✅✅✅ BANNER HD DEFINIDO!")
+                }
+                
                 enhancedSynopsis = enhancedMetadata.description
                 enhancedYear = enhancedMetadata.year
                 enhancedGenres = enhancedMetadata.genres
@@ -734,11 +718,6 @@ class AniTube : MainAPI() {
                     }
                     debugLog("⭐ Rating adicionado: $enhancedRating")
                 }
-                
-                debugLog("📊 Metadados HD:")
-                debugLog("  - Banner: ${banner?.take(30)}...")
-                debugLog("  - Ano: $enhancedYear")
-                debugLog("  - Gêneros: ${enhancedGenres.take(3)}")
             } else {
                 debugLog("😞 Nenhum metadado HD encontrado")
             }
@@ -747,25 +726,19 @@ class AniTube : MainAPI() {
         }
     
         val siteSynopsis = document.selectFirst(ANIME_SYNOPSIS)?.text()?.trim()
-        debugLog("📖 Sinopse do site: ${siteSynopsis?.take(50)}...")
         
         // Usa sinopse melhorada se disponível, senão usa a do site
         val synopsis = when {
             actualUrl.contains("/video/") -> {
-                debugLog("🎥 É um vídeo/episódio individual")
                 siteSynopsis ?: "Episódio $episodeNumber de $title"
             }
             enhancedSynopsis != null -> {
-                debugLog("📖 Usando sinopse enhanced")
                 enhancedSynopsis
             }
             else -> {
-                debugLog("📖 Usando sinopse do site")
                 siteSynopsis ?: "Sinopse não disponível."
             }
         }
-        
-        debugLog("📖 Sinopse final (início): ${synopsis.take(50)}...")
         
         var year: Int? = enhancedYear
         var episodes: Int? = null
@@ -774,41 +747,32 @@ class AniTube : MainAPI() {
         
         // Complementa com dados do site se necessário
         if (genres.isEmpty() || year == null) {
-            debugLog("🔍 Buscando dados adicionais do site...")
             document.select(ANIME_METADATA).forEach { element ->
                 val text = element.text()
-                debugLog("  - Metadado: $text")
                 
                 when {
                     text.contains("Gênero:", true) && genres.isEmpty() -> {
                         genres = text.substringAfter("Gênero:").split(",").map { it.trim() }
-                        debugLog("  ✅ Gêneros do site: $genres")
                     }
                     text.contains("Ano:", true) && year == null -> {
                         year = text.substringAfter("Ano:").trim().toIntOrNull()
-                        debugLog("  ✅ Ano do site: $year")
                     }
                     text.contains("Episódios:", true) -> {
                         episodes = text.substringAfter("Episódios:").trim().toIntOrNull()
-                        debugLog("  ✅ Episódios do site: $episodes")
                     }
                     text.contains("Tipo de Episódio:", true) -> {
                         audioType = text.substringAfter("Tipo de Episódio:").trim()
-                        debugLog("  ✅ Tipo de áudio: $audioType")
                     }
                 }
             }
         }
         
         val isDubbed = rawTitle.contains("dublado", true) || audioType.contains("dublado", true)
-        debugLog("🎵 É dublado? $isDubbed")
         
         val episodesList = document.select(EPISODE_LIST).mapNotNull { element ->
             val episodeTitle = element.text().trim()
             val episodeUrl = element.attr("href")
             val epNumber = extractEpisodeNumber(episodeTitle) ?: 1
-            
-            debugLog("📺 Episódio encontrado: $episodeTitle -> Ep $epNumber")
             
             newEpisode(episodeUrl) {
                 this.name = "Episódio $epNumber"
@@ -817,10 +781,7 @@ class AniTube : MainAPI() {
             }
         }
         
-        debugLog("📊 Total de episódios na lista: ${episodesList.size}")
-        
         val allEpisodes = if (episodesList.isEmpty() && actualUrl.contains("/video/")) {
-            debugLog("🎬 URL é um vídeo único, criando episódio único")
             listOf(newEpisode(actualUrl) {
                 this.name = "Episódio $episodeNumber"
                 this.episode = episodeNumber
@@ -834,25 +795,20 @@ class AniTube : MainAPI() {
         val showStatus = if (episodes != null && sortedEpisodes.size >= episodes) ShowStatus.Completed else ShowStatus.Ongoing
         
         debugLog("\n📋 RESUMO FINAL:")
-        debugLog("  - Episódios: ${sortedEpisodes.size}")
-        debugLog("  - Status: $showStatus")
-        debugLog("  - Poster final: ${poster?.take(30)}...")
-        debugLog("  - Banner final: ${banner?.take(30)}...")
-        debugLog("  - Ano: $year")
-        debugLog("  - Gêneros: ${genres.take(3)}")
+        debugLog("  - Poster: ${poster?.take(30)}...")
+        debugLog("  - Banner: ${banner?.take(30)}...")
+        debugLog("  - HD encontrado? ${banner != null || poster != sitePoster}")
         
         // 🔧 RETORNA COM IMAGENS DE ALTA QUALIDADE
-        debugLog("\n✅✅✅ RETORNANDO LOAD RESPONSE ✅✅✅")
         return newAnimeLoadResponse(title, actualUrl, TvType.Anime) {
             this.posterUrl = poster
-            this.backgroundPosterUrl = banner // BANNER DE ALTA QUALIDADE
+            this.backgroundPosterUrl = banner
             this.year = year
             this.plot = synopsis
             this.tags = genres
             this.showStatus = showStatus
             
             if (sortedEpisodes.isNotEmpty()) {
-                debugLog("➕ Adicionando ${sortedEpisodes.size} episódios")
                 addEpisodes(if (isDubbed) DubStatus.Dubbed else DubStatus.Subbed, sortedEpisodes)
             }
         }
@@ -866,31 +822,25 @@ class AniTube : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         debugLog("\n▶️=== LOAD LINKS ===")
-        debugLog("Data: ${data.take(50)}...")
         
         val actualUrl = data.split("|poster=")[0]
-        debugLog("URL para player: $actualUrl")
         
         val document = app.get(actualUrl).document
         
         document.selectFirst(PLAYER_FHD)?.let { iframe ->
             val src = iframe.attr("src").takeIf { it.isNotBlank() } ?: return@let
-            debugLog("🎬 Player FHD encontrado: ${src.take(50)}...")
             
             val m3u8Url = extractM3u8FromUrl(src) ?: src
-            debugLog("📺 M3U8 URL: ${m3u8Url.take(50)}...")
             
             callback(newExtractorLink(name, "1080p", m3u8Url, ExtractorLinkType.M3U8) {
                 referer = "$mainUrl/"
                 quality = 1080
             })
-            debugLog("✅✅✅ Link FHD extraído com sucesso")
             return true
         }
         
         document.selectFirst(PLAYER_BACKUP)?.let { iframe ->
             val src = iframe.attr("src").takeIf { it.isNotBlank() } ?: return@let
-            debugLog("🎬 Player Backup encontrado: ${src.take(50)}...")
             
             val isM3u8 = src.contains("m3u8", true)
             val linkType = if (isM3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
@@ -899,26 +849,22 @@ class AniTube : MainAPI() {
                 referer = "$mainUrl/"
                 quality = 720
             })
-            debugLog("✅✅✅ Link Backup extraído com sucesso")
             return true
         }
         
         document.select("iframe").forEachIndexed { index, iframe ->
             val src = iframe.attr("src")
             if (src.contains("m3u8", true)) {
-                debugLog("🎬 Iframe #$index com M3U8: ${src.take(50)}...")
                 val m3u8Url = extractM3u8FromUrl(src) ?: src
                 
                 callback(newExtractorLink(name, "Auto", m3u8Url, ExtractorLinkType.M3U8) {
                     referer = "$mainUrl/"
                     quality = 720
                 })
-                debugLog("✅✅✅ Link Auto extraído com sucesso")
                 return true
             }
         }
         
-        debugLog("❌❌❌ Nenhum player encontrado")
         return false
     }
 }
