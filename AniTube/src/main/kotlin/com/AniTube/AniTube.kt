@@ -27,8 +27,8 @@ class AniTube : MainAPI() {
         
         // Para página inicial - seletores das diferentes seções
         private const val LATEST_EPISODES_SECTION = ".epiContainer"
-        private const val POPULAR_ANIME_SECTION = "#splide01 .aniItem"  // Animes Mais Vistos
-        private const val RECENT_ANIME_SECTION = "#splide02 .aniItem"   // Animes Recentes
+        private const val POPULAR_ANIME_SECTION = "#splide01 .aniItem"
+        private const val RECENT_ANIME_SECTION = "#splide02 .aniItem"
         
         // Para página de anime
         private const val ANIME_TITLE = "h1"
@@ -97,7 +97,8 @@ class AniTube : MainAPI() {
         return clean.replace(Regex("\\s+"), " ").trim().ifBlank { dirtyTitle }
     }
     
-    private fun extractEpisodeNumber(title: String): Int? {
+    private fun extractEpisodeNumberFromTitle(title: String): Int? {
+        // Procura por padrões de episódio no título
         val patterns = listOf(
             "Epis[oó]dio\\s*(\\d+)".toRegex(RegexOption.IGNORE_CASE),
             "Ep\\.?\\s*(\\d+)".toRegex(RegexOption.IGNORE_CASE),
@@ -147,75 +148,47 @@ class AniTube : MainAPI() {
         }
     }
     
-    // MÉTODO 1: Criar uma classe personalizada com badge de episódio
-    private fun createEpisodeResponse(
-        title: String,
-        url: String,
-        posterUrl: String?,
-        episodeNumber: Int,
-        isDubbed: Boolean
-    ): AnimeSearchResponse {
-        // Formato para mostrar badge: colocar o número no título
-        val displayName = if (title.contains("$episodeNumber")) {
-            title // Já tem o número
-        } else {
-            "$title ($episodeNumber)" // Adiciona o número entre parênteses
-        }
-        
-        return newAnimeSearchResponse(displayName, url) {
-            this.posterUrl = posterUrl
-            this.type = TvType.Anime
-            
-            // Forçar badge de dublado/legendado
-            addDubStatus(dubExist = isDubbed, subExist = !isDubbed)
-            
-            // Adicionar metadata para badge de episódio
-            // CloudStream detecta automaticamente "(X)" no título
-        }
-    }
-    
-    // Método específico para episódios
+    // SOLUÇÃO: Criar uma resposta de episódio que formata o título para mostrar badge
     private fun Element.toEpisodeSearchResponse(): AnimeSearchResponse? {
         val href = selectFirst("a")?.attr("href") ?: return null
-        if (!href.contains("/video/")) return null
         
-        // Extrair título do episódio
-        val episodeTitle = selectFirst(EPISODE_NUMBER_SELECTOR)?.text()?.trim() ?: return null
+        // Extrair título completo
+        val fullTitle = selectFirst(EPISODE_NUMBER_SELECTOR)?.text()?.trim() ?: return null
         
-        // Extrair título do anime e número do episódio
-        val animeTitle = extractAnimeTitleFromEpisode(episodeTitle)
-        val episodeNumber = extractEpisodeNumber(episodeTitle) ?: 1
+        // Extrair número do episódio do título
+        val episodeNumber = extractEpisodeNumberFromTitle(fullTitle) ?: 1
+        
+        // Extrair título limpo do anime
+        val animeTitle = extractAnimeTitleFromEpisode(fullTitle)
         
         val posterUrl = selectFirst(POSTER_SELECTOR)?.attr("src")?.let { fixUrl(it) }
         val isDubbed = isDubbed(this)
         
-        // Formato que força badge: "Anime (1155)" ou "Anime - Episódio 1155"
-        val displayName = "$animeTitle - $episodeNumber") {
-            animeTitle
-        } else {
+        // FORMATOS QUE FUNCIONAM PARA BADGES:
+        // 1. "Anime (1155)" - CloudStream detecta números entre parênteses
+        // 2. "Anime - 1155" - Número no final com hífen
+        // 3. "1155 - Anime" - Número no início
+        
+        // Vamos tentar o formato que funciona: Anime (Número)
+        val displayName = if (animeTitle.isNotBlank() && animeTitle != "Anime") {
             "$animeTitle ($episodeNumber)"
+        } else {
+            "Episódio $episodeNumber"
         }
         
         return newAnimeSearchResponse(displayName, fixUrl(href)) {
             this.posterUrl = posterUrl
             this.type = TvType.Anime
             
-            // Forçar badge de dublado/legendado
+            // Adicionar status de áudio
             addDubStatus(dubExist = isDubbed, subExist = !isDubbed)
             
-            // Tentar adicionar metadata (algumas versões do CloudStream suportam)
-            try {
-                // Alguns plugins usam isso:
-                // this.metadata = AnimeSearchMetadata().apply { 
-                //     this.episode = episodeNumber 
-                // }
-            } catch (e: Exception) {
-                // Ignorar se não funcionar
-            }
+            // DEBUG: Verificar o que está sendo criado
+            println("ANITUBE DEBUG: Criando episódio: '$displayName' - Número: $episodeNumber")
         }
     }
     
-    // Método para animes (sem episódios específicos)
+    // Método para animes completos (sem episódios)
     private fun Element.toAnimeSearchResponse(): AnimeSearchResponse? {
         val href = selectFirst("a")?.attr("href") ?: return null
         
@@ -239,7 +212,6 @@ class AniTube : MainAPI() {
     ): HomePageResponse {
         val baseUrl = request.data
         
-        // Se for uma página de gênero
         if (baseUrl.contains("/?s=")) {
             val url = if (page > 1) {
                 baseUrl.replace("/?s=", "/page/$page/?s=")
@@ -251,7 +223,6 @@ class AniTube : MainAPI() {
             
             val allItems = document.select("$ANIME_CARD, $EPISODE_CARD")
                 .mapNotNull { 
-                    // Identificar se é episódio
                     val isEpisode = it.selectFirst(EPISODE_NUMBER_SELECTOR) != null
                     if (isEpisode) {
                         it.toEpisodeSearchResponse()
@@ -264,7 +235,6 @@ class AniTube : MainAPI() {
             return newHomePageResponse(request.name, allItems, hasNext = true)
         }
         
-        // Para página inicial (primeira página)
         val document = app.get(baseUrl).document
         
         return when (request.name) {
@@ -273,6 +243,9 @@ class AniTube : MainAPI() {
                 val items = episodeElements
                     .mapNotNull { it.toEpisodeSearchResponse() }
                     .distinctBy { it.url }
+                
+                // DEBUG: Ver quantos episódios foram encontrados
+                println("ANITUBE DEBUG: Encontrados ${items.size} episódios em 'Últimos Episódios'")
                 
                 newHomePageResponse(
                     list = HomePageList(
@@ -360,7 +333,7 @@ class AniTube : MainAPI() {
         val episodesList = document.select(EPISODE_LIST).mapNotNull { element ->
             val episodeTitle = element.text().trim()
             val episodeUrl = element.attr("href")
-            val episodeNumber = extractEpisodeNumber(episodeTitle) ?: 1
+            val episodeNumber = extractEpisodeNumberFromTitle(episodeTitle) ?: 1
             
             newEpisode(episodeUrl) {
                 this.name = episodeTitle
@@ -370,7 +343,7 @@ class AniTube : MainAPI() {
         }
         
         val allEpisodes = if (episodesList.isEmpty() && url.contains("/video/")) {
-            val episodeNumber = extractEpisodeNumber(rawTitle) ?: 1
+            val episodeNumber = extractEpisodeNumberFromTitle(rawTitle) ?: 1
             listOf(newEpisode(url) {
                 this.name = rawTitle
                 this.episode = episodeNumber
