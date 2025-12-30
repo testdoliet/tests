@@ -298,7 +298,7 @@ class AniTube : MainAPI() {
         return null
     }
 
-    // 📦 Classes para armazenar resultados
+    // 📦 Classes para armazenar resultados - CORRIGIDAS
     data class AniListResult(
         val title: String,
         val posterUrl: String?,
@@ -313,7 +313,7 @@ class AniTube : MainAPI() {
     data class EnhancedMetadata(
         val title: String,
         val posterUrl: String?,
-        bannerUrl: String?,
+        val bannerUrl: String?, // CORRIGIDO: adicionado 'val'
         val description: String?,
         val year: Int?,
         val genres: List<String>,
@@ -649,7 +649,7 @@ class AniTube : MainAPI() {
             debugLog("🎉🎉🎉 METADADOS COMPLETOS ENCONTRADOS! 🎉🎉🎉")
             
             poster = enhancedMetadata.posterUrl
-            banner = enhancedMetadata.bannerUrl
+            banner = enhancedMetadata.bannerUrl // CORRIGIDO: usando bannerUrl
             synopsis = enhancedMetadata.description
             year = enhancedMetadata.year
             genres = enhancedMetadata.genres
@@ -759,7 +759,7 @@ class AniTube : MainAPI() {
         
         return newAnimeLoadResponse(title, actualUrl, TvType.Anime) {
             this.posterUrl = poster
-            this.backgroundPosterUrl = banner
+            this.backgroundPosterUrl = banner // CORRIGIDO: usando banner
             this.year = year
             this.plot = synopsis
             this.tags = genres
