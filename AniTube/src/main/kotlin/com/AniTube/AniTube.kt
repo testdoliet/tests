@@ -25,8 +25,6 @@ class AniTube : MainAPI() {
         private const val EPISODE_NUMBER_SELECTOR = ".epiItemInfos .epiItemNome"
         
         private const val LATEST_EPISODES_SECTION = ".epiContainer"
-        private const val POPULAR_ANIME_SECTION = "#splide01 .splide__list .splide__slide:not(.splide__slide--clone) .aniItem"
-        private const val RECENT_ANIME_SECTION = "#splide02 .splide__list .splide__slide:not(.splide__slide--clone) .aniItem"
         
         private const val ANIME_TITLE = "h1"
         private const val ANIME_POSTER = "#capaAnime img"
@@ -205,69 +203,91 @@ class AniTube : MainAPI() {
                 )
             }
             "Animes Mais Vistos" -> {
-                // Estratégia específica para o carrossel de "Mais Vistos"
-                val items = mutableListOf<AnimeSearchResponse>()
+                // Vamos buscar os animes na primeira seção após "Animes Mais Vistos"
+                // Primeiro, vamos pegar todos os containers .aniContainer
+                val allContainers = document.select(".aniContainer")
                 
-                // 1. Tentar pelo seletor específico
-                val specificItems = document.select(POPULAR_ANIME_SECTION)
-                if (specificItems.isNotEmpty()) {
-                    items.addAll(specificItems.mapNotNull { it.toAnimeSearchResponse() })
-                } else {
-                    // 2. Fallback: buscar os primeiros .aniItem após a seção "Animes Mais Vistos"
-                    val popularSection = document.selectFirst(".aniContainer:contains(Animes Mais Vistos)")
-                    if (popularSection != null) {
-                        // Buscar todos os .aniItem após esta seção até encontrar outra seção
-                        val allElements = document.select(".aniItem")
-                        val startIndex = allElements.indexOfFirst { 
-                            it.parents().any { parent -> parent == popularSection } 
-                        }
+                // Encontrar o container com "Animes Mais Vistos"
+                var popularItems = listOf<AnimeSearchResponse>()
+                
+                for (container in allContainers) {
+                    val titleElement = container.selectFirst(".aniContainerTitulo")
+                    if (titleElement != null && titleElement.text().contains("Animes Mais Vistos", true)) {
+                        // Encontrar os .aniItem dentro deste container
+                        val items = container.select(".aniItem")
+                            .mapNotNull { it.toAnimeSearchResponse() }
+                            .distinctBy { it.url }
+                            .take(10) // Limitar a 10 itens
                         
-                        if (startIndex != -1) {
-                            // Pegar até 10 itens a partir daqui
-                            val endIndex = minOf(startIndex + 10, allElements.size)
-                            for (i in startIndex until endIndex) {
-                                allElements[i].toAnimeSearchResponse()?.let { items.add(it) }
-                            }
-                        }
+                        popularItems = items
+                        break
                     }
                 }
                 
+                // Se não encontrou, buscar nos slides do primeiro splide
+                if (popularItems.isEmpty()) {
+                    val slides = document.select("#splide01 .splide__slide")
+                        .filterNot { it.hasClass("splide__slide--clone") }
+                    
+                    popularItems = slides
+                        .mapNotNull { slide ->
+                            slide.selectFirst(".aniItem")?.toAnimeSearchResponse()
+                        }
+                        .distinctBy { it.url }
+                        .take(10)
+                }
+                
                 newHomePageResponse(
-                    list = HomePageList(request.name, items.distinctBy { it.url }, isHorizontalImages = true),
+                    list = HomePageList(request.name, popularItems, isHorizontalImages = true),
                     hasNext = false
                 )
             }
             "Animes Recentes" -> {
-                // Estratégia específica para o carrossel de "Recentemente Adicionados"
-                val items = mutableListOf<AnimeSearchResponse>()
+                // Vamos buscar os animes na seção "ANIMES RECENTES"
+                val allContainers = document.select(".aniContainer")
                 
-                // 1. Tentar pelo seletor específico
-                val specificItems = document.select(RECENT_ANIME_SECTION)
-                if (specificItems.isNotEmpty()) {
-                    items.addAll(specificItems.mapNotNull { it.toAnimeSearchResponse() })
-                } else {
-                    // 2. Fallback: buscar .aniItem que NÃO estão na seção "Mais Vistos"
-                    val allAniItems = document.select(".aniItem")
-                    
-                    // Tentar identificar os itens recentes (normalmente são os últimos adicionados)
-                    // Vamos pegar um subconjunto diferente dos "Mais Vistos"
-                    val popularItems = document.select(POPULAR_ANIME_SECTION).map { it.attr("href") }
-                    
-                    // Filtrar itens que não estão nos "Mais Vistos"
-                    val recentItems = allAniItems.filterNot { 
-                        val href = it.selectFirst("a")?.attr("href") ?: ""
-                        href in popularItems
+                // Encontrar o container com "ANIMES RECENTES"
+                var recentItems = listOf<AnimeSearchResponse>()
+                
+                for (container in allContainers) {
+                    val titleElement = container.selectFirst(".aniContainerTitulo")
+                    if (titleElement != null && titleElement.text().contains("ANIMES RECENTES", true)) {
+                        // Encontrar os .aniItem dentro deste container
+                        val items = container.select(".aniItem")
+                            .mapNotNull { it.toAnimeSearchResponse() }
+                            .distinctBy { it.url }
+                            .take(10) // Limitar a 10 itens
+                        
+                        recentItems = items
+                        break
                     }
+                }
+                
+                // Se não encontrou, buscar nos slides do segundo splide
+                if (recentItems.isEmpty()) {
+                    val slides = document.select("#splide02 .splide__slide")
+                        .filterNot { it.hasClass("splide__slide--clone") }
                     
-                    // Pegar os primeiros 10 itens únicos
-                    items.addAll(recentItems
+                    recentItems = slides
+                        .mapNotNull { slide ->
+                            slide.selectFirst(".aniItem")?.toAnimeSearchResponse()
+                        }
+                        .distinctBy { it.url }
+                        .take(10)
+                }
+                
+                // Se ainda não encontrou, buscar todos os .aniItem e filtrar
+                if (recentItems.isEmpty()) {
+                    val allAnimeItems = document.select(".aniItem")
                         .mapNotNull { it.toAnimeSearchResponse() }
                         .distinctBy { it.url }
-                        .take(10))
+                    
+                    // Tentar encontrar itens diferentes (talvez mais recentes vêm primeiro)
+                    recentItems = allAnimeItems.take(15) // Pegar mais itens
                 }
                 
                 newHomePageResponse(
-                    list = HomePageList(request.name, items.distinctBy { it.url }, isHorizontalImages = true),
+                    list = HomePageList(request.name, recentItems, isHorizontalImages = true),
                     hasNext = false
                 )
             }
