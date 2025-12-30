@@ -111,9 +111,6 @@ class AniTube : MainAPI() {
     }
     
     private fun extractAnimeTitleFromEpisode(episodeTitle: String): String {
-        // DEBUG: Mostrar título original
-        println("DEBUG - Título original do episódio: '$episodeTitle'")
-        
         // Remove padrões de episódio do título
         var clean = episodeTitle
             .replace("(?i)Epis[oó]dio\\s*\\d+".toRegex(), "")
@@ -125,9 +122,6 @@ class AniTube : MainAPI() {
         
         // Remove qualquer número solto no final
         clean = clean.replace("\\s*\\d+\\s*$".toRegex(), "").trim()
-        
-        // DEBUG: Mostrar título limpo
-        println("DEBUG - Título do anime extraído: '$clean'")
         
         return clean.ifBlank { "Anime" }
     }
@@ -161,42 +155,24 @@ class AniTube : MainAPI() {
         // Extrair título do episódio
         val episodeTitle = selectFirst(EPISODE_NUMBER_SELECTOR)?.text()?.trim() ?: return null
         
-        // DEBUG: Mostrar elemento HTML
-        println("DEBUG - Elemento HTML: ${this.html()}")
-        
         // Extrair título do anime e número do episódio
         val animeTitle = extractAnimeTitleFromEpisode(episodeTitle)
         val episodeNumber = extractEpisodeNumber(episodeTitle) ?: 1
         
-        // DEBUG: Mostrar informações extraídas
-        println("DEBUG - Anime: '$animeTitle', Episódio: $episodeNumber")
-        
         val posterUrl = selectFirst(POSTER_SELECTOR)?.attr("src")?.let { fixUrl(it) }
         val isDubbed = isDubbed(this)
         
-        // DEBUG: Mostrar se é dublado
-        println("DEBUG - É dublado? $isDubbed")
-        
-        // Formato 1: Tentar com "EP" no final (estilo CloudStream)
-        val displayName = if (animeTitle.isNotBlank() && animeTitle != "Anime") {
-            "$animeTitle EP$episodeNumber"
-        } else {
-            "EP$episodeNumber"
-        }
-        
-        // DEBUG: Mostrar nome final
-        println("DEBUG - Nome final: '$displayName'")
-        println("DEBUG =====================================")
+        // Formato igual ao AnimesDigital: "Anime - Episódio X"
+        val episodeText = if (isDubbed) "Dublado Episódio $episodeNumber" else "Legendado Episódio $episodeNumber"
+        val displayName = "$animeTitle - $episodeText"
         
         return newAnimeSearchResponse(displayName, fixUrl(href)) {
             this.posterUrl = posterUrl
             this.type = TvType.Anime
+            this.episode = episodeNumber
             
-            if (isDubbed) {
-                addDubStatus(dubExist = true, subExist = false)
-            } else {
-                addDubStatus(dubExist = false, subExist = true)
-            }
+            // Usando o mesmo padrão do AnimesDigital
+            addDubStatus(dubExist = isDubbed, subExist = !isDubbed)
         }
     }
     
@@ -215,11 +191,7 @@ class AniTube : MainAPI() {
             this.posterUrl = posterUrl
             this.type = TvType.Anime
             
-            if (isDubbed) {
-                addDubStatus(dubExist = true, subExist = false)
-            } else {
-                addDubStatus(dubExist = false, subExist = true)
-            }
+            addDubStatus(dubExist = isDubbed, subExist = !isDubbed)
         }
     }
 
@@ -251,16 +223,11 @@ class AniTube : MainAPI() {
         
         return when (request.name) {
             "Últimos Episódios" -> {
-                // DEBUG: Contar quantos episódios foram encontrados
-                val episodeElements = document.select("$LATEST_EPISODES_SECTION $EPISODE_CARD")
-                println("DEBUG - Total de elementos de episódios encontrados: ${episodeElements.size}")
-                
                 // Extrair episódios da seção específica - usar estilo AnimesDigital
+                val episodeElements = document.select("$LATEST_EPISODES_SECTION $EPISODE_CARD")
                 val items = episodeElements
                     .mapNotNull { it.toEpisodeSearchResponse() }
                     .distinctBy { it.url }
-                
-                println("DEBUG - Total de episódios processados: ${items.size}")
                 
                 // Para Últimos Episódios, usar layout horizontal como AnimesDigital
                 newHomePageResponse(
