@@ -10,7 +10,7 @@ class AniTube : MainAPI() {
     override var name = "AniTube"
     override val hasMainPage = true
     override var lang = "pt-br"
-    override val hasDownloadSupport = false
+    override val hasDownloadSupport = true
     override val supportedTypes = setOf(TvType.Anime)
     override val usesWebView = false
 
@@ -205,9 +205,19 @@ class AniTube : MainAPI() {
                 )
             }
             "Animes Mais Vistos" -> {
-                val items = document.select(POPULAR_ANIME_SECTION)
-                    .mapNotNull { it.toAnimeSearchResponse() }
-                    .distinctBy { it.url }
+                // CORREÇÃO: Buscar os elementos dentro do carrossel
+                val popularContainer = document.selectFirst("#splide01")
+                val items = if (popularContainer != null) {
+                    // Se o carrossel existe, pegar os elementos .aniItem dentro dele
+                    popularContainer.select(".aniItem")
+                        .mapNotNull { it.toAnimeSearchResponse() }
+                        .distinctBy { it.url }
+                } else {
+                    // Fallback: buscar de qualquer lugar
+                    document.select(POPULAR_ANIME_SECTION)
+                        .mapNotNull { it.toAnimeSearchResponse() }
+                        .distinctBy { it.url }
+                }
                 
                 newHomePageResponse(
                     list = HomePageList(request.name, items, isHorizontalImages = true),
@@ -215,9 +225,19 @@ class AniTube : MainAPI() {
                 )
             }
             "Animes Recentes" -> {
-                val items = document.select(RECENT_ANIME_SECTION)
-                    .mapNotNull { it.toAnimeSearchResponse() }
-                    .distinctBy { it.url }
+                // CORREÇÃO: Buscar os elementos dentro do carrossel
+                val recentContainer = document.selectFirst("#splide02")
+                val items = if (recentContainer != null) {
+                    // Se o carrossel existe, pegar os elementos .aniItem dentro dele
+                    recentContainer.select(".aniItem")
+                        .mapNotNull { it.toAnimeSearchResponse() }
+                        .distinctBy { it.url }
+                } else {
+                    // Fallback: buscar de qualquer lugar
+                    document.select(RECENT_ANIME_SECTION)
+                        .mapNotNull { it.toAnimeSearchResponse() }
+                        .distinctBy { it.url }
+                }
                 
                 newHomePageResponse(
                     list = HomePageList(request.name, items, isHorizontalImages = true),
