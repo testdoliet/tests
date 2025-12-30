@@ -27,8 +27,8 @@ class AniTube : MainAPI() {
         
         // Para página inicial - seletores das diferentes seções
         private const val LATEST_EPISODES_SECTION = ".epiContainer"
-        private const val POPULAR_ANIME_SECTION = "#splide01 .aniItem"
-        private const val RECENT_ANIME_SECTION = "#splide02 .aniItem"
+        private const val POPULAR_ANIME_SECTION = "#splide01 .aniItem"  // Animes Mais Vistos
+        private const val RECENT_ANIME_SECTION = "#splide02 .aniItem"   // Animes Recentes
         
         // Para página de anime
         private const val ANIME_TITLE = "h1"
@@ -84,8 +84,8 @@ class AniTube : MainAPI() {
 
     override val mainPage = mainPageOf(
         "$mainUrl" to "Últimos Episódios",
-        "$mainUrl" to "Mais Populares",
-        "$mainUrl" to "Animes Recentes",
+        "$mainUrl" to "Animes Mais Vistos",  // Renomeado de "Mais Populares"
+        "$mainUrl" to "Animes Recentes",     // Já estava certo
         *genresMap.map { (genre, slug) -> "$mainUrl/?s=$slug" to genre }.toTypedArray()
     )
 
@@ -179,7 +179,8 @@ class AniTube : MainAPI() {
     // Método para animes (sem episódios específicos)
     private fun Element.toAnimeSearchResponse(): AnimeSearchResponse? {
         val href = selectFirst("a")?.attr("href") ?: return null
-        if (!href.contains("/video/")) return null
+        // Não filtrar por /video/ aqui, pois pode ser página de anime completo
+        // if (!href.contains("/video/")) return null
         
         val rawTitle = selectFirst(TITLE_SELECTOR)?.text()?.trim() ?: return null
         val cleanedTitle = cleanTitle(rawTitle).ifBlank { return null }
@@ -239,13 +240,20 @@ class AniTube : MainAPI() {
                     hasNext = false
                 )
             }
-            "Mais Populares" -> {
+            "Animes Mais Vistos" -> {
                 // Extrair animes populares do primeiro carousel
                 val items = document.select(POPULAR_ANIME_SECTION)
                     .mapNotNull { it.toAnimeSearchResponse() }
                     .distinctBy { it.url }
                 
-                newHomePageResponse(request.name, items, hasNext = false)
+                newHomePageResponse(
+                    list = HomePageList(
+                        name = request.name,
+                        list = items,
+                        isHorizontalImages = true  // Também horizontal
+                    ),
+                    hasNext = false
+                )
             }
             "Animes Recentes" -> {
                 // Extrair animes recentes do segundo carousel
@@ -253,7 +261,14 @@ class AniTube : MainAPI() {
                     .mapNotNull { it.toAnimeSearchResponse() }
                     .distinctBy { it.url }
                 
-                newHomePageResponse(request.name, items, hasNext = false)
+                newHomePageResponse(
+                    list = HomePageList(
+                        name = request.name,
+                        list = items,
+                        isHorizontalImages = true  // Também horizontal
+                    ),
+                    hasNext = false
+                )
             }
             else -> newHomePageResponse(request.name, emptyList(), hasNext = false)
         }
