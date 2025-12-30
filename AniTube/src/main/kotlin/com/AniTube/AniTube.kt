@@ -190,7 +190,7 @@ class AniTube : MainAPI() {
         val isDubbed = isDubbed(this)
         
         // Formato que força badge: "Anime (1155)" ou "Anime - Episódio 1155"
-        val displayName = if (animeTitle.contains("$episodeNumber")) {
+        val displayName = "$animeTitle - $episodeNumber") {
             animeTitle
         } else {
             "$animeTitle ($episodeNumber)"
