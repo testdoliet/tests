@@ -22,10 +22,10 @@
     },
     {
         "iconUrl": "https://www.anitube.news/wp-content/uploads/cropped-Favicon6-192x192.png",
-        "jarFileSize": 128586,
+        "jarFileSize": 59424,
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/lawlietbt/lietrepo",
-        "fileSize": 33606,
+        "fileSize": 18785,
         "status": 1,
         "language": "pt-br",
         "authors": [
@@ -61,6 +61,29 @@
         "description": "Animes Online em HD gratuitamente no Goyabu",
         "url": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/Goyabu.cs3",
         "name": "Goyabu"
+    },
+    {
+        "iconUrl": "https://hypeflix.info/uploads/images/logo_hypeflix.png",
+        "jarFileSize": 49775,
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/lawlietbt/lietrepo",
+        "fileSize": 15021,
+        "status": 1,
+        "language": "pt-br",
+        "authors": [
+            "lawlietbr"
+        ],
+        "tvTypes": [
+            "Movies",
+            "Series",
+            "Animes"
+        ],
+        "version": 1,
+        "internalName": "Hypeflix",
+        "jarUrl": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/Hypeflix.jar",
+        "description": "Hypeflix \u00e9 o seu destino n\u00ba1 para assistir filmes online gr\u00e1tis e s\u00e9ries online, em alta qualidade e sem complica\u00e7\u00f5es.",
+        "url": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/Hypeflix.cs3",
+        "name": "Hypeflix"
     },
     {
         "iconUrl": "https://icons.duckduckgo.com/ip2/superflix22.lol.ico",
