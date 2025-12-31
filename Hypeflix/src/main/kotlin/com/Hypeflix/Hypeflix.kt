@@ -84,7 +84,7 @@ class Hypeflix : MainAPI() {
         val plot = document.selectFirst("div.sinopse, .plot")?.text() ?: ""
         val year = document.selectFirst("span.year")?.text()?.toIntOrNull()
         val tags = document.select("div.genres a").map { it.text() }
-        val actors = document.select("div.cast a").map { Actor(it.text()) }
+        val actors = document.select("div.cast a").map { ActorData(it.text()) }
 
         // Verificar se é filme ou série
         val isMovie = url.contains("/filme/") || 
@@ -112,40 +112,41 @@ class Hypeflix : MainAPI() {
                 this.recommendations = recommendations
             }
         } else {
-            // É uma série
-            val seasons = mutableListOf<SeasonData>()
+            // É uma série - criar lista de episódios
+            val episodes = mutableListOf<Episode>()
+            
+            // Procurar temporadas e episódios
             val seasonElements = document.select("div.season")
             
             if (seasonElements.isNotEmpty()) {
                 seasonElements.forEachIndexed { seasonIndex, seasonElement ->
                     val seasonNumber = (seasonIndex + 1)
-                    val episodes = seasonElement.select("div.episode-item, li").mapNotNull { epElement ->
-                        val epHref = epElement.selectFirst("a[href]")?.attr("href") ?: return@mapNotNull null
-                        val epTitle = epElement.selectFirst(".episode-title")?.text() ?: "Episódio ${seasonIndex + 1}"
-                        val epNumber = epElement.selectFirst(".episode-number")?.text()?.toIntOrNull() ?: (seasonIndex + 1)
+                    seasonElement.select("div.episode-item, li").forEachIndexed { episodeIndex, epElement ->
+                        val epHref = epElement.selectFirst("a[href]")?.attr("href") ?: return@forEachIndexed
+                        val epTitle = epElement.selectFirst(".episode-title")?.text() ?: "Episódio ${episodeIndex + 1}"
+                        val epNumber = epElement.selectFirst(".episode-number")?.text()?.toIntOrNull() ?: (episodeIndex + 1)
                         val epPoster = epElement.selectFirst("img[src]")?.attr("src") ?: poster
 
-                        newEpisode(epHref) {
-                            this.name = epTitle
-                            this.season = seasonNumber
-                            this.episode = epNumber
-                            this.posterUrl = epPoster
-                        }
-                    }
-                    
-                    if (episodes.isNotEmpty()) {
-                        seasons.add(SeasonData(seasonNumber, episodes))
+                        episodes.add(
+                            newEpisode(epHref) {
+                                this.name = epTitle
+                                this.season = seasonNumber
+                                this.episode = epNumber
+                                this.posterUrl = epPoster
+                            }
+                        )
                     }
                 }
             } else {
-                // Se não encontrar temporadas, criar uma temporada única com o episódio principal
-                val episode = newEpisode(url) {
-                    this.name = title
-                    this.season = 1
-                    this.episode = 1
-                    this.posterUrl = poster
-                }
-                seasons.add(SeasonData(1, listOf(episode)))
+                // Se não encontrar temporadas, criar um episódio único
+                episodes.add(
+                    newEpisode(url) {
+                        this.name = title
+                        this.season = 1
+                        this.episode = 1
+                        this.posterUrl = poster
+                    }
+                )
             }
 
             val recommendations = document.select("div.related div.card-serie").mapNotNull { related ->
@@ -158,13 +159,12 @@ class Hypeflix : MainAPI() {
                 }
             }
 
-            return newTvSeriesLoadResponse(title, url) {
+            return newTvSeriesLoadResponse(title, url, episodes) {
                 this.posterUrl = poster
                 this.plot = plot
                 this.year = year
                 this.tags = tags
                 this.actors = actors
-                this.seasons = seasons
                 this.recommendations = recommendations
             }
         }
