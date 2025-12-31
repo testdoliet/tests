@@ -2,297 +2,176 @@ package com.Hypeflix
 
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
-import com.lagradost.cloudstream3.app
 import org.jsoup.nodes.Element
-import java.net.URLEncoder
-import com.lagradost.cloudstream3.extractors.ExtractorLink
 
-class Hypeflix : MainAPI() {
-    override var mainUrl = "https://hypeflix.info"
+class HypeFlix : MainAPI() {
+    override var mainUrl = "https://hypeflix.site"
     override var name = "HypeFlix"
     override val hasMainPage = true
-    override var lang = "pt-br"
-    override val hasDownloadSupport = false
-    override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries, TvType.Anime)
-    override val usesWebView = false
+    override val hasDownloadSupport = true
+    override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries)
+    override val lang = "pt"
 
-    companion object {
-        private val HOME_SECTIONS = listOf(
-            "popular" to "Os mais populares",
-            "lancamentos" to "Séries em lançamentos", 
-            "filmes-recentes" to "Filmes recentes",
-            "atualizacoes" to "Últimas atualizações",
-            "animes" to "Animes"
-        )
-    }
+    // Seletores CSS
+    private val movieSelector = "div.card"
+    private val serieSelector = "div.card-serie"
+    private val episodeSelector = "div.episode-item, li.episode-item"
+    private val searchSelector = "div.search-item"
+    private val playerSelector = "iframe[src*='player'], video source[src]"
 
     override val mainPage = mainPageOf(
-        *HOME_SECTIONS.map { (section, name) -> 
-            "home_$section" to name 
-        }.toTypedArray()
+        "$mainUrl/lancamentos/" to "Lançamentos",
+        "$mainUrl/series/" to "Séries",
+        "$mainUrl/filmes/" to "Filmes",
+        "$mainUrl/animes/" to "Animes",
+        "$mainUrl/top/" to "Top"
     )
 
-    override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        if (page == 1) {
-            val document = app.get(mainUrl).document
-            val sectionId = request.data.removePrefix("home_")
-            val items = extractHomeSection(document, sectionId)
-            return newHomePageResponse(request.name, items.distinctBy { it.url }, false)
-        }
-        return newHomePageResponse(request.name, emptyList(), false)
-    }
+    override suspend fun getMainPage(
+        page: Int,
+        request: MainPageRequest
+    ): HomePageResponse {
+        val url = request.data + page
+        val document = app.get(url).document
 
-    private fun extractHomeSection(document: org.jsoup.nodes.Document, sectionId: String): List<SearchResponse> {
-        val sectionMap = mapOf(
-            "popular" to "os-mais-populares",
-            "lancamentos" to "sries-em-lanamentos", 
-            "filmes-recentes" to "filmes-recentes",
-            "atualizacoes" to "ltimas-atualizaes",
-            "animes" to "animes"
-        )
-        
-        val realSectionId = sectionMap[sectionId] ?: return emptyList()
-        
-        val section = document.selectFirst("section[aria-labelledby='$realSectionId']")
-            ?: document.selectFirst("section.carousels")
-            ?: return emptyList()
-        
-        return section.select("article").mapNotNull { article ->
-            article.toSearchResult()
-        }
-    }
+        val items = document.select("div.card, div.card-serie").mapNotNull { element ->
+            val href = element.selectFirst("a[href]")?.attr("href") ?: return@mapNotNull null
+            val title = element.selectFirst("h3, h2, .title")?.text() ?: return@mapNotNull null
+            val poster = element.selectFirst("img[src]")?.attr("src") ?: ""
 
-    private fun Element.toSearchResult(): SearchResponse? {
-        val linkElement = selectFirst("a") ?: return null
-        val href = linkElement.attr("href") ?: return null
-        
-        val titleElement = selectFirst("h3")
-        val title = titleElement?.text()?.trim() ?: return null
-        
-        // CORREÇÃO 1: Extrair ano corretamente
-        val yearElement = selectFirst("time.release-date")
-        val year = yearElement?.attr("datetime")?.substring(0, 4)?.toIntOrNull()
-            ?: Regex("\\((\\d{4})\\)").find(title)?.groupValues?.get(1)?.toIntOrNull()
-        
-        // CORREÇÃO 1: Limpar título removendo o ano
-        val cleanTitle = title
-            .replace(Regex("\\(\\d{4}\\)"), "") // Remove (2023)
-            .replace(Regex("\\d{4}$"), "") // Remove 2023 no final
-            .trim()
-        
-        val imgElement = selectFirst("img")
-        val posterUrl = imgElement?.attr("src")?.let { fixUrl(it) }
-        
-        val isAnime = href.contains("/anime/")
-        val isSerie = href.contains("/serie/") || href.contains("/tv/")
-        
-        return when {
-            isAnime -> newAnimeSearchResponse(cleanTitle, fixUrl(href), TvType.Anime) {
-                this.posterUrl = posterUrl
-                this.year = year
+            // Determinar tipo (Filme ou Série)
+            val type = if (href.contains("/filme/") || element.hasClass("movie")) {
+                TvType.Movie
+            } else {
+                TvType.TvSeries
             }
-            isSerie -> newTvSeriesLoadResponse(cleanTitle, fixUrl(href), TvType.TvSeries) {
-                this.posterUrl = posterUrl
-                this.year = year
-            }
-            else -> newMovieSearchResponse(cleanTitle, fixUrl(href), TvType.Movie) {
-                this.posterUrl = posterUrl
-                this.year = year
+
+            if (type == TvType.Movie) {
+                newMovieLoadResponse(title, href) {
+                    this.posterUrl = poster
+                    this.plot = ""
+                }
+            } else {
+                newTvSeriesLoadResponse(title, href) {
+                    this.posterUrl = poster
+                    this.plot = ""
+                }
             }
         }
+
+        return newHomePageResponse(request.name, items)
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        val encodedQuery = URLEncoder.encode(query, "UTF-8")
-        val searchUrl = "$mainUrl/?s=$encodedQuery"
+        val searchUrl = "$mainUrl/?s=$query"
         val document = app.get(searchUrl).document
-        
-        return document.select("article").mapNotNull { element ->
-            element.toSearchResult()
-        }.ifEmpty {
-            document.select("a[href*='/serie/'], a[href*='/filme/'], a[href*='/anime/']")
-                .mapNotNull { link ->
-                    val href = link.attr("href")
-                    if (href.contains("/serie/") || href.contains("/filme/") || href.contains("/anime/")) {
-                        val title = link.text().trim()
-                        val cleanTitle = title
-                            .replace(Regex("\\(\\d{4}\\)"), "")
-                            .replace(Regex("\\d{4}$"), "")
-                            .trim()
-                        
-                        if (cleanTitle.isNotEmpty()) {
-                            newMovieSearchResponse(cleanTitle, fixUrl(href), TvType.Movie) {
-                                this.posterUrl = link.selectFirst("img")?.attr("src")?.let { fixUrl(it) }
-                            }
-                        } else null
-                    } else null
-                }
-        }
-    }
 
-    override suspend fun load(url: String): LoadResponse? {
-        val document = app.get(url).document
-        
-        val titleElement = document.selectFirst("h1")
-        val title = titleElement?.text()?.trim() ?: return null
-        
-        val year = Regex("\\((\\d{4})\\)").find(title)?.groupValues?.get(1)?.toIntOrNull()
-        val cleanTitle = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
-        
-        val isAnime = url.contains("/anime/")
-        val isSerie = url.contains("/serie/")
-        
-        val description = document.selectFirst("meta[name='description']")
-            ?.attr("content")?.ifBlank { null } 
-            ?: document.selectFirst("p.description, .sinopse")?.text()?.trim()
-            ?: document.selectFirst(".description")?.text()?.trim()
-        
-        val heroSection = document.selectFirst("section.hero")
-        val backgroundStyle = heroSection?.attr("style")
-        val backdropUrl = backgroundStyle?.let {
-            Regex("url\\(['\"]?(.*?)['\"]?\\)").find(it)?.groupValues?.get(1)
-        }?.let { fixUrl(it) }
-        
-        val ogImage = document.selectFirst("meta[property='og:image']")?.attr("content")
-        val posterUrl = ogImage?.let { fixUrl(it) }
-        
-        // CORREÇÃO 2: Extrair temporadas e episódios corretamente
-        val episodes = if (isAnime || isSerie) {
-            extractEpisodesWithSeasons(document)
-        } else {
-            emptyList()
-        }
-        
-        val genres = document.select("a.chip, .chip, .genre, .tags").map { it.text().trim() }
-            .takeIf { it.isNotEmpty() }
-        
-        if (isAnime || isSerie) {
-            val type = if (isAnime) TvType.Anime else TvType.TvSeries
-            
-            return newTvSeriesLoadResponse(cleanTitle, url, type, episodes) {
-                this.posterUrl = posterUrl
-                this.backgroundPosterUrl = backdropUrl
-                this.year = year
-                this.plot = description
-                this.tags = genres
-            }
-        } else {
-            return newMovieLoadResponse(cleanTitle, url, TvType.Movie, url) {
-                this.posterUrl = posterUrl
-                this.backgroundPosterUrl = backdropUrl
-                this.year = year
-                this.plot = description
-                this.tags = genres
-            }
-        }
-    }
+        return document.select(searchSelector).mapNotNull { element ->
+            val href = element.selectFirst("a[href]")?.attr("href") ?: return@mapNotNull null
+            val title = element.selectFirst("h3, h2, .title")?.text() ?: return@mapNotNull null
+            val poster = element.selectFirst("img[src]")?.attr("src") ?: ""
+            val year = element.selectFirst(".year")?.text()?.toIntOrNull()
 
-    // CORREÇÃO 2: Nova função para extrair temporadas corretamente
-    private fun extractEpisodesWithSeasons(document: org.jsoup.nodes.Document): List<Episode> {
-        val episodes = mutableListOf<Episode>()
-        
-        // Primeiro, tentar encontrar o seletor de temporada
-        val seasonSelector = document.selectFirst("#seasonSelect")
-        val seasons = if (seasonSelector != null) {
-            // Se houver seletor de temporada, extrair opções
-            seasonSelector.select("option").mapNotNull { option ->
-                option.attr("value").toIntOrNull()
-            }
-        } else {
-            // Se não houver, assumir temporada 1
-            listOf(1)
-        }
-        
-        // Para cada temporada, extrair episódios
-        seasons.forEach { seasonNumber ->
-            // Filtrar episódios por temporada
-            val episodeElements = document.select(".episode-item")
-                .filter { it.hasClass("season_number_$seasonNumber") || 
-                         it.attr("data-season").toIntOrNull() == seasonNumber }
-            
-            if (episodeElements.isEmpty() && seasonNumber == 1) {
-                // Fallback: se não encontrar classe específica, pega todos
-                document.select(".episode-item").forEachIndexed { index, episodeElement ->
-                    extractSingleEpisode(episodeElement, seasonNumber, index + 1)?.let {
-                        episodes.add(it)
-                    }
+            // Determinar tipo
+            val isMovie = href.contains("/filme/") || element.selectFirst(".type")?.text()?.contains("Filme") == true
+
+            if (isMovie) {
+                newMovieSearchResponse(title, href) {
+                    this.posterUrl = poster
+                    this.year = year
                 }
             } else {
-                episodeElements.forEachIndexed { index, episodeElement ->
-                    extractSingleEpisode(episodeElement, seasonNumber, index + 1)?.let {
-                        episodes.add(it)
-                    }
+                newTvSeriesSearchResponse(title, href) {
+                    this.posterUrl = poster
+                    this.year = year
                 }
             }
         }
-        
-        return episodes
     }
 
-    private fun extractSingleEpisode(
-        episodeElement: Element,
-        seasonNumber: Int,
-        defaultEpisodeNumber: Int
-    ): Episode? {
-        return try {
-            val dataProtected = episodeElement.attr("data-protected")
-            if (dataProtected.isBlank()) return null
-            
-            val titleElement = episodeElement.selectFirst(".episode-title")
-            val title = titleElement?.text()?.trim() ?: "Episódio $defaultEpisodeNumber"
-            
-            // Extrair número do episódio de várias formas
-            val epNumber = episodeElement.attr("data-ep").toIntOrNull()
-                ?: Regex("""Ep\.?\s*(\d+)""").find(title)?.groupValues?.get(1)?.toIntOrNull()
-                ?: Regex("""Epis[oó]dio\s*(\d+)""").find(title)?.groupValues?.get(1)?.toIntOrNull()
-                ?: Regex("""(\d+)""").find(title)?.groupValues?.get(1)?.toIntOrNull()
-                ?: defaultEpisodeNumber
-            
-            val descriptionElement = episodeElement.selectFirst(".episode-description")
-            val description = descriptionElement?.text()?.trim()
-            
-            val durationElement = episodeElement.selectFirst(".episode-number")
-            val durationText = durationElement?.text()
-            val episodeDuration = durationText?.let {
-                Regex("""(\d+)\s*min""").find(it)?.groupValues?.get(1)?.toIntOrNull()
-            }
-            
-            // Construir descrição com duração
-            val fullDescription = buildString {
-                description?.let { append(it) }
-                episodeDuration?.let { 
-                    if (isNotEmpty()) append("\n\n")
-                    append("Duração: ${it} min")
+    override suspend fun load(url: String): LoadResponse {
+        val document = app.get(url).document
+
+        val title = document.selectFirst("h1.title")?.text() ?: ""
+        val poster = document.selectFirst("img.poster")?.attr("src") ?: ""
+        val plot = document.selectFirst("div.sinopse, .plot")?.text() ?: ""
+        val year = document.selectFirst("span.year")?.text()?.toIntOrNull()
+        val tags = document.select("div.genres a").map { it.text() }
+        val actors = document.select("div.cast a").map { it.text() }
+
+        // Verificar se é filme ou série
+        val isMovie = url.contains("/filme/") || 
+                      document.selectFirst("div.player-container") != null ||
+                      document.select("div.seasons").isEmpty()
+
+        if (isMovie) {
+            // É um filme
+            val recommendations = document.select("div.related div.card").mapNotNull { related ->
+                val href = related.selectFirst("a[href]")?.attr("href") ?: return@mapNotNull null
+                val relTitle = related.selectFirst("h3")?.text() ?: return@mapNotNull null
+                val relPoster = related.selectFirst("img[src]")?.attr("src") ?: ""
+
+                newMovieLoadResponse(relTitle, href) {
+                    this.posterUrl = relPoster
                 }
-            }.takeIf { it.isNotEmpty() }
-            
-            val imgElement = episodeElement.selectFirst("img")
-            val episodePoster = imgElement?.attr("src")?.let { fixUrl(it) }
-            
-            newEpisode(fixUrl(dataProtected)) {
-                this.name = title
-                this.season = seasonNumber
-                this.episode = epNumber
-                this.description = fullDescription
-                this.posterUrl = episodePoster
             }
-        } catch (e: Exception) {
-            null
+
+            return newMovieLoadResponse(title, url) {
+                this.posterUrl = poster
+                this.plot = plot
+                this.year = year
+                this.tags = tags
+                this.actors = actors
+                this.recommendations = recommendations
+            }
+        } else {
+            // É uma série
+            val seasons = document.select("div.season").mapIndexed { seasonIndex, seasonElement ->
+                val seasonNumber = (seasonIndex + 1)
+                val episodes = seasonElement.select("div.episode-item, li").mapNotNull { epElement ->
+                    val epHref = epElement.selectFirst("a[href]")?.attr("href") ?: return@mapNotNull null
+                    val epTitle = epElement.selectFirst(".episode-title")?.text() ?: "Episódio ${seasonIndex + 1}"
+                    val epNumber = epElement.selectFirst(".episode-number")?.text()?.toIntOrNull() ?: (seasonIndex + 1)
+                    val epPoster = epElement.selectFirst("img[src]")?.attr("src") ?: poster
+
+                    newEpisode(epHref) {
+                        this.name = epTitle
+                        this.season = seasonNumber
+                        this.episode = epNumber
+                        this.posterUrl = epPoster
+                    }
+                }
+                newTvSeason(seasonNumber, episodes)
+            }
+
+            val recommendations = document.select("div.related div.card-serie").mapNotNull { related ->
+                val href = related.selectFirst("a[href]")?.attr("href") ?: return@mapNotNull null
+                val relTitle = related.selectFirst("h3")?.text() ?: return@mapNotNull null
+                val relPoster = related.selectFirst("img[src]")?.attr("src") ?: ""
+
+                newTvSeriesLoadResponse(relTitle, href) {
+                    this.posterUrl = relPoster
+                }
+            }
+
+            return newTvSeriesLoadResponse(title, url) {
+                this.posterUrl = poster
+                this.plot = plot
+                this.year = year
+                this.tags = tags
+                this.actors = actors
+                this.seasons = seasons
+                this.recommendations = recommendations
+            }
         }
     }
 
     override suspend fun loadLinks(
-    data: String,
-    isCasting: Boolean,
-    subtitleCallback: (SubtitleFile) -> Unit,
-    callback: (ExtractorLink) -> Unit
-): Boolean {
-    // Se tiver suporte a download, usar o extrator
-    if (hasDownloadSupport) {
+        data: String,
+        isCasting: Boolean,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
         return HypeFlixExtractor.extractVideoLinks(data, mainUrl, callback)
     }
-    return false
 }
-
-// Não esquecer de habilitar o download
-override val hasDownloadSupport = true
