@@ -280,17 +280,19 @@ class Hypeflix : MainAPI() {
             null
         }
     }
-    
-override suspend fun loadLinks(
+
+    override suspend fun loadLinks(
     data: String,
     isCasting: Boolean,
     subtitleCallback: (SubtitleFile) -> Unit,
     callback: (ExtractorLink) -> Unit
 ): Boolean {
-    // Ativar suporte a download
+    // Se tiver suporte a download, usar o extrator
     if (hasDownloadSupport) {
         return HypeFlixExtractor.extractVideoLinks(data, mainUrl, callback)
     }
     return false
 }
-    
+
+// Não esquecer de habilitar o download
+override val hasDownloadSupport = true
