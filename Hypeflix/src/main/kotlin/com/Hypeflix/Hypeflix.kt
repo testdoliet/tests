@@ -4,13 +4,13 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import org.jsoup.nodes.Element
 
-class HypeFlix : MainAPI() {
+class Hypeflix : MainAPI() {
     override var mainUrl = "https://hypeflix.site"
-    override var name = "HypeFlix"
+    override var name = "Hypeflix"
     override val hasMainPage = true
     override val hasDownloadSupport = true
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries)
-    override val lang = "pt"
+    override var lang = "pt"
 
     // Seletores CSS
     private val movieSelector = "div.card"
@@ -31,7 +31,7 @@ class HypeFlix : MainAPI() {
         page: Int,
         request: MainPageRequest
     ): HomePageResponse {
-        val url = request.data + page
+        val url = request.data + if (page > 1) "page/$page/" else ""
         val document = app.get(url).document
 
         val items = document.select("div.card, div.card-serie").mapNotNull { element ->
@@ -40,26 +40,40 @@ class HypeFlix : MainAPI() {
             val poster = element.selectFirst("img[src]")?.attr("src") ?: ""
 
             // Determinar tipo (Filme ou Série)
-            val type = if (href.contains("/filme/") || element.hasClass("movie")) {
-                TvType.Movie
-            } else {
-                TvType.TvSeries
-            }
+            val isMovie = href.contains("/filme/") || element.hasClass("movie")
 
-            if (type == TvType.Movie) {
-                newMovieLoadResponse(title, href) {
-                    this.posterUrl = poster
-                    this.plot = ""
-                }
+            if (isMovie) {
+                MovieSearchResponse(
+                    title,
+                    href,
+                    this.name,
+                    TvType.Movie,
+                    poster,
+                    null,
+                    null
+                )
             } else {
-                newTvSeriesLoadResponse(title, href) {
-                    this.posterUrl = poster
-                    this.plot = ""
-                }
+                TvSeriesSearchResponse(
+                    title,
+                    href,
+                    this.name,
+                    TvType.TvSeries,
+                    poster,
+                    null,
+                    null
+                )
             }
         }
 
-        return newHomePageResponse(request.name, items)
+        return HomePageResponse(
+            listOf(
+                HomePageList(
+                    request.name,
+                    items
+                )
+            ),
+            hasNext = items.isNotEmpty()
+        )
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
@@ -76,15 +90,25 @@ class HypeFlix : MainAPI() {
             val isMovie = href.contains("/filme/") || element.selectFirst(".type")?.text()?.contains("Filme") == true
 
             if (isMovie) {
-                newMovieSearchResponse(title, href) {
-                    this.posterUrl = poster
-                    this.year = year
-                }
+                MovieSearchResponse(
+                    title,
+                    href,
+                    this.name,
+                    TvType.Movie,
+                    poster,
+                    year,
+                    null
+                )
             } else {
-                newTvSeriesSearchResponse(title, href) {
-                    this.posterUrl = poster
-                    this.year = year
-                }
+                TvSeriesSearchResponse(
+                    title,
+                    href,
+                    this.name,
+                    TvType.TvSeries,
+                    poster,
+                    year,
+                    null
+                )
             }
         }
     }
@@ -97,7 +121,7 @@ class HypeFlix : MainAPI() {
         val plot = document.selectFirst("div.sinopse, .plot")?.text() ?: ""
         val year = document.selectFirst("span.year")?.text()?.toIntOrNull()
         val tags = document.select("div.genres a").map { it.text() }
-        val actors = document.select("div.cast a").map { it.text() }
+        val actors = document.select("div.cast a").map { ActorData(it.text()) }
 
         // Verificar se é filme ou série
         val isMovie = url.contains("/filme/") || 
@@ -111,19 +135,32 @@ class HypeFlix : MainAPI() {
                 val relTitle = related.selectFirst("h3")?.text() ?: return@mapNotNull null
                 val relPoster = related.selectFirst("img[src]")?.attr("src") ?: ""
 
-                newMovieLoadResponse(relTitle, href) {
-                    this.posterUrl = relPoster
-                }
+                MovieSearchResponse(
+                    relTitle,
+                    href,
+                    this.name,
+                    TvType.Movie,
+                    relPoster,
+                    null,
+                    null
+                )
             }
 
-            return newMovieLoadResponse(title, url) {
-                this.posterUrl = poster
-                this.plot = plot
-                this.year = year
-                this.tags = tags
-                this.actors = actors
-                this.recommendations = recommendations
-            }
+            return MovieLoadResponse(
+                title,
+                url,
+                this.name,
+                TvType.Movie,
+                url,
+                poster,
+                year,
+                plot,
+                tags,
+                actors,
+                recommendations,
+                null,
+                null
+            )
         } else {
             // É uma série
             val seasons = document.select("div.season").mapIndexed { seasonIndex, seasonElement ->
@@ -134,14 +171,19 @@ class HypeFlix : MainAPI() {
                     val epNumber = epElement.selectFirst(".episode-number")?.text()?.toIntOrNull() ?: (seasonIndex + 1)
                     val epPoster = epElement.selectFirst("img[src]")?.attr("src") ?: poster
 
-                    newEpisode(epHref) {
-                        this.name = epTitle
-                        this.season = seasonNumber
-                        this.episode = epNumber
-                        this.posterUrl = epPoster
-                    }
+                    Episode(
+                        epHref,
+                        epTitle,
+                        seasonNumber,
+                        epNumber,
+                        epPoster
+                    )
                 }
-                newTvSeason(seasonNumber, episodes)
+                
+                SeasonData(
+                    seasonNumber,
+                    episodes
+                )
             }
 
             val recommendations = document.select("div.related div.card-serie").mapNotNull { related ->
@@ -149,20 +191,33 @@ class HypeFlix : MainAPI() {
                 val relTitle = related.selectFirst("h3")?.text() ?: return@mapNotNull null
                 val relPoster = related.selectFirst("img[src]")?.attr("src") ?: ""
 
-                newTvSeriesLoadResponse(relTitle, href) {
-                    this.posterUrl = relPoster
-                }
+                TvSeriesSearchResponse(
+                    relTitle,
+                    href,
+                    this.name,
+                    TvType.TvSeries,
+                    relPoster,
+                    null,
+                    null
+                )
             }
 
-            return newTvSeriesLoadResponse(title, url) {
-                this.posterUrl = poster
-                this.plot = plot
-                this.year = year
-                this.tags = tags
-                this.actors = actors
-                this.seasons = seasons
-                this.recommendations = recommendations
-            }
+            return TvSeriesLoadResponse(
+                title,
+                url,
+                this.name,
+                TvType.TvSeries,
+                url,
+                poster,
+                year,
+                plot,
+                tags,
+                actors,
+                seasons,
+                recommendations,
+                null,
+                null
+            )
         }
     }
 
@@ -172,6 +227,6 @@ class HypeFlix : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        return HypeFlixExtractor.extractVideoLinks(data, mainUrl, callback)
+        return HypeflixExtractor.extractVideoLinks(data, mainUrl, callback)
     }
 }
