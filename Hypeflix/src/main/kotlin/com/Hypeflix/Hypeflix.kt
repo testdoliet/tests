@@ -322,12 +322,21 @@ class Hypeflix : MainAPI() {
     }
 
     override suspend fun loadLinks(
-        data: String,
-        isCasting: Boolean,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        // Chamar o extractor para processar os links
-        return HypeflixExtractor.extractVideoLinks(data, mainUrl, callback)
-    }
+    data: String,
+    isCasting: Boolean,
+    subtitleCallback: (SubtitleFile) -> Unit,
+    callback: (ExtractorLink) -> Unit
+): Boolean {
+    println("[Hypeflix] === loadLinks chamado ===")
+    println("[Hypeflix] Data recebida: $data")
+    println("[Hypeflix] isCasting: $isCasting")
+    println("[Hypeflix] Main URL: $mainUrl")
+    
+    // Chamar o extractor para processar os links
+    val result = HypeflixExtractor.extractVideoLinks(data, mainUrl, callback)
+    
+    println("[Hypeflix] Resultado do extractor: $result")
+    println("[Hypeflix] === loadLinks finalizado ===")
+    
+    return result
 }
