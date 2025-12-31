@@ -356,5 +356,5 @@ class AniTube : MainAPI() {
             if (sortedEpisodes.isNotEmpty()) addEpisodes(if (isDubbed) DubStatus.Dubbed else DubStatus.Subbed, sortedEpisodes)
         }
     }
-
+}
     
