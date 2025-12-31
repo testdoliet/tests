@@ -7,16 +7,21 @@
 # LietRepo
 ## Repositório experimental de plugins para CloudStream 3
 
-### 🇧🇷 Plugins BR para CloudStream 3 
-### 🇺🇸 BR plugins for CloudStream 3 
+### 🇧🇷 Plugins BR para CloudStream 3 — foco em desempenho e estabilidade  
+### 🇺🇸 BR plugins for CloudStream 3 — performance and stability focused
 
 <br>
 
 ### ⬇️ Instalação Direta / Direct Installation
 
-[![Instalar no CloudStream](https://img.shields.io/badge/CLICK_HERE_TO_INSTALL-CloudStream-7289DA?style=for-the-badge&logo=android&logoColor=white)](https://raw.githubusercontent.com/lawlietbr/lietrepo/main/builds/repo.json)
+<button onclick="navigator.clipboard.writeText('https://raw.githubusercontent.com/lawlietbr/lietrepo/main/builds/repo.json').then(() => alert('URL copiada para a área de transferência! Cole no CloudStream.'))"
+        style="background:#7289DA;color:white;border:none;padding:12px 24px;border-radius:8px;font-size:16px;font-weight:bold;cursor:pointer;box-shadow:0 4px 8px rgba(0,0,0,0.2);">
+  📋 COPIAR URL DO REPOSITÓRIO
+</button>
 
-**Instrução alternativa:** Ou Copie a URL abaixo e cole no CloudStream:
+<br><br>
+
+**Instrução alternativa:** Copie manualmente a URL abaixo e cole no CloudStream:
 https://raw.githubusercontent.com/lawlietbr/lietrepo/main/builds/repo.json
 
 </div>
@@ -51,10 +56,11 @@ The **LietRepo** is an experimental plugin development project for CloudStream 3
 
 # 📦 Instalação / Installation
 
-## Método 1: Instalação Automática (Recomendado)
-Clique no botão **[CLICK_HERE_TO_INSTALL](#)** acima com o CloudStream instalado.
+## Método Recomendado: Copiar URL
+Clique no botão acima **📋 COPIAR URL DO REPOSITÓRIO** → uma mensagem confirmará que a URL foi copiada.  
+Depois, abra o CloudStream → Configurações → Repositórios → Adicionar → Cole a URL.
 
-## Método 2: Instalação Manual
+## Método Manual
 1. Abra o CloudStream 3
 2. Vá em **Configurações → Repositórios**
 3. Clique em **"Adicionar Repositório"**
