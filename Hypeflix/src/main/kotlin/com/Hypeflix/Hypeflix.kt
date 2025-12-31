@@ -6,17 +6,16 @@ import com.lagradost.cloudstream3.app
 import org.jsoup.nodes.Element
 import java.net.URLEncoder
 
-class Hypeflix : MainAPI() {
+class HypeFlix : MainAPI() {
     override var mainUrl = "https://hypeflix.info"
     override var name = "HypeFlix"
     override val hasMainPage = true
     override var lang = "pt-br"
-    override val hasDownloadSupport = false // Desativado por enquanto
+    override val hasDownloadSupport = false
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries, TvType.Anime)
     override val usesWebView = false
 
     companion object {
-        // Categorias baseadas nas seções da página inicial
         private val HOME_SECTIONS = listOf(
             "popular" to "Os mais populares",
             "lancamentos" to "Séries em lançamentos", 
@@ -33,23 +32,16 @@ class Hypeflix : MainAPI() {
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        // Se for a primeira página, pega da página inicial
         if (page == 1) {
             val document = app.get(mainUrl).document
-            
-            // Extrai a seção específica baseada no request.data
             val sectionId = request.data.removePrefix("home_")
             val items = extractHomeSection(document, sectionId)
-            
             return newHomePageResponse(request.name, items.distinctBy { it.url }, false)
         }
-        
-        // Para páginas subsequentes, retorna vazio por enquanto
         return newHomePageResponse(request.name, emptyList(), false)
     }
 
     private fun extractHomeSection(document: org.jsoup.nodes.Document, sectionId: String): List<SearchResponse> {
-        // Mapeia IDs de seção para os IDs reais do HTML
         val sectionMap = mapOf(
             "popular" to "os-mais-populares",
             "lancamentos" to "sries-em-lanamentos", 
@@ -60,12 +52,10 @@ class Hypeflix : MainAPI() {
         
         val realSectionId = sectionMap[sectionId] ?: return emptyList()
         
-        // Encontra a seção pelo aria-labelledby
         val section = document.selectFirst("section[aria-labelledby='$realSectionId']")
             ?: document.selectFirst("section.carousels")
             ?: return emptyList()
         
-        // Extrai todos os artigos da seção
         return section.select("article").mapNotNull { article ->
             article.toSearchResult()
         }
@@ -75,22 +65,23 @@ class Hypeflix : MainAPI() {
         val linkElement = selectFirst("a") ?: return null
         val href = linkElement.attr("href") ?: return null
         
-        // Título do elemento h3 dentro do artigo
         val titleElement = selectFirst("h3")
         val title = titleElement?.text()?.trim() ?: return null
         
-        // Extrair ano da data de publicação
+        // CORREÇÃO 1: Extrair ano corretamente
         val yearElement = selectFirst("time.release-date")
         val year = yearElement?.attr("datetime")?.substring(0, 4)?.toIntOrNull()
             ?: Regex("\\((\\d{4})\\)").find(title)?.groupValues?.get(1)?.toIntOrNull()
         
-        val cleanTitle = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
+        // CORREÇÃO 1: Limpar título removendo o ano
+        val cleanTitle = title
+            .replace(Regex("\\(\\d{4}\\)"), "") // Remove (2023)
+            .replace(Regex("\\d{4}$"), "") // Remove 2023 no final
+            .trim()
         
-        // Imagem do pôster
         val imgElement = selectFirst("img")
         val posterUrl = imgElement?.attr("src")?.let { fixUrl(it) }
         
-        // Determinar tipo pelo URL
         val isAnime = href.contains("/anime/")
         val isSerie = href.contains("/serie/") || href.contains("/tv/")
         
@@ -99,7 +90,7 @@ class Hypeflix : MainAPI() {
                 this.posterUrl = posterUrl
                 this.year = year
             }
-            isSerie -> newTvSeriesSearchResponse(cleanTitle, fixUrl(href), TvType.TvSeries) {
+            isSerie -> newTvSeriesLoadResponse(cleanTitle, fixUrl(href), TvType.TvSeries) {
                 this.posterUrl = posterUrl
                 this.year = year
             }
@@ -111,23 +102,25 @@ class Hypeflix : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        // Corrigido: usar URLEncoder do Java
         val encodedQuery = URLEncoder.encode(query, "UTF-8")
         val searchUrl = "$mainUrl/?s=$encodedQuery"
         val document = app.get(searchUrl).document
         
-        // Procura por artigos na página de busca
         return document.select("article").mapNotNull { element ->
             element.toSearchResult()
         }.ifEmpty {
-            // Fallback: procura em qualquer link que possa ser um resultado
             document.select("a[href*='/serie/'], a[href*='/filme/'], a[href*='/anime/']")
                 .mapNotNull { link ->
                     val href = link.attr("href")
                     if (href.contains("/serie/") || href.contains("/filme/") || href.contains("/anime/")) {
                         val title = link.text().trim()
-                        if (title.isNotEmpty()) {
-                            newMovieSearchResponse(title, fixUrl(href), TvType.Movie) {
+                        val cleanTitle = title
+                            .replace(Regex("\\(\\d{4}\\)"), "")
+                            .replace(Regex("\\d{4}$"), "")
+                            .trim()
+                        
+                        if (cleanTitle.isNotEmpty()) {
+                            newMovieSearchResponse(cleanTitle, fixUrl(href), TvType.Movie) {
                                 this.posterUrl = link.selectFirst("img")?.attr("src")?.let { fixUrl(it) }
                             }
                         } else null
@@ -139,43 +132,36 @@ class Hypeflix : MainAPI() {
     override suspend fun load(url: String): LoadResponse? {
         val document = app.get(url).document
         
-        // Título principal
         val titleElement = document.selectFirst("h1")
         val title = titleElement?.text()?.trim() ?: return null
         
-        // Extrair ano do título
         val year = Regex("\\((\\d{4})\\)").find(title)?.groupValues?.get(1)?.toIntOrNull()
         val cleanTitle = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
         
-        // Determinar tipo pelo URL
         val isAnime = url.contains("/anime/")
         val isSerie = url.contains("/serie/")
         
-        // Extrair sinopse
         val description = document.selectFirst("meta[name='description']")
             ?.attr("content")?.ifBlank { null } 
             ?: document.selectFirst("p.description, .sinopse")?.text()?.trim()
             ?: document.selectFirst(".description")?.text()?.trim()
         
-        // Extrair imagem de fundo do hero section
         val heroSection = document.selectFirst("section.hero")
         val backgroundStyle = heroSection?.attr("style")
         val backdropUrl = backgroundStyle?.let {
             Regex("url\\(['\"]?(.*?)['\"]?\\)").find(it)?.groupValues?.get(1)
         }?.let { fixUrl(it) }
         
-        // Extrair poster da meta tag OG
         val ogImage = document.selectFirst("meta[property='og:image']")?.attr("content")
         val posterUrl = ogImage?.let { fixUrl(it) }
         
-        // Extrair episódios para séries
+        // CORREÇÃO 2: Extrair temporadas e episódios corretamente
         val episodes = if (isAnime || isSerie) {
-            extractEpisodesFromSite(document, url)
+            extractEpisodesWithSeasons(document)
         } else {
             emptyList()
         }
         
-        // Extrair gêneros se disponíveis
         val genres = document.select("a.chip, .chip, .genre, .tags").map { it.text().trim() }
             .takeIf { it.isNotEmpty() }
         
@@ -190,7 +176,6 @@ class Hypeflix : MainAPI() {
                 this.tags = genres
             }
         } else {
-            // Para filmes - usar a própria URL como dataUrl por enquanto
             return newMovieLoadResponse(cleanTitle, url, TvType.Movie, url) {
                 this.posterUrl = posterUrl
                 this.backgroundPosterUrl = backdropUrl
@@ -200,43 +185,78 @@ class Hypeflix : MainAPI() {
             }
         }
     }
-private fun extractEpisodesFromSite(
-    document: org.jsoup.nodes.Document,
-    url: String
-): List<Episode> {
-    val episodes = mutableListOf<Episode>()
-    
-    // Extrair episódios da aba de episódios
-    val episodeElements = document.select(".episode-item")
-    
-    episodeElements.forEachIndexed { index, episodeElement ->
-        try {
-            // O link está no atributo data-protected
+
+    // CORREÇÃO 2: Nova função para extrair temporadas corretamente
+    private fun extractEpisodesWithSeasons(document: org.jsoup.nodes.Document): List<Episode> {
+        val episodes = mutableListOf<Episode>()
+        
+        // Primeiro, tentar encontrar o seletor de temporada
+        val seasonSelector = document.selectFirst("#seasonSelect")
+        val seasons = if (seasonSelector != null) {
+            // Se houver seletor de temporada, extrair opções
+            seasonSelector.select("option").mapNotNull { option ->
+                option.attr("value").toIntOrNull()
+            }
+        } else {
+            // Se não houver, assumir temporada 1
+            listOf(1)
+        }
+        
+        // Para cada temporada, extrair episódios
+        seasons.forEach { seasonNumber ->
+            // Filtrar episódios por temporada
+            val episodeElements = document.select(".episode-item")
+                .filter { it.hasClass("season_number_$seasonNumber") || 
+                         it.attr("data-season").toIntOrNull() == seasonNumber }
+            
+            if (episodeElements.isEmpty() && seasonNumber == 1) {
+                // Fallback: se não encontrar classe específica, pega todos
+                document.select(".episode-item").forEachIndexed { index, episodeElement ->
+                    extractSingleEpisode(episodeElement, seasonNumber, index + 1)?.let {
+                        episodes.add(it)
+                    }
+                }
+            } else {
+                episodeElements.forEachIndexed { index, episodeElement ->
+                    extractSingleEpisode(episodeElement, seasonNumber, index + 1)?.let {
+                        episodes.add(it)
+                    }
+                }
+            }
+        }
+        
+        return episodes
+    }
+
+    private fun extractSingleEpisode(
+        episodeElement: Element,
+        seasonNumber: Int,
+        defaultEpisodeNumber: Int
+    ): Episode? {
+        return try {
             val dataProtected = episodeElement.attr("data-protected")
-            if (dataProtected.isBlank()) return@forEachIndexed
+            if (dataProtected.isBlank()) return null
             
-            // Extrair título do episódio
             val titleElement = episodeElement.selectFirst(".episode-title")
-            val title = titleElement?.text()?.trim() ?: "Episódio ${index + 1}"
+            val title = titleElement?.text()?.trim() ?: "Episódio $defaultEpisodeNumber"
             
-            // Tentar extrair número do episódio
+            // Extrair número do episódio de várias formas
             val epNumber = episodeElement.attr("data-ep").toIntOrNull()
-                ?: Regex("Epis[oó]dio\\s*(\\d+)").find(title)?.groupValues?.get(1)?.toIntOrNull()
-                ?: Regex("(\\d+)").find(title)?.groupValues?.get(1)?.toIntOrNull()
-                ?: (index + 1)
+                ?: Regex("""Ep\.?\s*(\d+)""").find(title)?.groupValues?.get(1)?.toIntOrNull()
+                ?: Regex("""Epis[oó]dio\s*(\d+)""").find(title)?.groupValues?.get(1)?.toIntOrNull()
+                ?: Regex("""(\d+)""").find(title)?.groupValues?.get(1)?.toIntOrNull()
+                ?: defaultEpisodeNumber
             
-            // Extrair descrição
             val descriptionElement = episodeElement.selectFirst(".episode-description")
             val description = descriptionElement?.text()?.trim()
             
-            // Extrair duração (em minutos)
             val durationElement = episodeElement.selectFirst(".episode-number")
             val durationText = durationElement?.text()
             val episodeDuration = durationText?.let {
-                Regex("(\\d+) min").find(it)?.groupValues?.get(1)?.toIntOrNull()
+                Regex("""(\d+)\s*min""").find(it)?.groupValues?.get(1)?.toIntOrNull()
             }
             
-            // Construir a descrição incluindo a duração se disponível
+            // Construir descrição com duração
             val fullDescription = buildString {
                 description?.let { append(it) }
                 episodeDuration?.let { 
@@ -245,36 +265,27 @@ private fun extractEpisodesFromSite(
                 }
             }.takeIf { it.isNotEmpty() }
             
-            // Usar a URL data-protected como link do episódio
-            val episode = newEpisode(fixUrl(dataProtected)) {
+            val imgElement = episodeElement.selectFirst("img")
+            val episodePoster = imgElement?.attr("src")?.let { fixUrl(it) }
+            
+            newEpisode(fixUrl(dataProtected)) {
                 this.name = title
-                this.season = 1 // Assumir temporada 1 por padrão
+                this.season = seasonNumber
                 this.episode = epNumber
                 this.description = fullDescription
-                
-                // Extrair imagem do episódio
-                val imgElement = episodeElement.selectFirst("img")
-                imgElement?.attr("src")?.let { imgUrl ->
-                    this.posterUrl = fixUrl(imgUrl)
-                }
+                this.posterUrl = episodePoster
             }
-            
-            episodes.add(episode)
         } catch (e: Exception) {
-            // Ignorar episódio com erro
+            null
         }
     }
-    
-    return episodes
-}
-    
+
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // Retorna false - extrator desativado por enquanto
         return false
     }
 }
