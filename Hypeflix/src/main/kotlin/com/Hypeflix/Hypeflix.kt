@@ -5,7 +5,7 @@ import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.app
 import org.jsoup.nodes.Element
 
-class HypeFlix : MainAPI() {
+class Hypeflix : MainAPI() {
     override var mainUrl = "https://hypeflix.info"
     override var name = "HypeFlix"
     override val hasMainPage = true
