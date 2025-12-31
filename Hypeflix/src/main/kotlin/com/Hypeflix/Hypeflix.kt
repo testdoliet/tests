@@ -12,7 +12,7 @@ class Hypeflix : MainAPI() {
     override val hasMainPage = true
     override val hasDownloadSupport = true
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries)
-    override var lang = "pt-br"
+    override var lang = "pt"
     
     override val mainPage = mainPageOf(
         "$mainUrl/lancamentos/" to "Lançamentos",
@@ -131,7 +131,7 @@ class Hypeflix : MainAPI() {
         // Extrair gêneros/tags
         val tags = document.select("div.genres a, .tags a, .category a").map { it.text() }.takeIf { it.isNotEmpty() }
 
-        // Extrair atores - CORREÇÃO: usar Actor (não ActorData)
+        // Extrair atores
         val actors = document.select("div.cast a, .actors a").map { Actor(it.text()) }.takeIf { it.isNotEmpty() }
 
         // Determinar se é filme ou série
@@ -143,12 +143,13 @@ class Hypeflix : MainAPI() {
         val recommendations = extractRecommendations(document)
 
         if (isMovie) {
-            return newMovieLoadResponse(cleanTitle, url) {
+            // CORREÇÃO: newMovieLoadResponse com type e dataUrl
+            return newMovieLoadResponse(cleanTitle, url, TvType.Movie, url) {
                 this.posterUrl = poster
                 this.plot = plot
                 this.year = year
                 this.tags = tags
-                // CORREÇÃO: usar addActors em vez de passar no construtor
+                // Usar addActors em vez de passar no construtor
                 if (!actors.isNullOrEmpty()) {
                     addActors(actors)
                 }
@@ -158,12 +159,13 @@ class Hypeflix : MainAPI() {
             // É uma série - extrair episódios
             val episodes = extractEpisodes(document, url)
 
+            // CORREÇÃO: newTvSeriesLoadResponse com type e episodes
             return newTvSeriesLoadResponse(cleanTitle, url, TvType.TvSeries, episodes) {
                 this.posterUrl = poster
                 this.plot = plot
                 this.year = year
                 this.tags = tags
-                // CORREÇÃO: usar addActors em vez de passar no construtor
+                // Usar addActors em vez de passar no construtor
                 if (!actors.isNullOrEmpty()) {
                     addActors(actors)
                 }
