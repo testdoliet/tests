@@ -130,7 +130,7 @@ class Hypeflix : MainAPI() {
         // Extrair gêneros/tags
         val tags = document.select("div.genres a, .tags a, .category a").map { it.text() }.takeIf { it.isNotEmpty() }
 
-        // Extrair atores
+        // Extrair atores (corrigido para ActorData)
         val actors = document.select("div.cast a, .actors a").map { ActorData(it.text()) }.takeIf { it.isNotEmpty() }
 
         // Determinar se é filme ou série
@@ -142,6 +142,7 @@ class Hypeflix : MainAPI() {
         val recommendations = extractRecommendations(document)
 
         if (isMovie) {
+            // CORREÇÃO: newMovieLoadResponse não precisa de type nem dataUrl
             return newMovieLoadResponse(cleanTitle, url) {
                 this.posterUrl = poster
                 this.plot = plot
@@ -154,6 +155,7 @@ class Hypeflix : MainAPI() {
             // É uma série - extrair episódios
             val episodes = extractEpisodes(document, url)
 
+            // CORREÇÃO: newTvSeriesLoadResponse não precisa de type
             return newTvSeriesLoadResponse(cleanTitle, url, episodes) {
                 this.posterUrl = poster
                 this.plot = plot
@@ -190,7 +192,7 @@ class Hypeflix : MainAPI() {
                     val episodePoster = element.selectFirst("img[src]")?.attr("src")?.let { fixUrl(it) }
 
                     episodes.add(
-                        newEpisode(fixUrl(episodeUrl)) {
+                        newEpisode(episodeUrl) {  // REMOVIDO: fixUrl() aqui
                             this.name = episodeTitle
                             this.season = seasonNumber
                             this.episode = episodeNumber
@@ -214,7 +216,7 @@ class Hypeflix : MainAPI() {
             )
         }
 
-        return episodes.distinctBy { it.url }
+        return episodes.distinctBy { it.data }
     }
 
     private fun extractEpisodeNumber(element: Element, default: Int): Int {
@@ -243,15 +245,15 @@ class Hypeflix : MainAPI() {
                 val isSerie = href.contains("/serie/")
 
                 when {
-                    isMovie -> newMovieSearchResponse(cleanTitle, fixUrl(href)) {
+                    isMovie -> newMovieSearchResponse(cleanTitle, href) {  // REMOVIDO: fixUrl() aqui
                         this.posterUrl = poster
                         this.year = year
                     }
-                    isSerie -> newTvSeriesSearchResponse(cleanTitle, fixUrl(href)) {
+                    isSerie -> newTvSeriesSearchResponse(cleanTitle, href) {  // REMOVIDO: fixUrl() aqui
                         this.posterUrl = poster
                         this.year = year
                     }
-                    else -> newMovieSearchResponse(cleanTitle, fixUrl(href)) {
+                    else -> newMovieSearchResponse(cleanTitle, href) {  // REMOVIDO: fixUrl() aqui
                         this.posterUrl = poster
                         this.year = year
                     }
