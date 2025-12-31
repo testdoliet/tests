@@ -267,4 +267,5 @@ class Hypeflix : MainAPI() {
         // Retorna false - extrator desativado por enquanto
         return false
     }
+  }
 }
