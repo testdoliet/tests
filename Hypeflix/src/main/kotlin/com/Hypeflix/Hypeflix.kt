@@ -5,7 +5,7 @@ import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.app
 import org.jsoup.nodes.Element
 
-class Hypeflix : MainAPI() {
+class HypeFlix : MainAPI() {
     override var mainUrl = "https://hypeflix.info"
     override var name = "HypeFlix"
     override val hasMainPage = true
@@ -110,7 +110,8 @@ class Hypeflix : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        val searchUrl = "$mainUrl/?s=${query.encodeUrl()}"
+        // Corrigido: usar encodeURIQuery em vez de encodeUrl
+        val searchUrl = "$mainUrl/?s=${encodeURI(query)}"
         val document = app.get(searchUrl).document
         
         // Procura por artigos na página de busca
@@ -198,7 +199,7 @@ class Hypeflix : MainAPI() {
         }
     }
 
-    private suspend fun extractEpisodesFromSite(
+    private fun extractEpisodesFromSite(
         document: org.jsoup.nodes.Document,
         url: String
     ): List<Episode> {
@@ -227,10 +228,10 @@ class Hypeflix : MainAPI() {
                 val descriptionElement = episodeElement.selectFirst(".episode-description")
                 val description = descriptionElement?.text()?.trim()
                 
-                // Extrair duração
+                // Extrair duração (renomeado para episodeDuration para evitar conflito)
                 val durationElement = episodeElement.selectFirst(".episode-number")
                 val durationText = durationElement?.text()
-                val duration = durationText?.let {
+                val episodeDuration = durationText?.let {
                     Regex("(\\d+) min").find(it)?.groupValues?.get(1)?.toIntOrNull()
                 }
                 
@@ -240,7 +241,10 @@ class Hypeflix : MainAPI() {
                     this.season = 1 // Assumir temporada 1 por padrão
                     this.episode = epNumber
                     this.description = description
-                    this.duration = duration
+                    // Corrigido: usar episodeDuration em vez de duration
+                    episodeDuration?.let { dur ->
+                        this.duration = dur
+                    }
                     
                     // Extrair imagem do episódio
                     val imgElement = episodeElement.selectFirst("img")
@@ -267,5 +271,4 @@ class Hypeflix : MainAPI() {
         // Retorna false - extrator desativado por enquanto
         return false
     }
-  }
 }
