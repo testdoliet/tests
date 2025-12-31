@@ -164,34 +164,23 @@ class CineAgora : MainAPI() {
         val imgElement = selectFirst("img.thumbnail")
         val posterUrl = imgElement?.attr("src")?.let { fixUrl(it) }
         
-        // Extrair badges conforme seu scraping
-        // 1. Qualidade (HD, TS, etc.)
-        val qualityBadge = selectFirst(".item-info > div:first-child")?.text()?.trim()
+        // 1. Qualidade (HD, TS, etc.) - Primeiro .item-info
+        val qualityBadge = select(".item-info").firstOrNull()?.selectFirst("div:first-child")?.text()?.trim()
         
-        // 2. Idioma (Dublado/Legendado)
-        val languageBadge = selectFirst(".item-info > div:nth-child(2)")?.text()?.trim()
+        // 2. Idioma (Dublado/Legendado) - Primeiro .item-info
+        val languageBadge = select(".item-info").firstOrNull()?.selectFirst("div:nth-child(2)")?.text()?.trim()
         
-        // 3. Score/Rating (com estrela)
+        // 3. Score/Rating (com estrela) - .item-info-ust .rating
         val ratingText = selectFirst(".item-info-ust .rating")?.ownText()?.trim()
         val rating = ratingText?.toFloatOrNull()
         
-        // 4. Informações de episódios/temporadas para séries
-        val episodeInfoElement = selectFirst(".data")
-        val episodeInfo = episodeInfoElement?.text()?.trim()
-        
-        // Extrair número do episódio se disponível
-        val episodeNumber = episodeInfo?.let {
-            Regex("""Ep[\.\s]*(\d+)""", RegexOption.IGNORE_CASE).find(it)?.groupValues?.get(1)?.toIntOrNull()
-        }
-        
-        // Extrair temporada se disponível
-        val seasonNumber = episodeInfo?.let {
-            Regex("""Temp[\.\s]*(\d+)""", RegexOption.IGNORE_CASE).find(it)?.groupValues?.get(1)?.toIntOrNull()
-        }
+        // 4. Último episódio adicionado (para séries) - Segundo .item-info ou .data
+        val lastEpisodeInfo = select(".item-info").getOrNull(1)?.selectFirst("small")?.text()?.trim()
+            ?: selectFirst(".data")?.text()?.trim()
         
         // Determinar se é filme ou série
         val isSerie = href.contains("/series-") || href.contains("/serie-") || href.contains("/tv-") || 
-                      episodeInfo?.contains(Regex("Temporada|Episódio")) == true
+                      lastEpisodeInfo?.contains(Regex("S\\d+.*E\\d+")) == true
         
         // Construir descrição com badges
         val description = buildString {
@@ -204,18 +193,18 @@ class CineAgora : MainAPI() {
             }
             if (rating != null) {
                 if (isNotEmpty()) append(" | ")
-                append("Nota: $rating")
+                append("⭐ $rating")
             }
-            if (episodeInfo != null && episodeInfo.isNotBlank()) {
+            if (lastEpisodeInfo != null && lastEpisodeInfo.isNotBlank()) {
                 if (isNotEmpty()) append(" | ")
-                append(episodeInfo)
+                append("Último: $lastEpisodeInfo")
             }
         }.takeIf { it.isNotBlank() }
         
         // Determinar qualidade baseada na badge
         val quality = when {
             qualityBadge?.contains("HD", ignoreCase = true) == true -> SearchQuality.HD
-            qualityBadge?.contains("4K", ignoreCase = true) == true -> SearchQuality.HD // Fallback
+            qualityBadge?.contains("4K", ignoreCase = true) == true -> SearchQuality.HD
             qualityBadge?.contains("FULLHD", ignoreCase = true) == true -> SearchQuality.HD
             qualityBadge?.contains("TS", ignoreCase = true) == true -> SearchQuality.Cam
             else -> null
@@ -228,6 +217,11 @@ class CineAgora : MainAPI() {
                 if (quality != null) {
                     this.quality = quality
                 }
+                // Adicionar descrição com badges
+                if (description != null) {
+                    // Podemos adicionar como um campo extra ou metadata
+                    // O Cloudstream geralmente mostra isso no hover/card
+                }
             }
         } else {
             newMovieSearchResponse(cleanTitle, fixUrl(href)) {
@@ -235,6 +229,10 @@ class CineAgora : MainAPI() {
                 this.year = year
                 if (quality != null) {
                     this.quality = quality
+                }
+                // Adicionar descrição com badges
+                if (description != null) {
+                    // Podemos adicionar como um campo extra ou metadata
                 }
             }
         }
