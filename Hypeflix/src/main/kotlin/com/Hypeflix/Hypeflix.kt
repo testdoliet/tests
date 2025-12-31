@@ -11,7 +11,7 @@ class Hypeflix : MainAPI() {
     override var name = "Hypeflix"
     override val hasMainPage = true
     override var lang = "pt-br"
-    override val hasDownloadSupport = false
+    override val hasDownloadSupport = true  // Agora tem suporte a download
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries, TvType.Anime)
     override val usesWebView = false
 
@@ -172,7 +172,14 @@ class Hypeflix : MainAPI() {
         val episodes = if (isAnime || isSerie) {
             extractEpisodesWithSeasons(document)
         } else {
-            emptyList()
+            // Para filmes, cria um episódio único com a URL do filme
+            listOf(
+                newEpisode(url) {
+                    this.name = cleanTitle
+                    this.season = null
+                    this.episode = 1
+                }
+            )
         }
         
         val genres = document.select("a.chip, .chip, .genre, .tags").map { it.text().trim() }
@@ -181,7 +188,6 @@ class Hypeflix : MainAPI() {
         return if (isAnime || isSerie) {
             val type = if (isAnime) TvType.Anime else TvType.TvSeries
             
-            // FIXED: Use builder pattern with lambda
             newTvSeriesLoadResponse(cleanTitle, url, type, episodes) {
                 this.posterUrl = posterUrl
                 this.year = year
@@ -190,7 +196,6 @@ class Hypeflix : MainAPI() {
                 this.tags = genres
             }
         } else {
-            // FIXED: Use builder pattern with lambda
             newMovieLoadResponse(cleanTitle, url, TvType.Movie, url) {
                 this.posterUrl = posterUrl
                 this.year = year
@@ -245,8 +250,26 @@ class Hypeflix : MainAPI() {
         defaultEpisodeNumber: Int
     ): Episode? {
         return try {
-            val dataProtected = episodeElement.attr("data-protected")
-            if (dataProtected.isBlank()) return null
+            // Primeiro tenta pegar o data-protected
+            var dataProtected = episodeElement.attr("data-protected")
+            
+            // Se não tiver, tenta outras formas de extrair o link
+            if (dataProtected.isBlank()) {
+                // Tenta pegar link do botão de play
+                val playButton = episodeElement.selectFirst("a.btn-play, button[data-url]")
+                dataProtected = playButton?.attr("href") ?: playButton?.attr("data-url") ?: ""
+            }
+            
+            // Se ainda não tiver link, tenta pegar da URL de redirecionamento
+            if (dataProtected.isBlank()) {
+                val episodeLink = episodeElement.selectFirst("a[href*='/assistir/']")
+                dataProtected = episodeLink?.attr("href") ?: ""
+            }
+            
+            // Se ainda estiver vazio, retorna null
+            if (dataProtected.isBlank()) {
+                return null
+            }
             
             val titleElement = episodeElement.selectFirst(".episode-title")
             val title = titleElement?.text()?.trim() ?: "Episódio $defaultEpisodeNumber"
@@ -279,8 +302,14 @@ class Hypeflix : MainAPI() {
             val imgElement = episodeElement.selectFirst("img")
             val episodePoster = imgElement?.attr("src")?.let { fixUrl(it) }
             
-            // FIXED: Use newEpisode builder instead of direct constructor
-            newEpisode(fixUrl(dataProtected)) {
+            // Para filmes, usar a URL direta, para séries, formatar com pipe
+            val episodeUrl = if (title.contains("Filme", ignoreCase = true) || episodeElement.hasClass("movie")) {
+                dataProtected
+            } else {
+                "$dataProtected|poster=${episodePoster ?: ""}"
+            }
+            
+            newEpisode(episodeUrl) {
                 this.name = title
                 this.season = seasonNumber
                 this.episode = epNumber
@@ -298,6 +327,7 @@ class Hypeflix : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        return false
+        // Chamar o extractor para processar os links
+        return HypeflixExtractor.extractVideoLinks(data, mainUrl, callback)
     }
 }
