@@ -5,247 +5,197 @@ import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.app
 
 object HypeFlixExtractor {
+    // Constantes para seletores CSS (ajuste conforme necessário)
+    private const val PLAYER_FHD = "iframe[src*='m3u8'][src*='1080p']"
+    private const val PLAYER_HD = "iframe[src*='m3u8'][src*='720p']"
+    private const val PLAYER_SD = "iframe[src*='m3u8'][src*='480p'], iframe[src*='m3u8'][src*='360p']"
+    private const val PLAYER_BACKUP = "iframe[src*='m3u8']:not([src*='1080p']):not([src*='720p']):not([src*='480p']):not([src*='360p'])"
+    
     suspend fun extractVideoLinks(
         data: String,
         referer: String,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        return try {
-            val document = app.get(data, referer = referer).document
-            
-            // Tentar 1: Procurar por iframe primeiro
-            val iframe = document.selectFirst("iframe[src]")
-            if (iframe != null) {
-                val iframeSrc = iframe.attr("src")
-                if (iframeSrc.isNotBlank()) {
-                    return processIframeUrl(iframeSrc, data, callback)
+        val actualUrl = data.split("|poster=")[0]
+        val document = app.get(actualUrl, referer = referer).document
+
+        var linksFound = false
+
+        // Player FHD (1080p)
+        document.selectFirst(PLAYER_FHD)?.let { iframe ->
+            val src = iframe.attr("src").takeIf { it.isNotBlank() } ?: return@let
+            val m3u8Url = extractM3u8FromUrl(src) ?: src
+
+            callback(
+                newExtractorLink(
+                    "HypeFlix",
+                    "Player FHD",
+                    m3u8Url,
+                    ExtractorLinkType.M3U8
+                ) {
+                    this.referer = "$referer/"
+                    quality = 1080
+                }
+            )
+            linksFound = true
+        }
+
+        // Player HD (720p)
+        document.selectFirst(PLAYER_HD)?.let { iframe ->
+            val src = iframe.attr("src").takeIf { it.isNotBlank() } ?: return@let
+            val m3u8Url = extractM3u8FromUrl(src) ?: src
+
+            callback(
+                newExtractorLink(
+                    "HypeFlix",
+                    "Player HD",
+                    m3u8Url,
+                    ExtractorLinkType.M3U8
+                ) {
+                    this.referer = "$referer/"
+                    quality = 720
+                }
+            )
+            linksFound = true
+        }
+
+        // Player SD (480p/360p)
+        document.selectFirst(PLAYER_SD)?.let { iframe ->
+            val src = iframe.attr("src").takeIf { it.isNotBlank() } ?: return@let
+            val m3u8Url = extractM3u8FromUrl(src) ?: src
+            val quality = if (src.contains("480p", true)) 480 else 360
+
+            callback(
+                newExtractorLink(
+                    "HypeFlix",
+                    "Player SD",
+                    m3u8Url,
+                    ExtractorLinkType.M3U8
+                ) {
+                    this.referer = "$referer/"
+                    this.quality = quality
+                }
+            )
+            linksFound = true
+        }
+
+        // Player Backup (qualidade desconhecida)
+        document.selectFirst(PLAYER_BACKUP)?.let { iframe ->
+            val src = iframe.attr("src").takeIf { it.isNotBlank() } ?: return@let
+            val isM3u8 = src.contains("m3u8", true)
+            val linkType = if (isM3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+
+            callback(
+                newExtractorLink(
+                    "HypeFlix",
+                    "Player Backup",
+                    src,
+                    linkType
+                ) {
+                    this.referer = "$referer/"
+                    quality = 720
+                }
+            )
+            linksFound = true
+        }
+
+        // Verificar todos os iframes restantes
+        document.select("iframe").forEachIndexed { index, iframe ->
+            val src = iframe.attr("src")
+            if (src.contains("m3u8", true)) {
+                // Verificar se já foi adicionado pelos seletores acima
+                val alreadyAdded = listOf(
+                    document.selectFirst(PLAYER_FHD)?.attr("src"),
+                    document.selectFirst(PLAYER_HD)?.attr("src"),
+                    document.selectFirst(PLAYER_SD)?.attr("src"),
+                    document.selectFirst(PLAYER_BACKUP)?.attr("src")
+                ).any { it == src }
+
+                if (!alreadyAdded) {
+                    val m3u8Url = extractM3u8FromUrl(src) ?: src
+
+                    callback(
+                        newExtractorLink(
+                            "HypeFlix",
+                            "Player ${index + 1}",
+                            m3u8Url,
+                            ExtractorLinkType.M3U8
+                        ) {
+                            this.referer = "$referer/"
+                            quality = 720
+                        }
+                    )
+                    linksFound = true
                 }
             }
-            
-            // Tentar 2: Procurar em scripts
-            val scripts = document.select("script")
-            for (script in scripts) {
-                val content = script.html()
-                
-                // Buscar links m3u8
-                val m3u8Links = extractLinks(content, ".m3u8")
-                if (m3u8Links.isNotEmpty()) {
-                    m3u8Links.forEach { url ->
-                        callback(
-                            newExtractorLink(
-                                "HypeFlix",
-                                "HLS",
-                                url,
-                                referer = data,
-                                Qualities.Unknown.value,
-                                isM3u8 = true
+        }
+
+        // Se não encontrou iframes com m3u8, procurar em scripts
+        if (!linksFound) {
+            document.select("script").forEach { script ->
+                val scriptContent = script.html()
+                if (scriptContent.contains("m3u8")) {
+                    // Extrair URL m3u8 do script
+                    val m3u8Pattern = Regex("""(https?://[^\s"']*\.m3u8[^\s"']*)""")
+                    val m3u8Matches = m3u8Pattern.findAll(scriptContent)
+                    
+                    m3u8Matches.forEach { match ->
+                        val m3u8Url = match.value
+                        if (m3u8Url.isNotBlank()) {
+                            callback(
+                                newExtractorLink(
+                                    "HypeFlix",
+                                    "Script Player",
+                                    m3u8Url,
+                                    ExtractorLinkType.M3U8
+                                ) {
+                                    this.referer = "$referer/"
+                                    quality = 720
+                                }
                             )
-                        )
+                            linksFound = true
+                        }
                     }
-                    return true
-                }
-                
-                // Buscar links mp4
-                val mp4Links = extractLinks(content, ".mp4")
-                if (mp4Links.isNotEmpty()) {
-                    mp4Links.forEach { url ->
-                        callback(
-                            newExtractorLink(
-                                "HypeFlix",
-                                "MP4",
-                                url,
-                                referer = data,
-                                Qualities.Unknown.value,
-                                isM3u8 = false
-                            )
-                        )
-                    }
-                    return true
                 }
             }
-            
-            // Tentar 3: Procurar em meta tags
-            val metaTags = document.select("meta[content]")
-            for (meta in metaTags) {
-                val content = meta.attr("content")
-                if (content.contains(".m3u8")) {
-                    callback(
-                        newExtractorLink(
-                            "HypeFlix",
-                            "HLS",
-                            content,
-                            referer = data,
-                            getQualityFromUrl(content),
-                            isM3u8 = true
-                        )
-                    )
-                    return true
-                } else if (content.contains(".mp4")) {
-                    callback(
-                        newExtractorLink(
-                            "HypeFlix",
-                            "MP4",
-                            content,
-                            referer = data,
-                            getQualityFromUrl(content),
-                            isM3u8 = false
-                        )
-                    )
-                    return true
-                }
-            }
-            
-            // Tentar 4: PlayerFlixAPI
-            if (data.contains("playerflixapi.com")) {
-                return extractFromPlayerFlixApi(data, callback)
-            }
-            
-            false
-            
-        } catch (e: Exception) {
-            e.printStackTrace()
-            false
         }
+
+        return linksFound
     }
-    
-    private suspend fun processIframeUrl(
-        iframeUrl: String,
-        referer: String,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
+
+    private fun extractM3u8FromUrl(url: String): String? {
         return try {
-            // Se já for link direto
-            if (iframeUrl.contains(".m3u8")) {
-                callback(
-                    newExtractorLink(
-                        "HypeFlix",
-                        "HLS",
-                        iframeUrl,
-                        referer = referer,
-                        getQualityFromUrl(iframeUrl),
-                        isM3u8 = true
-                    )
-                )
-                return true
-            } else if (iframeUrl.contains(".mp4")) {
-                callback(
-                    newExtractorLink(
-                        "HypeFlix",
-                        "MP4",
-                        iframeUrl,
-                        referer = referer,
-                        getQualityFromUrl(iframeUrl),
-                        isM3u8 = false
-                    )
-                )
-                return true
+            // Se a URL já é m3u8, retorna direto
+            if (url.contains(".m3u8")) {
+                return url
             }
             
-            // Fazer requisição ao iframe
-            val iframeDoc = app.get(iframeUrl, referer = referer).document
-            
-            // Procurar vídeos dentro do iframe
-            val iframeScripts = iframeDoc.select("script")
-            for (script in iframeScripts) {
-                val content = script.html()
+            // Se for uma URL de player, tenta extrair o m3u8
+            if (url.contains("player") || url.contains("embed")) {
+                // Padrões comuns de extração
+                val patterns = listOf(
+                    Regex("""(?:file|src|source)\s*[:=]\s*['"]([^'"]+\.m3u8[^'"]*)['"]"""),
+                    Regex("""(https?://[^"']+\.m3u8[^"']*)"""),
+                    Regex("""m3u8.*?(https?://[^\s"']+)""")
+                )
                 
-                val m3u8Links = extractLinks(content, ".m3u8")
-                val mp4Links = extractLinks(content, ".mp4")
+                // Fazer requisição para extrair
+                val response = app.get(url).text
                 
-                m3u8Links.forEach { url ->
-                    callback(
-                        newExtractorLink(
-                            "HypeFlix",
-                            "HLS",
-                            url,
-                            referer = iframeUrl,
-                            getQualityFromUrl(url),
-                            isM3u8 = true
-                        )
-                    )
-                }
-                
-                mp4Links.forEach { url ->
-                    callback(
-                        newExtractorLink(
-                            "HypeFlix",
-                            "MP4",
-                            url,
-                            referer = iframeUrl,
-                            getQualityFromUrl(url),
-                            isM3u8 = false
-                        )
-                    )
-                }
-                
-                if (m3u8Links.isNotEmpty() || mp4Links.isNotEmpty()) {
-                    return true
+                for (pattern in patterns) {
+                    val match = pattern.find(response)
+                    if (match != null) {
+                        val extractedUrl = match.groupValues[1]
+                        if (extractedUrl.isNotBlank()) {
+                            return extractedUrl
+                        }
+                    }
                 }
             }
             
-            false
+            null
         } catch (e: Exception) {
-            false
-        }
-    }
-    
-    private fun extractLinks(content: String, extension: String): List<String> {
-        val patterns = listOf(
-            Regex("""['"]((?:https?:)?//[^'"]*?$extension(?:\?[^'"]*)?)['"]"""),
-            Regex("""[""]((?:https?:)?//[^""]*?$extension(?:\?[^""]*)?)[""]"""),
-            Regex("""(https?://[^\s<>"']*?$extension[^\s<>"']*?)"""),
-            Regex("""(?:file|src|source|url)\s*[:=]\s*['"]((?:https?:)?//[^'"]*?$extension[^'"]*?)['"]""")
-        )
-        
-        return patterns.flatMap { pattern ->
-            pattern.findAll(content).mapNotNull { match ->
-                match.groupValues.getOrNull(1)?.takeIf { it.isNotBlank() }
-            }.toList()
-        }.distinct()
-    }
-    
-    private fun extractFromPlayerFlixApi(url: String, callback: (ExtractorLink) -> Unit): Boolean {
-        val patterns = listOf(
-            Regex("""playerflixapi\.com/serie/(\d+)/(\d+)/(\d+)"""),
-            Regex("""playerflixapi\.com/filme/(\d+)""")
-        )
-        
-        for (pattern in patterns) {
-            val match = pattern.find(url)
-            if (match != null) {
-                val embedUrl = when (match.groupValues.size) {
-                    4 -> "https://playerflixapi.com/embed/serie/${match.groupValues[1]}/${match.groupValues[2]}/${match.groupValues[3]}"
-                    2 -> "https://playerflixapi.com/embed/movie/${match.groupValues[1]}"
-                    else -> null
-                }
-                
-                embedUrl?.let {
-                    callback(
-                        newExtractorLink(
-                            "HypeFlix",
-                            "Embed",
-                            it,
-                            referer = url,
-                            Qualities.Unknown.value,
-                            isM3u8 = false
-                        )
-                    )
-                    return true
-                }
-            }
-        }
-        
-        return false
-    }
-    
-    private fun getQualityFromUrl(url: String): Int {
-        return when {
-            url.contains("360p", ignoreCase = true) -> Qualities.P360.value
-            url.contains("480p", ignoreCase = true) -> Qualities.P480.value
-            url.contains("720p", ignoreCase = true) -> Qualities.P720.value
-            url.contains("1080p", ignoreCase = true) -> Qualities.P1080.value
-            url.contains("2160p", ignoreCase = true) || url.contains("4k", ignoreCase = true) -> Qualities.P2160.value
-            else -> Qualities.Unknown.value
+            null
         }
     }
 }
