@@ -1,4 +1,4 @@
-package com.SuperFlix
+package com.Hypeflix
 
 import android.content.Context
 import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
