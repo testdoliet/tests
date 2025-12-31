@@ -2,6 +2,7 @@ package com.Hypeflix
 
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
+import com.lagradost.cloudstream3.LoadResponse.Companion.addActors
 import com.lagradost.cloudstream3.app
 import org.jsoup.nodes.Element
 
@@ -11,7 +12,7 @@ class Hypeflix : MainAPI() {
     override val hasMainPage = true
     override val hasDownloadSupport = true
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries)
-    override var lang = "pt"
+    override var lang = "pt-br"
     
     override val mainPage = mainPageOf(
         "$mainUrl/lancamentos/" to "Lançamentos",
@@ -130,8 +131,8 @@ class Hypeflix : MainAPI() {
         // Extrair gêneros/tags
         val tags = document.select("div.genres a, .tags a, .category a").map { it.text() }.takeIf { it.isNotEmpty() }
 
-        // Extrair atores (corrigido para ActorData)
-        val actors = document.select("div.cast a, .actors a").map { ActorData(it.text()) }.takeIf { it.isNotEmpty() }
+        // Extrair atores - CORREÇÃO: usar Actor (não ActorData)
+        val actors = document.select("div.cast a, .actors a").map { Actor(it.text()) }.takeIf { it.isNotEmpty() }
 
         // Determinar se é filme ou série
         val isMovie = url.contains("/filme/") || 
@@ -142,26 +143,30 @@ class Hypeflix : MainAPI() {
         val recommendations = extractRecommendations(document)
 
         if (isMovie) {
-            // CORREÇÃO: newMovieLoadResponse não precisa de type nem dataUrl
             return newMovieLoadResponse(cleanTitle, url) {
                 this.posterUrl = poster
                 this.plot = plot
                 this.year = year
                 this.tags = tags
-                this.actors = actors
+                // CORREÇÃO: usar addActors em vez de passar no construtor
+                if (!actors.isNullOrEmpty()) {
+                    addActors(actors)
+                }
                 this.recommendations = recommendations
             }
         } else {
             // É uma série - extrair episódios
             val episodes = extractEpisodes(document, url)
 
-            // CORREÇÃO: newTvSeriesLoadResponse não precisa de type
-            return newTvSeriesLoadResponse(cleanTitle, url, episodes) {
+            return newTvSeriesLoadResponse(cleanTitle, url, TvType.TvSeries, episodes) {
                 this.posterUrl = poster
                 this.plot = plot
                 this.year = year
                 this.tags = tags
-                this.actors = actors
+                // CORREÇÃO: usar addActors em vez de passar no construtor
+                if (!actors.isNullOrEmpty()) {
+                    addActors(actors)
+                }
                 this.recommendations = recommendations
             }
         }
@@ -192,7 +197,7 @@ class Hypeflix : MainAPI() {
                     val episodePoster = element.selectFirst("img[src]")?.attr("src")?.let { fixUrl(it) }
 
                     episodes.add(
-                        newEpisode(episodeUrl) {  // REMOVIDO: fixUrl() aqui
+                        newEpisode(episodeUrl) {
                             this.name = episodeTitle
                             this.season = seasonNumber
                             this.episode = episodeNumber
@@ -245,15 +250,15 @@ class Hypeflix : MainAPI() {
                 val isSerie = href.contains("/serie/")
 
                 when {
-                    isMovie -> newMovieSearchResponse(cleanTitle, href) {  // REMOVIDO: fixUrl() aqui
+                    isMovie -> newMovieSearchResponse(cleanTitle, href) {
                         this.posterUrl = poster
                         this.year = year
                     }
-                    isSerie -> newTvSeriesSearchResponse(cleanTitle, href) {  // REMOVIDO: fixUrl() aqui
+                    isSerie -> newTvSeriesSearchResponse(cleanTitle, href) {
                         this.posterUrl = poster
                         this.year = year
                     }
-                    else -> newMovieSearchResponse(cleanTitle, href) {  // REMOVIDO: fixUrl() aqui
+                    else -> newMovieSearchResponse(cleanTitle, href) {
                         this.posterUrl = poster
                         this.year = year
                     }
