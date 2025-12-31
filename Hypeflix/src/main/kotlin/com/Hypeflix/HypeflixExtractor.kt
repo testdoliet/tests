@@ -3,8 +3,9 @@ package com.Hypeflix
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.app
+import kotlinx.coroutines.runBlocking
 
-object HypeFlixExtractor {
+object HypeflixExtractor {
     // Constantes para seletores CSS
     private const val PLAYER_FHD = "iframe[src*='m3u8'][src*='1080p']"
     private const val PLAYER_HD = "iframe[src*='m3u8'][src*='720p']"
@@ -28,7 +29,7 @@ object HypeFlixExtractor {
 
             callback(
                 newExtractorLink(
-                    "HypeFlix",
+                    "Hypeflix",
                     "Player FHD",
                     m3u8Url,
                     ExtractorLinkType.M3U8
@@ -47,7 +48,7 @@ object HypeFlixExtractor {
 
             callback(
                 newExtractorLink(
-                    "HypeFlix",
+                    "Hypeflix",
                     "Player HD",
                     m3u8Url,
                     ExtractorLinkType.M3U8
@@ -67,7 +68,7 @@ object HypeFlixExtractor {
 
             callback(
                 newExtractorLink(
-                    "HypeFlix",
+                    "Hypeflix",
                     "Player SD",
                     m3u8Url,
                     ExtractorLinkType.M3U8
@@ -87,7 +88,7 @@ object HypeFlixExtractor {
 
             callback(
                 newExtractorLink(
-                    "HypeFlix",
+                    "Hypeflix",
                     "Player Backup",
                     src,
                     linkType
@@ -116,7 +117,7 @@ object HypeFlixExtractor {
 
                     callback(
                         newExtractorLink(
-                            "HypeFlix",
+                            "Hypeflix",
                             "Player ${index + 1}",
                             m3u8Url,
                             ExtractorLinkType.M3U8
@@ -143,7 +144,7 @@ object HypeFlixExtractor {
                         if (m3u8Url.isNotBlank()) {
                             callback(
                                 newExtractorLink(
-                                    "HypeFlix",
+                                    "Hypeflix",
                                     "Script Player",
                                     m3u8Url,
                                     ExtractorLinkType.M3U8
@@ -207,7 +208,7 @@ object HypeFlixExtractor {
         }
     }
 
-    private fun extractAllVideoLinks(
+    private suspend fun extractAllVideoLinks(
         content: String,
         referer: String,
         callback: (ExtractorLink) -> Unit
@@ -221,7 +222,7 @@ object HypeFlixExtractor {
             if (url.isNotBlank()) {
                 callback(
                     newExtractorLink(
-                        "HypeFlix",
+                        "Hypeflix",
                         "Extracted M3U8",
                         fixUrl(url),
                         ExtractorLinkType.M3U8
@@ -241,7 +242,7 @@ object HypeFlixExtractor {
             if (url.isNotBlank()) {
                 callback(
                     newExtractorLink(
-                        "HypeFlix",
+                        "Hypeflix",
                         "Extracted MP4",
                         fixUrl(url),
                         ExtractorLinkType.VIDEO
