@@ -339,4 +339,5 @@ class Hypeflix : MainAPI() {
     println("[Hypeflix] === loadLinks finalizado ===")
     
     return result
+  }
 }
