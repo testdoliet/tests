@@ -5,7 +5,7 @@ import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.app
 
 object HypeFlixExtractor {
-    // Constantes para seletores CSS (ajuste conforme necessário)
+    // Constantes para seletores CSS
     private const val PLAYER_FHD = "iframe[src*='m3u8'][src*='1080p']"
     private const val PLAYER_HD = "iframe[src*='m3u8'][src*='720p']"
     private const val PLAYER_SD = "iframe[src*='m3u8'][src*='480p'], iframe[src*='m3u8'][src*='360p']"
@@ -103,7 +103,7 @@ object HypeFlixExtractor {
         document.select("iframe").forEachIndexed { index, iframe ->
             val src = iframe.attr("src")
             if (src.contains("m3u8", true)) {
-                // Verificar se já foi adicionado pelos seletores acima
+                // Verificar se já foi adicionado
                 val alreadyAdded = listOf(
                     document.selectFirst(PLAYER_FHD)?.attr("src"),
                     document.selectFirst(PLAYER_HD)?.attr("src"),
@@ -130,12 +130,11 @@ object HypeFlixExtractor {
             }
         }
 
-        // Se não encontrou iframes com m3u8, procurar em scripts
+        // Se não encontrou iframes, procurar em scripts
         if (!linksFound) {
             document.select("script").forEach { script ->
                 val scriptContent = script.html()
                 if (scriptContent.contains("m3u8")) {
-                    // Extrair URL m3u8 do script
                     val m3u8Pattern = Regex("""(https?://[^\s"']*\.m3u8[^\s"']*)""")
                     val m3u8Matches = m3u8Pattern.findAll(scriptContent)
                     
@@ -160,10 +159,20 @@ object HypeFlixExtractor {
             }
         }
 
+        // Tentar extrair de players alternativos
+        if (!linksFound) {
+            document.select("div.player-container script").forEach { script ->
+                val content = script.html()
+                extractAllVideoLinks(content, referer, callback)?.let {
+                    linksFound = true
+                }
+            }
+        }
+
         return linksFound
     }
 
-    private fun extractM3u8FromUrl(url: String): String? {
+    private suspend fun extractM3u8FromUrl(url: String): String? {
         return try {
             // Se a URL já é m3u8, retorna direto
             if (url.contains(".m3u8")) {
@@ -171,15 +180,14 @@ object HypeFlixExtractor {
             }
             
             // Se for uma URL de player, tenta extrair o m3u8
-            if (url.contains("player") || url.contains("embed")) {
-                // Padrões comuns de extração
+            if (url.contains("player") || url.contains("embed") || url.contains("video")) {
                 val patterns = listOf(
-                    Regex("""(?:file|src|source)\s*[:=]\s*['"]([^'"]+\.m3u8[^'"]*)['"]"""),
+                    Regex("""(?:file|src|source|url)\s*[:=]\s*['"]([^'"]+\.m3u8[^'"]*)['"]"""),
                     Regex("""(https?://[^"']+\.m3u8[^"']*)"""),
-                    Regex("""m3u8.*?(https?://[^\s"']+)""")
+                    Regex("""m3u8.*?(https?://[^\s"']+)"""),
+                    Regex(""""url"\s*:\s*"([^"]+\.m3u8[^"]*)"""")
                 )
                 
-                // Fazer requisição para extrair
                 val response = app.get(url).text
                 
                 for (pattern in patterns) {
@@ -187,7 +195,7 @@ object HypeFlixExtractor {
                     if (match != null) {
                         val extractedUrl = match.groupValues[1]
                         if (extractedUrl.isNotBlank()) {
-                            return extractedUrl
+                            return fixUrl(extractedUrl)
                         }
                     }
                 }
@@ -196,6 +204,77 @@ object HypeFlixExtractor {
             null
         } catch (e: Exception) {
             null
+        }
+    }
+
+    private fun extractAllVideoLinks(
+        content: String,
+        referer: String,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        var found = false
+        
+        // Buscar m3u8
+        val m3u8Pattern = Regex("""(https?://[^\s"']*\.m3u8[^\s"']*)""")
+        m3u8Pattern.findAll(content).forEach { match ->
+            val url = match.value
+            if (url.isNotBlank()) {
+                callback(
+                    newExtractorLink(
+                        "HypeFlix",
+                        "Extracted M3U8",
+                        fixUrl(url),
+                        ExtractorLinkType.M3U8
+                    ) {
+                        this.referer = referer
+                        quality = getQualityFromUrl(url)
+                    }
+                )
+                found = true
+            }
+        }
+        
+        // Buscar mp4
+        val mp4Pattern = Regex("""(https?://[^\s"']*\.mp4[^\s"']*)""")
+        mp4Pattern.findAll(content).forEach { match ->
+            val url = match.value
+            if (url.isNotBlank()) {
+                callback(
+                    newExtractorLink(
+                        "HypeFlix",
+                        "Extracted MP4",
+                        fixUrl(url),
+                        ExtractorLinkType.VIDEO
+                    ) {
+                        this.referer = referer
+                        quality = getQualityFromUrl(url)
+                    }
+                )
+                found = true
+            }
+        }
+        
+        return found
+    }
+
+    private fun getQualityFromUrl(url: String): Int {
+        return when {
+            url.contains("360p", ignoreCase = true) -> Qualities.P360.value
+            url.contains("480p", ignoreCase = true) -> Qualities.P480.value
+            url.contains("720p", ignoreCase = true) -> Qualities.P720.value
+            url.contains("1080p", ignoreCase = true) -> Qualities.P1080.value
+            url.contains("2160p", ignoreCase = true) || url.contains("4k", ignoreCase = true) -> Qualities.P2160.value
+            else -> Qualities.Unknown.value
+        }
+    }
+
+    private fun fixUrl(url: String): String {
+        return if (url.startsWith("//")) {
+            "https:$url"
+        } else if (!url.startsWith("http")) {
+            "https://$url"
+        } else {
+            url
         }
     }
 }
