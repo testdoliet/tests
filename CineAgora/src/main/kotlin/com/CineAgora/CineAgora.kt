@@ -4,9 +4,8 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.app
 import org.jsoup.nodes.Element
-import java.net.URLEncoder
 
-class CineAgoraProvider : MainAPI() {
+class CineAgora : MainAPI() {
     override var mainUrl = "https://cineagora.net"
     override var name = "CineAgora"
     override val hasMainPage = true
@@ -70,7 +69,7 @@ class CineAgoraProvider : MainAPI() {
             "filmes-populares" -> "Filmes Populares"
             "series-populares" -> "Séries Populares"
             "netflix" -> "Netflix"
-            "paramound" -> "Paramount+"
+            "paramount" -> "Paramount+"
             "disney" -> "Disney+"
             "apple" -> "Apple TV+"
             "hbo" -> "HBO Max"
@@ -96,13 +95,9 @@ class CineAgoraProvider : MainAPI() {
             "thriller" -> "Thriller"
             "guerra" -> "Guerra"
             "faroeste" -> "Faroeste"
-            else -> section.replace("-", " ").capitalizeWords()
-        }
-    }
-
-    private fun String.capitalizeWords(): String {
-        return split(" ").joinToString(" ") { 
-            it.replaceFirstChar { char -> char.uppercase() }
+            else -> section.replace("-", " ").split(" ").joinToString(" ") { 
+                it.replaceFirstChar { char -> char.uppercase() }
+            }
         }
     }
 
@@ -136,7 +131,7 @@ class CineAgoraProvider : MainAPI() {
                 "ultimas-series" -> items.filter { item ->
                     val href = item.selectFirst("a")?.attr("href") ?: ""
                     href.contains("/series-") || href.contains("/serie-") || href.contains("/tv-") ||
-                    item.selectFirst(".data")?.text()?.contains("Temporada|Episódio".toRegex()) == true
+                    item.selectFirst(".data")?.text()?.contains(Regex("Temporada|Episódio")) == true
                 }.mapNotNull { it.toSearchResult() }
                 
                 else -> items.mapNotNull { it.toSearchResult() }
@@ -196,7 +191,7 @@ class CineAgoraProvider : MainAPI() {
         
         // Determinar se é filme ou série
         val isSerie = href.contains("/series-") || href.contains("/serie-") || href.contains("/tv-") || 
-                      episodeInfo?.contains("Temporada|Episódio".toRegex()) == true
+                      episodeInfo?.contains(Regex("Temporada|Episódio")) == true
         
         // Construir descrição com badges
         val description = buildString {
@@ -217,46 +212,32 @@ class CineAgoraProvider : MainAPI() {
             }
         }.takeIf { it.isNotBlank() }
         
-        // Mapear qualidade para enum do Cloudstream
+        // Determinar qualidade baseada na badge
         val quality = when {
             qualityBadge?.contains("HD", ignoreCase = true) == true -> SearchQuality.HD
-            qualityBadge?.contains("4K", ignoreCase = true) == true -> SearchQuality.UltraHD
-            qualityBadge?.contains("FULLHD", ignoreCase = true) == true -> SearchQuality.FullHd
+            qualityBadge?.contains("4K", ignoreCase = true) == true -> SearchQuality.HD // Fallback
+            qualityBadge?.contains("FULLHD", ignoreCase = true) == true -> SearchQuality.HD
             qualityBadge?.contains("TS", ignoreCase = true) == true -> SearchQuality.Cam
-            else -> SearchQuality.Unknown
+            else -> null
         }
         
         return if (isSerie) {
             newTvSeriesSearchResponse(cleanTitle, fixUrl(href)) {
                 this.posterUrl = posterUrl
                 this.year = year
-                this.quality = quality
-                // Adicionar informações extras
-                if (description != null) {
-                    // Pode ser adicionado como metadata
+                if (quality != null) {
+                    this.quality = quality
                 }
             }
         } else {
             newMovieSearchResponse(cleanTitle, fixUrl(href)) {
                 this.posterUrl = posterUrl
                 this.year = year
-                this.quality = quality
-                // Adicionar informações extras
-                if (description != null) {
-                    // Pode ser adicionado como metadata
+                if (quality != null) {
+                    this.quality = quality
                 }
             }
         }
-    }
-
-    // Para recomendações no Cloudstream
-    override suspend fun getMainPageData(page: Int): HomePageData {
-        // Retornar apenas as seções principais
-        val pages = listOf(
-            HomePageList("Últimos Filmes", "home_ultimos-filmes"),
-            HomePageList("Últimas Séries", "home_ultimas-series")
-        )
-        return HomePageData(pages)
     }
 
     // As outras funções retornam false/nulo por enquanto conforme solicitado
