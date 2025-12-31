@@ -7,16 +7,16 @@
 # LietRepo
 ## Repositório experimental de plugins para CloudStream 3
 
-### 🇧🇷 Plugins BR para CloudStream 3 — foco em desempenho e estabilidade  
-### 🇺🇸 BR plugins for CloudStream 3 — performance and stability focused
+### 🇧🇷 Plugins BR para CloudStream 3 
+### 🇺🇸 BR plugins for CloudStream 3 
 
 <br>
 
 ### ⬇️ Instalação Direta / Direct Installation
 
-[![Instalar no CloudStream](https://img.shields.io/badge/CLICK_HERE_TO_INSTALL-CloudStream-7289DA?style=for-the-badge&logo=android&logoColor=white)](https://repos.cloudstream.best/install?url=https://raw.githubusercontent.com/lawlietbr/lietrepo/main/builds/repo.json)
+[![Instalar no CloudStream](https://img.shields.io/badge/CLICK_HERE_TO_INSTALL-CloudStream-7289DA?style=for-the-badge&logo=android&logoColor=white)](https://raw.githubusercontent.com/lawlietbr/lietrepo/main/builds/repo.json)
 
-**Instrução alternativa:** Copie a URL abaixo e cole no CloudStream:
+**Instrução alternativa:** Ou Copie a URL abaixo e cole no CloudStream:
 https://raw.githubusercontent.com/lawlietbr/lietrepo/main/builds/repo.json
 
 </div>
