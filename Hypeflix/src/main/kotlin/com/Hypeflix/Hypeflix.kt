@@ -6,9 +6,9 @@ import com.lagradost.cloudstream3.app
 import org.jsoup.nodes.Element
 import java.net.URLEncoder
 
-class Hypeflix : MainAPI() {  // Fixed class name (should match file name)
+class Hypeflix : MainAPI() {
     override var mainUrl = "https://hypeflix.info"
-    override var name = "Hypeflix"  // Fixed name consistency
+    override var name = "Hypeflix"
     override val hasMainPage = true
     override var lang = "pt-br"
     override val hasDownloadSupport = false
@@ -61,7 +61,7 @@ class Hypeflix : MainAPI() {  // Fixed class name (should match file name)
         }
     }
 
-    private fun Element.toSearchResult(): SearchResponse? {  // Fixed return type
+    private fun Element.toSearchResult(): SearchResponse? {
         val linkElement = selectFirst("a") ?: return null
         val href = linkElement.attr("href").takeIf { it.isNotBlank() } ?: return null
         
@@ -88,15 +88,15 @@ class Hypeflix : MainAPI() {  // Fixed class name (should match file name)
         val isSerie = href.contains("/serie/") || href.contains("/tv/")
         
         return when {
-            isAnime -> newAnimeSearchResponse(cleanTitle, fixUrl(href)) {  // FIXED: Removed TvType parameter
+            isAnime -> newAnimeSearchResponse(cleanTitle, fixUrl(href)) {
                 this.posterUrl = posterUrl
                 this.year = year
             }
-            isSerie -> newTvSeriesSearchResponse(cleanTitle, fixUrl(href)) {  // FIXED: Changed to newTvSeriesSearchResponse
+            isSerie -> newTvSeriesSearchResponse(cleanTitle, fixUrl(href)) {
                 this.posterUrl = posterUrl
                 this.year = year
             }
-            else -> newMovieSearchResponse(cleanTitle, fixUrl(href)) {  // FIXED: Removed TvType parameter
+            else -> newMovieSearchResponse(cleanTitle, fixUrl(href)) {
                 this.posterUrl = posterUrl
                 this.year = year
             }
@@ -122,7 +122,6 @@ class Hypeflix : MainAPI() {  // Fixed class name (should match file name)
                             .trim()
                         
                         if (cleanTitle.isNotEmpty()) {
-                            // Determine type based on URL
                             val isSerie = href.contains("/serie/")
                             val isAnime = href.contains("/anime/")
                             
@@ -182,32 +181,22 @@ class Hypeflix : MainAPI() {  // Fixed class name (should match file name)
         return if (isAnime || isSerie) {
             val type = if (isAnime) TvType.Anime else TvType.TvSeries
             
-            // FIXED: Properly call newTvSeriesLoadResponse with all required parameters
-            newTvSeriesLoadResponse(
-                name = cleanTitle,
-                url = url,
-                type = type,
-                episodes = episodes,
-                posterUrl = posterUrl,
-                year = year,
-                plot = description,
-                backgroundPosterUrl = backdropUrl,
-                tags = genres
-            )
+            // FIXED: Use builder pattern with lambda
+            newTvSeriesLoadResponse(cleanTitle, url, type, episodes) {
+                this.posterUrl = posterUrl
+                this.year = year
+                this.plot = description
+                this.backgroundPosterUrl = backdropUrl
+                this.tags = genres
+            }
         } else {
-            // FIXED: Properly call newMovieLoadResponse
-            newMovieLoadResponse(
-                name = cleanTitle,
-                url = url,
-                apiName = this.name,
-                type = TvType.Movie,
-                posterUrl = posterUrl,
-                year = year,
-                plot = description,
-                backgroundPosterUrl = backdropUrl,
-                tags = genres
-            ) {
-                // You can add additional initialization here if needed
+            // FIXED: Use builder pattern with lambda
+            newMovieLoadResponse(cleanTitle, url, TvType.Movie, url) {
+                this.posterUrl = posterUrl
+                this.year = year
+                this.plot = description
+                this.backgroundPosterUrl = backdropUrl
+                this.tags = genres
             }
         }
     }
@@ -290,14 +279,14 @@ class Hypeflix : MainAPI() {  // Fixed class name (should match file name)
             val imgElement = episodeElement.selectFirst("img")
             val episodePoster = imgElement?.attr("src")?.let { fixUrl(it) }
             
-            Episode(
-                data = fixUrl(dataProtected),
-                name = title,
-                season = seasonNumber,
-                episode = epNumber,
-                description = fullDescription,
-                posterUrl = episodePoster
-            )
+            // FIXED: Use newEpisode builder instead of direct constructor
+            newEpisode(fixUrl(dataProtected)) {
+                this.name = title
+                this.season = seasonNumber
+                this.episode = epNumber
+                this.description = fullDescription
+                this.posterUrl = episodePoster
+            }
         } catch (e: Exception) {
             null
         }
