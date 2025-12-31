@@ -4,6 +4,7 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.app
 import org.jsoup.nodes.Element
+import java.net.URLEncoder
 
 class HypeFlix : MainAPI() {
     override var mainUrl = "https://hypeflix.info"
@@ -110,8 +111,9 @@ class HypeFlix : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        // Corrigido: usar encodeURIQuery em vez de encodeUrl
-        val searchUrl = "$mainUrl/?s=${encodeURI(query)}"
+        // Corrigido: usar URLEncoder do Java
+        val encodedQuery = URLEncoder.encode(query, "UTF-8")
+        val searchUrl = "$mainUrl/?s=$encodedQuery"
         val document = app.get(searchUrl).document
         
         // Procura por artigos na página de busca
@@ -228,7 +230,7 @@ class HypeFlix : MainAPI() {
                 val descriptionElement = episodeElement.selectFirst(".episode-description")
                 val description = descriptionElement?.text()?.trim()
                 
-                // Extrair duração (renomeado para episodeDuration para evitar conflito)
+                // Extrair duração
                 val durationElement = episodeElement.selectFirst(".episode-number")
                 val durationText = durationElement?.text()
                 val episodeDuration = durationText?.let {
@@ -241,9 +243,10 @@ class HypeFlix : MainAPI() {
                     this.season = 1 // Assumir temporada 1 por padrão
                     this.episode = epNumber
                     this.description = description
-                    // Corrigido: usar episodeDuration em vez de duration
-                    episodeDuration?.let { dur ->
-                        this.duration = dur
+                    
+                    // Configurar duração do episódio se disponível
+                    if (episodeDuration != null) {
+                        this.duration = episodeDuration
                     }
                     
                     // Extrair imagem do episódio
