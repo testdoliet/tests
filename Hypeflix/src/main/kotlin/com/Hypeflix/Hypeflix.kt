@@ -6,7 +6,7 @@ import com.lagradost.cloudstream3.app
 import org.jsoup.nodes.Element
 import java.net.URLEncoder
 
-class HypeFlix : MainAPI() {
+class Hypeflix : MainAPI() {
     override var mainUrl = "https://hypeflix.info"
     override var name = "HypeFlix"
     override val hasMainPage = true
