@@ -12,13 +12,6 @@ class Hypeflix : MainAPI() {
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries)
     override var lang = "pt"
 
-    // Seletores CSS
-    private val movieSelector = "div.card"
-    private val serieSelector = "div.card-serie"
-    private val episodeSelector = "div.episode-item, li.episode-item"
-    private val searchSelector = "div.search-item"
-    private val playerSelector = "iframe[src*='player'], video source[src]"
-
     override val mainPage = mainPageOf(
         "$mainUrl/lancamentos/" to "Lançamentos",
         "$mainUrl/series/" to "Séries",
@@ -43,44 +36,24 @@ class Hypeflix : MainAPI() {
             val isMovie = href.contains("/filme/") || element.hasClass("movie")
 
             if (isMovie) {
-                MovieSearchResponse(
-                    title,
-                    href,
-                    this.name,
-                    TvType.Movie,
-                    poster,
-                    null,
-                    null
-                )
+                newMovieSearchResponse(title, href) {
+                    this.posterUrl = poster
+                }
             } else {
-                TvSeriesSearchResponse(
-                    title,
-                    href,
-                    this.name,
-                    TvType.TvSeries,
-                    poster,
-                    null,
-                    null
-                )
+                newTvSeriesSearchResponse(title, href) {
+                    this.posterUrl = poster
+                }
             }
         }
 
-        return HomePageResponse(
-            listOf(
-                HomePageList(
-                    request.name,
-                    items
-                )
-            ),
-            hasNext = items.isNotEmpty()
-        )
+        return newHomePageResponse(request.name, items)
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
         val searchUrl = "$mainUrl/?s=$query"
         val document = app.get(searchUrl).document
 
-        return document.select(searchSelector).mapNotNull { element ->
+        return document.select("div.search-item, div.card, div.card-serie").mapNotNull { element ->
             val href = element.selectFirst("a[href]")?.attr("href") ?: return@mapNotNull null
             val title = element.selectFirst("h3, h2, .title")?.text() ?: return@mapNotNull null
             val poster = element.selectFirst("img[src]")?.attr("src") ?: ""
@@ -90,25 +63,15 @@ class Hypeflix : MainAPI() {
             val isMovie = href.contains("/filme/") || element.selectFirst(".type")?.text()?.contains("Filme") == true
 
             if (isMovie) {
-                MovieSearchResponse(
-                    title,
-                    href,
-                    this.name,
-                    TvType.Movie,
-                    poster,
-                    year,
-                    null
-                )
+                newMovieSearchResponse(title, href) {
+                    this.posterUrl = poster
+                    this.year = year
+                }
             } else {
-                TvSeriesSearchResponse(
-                    title,
-                    href,
-                    this.name,
-                    TvType.TvSeries,
-                    poster,
-                    year,
-                    null
-                )
+                newTvSeriesSearchResponse(title, href) {
+                    this.posterUrl = poster
+                    this.year = year
+                }
             }
         }
     }
@@ -121,7 +84,7 @@ class Hypeflix : MainAPI() {
         val plot = document.selectFirst("div.sinopse, .plot")?.text() ?: ""
         val year = document.selectFirst("span.year")?.text()?.toIntOrNull()
         val tags = document.select("div.genres a").map { it.text() }
-        val actors = document.select("div.cast a").map { ActorData(it.text()) }
+        val actors = document.select("div.cast a").map { Actor(it.text()) }
 
         // Verificar se é filme ou série
         val isMovie = url.contains("/filme/") || 
@@ -135,55 +98,54 @@ class Hypeflix : MainAPI() {
                 val relTitle = related.selectFirst("h3")?.text() ?: return@mapNotNull null
                 val relPoster = related.selectFirst("img[src]")?.attr("src") ?: ""
 
-                MovieSearchResponse(
-                    relTitle,
-                    href,
-                    this.name,
-                    TvType.Movie,
-                    relPoster,
-                    null,
-                    null
-                )
+                newMovieSearchResponse(relTitle, href) {
+                    this.posterUrl = relPoster
+                }
             }
 
-            return MovieLoadResponse(
-                title,
-                url,
-                this.name,
-                TvType.Movie,
-                url,
-                poster,
-                year,
-                plot,
-                tags,
-                actors,
-                recommendations,
-                null,
-                null
-            )
+            return newMovieLoadResponse(title, url) {
+                this.posterUrl = poster
+                this.plot = plot
+                this.year = year
+                this.tags = tags
+                this.actors = actors
+                this.recommendations = recommendations
+            }
         } else {
             // É uma série
-            val seasons = document.select("div.season").mapIndexed { seasonIndex, seasonElement ->
-                val seasonNumber = (seasonIndex + 1)
-                val episodes = seasonElement.select("div.episode-item, li").mapNotNull { epElement ->
-                    val epHref = epElement.selectFirst("a[href]")?.attr("href") ?: return@mapNotNull null
-                    val epTitle = epElement.selectFirst(".episode-title")?.text() ?: "Episódio ${seasonIndex + 1}"
-                    val epNumber = epElement.selectFirst(".episode-number")?.text()?.toIntOrNull() ?: (seasonIndex + 1)
-                    val epPoster = epElement.selectFirst("img[src]")?.attr("src") ?: poster
+            val seasons = mutableListOf<SeasonData>()
+            val seasonElements = document.select("div.season")
+            
+            if (seasonElements.isNotEmpty()) {
+                seasonElements.forEachIndexed { seasonIndex, seasonElement ->
+                    val seasonNumber = (seasonIndex + 1)
+                    val episodes = seasonElement.select("div.episode-item, li").mapNotNull { epElement ->
+                        val epHref = epElement.selectFirst("a[href]")?.attr("href") ?: return@mapNotNull null
+                        val epTitle = epElement.selectFirst(".episode-title")?.text() ?: "Episódio ${seasonIndex + 1}"
+                        val epNumber = epElement.selectFirst(".episode-number")?.text()?.toIntOrNull() ?: (seasonIndex + 1)
+                        val epPoster = epElement.selectFirst("img[src]")?.attr("src") ?: poster
 
-                    Episode(
-                        epHref,
-                        epTitle,
-                        seasonNumber,
-                        epNumber,
-                        epPoster
-                    )
+                        newEpisode(epHref) {
+                            this.name = epTitle
+                            this.season = seasonNumber
+                            this.episode = epNumber
+                            this.posterUrl = epPoster
+                        }
+                    }
+                    
+                    if (episodes.isNotEmpty()) {
+                        seasons.add(SeasonData(seasonNumber, episodes))
+                    }
                 }
-                
-                SeasonData(
-                    seasonNumber,
-                    episodes
-                )
+            } else {
+                // Se não encontrar temporadas, criar uma temporada única com o episódio principal
+                val episode = newEpisode(url) {
+                    this.name = title
+                    this.season = 1
+                    this.episode = 1
+                    this.posterUrl = poster
+                }
+                seasons.add(SeasonData(1, listOf(episode)))
             }
 
             val recommendations = document.select("div.related div.card-serie").mapNotNull { related ->
@@ -191,33 +153,20 @@ class Hypeflix : MainAPI() {
                 val relTitle = related.selectFirst("h3")?.text() ?: return@mapNotNull null
                 val relPoster = related.selectFirst("img[src]")?.attr("src") ?: ""
 
-                TvSeriesSearchResponse(
-                    relTitle,
-                    href,
-                    this.name,
-                    TvType.TvSeries,
-                    relPoster,
-                    null,
-                    null
-                )
+                newTvSeriesSearchResponse(relTitle, href) {
+                    this.posterUrl = relPoster
+                }
             }
 
-            return TvSeriesLoadResponse(
-                title,
-                url,
-                this.name,
-                TvType.TvSeries,
-                url,
-                poster,
-                year,
-                plot,
-                tags,
-                actors,
-                seasons,
-                recommendations,
-                null,
-                null
-            )
+            return newTvSeriesLoadResponse(title, url) {
+                this.posterUrl = poster
+                this.plot = plot
+                this.year = year
+                this.tags = tags
+                this.actors = actors
+                this.seasons = seasons
+                this.recommendations = recommendations
+            }
         }
     }
 
