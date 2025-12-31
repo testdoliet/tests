@@ -42,6 +42,29 @@
         "name": "AniTube"
     },
     {
+        "iconUrl": "https://cineagora.net/templates/cineagora/images/touch-icon-180x180.png",
+        "jarFileSize": 38238,
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/lawlietbt/lietrepo",
+        "fileSize": 14483,
+        "status": 1,
+        "language": "pt-br",
+        "authors": [
+            "lawlietbr"
+        ],
+        "tvTypes": [
+            "Movies",
+            "Series",
+            "Animes"
+        ],
+        "version": 1,
+        "internalName": "CineAgora",
+        "jarUrl": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/CineAgora.jar",
+        "description": "Assista filmes e s\u00e9ries online gr\u00e1tis em HD no CineAgora",
+        "url": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/CineAgora.cs3",
+        "name": "CineAgora"
+    },
+    {
         "iconUrl": "https://goyabu.io/wp-content/uploads/2025/12/cropped-goyabu-favicon-192x192.png",
         "jarFileSize": 129587,
         "apiVersion": 1,
@@ -61,29 +84,6 @@
         "description": "Animes Online em HD gratuitamente no Goyabu",
         "url": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/Goyabu.cs3",
         "name": "Goyabu"
-    },
-    {
-        "iconUrl": "https://hypeflix.info/uploads/images/logo_hypeflix.png",
-        "jarFileSize": 140185,
-        "apiVersion": 1,
-        "repositoryUrl": "https://github.com/lawlietbt/lietrepo",
-        "fileSize": 32370,
-        "status": 1,
-        "language": "pt-br",
-        "authors": [
-            "lawlietbr"
-        ],
-        "tvTypes": [
-            "Movies",
-            "Series",
-            "Animes"
-        ],
-        "version": 1,
-        "internalName": "Hypeflix",
-        "jarUrl": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/Hypeflix.jar",
-        "description": "Hypeflix \u00e9 o seu destino n\u00ba1 para assistir filmes online gr\u00e1tis e s\u00e9ries online, em alta qualidade e sem complica\u00e7\u00f5es.",
-        "url": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/Hypeflix.cs3",
-        "name": "Hypeflix"
     },
     {
         "iconUrl": "https://icons.duckduckgo.com/ip2/superflix22.lol.ico",
