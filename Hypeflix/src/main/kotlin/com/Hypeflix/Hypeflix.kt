@@ -5,8 +5,9 @@ import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.app
 import org.jsoup.nodes.Element
 import java.net.URLEncoder
+import com.lagradost.cloudstream3.extractors.ExtractorLink
 
-class HypeFlix : MainAPI() {
+class Hypeflix : MainAPI() {
     override var mainUrl = "https://hypeflix.info"
     override var name = "HypeFlix"
     override val hasMainPage = true
@@ -279,13 +280,17 @@ class HypeFlix : MainAPI() {
             null
         }
     }
-
-    override suspend fun loadLinks(
-        data: String,
-        isCasting: Boolean,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        return false
+    
+override suspend fun loadLinks(
+    data: String,
+    isCasting: Boolean,
+    subtitleCallback: (SubtitleFile) -> Unit,
+    callback: (ExtractorLink) -> Unit
+): Boolean {
+    // Ativar suporte a download
+    if (hasDownloadSupport) {
+        return HypeFlixExtractor.extractVideoLinks(data, mainUrl, callback)
     }
+    return false
 }
+    
