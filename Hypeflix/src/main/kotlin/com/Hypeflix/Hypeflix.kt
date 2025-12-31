@@ -6,9 +6,9 @@ import com.lagradost.cloudstream3.app
 import org.jsoup.nodes.Element
 import java.net.URLEncoder
 
-class HypeFlix : MainAPI() {
+class Hypeflix : MainAPI() {  // Fixed class name (should match file name)
     override var mainUrl = "https://hypeflix.info"
-    override var name = "HypeFlix"
+    override var name = "Hypeflix"  // Fixed name consistency
     override val hasMainPage = true
     override var lang = "pt-br"
     override val hasDownloadSupport = false
@@ -61,22 +61,24 @@ class HypeFlix : MainAPI() {
         }
     }
 
-    private fun Element.toSearchResult(): SearchResponse? {
+    private fun Element.toSearchResult(): SearchResponse? {  // Fixed return type
         val linkElement = selectFirst("a") ?: return null
-        val href = linkElement.attr("href") ?: return null
+        val href = linkElement.attr("href").takeIf { it.isNotBlank() } ?: return null
         
         val titleElement = selectFirst("h3")
         val title = titleElement?.text()?.trim() ?: return null
         
-        // CORREÇÃO 1: Extrair ano corretamente
-        val yearElement = selectFirst("time.release-date")
-        val year = yearElement?.attr("datetime")?.substring(0, 4)?.toIntOrNull()
+        // Extract year
+        val year = selectFirst("time.release-date")
+            ?.attr("datetime")
+            ?.substring(0, 4)
+            ?.toIntOrNull()
             ?: Regex("\\((\\d{4})\\)").find(title)?.groupValues?.get(1)?.toIntOrNull()
         
-        // CORREÇÃO 1: Limpar título removendo o ano
+        // Clean title
         val cleanTitle = title
-            .replace(Regex("\\(\\d{4}\\)"), "") // Remove (2023)
-            .replace(Regex("\\d{4}$"), "") // Remove 2023 no final
+            .replace(Regex("\\(\\d{4}\\)"), "")
+            .replace(Regex("\\d{4}$"), "")
             .trim()
         
         val imgElement = selectFirst("img")
@@ -86,15 +88,15 @@ class HypeFlix : MainAPI() {
         val isSerie = href.contains("/serie/") || href.contains("/tv/")
         
         return when {
-            isAnime -> newAnimeSearchResponse(cleanTitle, fixUrl(href), TvType.Anime) {
+            isAnime -> newAnimeSearchResponse(cleanTitle, fixUrl(href)) {  // FIXED: Removed TvType parameter
                 this.posterUrl = posterUrl
                 this.year = year
             }
-            isSerie -> newTvSeriesLoadResponse(cleanTitle, fixUrl(href), TvType.TvSeries) {
+            isSerie -> newTvSeriesSearchResponse(cleanTitle, fixUrl(href)) {  // FIXED: Changed to newTvSeriesSearchResponse
                 this.posterUrl = posterUrl
                 this.year = year
             }
-            else -> newMovieSearchResponse(cleanTitle, fixUrl(href), TvType.Movie) {
+            else -> newMovieSearchResponse(cleanTitle, fixUrl(href)) {  // FIXED: Removed TvType parameter
                 this.posterUrl = posterUrl
                 this.year = year
             }
@@ -120,8 +122,20 @@ class HypeFlix : MainAPI() {
                             .trim()
                         
                         if (cleanTitle.isNotEmpty()) {
-                            newMovieSearchResponse(cleanTitle, fixUrl(href), TvType.Movie) {
-                                this.posterUrl = link.selectFirst("img")?.attr("src")?.let { fixUrl(it) }
+                            // Determine type based on URL
+                            val isSerie = href.contains("/serie/")
+                            val isAnime = href.contains("/anime/")
+                            
+                            when {
+                                isAnime -> newAnimeSearchResponse(cleanTitle, fixUrl(href)) {
+                                    this.posterUrl = link.selectFirst("img")?.attr("src")?.let { fixUrl(it) }
+                                }
+                                isSerie -> newTvSeriesSearchResponse(cleanTitle, fixUrl(href)) {
+                                    this.posterUrl = link.selectFirst("img")?.attr("src")?.let { fixUrl(it) }
+                                }
+                                else -> newMovieSearchResponse(cleanTitle, fixUrl(href)) {
+                                    this.posterUrl = link.selectFirst("img")?.attr("src")?.let { fixUrl(it) }
+                                }
                             }
                         } else null
                     } else null
@@ -155,7 +169,7 @@ class HypeFlix : MainAPI() {
         val ogImage = document.selectFirst("meta[property='og:image']")?.attr("content")
         val posterUrl = ogImage?.let { fixUrl(it) }
         
-        // CORREÇÃO 2: Extrair temporadas e episódios corretamente
+        // Extract episodes
         val episodes = if (isAnime || isSerie) {
             extractEpisodesWithSeasons(document)
         } else {
@@ -165,52 +179,60 @@ class HypeFlix : MainAPI() {
         val genres = document.select("a.chip, .chip, .genre, .tags").map { it.text().trim() }
             .takeIf { it.isNotEmpty() }
         
-        if (isAnime || isSerie) {
+        return if (isAnime || isSerie) {
             val type = if (isAnime) TvType.Anime else TvType.TvSeries
             
-            return newTvSeriesLoadResponse(cleanTitle, url, type, episodes) {
-                this.posterUrl = posterUrl
-                this.backgroundPosterUrl = backdropUrl
-                this.year = year
-                this.plot = description
-                this.tags = genres
-            }
+            // FIXED: Properly call newTvSeriesLoadResponse with all required parameters
+            newTvSeriesLoadResponse(
+                name = cleanTitle,
+                url = url,
+                type = type,
+                episodes = episodes,
+                posterUrl = posterUrl,
+                year = year,
+                plot = description,
+                backgroundPosterUrl = backdropUrl,
+                tags = genres
+            )
         } else {
-            return newMovieLoadResponse(cleanTitle, url, TvType.Movie, url) {
-                this.posterUrl = posterUrl
-                this.backgroundPosterUrl = backdropUrl
-                this.year = year
-                this.plot = description
-                this.tags = genres
+            // FIXED: Properly call newMovieLoadResponse
+            newMovieLoadResponse(
+                name = cleanTitle,
+                url = url,
+                apiName = this.name,
+                type = TvType.Movie,
+                posterUrl = posterUrl,
+                year = year,
+                plot = description,
+                backgroundPosterUrl = backdropUrl,
+                tags = genres
+            ) {
+                // You can add additional initialization here if needed
             }
         }
     }
 
-    // CORREÇÃO 2: Nova função para extrair temporadas corretamente
     private fun extractEpisodesWithSeasons(document: org.jsoup.nodes.Document): List<Episode> {
         val episodes = mutableListOf<Episode>()
         
-        // Primeiro, tentar encontrar o seletor de temporada
+        // First try to find season selector
         val seasonSelector = document.selectFirst("#seasonSelect")
         val seasons = if (seasonSelector != null) {
-            // Se houver seletor de temporada, extrair opções
             seasonSelector.select("option").mapNotNull { option ->
                 option.attr("value").toIntOrNull()
             }
         } else {
-            // Se não houver, assumir temporada 1
             listOf(1)
         }
         
-        // Para cada temporada, extrair episódios
+        // For each season, extract episodes
         seasons.forEach { seasonNumber ->
-            // Filtrar episódios por temporada
             val episodeElements = document.select(".episode-item")
                 .filter { it.hasClass("season_number_$seasonNumber") || 
                          it.attr("data-season").toIntOrNull() == seasonNumber }
             
             if (episodeElements.isEmpty() && seasonNumber == 1) {
-                // Fallback: se não encontrar classe específica, pega todos
+                // Fallback
                 document.select(".episode-item").forEachIndexed { index, episodeElement ->
                     extractSingleEpisode(episodeElement, seasonNumber, index + 1)?.let {
                         episodes.add(it)
@@ -240,7 +262,7 @@ class HypeFlix : MainAPI() {
             val titleElement = episodeElement.selectFirst(".episode-title")
             val title = titleElement?.text()?.trim() ?: "Episódio $defaultEpisodeNumber"
             
-            // Extrair número do episódio de várias formas
+            // Extract episode number
             val epNumber = episodeElement.attr("data-ep").toIntOrNull()
                 ?: Regex("""Ep\.?\s*(\d+)""").find(title)?.groupValues?.get(1)?.toIntOrNull()
                 ?: Regex("""Epis[oó]dio\s*(\d+)""").find(title)?.groupValues?.get(1)?.toIntOrNull()
@@ -256,7 +278,7 @@ class HypeFlix : MainAPI() {
                 Regex("""(\d+)\s*min""").find(it)?.groupValues?.get(1)?.toIntOrNull()
             }
             
-            // Construir descrição com duração
+            // Build description with duration
             val fullDescription = buildString {
                 description?.let { append(it) }
                 episodeDuration?.let { 
@@ -268,13 +290,14 @@ class HypeFlix : MainAPI() {
             val imgElement = episodeElement.selectFirst("img")
             val episodePoster = imgElement?.attr("src")?.let { fixUrl(it) }
             
-            newEpisode(fixUrl(dataProtected)) {
-                this.name = title
-                this.season = seasonNumber
-                this.episode = epNumber
-                this.description = fullDescription
-                this.posterUrl = episodePoster
-            }
+            Episode(
+                data = fixUrl(dataProtected),
+                name = title,
+                season = seasonNumber,
+                episode = epNumber,
+                description = fullDescription,
+                posterUrl = episodePoster
+            )
         } catch (e: Exception) {
             null
         }
