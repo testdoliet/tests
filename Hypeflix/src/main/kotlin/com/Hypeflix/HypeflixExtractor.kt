@@ -17,171 +17,308 @@ object HypeflixExtractor {
         referer: String,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val actualUrl = data.split("|poster=")[0]
-        val document = app.get(actualUrl, referer = referer).document
-
-        var linksFound = false
-
-        // Player FHD (1080p)
-        document.selectFirst(PLAYER_FHD)?.let { iframe ->
-            val src = iframe.attr("src").takeIf { it.isNotBlank() } ?: return@let
-            val m3u8Url = extractM3u8FromUrl(src) ?: src
-
-            callback(
-                newExtractorLink(
-                    "Hypeflix",
-                    "Player FHD",
-                    m3u8Url,
-                    ExtractorLinkType.M3U8
-                ) {
-                    this.referer = "$referer/"
-                    quality = 1080
-                }
-            )
-            linksFound = true
+        println("[HypeflixExtractor] === INICIANDO EXTRACTION ===")
+        println("[HypeflixExtractor] Data recebida: $data")
+        println("[HypeflixExtractor] Referer: $referer")
+        
+        // Separar URL e poster
+        val parts = data.split("|poster=")
+        val actualUrl = parts[0]
+        val poster = parts.getOrNull(1)
+        
+        println("[HypeflixExtractor] URL extraída: $actualUrl")
+        println("[HypeflixExtractor] Poster extraído: ${poster ?: "Nenhum"}")
+        
+        // Verificar se a URL é válida
+        if (actualUrl.isBlank() || !actualUrl.startsWith("http")) {
+            println("[HypeflixExtractor] ERRO: URL inválida ou vazia")
+            return false
         }
+        
+        try {
+            println("[HypeflixExtractor] Acessando página: $actualUrl")
+            println("[HypeflixExtractor] Headers sendo enviados: referer=$referer")
+            
+            val response = app.get(actualUrl, referer = referer)
+            val document = response.document
+            val statusCode = response.code
+            
+            println("[HypeflixExtractor] Status code: $statusCode")
+            println("[HypeflixExtractor] Título da página: ${document.title()}")
+            
+            // Verificar conteúdo da página
+            val pageContentPreview = document.html().take(500)
+            println("[HypeflixExtractor] Primeiros 500 chars da página: $pageContentPreview")
+            
+            // Contar iframes
+            val iframes = document.select("iframe")
+            println("[HypeflixExtractor] Total de iframes encontrados: ${iframes.size}")
+            
+            iframes.forEachIndexed { index, iframe ->
+                val src = iframe.attr("src")
+                println("[HypeflixExtractor] Iframe $index - src: $src")
+                println("[HypeflixExtractor] Iframe $index - atributos: ${iframe.attributes()}")
+            }
+            
+            // Contar scripts
+            val scripts = document.select("script")
+            println("[HypeflixExtractor] Total de scripts: ${scripts.size}")
+            
+            var linksFound = false
 
-        // Player HD (720p)
-        document.selectFirst(PLAYER_HD)?.let { iframe ->
-            val src = iframe.attr("src").takeIf { it.isNotBlank() } ?: return@let
-            val m3u8Url = extractM3u8FromUrl(src) ?: src
+            // DEBUG: Verificar seletores
+            println("[HypeflixExtractor] Verificando seletores CSS...")
+            
+            // Player FHD (1080p)
+            val playerFhd = document.selectFirst(PLAYER_FHD)
+            println("[HypeflixExtractor] Player FHD encontrado: ${playerFhd != null}")
+            playerFhd?.let { iframe ->
+                val src = iframe.attr("src").takeIf { it.isNotBlank() } ?: return@let
+                println("[HypeflixExtractor] Player FHD src: $src")
+                
+                val m3u8Url = extractM3u8FromUrl(src) ?: src
+                println("[HypeflixExtractor] Player FHD m3u8 final: $m3u8Url")
 
-            callback(
-                newExtractorLink(
-                    "Hypeflix",
-                    "Player HD",
-                    m3u8Url,
-                    ExtractorLinkType.M3U8
-                ) {
-                    this.referer = "$referer/"
-                    quality = 720
-                }
+                callback(
+                    newExtractorLink(
+                        "Hypeflix",
+                        "Player FHD",
+                        m3u8Url,
+                        ExtractorLinkType.M3U8
+                    ) {
+                        this.referer = "$referer/"
+                        quality = 1080
+                    }
+                )
+                println("[HypeflixExtractor] Link FHD adicionado com sucesso!")
+                linksFound = true
+            }
+
+            // Player HD (720p)
+            val playerHd = document.selectFirst(PLAYER_HD)
+            println("[HypeflixExtractor] Player HD encontrado: ${playerHd != null}")
+            playerHd?.let { iframe ->
+                val src = iframe.attr("src").takeIf { it.isNotBlank() } ?: return@let
+                println("[HypeflixExtractor] Player HD src: $src")
+                
+                val m3u8Url = extractM3u8FromUrl(src) ?: src
+                println("[HypeflixExtractor] Player HD m3u8 final: $m3u8Url")
+
+                callback(
+                    newExtractorLink(
+                        "Hypeflix",
+                        "Player HD",
+                        m3u8Url,
+                        ExtractorLinkType.M3U8
+                    ) {
+                        this.referer = "$referer/"
+                        quality = 720
+                    }
+                )
+                println("[HypeflixExtractor] Link HD adicionado com sucesso!")
+                linksFound = true
+            }
+
+            // Player SD (480p/360p)
+            val playerSd = document.selectFirst(PLAYER_SD)
+            println("[HypeflixExtractor] Player SD encontrado: ${playerSd != null}")
+            playerSd?.let { iframe ->
+                val src = iframe.attr("src").takeIf { it.isNotBlank() } ?: return@let
+                println("[HypeflixExtractor] Player SD src: $src")
+                
+                val m3u8Url = extractM3u8FromUrl(src) ?: src
+                val quality = if (src.contains("480p", true)) 480 else 360
+                println("[HypeflixExtractor] Player SD m3u8 final: $m3u8Url (qualidade: $quality)")
+
+                callback(
+                    newExtractorLink(
+                        "Hypeflix",
+                        "Player SD",
+                        m3u8Url,
+                        ExtractorLinkType.M3U8
+                    ) {
+                        this.referer = "$referer/"
+                        this.quality = quality
+                    }
+                )
+                println("[HypeflixExtractor] Link SD adicionado com sucesso!")
+                linksFound = true
+            }
+
+            // Player Backup (qualidade desconhecida)
+            val playerBackup = document.selectFirst(PLAYER_BACKUP)
+            println("[HypeflixExtractor] Player Backup encontrado: ${playerBackup != null}")
+            playerBackup?.let { iframe ->
+                val src = iframe.attr("src").takeIf { it.isNotBlank() } ?: return@let
+                println("[HypeflixExtractor] Player Backup src: $src")
+                
+                val isM3u8 = src.contains("m3u8", true)
+                val linkType = if (isM3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                println("[HypeflixExtractor] Player Backup type: $linkType")
+
+                callback(
+                    newExtractorLink(
+                        "Hypeflix",
+                        "Player Backup",
+                        src,
+                        linkType
+                    ) {
+                        this.referer = "$referer/"
+                        quality = 720
+                    }
+                )
+                println("[HypeflixExtractor] Link Backup adicionado com sucesso!")
+                linksFound = true
+            }
+
+            // Verificar todos os iframes restantes
+            println("[HypeflixExtractor] Verificando iframes restantes...")
+            val alreadyChecked = listOf(
+                playerFhd?.attr("src"),
+                playerHd?.attr("src"),
+                playerSd?.attr("src"),
+                playerBackup?.attr("src")
             )
-            linksFound = true
-        }
+            
+            document.select("iframe").forEachIndexed { index, iframe ->
+                val src = iframe.attr("src")
+                if (src.isNotBlank() && src.contains("m3u8", true)) {
+                    val alreadyAdded = alreadyChecked.any { it == src }
+                    
+                    if (!alreadyAdded) {
+                        println("[HypeflixExtractor] Iframe $index não processado anteriormente - src: $src")
+                        val m3u8Url = extractM3u8FromUrl(src) ?: src
 
-        // Player SD (480p/360p)
-        document.selectFirst(PLAYER_SD)?.let { iframe ->
-            val src = iframe.attr("src").takeIf { it.isNotBlank() } ?: return@let
-            val m3u8Url = extractM3u8FromUrl(src) ?: src
-            val quality = if (src.contains("480p", true)) 480 else 360
-
-            callback(
-                newExtractorLink(
-                    "Hypeflix",
-                    "Player SD",
-                    m3u8Url,
-                    ExtractorLinkType.M3U8
-                ) {
-                    this.referer = "$referer/"
-                    this.quality = quality
-                }
-            )
-            linksFound = true
-        }
-
-        // Player Backup (qualidade desconhecida)
-        document.selectFirst(PLAYER_BACKUP)?.let { iframe ->
-            val src = iframe.attr("src").takeIf { it.isNotBlank() } ?: return@let
-            val isM3u8 = src.contains("m3u8", true)
-            val linkType = if (isM3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-
-            callback(
-                newExtractorLink(
-                    "Hypeflix",
-                    "Player Backup",
-                    src,
-                    linkType
-                ) {
-                    this.referer = "$referer/"
-                    quality = 720
-                }
-            )
-            linksFound = true
-        }
-
-        // Verificar todos os iframes restantes
-        document.select("iframe").forEachIndexed { index, iframe ->
-            val src = iframe.attr("src")
-            if (src.contains("m3u8", true)) {
-                // Verificar se já foi adicionado
-                val alreadyAdded = listOf(
-                    document.selectFirst(PLAYER_FHD)?.attr("src"),
-                    document.selectFirst(PLAYER_HD)?.attr("src"),
-                    document.selectFirst(PLAYER_SD)?.attr("src"),
-                    document.selectFirst(PLAYER_BACKUP)?.attr("src")
-                ).any { it == src }
-
-                if (!alreadyAdded) {
-                    val m3u8Url = extractM3u8FromUrl(src) ?: src
-
-                    callback(
-                        newExtractorLink(
-                            "Hypeflix",
-                            "Player ${index + 1}",
-                            m3u8Url,
-                            ExtractorLinkType.M3U8
-                        ) {
-                            this.referer = "$referer/"
-                            quality = 720
-                        }
-                    )
-                    linksFound = true
+                        callback(
+                            newExtractorLink(
+                                "Hypeflix",
+                                "Player ${index + 1}",
+                                m3u8Url,
+                                ExtractorLinkType.M3U8
+                            ) {
+                                this.referer = "$referer/"
+                                quality = 720
+                            }
+                        )
+                        println("[HypeflixExtractor] Link do iframe $index adicionado!")
+                        linksFound = true
+                    }
                 }
             }
-        }
 
-        // Se não encontrou iframes, procurar em scripts
-        if (!linksFound) {
-            document.select("script").forEach { script ->
-                val scriptContent = script.html()
-                if (scriptContent.contains("m3u8")) {
-                    val m3u8Pattern = Regex("""(https?://[^\s"']*\.m3u8[^\s"']*)""")
-                    val m3u8Matches = m3u8Pattern.findAll(scriptContent)
-                    
-                    m3u8Matches.forEach { match ->
-                        val m3u8Url = match.value
-                        if (m3u8Url.isNotBlank()) {
-                            callback(
-                                newExtractorLink(
-                                    "Hypeflix",
-                                    "Script Player",
-                                    m3u8Url,
-                                    ExtractorLinkType.M3U8
-                                ) {
-                                    this.referer = "$referer/"
-                                    quality = 720
-                                }
-                            )
-                            linksFound = true
+            // Se não encontrou iframes, procurar em scripts
+            if (!linksFound) {
+                println("[HypeflixExtractor] Nenhum iframe encontrado, procurando em scripts...")
+                document.select("script").forEachIndexed { index, script ->
+                    val scriptContent = script.html()
+                    if (scriptContent.contains("m3u8")) {
+                        println("[HypeflixExtractor] Script $index contém 'm3u8'")
+                        val m3u8Pattern = Regex("""(https?://[^\s"']*\.m3u8[^\s"']*)""")
+                        val m3u8Matches = m3u8Pattern.findAll(scriptContent)
+                        
+                        println("[HypeflixExtractor] Encontrados ${m3u8Matches.count()} matches de m3u8")
+                        m3u8Matches.forEach { match ->
+                            val m3u8Url = match.value
+                            if (m3u8Url.isNotBlank()) {
+                                println("[HypeflixExtractor] M3U8 encontrado em script: $m3u8Url")
+                                callback(
+                                    newExtractorLink(
+                                        "Hypeflix",
+                                        "Script Player",
+                                        m3u8Url,
+                                        ExtractorLinkType.M3U8
+                                    ) {
+                                        this.referer = "$referer/"
+                                        quality = 720
+                                    }
+                                )
+                                println("[HypeflixExtractor] Link do script adicionado!")
+                                linksFound = true
+                            }
                         }
                     }
                 }
             }
-        }
 
-        // Tentar extrair de players alternativos
-        if (!linksFound) {
-            document.select("div.player-container script").forEach { script ->
-                val content = script.html()
-                extractAllVideoLinks(content, referer, callback)?.let {
-                    linksFound = true
+            // Tentar extrair de players alternativos
+            if (!linksFound) {
+                println("[HypeflixExtractor] Procurando em players alternativos...")
+                document.select("div.player-container script").forEachIndexed { index, script ->
+                    println("[HypeflixExtractor] Player container script $index encontrado")
+                    val content = script.html()
+                    val result = extractAllVideoLinks(content, referer, callback)
+                    if (result) {
+                        println("[HypeflixExtractor] Links encontrados em player container!")
+                        linksFound = true
+                    }
                 }
             }
-        }
 
-        return linksFound
+            // Última tentativa: buscar em todo o HTML
+            if (!linksFound) {
+                println("[HypeflixExtractor] Última tentativa: buscar em todo HTML...")
+                val html = document.html()
+                val allM3u8Pattern = Regex("""https?://[^\s"']*\.m3u8[^\s"']*""")
+                val allMatches = allM3u8Pattern.findAll(html).toList()
+                
+                println("[HypeflixExtractor] Total de matches m3u8 no HTML: ${allMatches.size}")
+                allMatches.forEachIndexed { index, match ->
+                    val url = match.value
+                    println("[HypeflixExtractor] M3U8 encontrado #$index: $url")
+                    
+                    // Verificar se é uma URL válida
+                    if (url.isNotBlank() && (url.contains("1080p") || url.contains("720p") || url.contains("480p") || url.contains("360p"))) {
+                        val quality = getQualityFromUrl(url)
+                        callback(
+                            newExtractorLink(
+                                "Hypeflix",
+                                "Auto-detected $quality",
+                                url,
+                                ExtractorLinkType.M3U8
+                            ) {
+                                this.referer = referer
+                                this.quality = quality
+                            }
+                        )
+                        println("[HypeflixExtractor] Link auto-detectado adicionado!")
+                        linksFound = true
+                    }
+                }
+            }
+
+            println("[HypeflixExtractor] === FINALIZANDO EXTRACTION ===")
+            println("[HypeflixExtractor] Links encontrados: $linksFound")
+            
+            return linksFound
+            
+        } catch (e: Exception) {
+            println("[HypeflixExtractor] ERRO durante extração: ${e.message}")
+            println("[HypeflixExtractor] Stack trace:")
+            e.printStackTrace()
+            return false
+        }
     }
 
     private suspend fun extractM3u8FromUrl(url: String): String? {
-        return try {
+        println("[HypeflixExtractor] extractM3u8FromUrl chamado para: $url")
+        
+        try {
             // Se a URL já é m3u8, retorna direto
             if (url.contains(".m3u8")) {
+                println("[HypeflixExtractor] URL já é m3u8, retornando direto")
                 return url
             }
             
             // Se for uma URL de player, tenta extrair o m3u8
             if (url.contains("player") || url.contains("embed") || url.contains("video")) {
+                println("[HypeflixExtractor] URL parece ser de player, tentando extrair m3u8...")
+                
+                val response = app.get(url)
+                println("[HypeflixExtractor] Response status: ${response.code}")
+                
+                val responseText = response.text
+                println("[HypeflixExtractor] Response preview (500 chars): ${responseText.take(500)}")
+                
                 val patterns = listOf(
                     Regex("""(?:file|src|source|url)\s*[:=]\s*['"]([^'"]+\.m3u8[^'"]*)['"]"""),
                     Regex("""(https?://[^"']+\.m3u8[^"']*)"""),
@@ -189,22 +326,29 @@ object HypeflixExtractor {
                     Regex(""""url"\s*:\s*"([^"]+\.m3u8[^"]*)"""")
                 )
                 
-                val response = app.get(url).text
-                
-                for (pattern in patterns) {
-                    val match = pattern.find(response)
+                for ((index, pattern) in patterns.withIndex()) {
+                    val match = pattern.find(responseText)
                     if (match != null) {
                         val extractedUrl = match.groupValues[1]
+                        println("[HypeflixExtractor] Pattern $index encontrou: $extractedUrl")
+                        
                         if (extractedUrl.isNotBlank()) {
-                            return fixUrl(extractedUrl)
+                            val fixedUrl = fixUrl(extractedUrl)
+                            println("[HypeflixExtractor] URL fixada: $fixedUrl")
+                            return fixedUrl
                         }
                     }
                 }
+                
+                println("[HypeflixExtractor] Nenhum m3u8 encontrado nos patterns")
+            } else {
+                println("[HypeflixExtractor] URL não parece ser de player, ignorando")
             }
             
-            null
+            return null
         } catch (e: Exception) {
-            null
+            println("[HypeflixExtractor] ERRO em extractM3u8FromUrl: ${e.message}")
+            return null
         }
     }
 
@@ -213,22 +357,34 @@ object HypeflixExtractor {
         referer: String,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
+        println("[HypeflixExtractor] extractAllVideoLinks chamado")
+        println("[HypeflixExtractor] Content preview: ${content.take(200)}")
+        
         var found = false
         
         // Buscar m3u8
         val m3u8Pattern = Regex("""(https?://[^\s"']*\.m3u8[^\s"']*)""")
-        m3u8Pattern.findAll(content).forEach { match ->
+        val m3u8Matches = m3u8Pattern.findAll(content).toList()
+        println("[HypeflixExtractor] M3U8 matches encontrados: ${m3u8Matches.size}")
+        
+        m3u8Matches.forEachIndexed { index, match ->
             val url = match.value
+            println("[HypeflixExtractor] M3U8 match $index: $url")
+            
             if (url.isNotBlank()) {
+                val fixedUrl = fixUrl(url)
+                val quality = getQualityFromUrl(url)
+                println("[HypeflixExtractor] Adicionando m3u8 - URL: $fixedUrl, Quality: $quality")
+                
                 callback(
                     newExtractorLink(
                         "Hypeflix",
                         "Extracted M3U8",
-                        fixUrl(url),
+                        fixedUrl,
                         ExtractorLinkType.M3U8
                     ) {
                         this.referer = referer
-                        quality = getQualityFromUrl(url)
+                        this.quality = quality
                     }
                 )
                 found = true
@@ -237,45 +393,74 @@ object HypeflixExtractor {
         
         // Buscar mp4
         val mp4Pattern = Regex("""(https?://[^\s"']*\.mp4[^\s"']*)""")
-        mp4Pattern.findAll(content).forEach { match ->
+        val mp4Matches = mp4Pattern.findAll(content).toList()
+        println("[HypeflixExtractor] MP4 matches encontrados: ${mp4Matches.size}")
+        
+        mp4Matches.forEachIndexed { index, match ->
             val url = match.value
+            println("[HypeflixExtractor] MP4 match $index: $url")
+            
             if (url.isNotBlank()) {
+                val fixedUrl = fixUrl(url)
+                val quality = getQualityFromUrl(url)
+                println("[HypeflixExtractor] Adicionando mp4 - URL: $fixedUrl, Quality: $quality")
+                
                 callback(
                     newExtractorLink(
                         "Hypeflix",
                         "Extracted MP4",
-                        fixUrl(url),
+                        fixedUrl,
                         ExtractorLinkType.VIDEO
                     ) {
                         this.referer = referer
-                        quality = getQualityFromUrl(url)
+                        this.quality = quality
                     }
                 )
                 found = true
             }
         }
         
+        println("[HypeflixExtractor] extractAllVideoLinks resultado: $found")
         return found
     }
 
     private fun getQualityFromUrl(url: String): Int {
-        return when {
-            url.contains("360p", ignoreCase = true) -> Qualities.P360.value
-            url.contains("480p", ignoreCase = true) -> Qualities.P480.value
-            url.contains("720p", ignoreCase = true) -> Qualities.P720.value
-            url.contains("1080p", ignoreCase = true) -> Qualities.P1080.value
-            url.contains("2160p", ignoreCase = true) || url.contains("4k", ignoreCase = true) -> Qualities.P2160.value
-            else -> Qualities.Unknown.value
+        val quality = when {
+            url.contains("360p", ignoreCase = true) -> {
+                println("[HypeflixExtractor] Qualidade detectada: 360p")
+                Qualities.P360.value
+            }
+            url.contains("480p", ignoreCase = true) -> {
+                println("[HypeflixExtractor] Qualidade detectada: 480p")
+                Qualities.P480.value
+            }
+            url.contains("720p", ignoreCase = true) -> {
+                println("[HypeflixExtractor] Qualidade detectada: 720p")
+                Qualities.P720.value
+            }
+            url.contains("1080p", ignoreCase = true) -> {
+                println("[HypeflixExtractor] Qualidade detectada: 1080p")
+                Qualities.P1080.value
+            }
+            url.contains("2160p", ignoreCase = true) || url.contains("4k", ignoreCase = true) -> {
+                println("[HypeflixExtractor] Qualidade detectada: 4K")
+                Qualities.P2160.value
+            }
+            else -> {
+                println("[HypeflixExtractor] Qualidade desconhecida, usando 720p")
+                Qualities.Unknown.value
+            }
         }
+        return quality
     }
 
     private fun fixUrl(url: String): String {
-        return if (url.startsWith("//")) {
-            "https:$url"
-        } else if (!url.startsWith("http")) {
-            "https://$url"
-        } else {
-            url
+        val fixed = when {
+            url.startsWith("//") -> "https:$url"
+            !url.startsWith("http") -> "https://$url"
+            else -> url
         }
+        println("[HypeflixExtractor] fixUrl: $url -> $fixed")
+        return fixed
     }
 }
