@@ -200,71 +200,74 @@ class Hypeflix : MainAPI() {
             }
         }
     }
-
-    private fun extractEpisodesFromSite(
-        document: org.jsoup.nodes.Document,
-        url: String
-    ): List<Episode> {
-        val episodes = mutableListOf<Episode>()
-        
-        // Extrair episódios da aba de episódios
-        val episodeElements = document.select(".episode-item")
-        
-        episodeElements.forEachIndexed { index, episodeElement ->
-            try {
-                // O link está no atributo data-protected
-                val dataProtected = episodeElement.attr("data-protected")
-                if (dataProtected.isBlank()) return@forEachIndexed
-                
-                // Extrair título do episódio
-                val titleElement = episodeElement.selectFirst(".episode-title")
-                val title = titleElement?.text()?.trim() ?: "Episódio ${index + 1}"
-                
-                // Tentar extrair número do episódio
-                val epNumber = episodeElement.attr("data-ep").toIntOrNull()
-                    ?: Regex("Epis[oó]dio\\s*(\\d+)").find(title)?.groupValues?.get(1)?.toIntOrNull()
-                    ?: Regex("(\\d+)").find(title)?.groupValues?.get(1)?.toIntOrNull()
-                    ?: (index + 1)
-                
-                // Extrair descrição
-                val descriptionElement = episodeElement.selectFirst(".episode-description")
-                val description = descriptionElement?.text()?.trim()
-                
-                // Extrair duração
-                val durationElement = episodeElement.selectFirst(".episode-number")
-                val durationText = durationElement?.text()
-                val episodeDuration = durationText?.let {
-                    Regex("(\\d+) min").find(it)?.groupValues?.get(1)?.toIntOrNull()
-                }
-                
-                // Usar a URL data-protected como link do episódio
-                val episode = newEpisode(fixUrl(dataProtected)) {
-                    this.name = title
-                    this.season = 1 // Assumir temporada 1 por padrão
-                    this.episode = epNumber
-                    this.description = description
-                    
-                    // Configurar duração do episódio se disponível
-                    if (episodeDuration != null) {
-                        this.duration = episodeDuration
-                    }
-                    
-                    // Extrair imagem do episódio
-                    val imgElement = episodeElement.selectFirst("img")
-                    imgElement?.attr("src")?.let { imgUrl ->
-                        this.posterUrl = fixUrl(imgUrl)
-                    }
-                }
-                
-                episodes.add(episode)
-            } catch (e: Exception) {
-                // Ignorar episódio com erro
+private fun extractEpisodesFromSite(
+    document: org.jsoup.nodes.Document,
+    url: String
+): List<Episode> {
+    val episodes = mutableListOf<Episode>()
+    
+    // Extrair episódios da aba de episódios
+    val episodeElements = document.select(".episode-item")
+    
+    episodeElements.forEachIndexed { index, episodeElement ->
+        try {
+            // O link está no atributo data-protected
+            val dataProtected = episodeElement.attr("data-protected")
+            if (dataProtected.isBlank()) return@forEachIndexed
+            
+            // Extrair título do episódio
+            val titleElement = episodeElement.selectFirst(".episode-title")
+            val title = titleElement?.text()?.trim() ?: "Episódio ${index + 1}"
+            
+            // Tentar extrair número do episódio
+            val epNumber = episodeElement.attr("data-ep").toIntOrNull()
+                ?: Regex("Epis[oó]dio\\s*(\\d+)").find(title)?.groupValues?.get(1)?.toIntOrNull()
+                ?: Regex("(\\d+)").find(title)?.groupValues?.get(1)?.toIntOrNull()
+                ?: (index + 1)
+            
+            // Extrair descrição
+            val descriptionElement = episodeElement.selectFirst(".episode-description")
+            val description = descriptionElement?.text()?.trim()
+            
+            // Extrair duração (em minutos)
+            val durationElement = episodeElement.selectFirst(".episode-number")
+            val durationText = durationElement?.text()
+            val episodeDuration = durationText?.let {
+                Regex("(\\d+) min").find(it)?.groupValues?.get(1)?.toIntOrNull()
             }
+            
+            // Construir a descrição incluindo a duração se disponível
+            val fullDescription = buildString {
+                description?.let { append(it) }
+                episodeDuration?.let { 
+                    if (isNotEmpty()) append("\n\n")
+                    append("Duração: ${it} min")
+                }
+            }.takeIf { it.isNotEmpty() }
+            
+            // Usar a URL data-protected como link do episódio
+            val episode = newEpisode(fixUrl(dataProtected)) {
+                this.name = title
+                this.season = 1 // Assumir temporada 1 por padrão
+                this.episode = epNumber
+                this.description = fullDescription
+                
+                // Extrair imagem do episódio
+                val imgElement = episodeElement.selectFirst("img")
+                imgElement?.attr("src")?.let { imgUrl ->
+                    this.posterUrl = fixUrl(imgUrl)
+                }
+            }
+            
+            episodes.add(episode)
+        } catch (e: Exception) {
+            // Ignorar episódio com erro
         }
-        
-        return episodes
     }
-
+    
+    return episodes
+}
+    
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
