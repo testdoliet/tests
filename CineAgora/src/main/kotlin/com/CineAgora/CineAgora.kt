@@ -260,8 +260,8 @@ class CineAgora : MainAPI() {
             badges.add("🗣️ $languageBadge")
         }
         
-        if (score != null) {
-            badges.add("⭐ ${score.value}/10")
+        if (scoreText != null && scoreText.isNotBlank() && scoreText != "N/A") {
+            badges.add("⭐ $scoreText")
         }
         
         if (lastEpisodeInfo != null && lastEpisodeInfo.isNotBlank()) {
