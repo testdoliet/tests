@@ -103,7 +103,7 @@ class CineAgora : MainAPI() {
         val sectionId = request.data.removePrefix("section_")
         val path = SECTION_URLS[sectionId] ?: return newHomePageResponse(request.name, emptyList(), false)
         
-        // Construir URL completa com paginação
+        // Construir URL completa - page 0 = URL base, page 1 = /page/2/, etc.
         val baseUrl = mainUrl + path
         val url = if (page == 0) {
             baseUrl
@@ -114,27 +114,33 @@ class CineAgora : MainAPI() {
         val document = app.get(url).document
         val items = extractSectionItems(document, sectionId)
         
-        // Verificar se tem próxima página
-        val hasNextPage = checkHasNextPage(document, page)
+        // Verificar se tem próxima página - CORRIGIDO: page + 2 se torna page + 1
+        val hasNextPage = checkHasNextPage(document, page + 1) // +1 porque o site começa em 1
         
         return newHomePageResponse(request.name, items.distinctBy { it.url }, hasNextPage)
     }
 
-    private fun checkHasNextPage(document: org.jsoup.nodes.Document, currentPage: Int): Boolean {
+    private fun checkHasNextPage(document: org.jsoup.nodes.Document, currentPageSite: Int): Boolean {
         // Verificar se existe paginação
         val paginationElements = document.select(".pagination a, .page-numbers a, .paginacao a, .nav-links a")
         if (paginationElements.isEmpty()) return false
         
-        // Verificar se há link para próxima página
+        // O site mostra página 1, 2, 3... mas estamos usando currentPageSite (que começa em 1 para página 1 do site)
+        // Verificar se há link para a próxima página do site
         return paginationElements.any { element ->
             val text = element.text().trim()
             val href = element.attr("href")
             
-            text.contains((currentPage + 2).toString()) ||
+            // Verificar se tem número da próxima página
+            text.toIntOrNull()?.let { pageNum ->
+                pageNum > currentPageSite
+            } ?: false ||
+            // Ou se tem texto "Próxima"
             text.contains("Próxima", ignoreCase = true) ||
             text.contains(">") || 
             text.contains("›") ||
-            href.contains("/page/${currentPage + 2}/")
+            // Ou se o href contém a próxima página
+            href.contains("/page/${currentPageSite + 1}/")
         }
     }
 
@@ -144,10 +150,14 @@ class CineAgora : MainAPI() {
         // Para "Últimos Filmes" e "Últimas Séries", já usamos URLs específicas,
         // então não precisamos filtrar. Mas mantemos o filtro para segurança.
         return when (sectionId) {
-            "ultimos-filmes", "filmes-populares" -> items.filter { item ->
-                val href = item.selectFirst("a")?.attr("href") ?: ""
-                !href.contains("/series-") && !href.contains("/serie-") && !href.contains("/tv-")
-            }.mapNotNull { it.toSearchResult() }
+            "ultimos-filmes", "filmes-populares", "acao", "aventura", "animacao", 
+            "biograficos", "comedia", "crime", "documentarios", "esporte", "drama",
+            "familia", "fantasia", "historicos", "terror", "musicais", "misterio",
+            "romanticos", "suspense", "sci-fi", "tv", "thriller", "guerra", "faroeste" -> 
+                items.filter { item ->
+                    val href = item.selectFirst("a")?.attr("href") ?: ""
+                    !href.contains("/series-") && !href.contains("/serie-") && !href.contains("/tv-")
+                }.mapNotNull { it.toSearchResult() }
             
             "ultimas-series", "series-populares" -> items.filter { item ->
                 val href = item.selectFirst("a")?.attr("href") ?: ""
@@ -284,25 +294,6 @@ class CineAgora : MainAPI() {
         } else {
             fixUrl(href)
         }
-        
-        // Criar descrição com badges (para aparecer como tooltip)
-        val description = buildString {
-            if (qualityBadge != null && qualityBadge.isNotBlank()) {
-                append("📀 $qualityBadge")
-            }
-            if (languageBadge != null && languageBadge.isNotBlank()) {
-                if (isNotEmpty()) append(" • ")
-                append("🗣️ $languageBadge")
-            }
-            if (scoreText != null && scoreText != "N/A") {
-                if (isNotEmpty()) append(" • ")
-                append("⭐ $scoreText")
-            }
-            if (lastEpisodeInfo != null && lastEpisodeInfo.isNotBlank()) {
-                if (isNotEmpty()) append(" • ")
-                append("📺 $lastEpisodeInfo")
-            }
-        }.takeIf { it.isNotBlank() }
         
         return if (isSerie) {
             newTvSeriesSearchResponse(cleanTitle, urlWithPoster) {
