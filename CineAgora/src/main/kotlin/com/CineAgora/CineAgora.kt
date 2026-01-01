@@ -15,47 +15,56 @@ class CineAgora : MainAPI() {
     override val usesWebView = false
 
     companion object {
-        // URLs específicas para cada seção
-        private val SECTION_URLS = mapOf(
-            // Seções da página principal
-            "ultimos-filmes" to "$mainUrl/",
-            "ultimas-series" to "$mainUrl/series-online-hd-gratis/",
+        // URLs específicas para cada seção (serão preenchidas no init)
+        private val SECTION_URLS = mutableMapOf<String, String>()
+        
+        init {
+            // URLs base (sem o mainUrl)
+            val baseUrls = mapOf(
+                // Seções da página principal
+                "ultimos-filmes" to "/",
+                "ultimas-series" to "/series-online-hd-gratis/",
+                
+                // Seções com URLs específicas
+                "filmes-populares" to "/filmes-hd-online/filmes-populares-hd/",
+                "series-populares" to "/series-online-hd-gratis/series-populares-hd/",
+                "netflix" to "/netflix/",
+                "paramount" to "/paramount/",
+                "disney" to "/disney/",
+                "apple" to "/apple/",
+                "hbo" to "/hbo/",
+                "acao" to "/filmes-hd-online/filmes-de-acao-hd/",
+                "aventura" to "/filmes-hd-online/filmes-de-aventura-gratis/",
+                "animacao" to "/filmes-hd-online/filmes-de-animacao-online/",
+                "biograficos" to "/filmes-hd-online/assistir-filmes-biograficos/",
+                "comedia" to "/filmes-hd-online/comedia-filmes-online/",
+                "crime" to "/filmes-hd-online/crime-filmes-online/",
+                "documentarios" to "/filmes-hd-online/documentarios-em-portugues/",
+                "esporte" to "/filmes-hd-online/filmes-de-esporte-hd/",
+                "drama" to "/filmes-hd-online/filmes-drama-online-hd/",
+                "familia" to "/filmes-hd-online/filmes-familia-online/",
+                "fantasia" to "/filmes-hd-online/filmes-fantasia-magia/",
+                "historicos" to "/filmes-hd-online/filmes-historicos-hd/",
+                "terror" to "/filmes-hd-online/filmes-terror-horror/",
+                "musicais" to "/filmes-hd-online/filmes-musicais-online/",
+                "misterio" to "/filmes-hd-online/filmes-misterio-suspense/",
+                "romanticos" to "/filmes-hd-online/filmes-romanticos-online/",
+                "suspense" to "/filmes-hd-online/filmes-suspense-hd/",
+                "sci-fi" to "/filmes-hd-online/ficcao-cientifica-hd/",
+                "tv" to "/filmes-hd-online/filmes-para-tv-hd/",
+                "thriller" to "/filmes-hd-online/thriller-suspense-online/",
+                "guerra" to "/filmes-hd-online/filmes-guerra-epicas/",
+                "faroeste" to "/filmes-hd-online/filmes-faroeste-online/"
+            )
             
-            // Seções com URLs específicas
-            "filmes-populares" to "$mainUrl/filmes-hd-online/filmes-populares-hd/",
-            "series-populares" to "$mainUrl/series-online-hd-gratis/series-populares-hd/",
-            "netflix" to "$mainUrl/netflix/",
-            "paramount" to "$mainUrl/paramount/",
-            "disney" to "$mainUrl/disney/",
-            "apple" to "$mainUrl/apple/",
-            "hbo" to "$mainUrl/hbo/",
-            "acao" to "$mainUrl/filmes-hd-online/filmes-de-acao-hd/",
-            "aventura" to "$mainUrl/filmes-hd-online/filmes-de-aventura-gratis/",
-            "animacao" to "$mainUrl/filmes-hd-online/filmes-de-animacao-online/",
-            "biograficos" to "$mainUrl/filmes-hd-online/assistir-filmes-biograficos/",
-            "comedia" to "$mainUrl/filmes-hd-online/comedia-filmes-online/",
-            "crime" to "$mainUrl/filmes-hd-online/crime-filmes-online/",
-            "documentarios" to "$mainUrl/filmes-hd-online/documentarios-em-portugues/",
-            "esporte" to "$mainUrl/filmes-hd-online/filmes-de-esporte-hd/",
-            "drama" to "$mainUrl/filmes-hd-online/filmes-drama-online-hd/",
-            "familia" to "$mainUrl/filmes-hd-online/filmes-familia-online/",
-            "fantasia" to "$mainUrl/filmes-hd-online/filmes-fantasia-magia/",
-            "historicos" to "$mainUrl/filmes-hd-online/filmes-historicos-hd/",
-            "terror" to "$mainUrl/filmes-hd-online/filmes-terror-horror/",
-            "musicais" to "$mainUrl/filmes-hd-online/filmes-musicais-online/",
-            "misterio" to "$mainUrl/filmes-hd-online/filmes-misterio-suspense/",
-            "romanticos" to "$mainUrl/filmes-hd-online/filmes-romanticos-online/",
-            "suspense" to "$mainUrl/filmes-hd-online/filmes-suspense-hd/",
-            "sci-fi" to "$mainUrl/filmes-hd-online/ficcao-cientifica-hd/",
-            "tv" to "$mainUrl/filmes-hd-online/filmes-para-tv-hd/",
-            "thriller" to "$mainUrl/filmes-hd-online/thriller-suspense-online/",
-            "guerra" to "$mainUrl/filmes-hd-online/filmes-guerra-epicas/",
-            "faroeste" to "$mainUrl/filmes-hd-online/filmes-faroeste-online/"
-        )
+            // Não podemos usar this.mainUrl aqui, então vamos deixar como placeholders
+            // As URLs serão construídas no getMainPage
+            SECTION_URLS.putAll(baseUrls)
+        }
     }
 
     override val mainPage = mainPageOf(
-        *SECTION_URLS.map { (section, url) ->
+        *SECTION_URLS.keys.map { section ->
             "section_$section" to getSectionName(section)
         }.toTypedArray()
     )
@@ -101,9 +110,10 @@ class CineAgora : MainAPI() {
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val sectionId = request.data.removePrefix("section_")
-        val baseUrl = SECTION_URLS[sectionId] ?: mainUrl
+        val path = SECTION_URLS[sectionId] ?: "/"
         
-        // Construir URL com paginação
+        // Construir URL completa com paginação
+        val baseUrl = mainUrl + path
         val url = when {
             page == 0 -> baseUrl
             baseUrl.endsWith("/") -> "${baseUrl}page/${page + 1}/"
@@ -113,7 +123,7 @@ class CineAgora : MainAPI() {
         val document = app.get(url).document
         val items = extractSectionItems(document, sectionId)
         
-        // Verificar se tem próxima página (procura por links de paginação)
+        // Verificar se tem próxima página
         val hasNextPage = document.select(".pagination a, .page-numbers a, .paginacao a")
             .any { it.text().contains((page + 2).toString()) || 
                    it.text().contains("Próxima", ignoreCase = true) ||
@@ -226,7 +236,6 @@ class CineAgora : MainAPI() {
     private fun cleanTitle(title: String): String {
         return title
             .replace(Regex("\\(\\d{4}\\)"), "")
-            .replace(Regex("\\d{4}$"), "")
             .replace(Regex("\\(dublado\\)", RegexOption.IGNORE_CASE), "")
             .replace(Regex("\\(legendado\\)", RegexOption.IGNORE_CASE), "")
             .replace(Regex("-\\s*epis[oó]dio\\s*\\d+", RegexOption.IGNORE_CASE), "")
