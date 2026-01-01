@@ -4,6 +4,7 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.app
 import org.jsoup.nodes.Element
+import java.net.URLEncoder
 
 class CineAgora : MainAPI() {
     override var mainUrl = "https://cineagora.net"
@@ -172,6 +173,60 @@ class CineAgora : MainAPI() {
         return nextPageLinks.isNotEmpty()
     }
 
+    // IMPLEMENTAÇÃO DA PESQUISA COM BASE NA SUA DESCOBERTA
+    override suspend fun search(query: String): List<SearchResponse> {
+        if (query.isBlank()) return emptyList()
+        
+        // De acordo com sua análise, o site usa POST para a raiz com parâmetros específicos
+        val searchUrl = mainUrl
+        
+        try {
+            val document = app.post(
+                url = searchUrl,
+                data = mapOf(
+                    "do" to "search",
+                    "subaction" to "search",
+                    "story" to query
+                ),
+                referer = searchUrl,
+                headers = mapOf(
+                    "Content-Type" to "application/x-www-form-urlencoded",
+                    "Origin" to mainUrl,
+                    "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
+                )
+            ).document
+            
+            // Processar os resultados da pesquisa
+            return extractSearchResults(document)
+            
+        } catch (e: Exception) {
+            // Fallback: tentar com GET se POST falhar
+            try {
+                val encodedQuery = URLEncoder.encode(query, "UTF-8")
+                val fallbackUrl = "$mainUrl/?do=search&subaction=search&story=$encodedQuery"
+                
+                val document = app.get(fallbackUrl).document
+                return extractSearchResults(document)
+            } catch (e2: Exception) {
+                // Retornar lista vazia se ambas as tentativas falharem
+                return emptyList()
+            }
+        }
+    }
+
+    private fun extractSearchResults(document: org.jsoup.nodes.Document): List<SearchResponse> {
+        // Primeiro tentar seletores específicos da página de busca
+        val searchItems = document.select(".film-list .content .col-6.col-sm-4.col-md-3.col-lg-2 .item-relative > a.item")
+        
+        return if (searchItems.isNotEmpty()) {
+            searchItems.mapNotNull { it.toSearchResult() }
+        } else {
+            // Fallback: seletores gerais (os mesmos da página principal)
+            document.select(".item, .item-relative .item, .poster, .movie-item, .serie-item")
+                .mapNotNull { it.toSearchResult() }
+        }
+    }
+
     private fun extractSectionItems(document: org.jsoup.nodes.Document, sectionId: String): List<SearchResponse> {
         val items = document.select(".item, .item-relative .item, .poster, .movie-item, .serie-item")
         
@@ -285,7 +340,8 @@ class CineAgora : MainAPI() {
         // Determinar se é filme ou série
         val isSerie = href.contains("/series-") || href.contains("/serie-") || href.contains("/tv-") || 
                       href.contains("/series-online") ||
-                      lastEpisodeInfo?.contains(Regex("S\\d+.*E\\d+")) == true
+                      lastEpisodeInfo?.contains(Regex("S\\d+.*E\\d+")) == true ||
+                      title.contains(Regex("(?i)(temporada|episódio|season|episode)"))
         
         // Construir badges para mostrar no Cloudstream
         val badges = mutableListOf<String>()
@@ -323,6 +379,10 @@ class CineAgora : MainAPI() {
                 if (quality != null) {
                     this.quality = quality
                 }
+                // Adicionar badges como metadata
+                if (badges.isNotEmpty()) {
+                    this.description = badges.joinToString(" • ")
+                }
             }
         } else {
             newMovieSearchResponse(cleanTitle, fixUrl(href)) {
@@ -332,18 +392,173 @@ class CineAgora : MainAPI() {
                 if (quality != null) {
                     this.quality = quality
                 }
+                // Adicionar badges como metadata
+                if (badges.isNotEmpty()) {
+                    this.description = badges.joinToString(" • ")
+                }
             }
         }
     }
 
-    // As outras funções retornam false/nulo por enquanto conforme solicitado
-    
-    override suspend fun search(query: String): List<SearchResponse> {
-        return emptyList()
+    // SISTEMA DE RECOMENDAÇÕES DO CLOUDSTREAM
+    override suspend fun getRecommendations(url: String): List<SearchResponse> {
+        return try {
+            // Carregar a página para obter recomendações
+            val document = app.get(url).document
+            
+            // Primeiro tentar encontrar a seção "Últimos lançamentos do cinema" que você identificou
+            val recommendationsSection = document.select(".title--area:contains(Últimos lançamentos do cinema) + .content, " +
+                                                       ".title--area:contains(Recomendações) + .content, " +
+                                                       ".title--area:contains(Populares) + .content, " +
+                                                       ".section-recommendations, " +
+                                                       ".recommended, " +
+                                                       ".similar")
+            
+            val recommendations = if (recommendationsSection.isNotEmpty()) {
+                // Extrair itens da seção de recomendações
+                recommendationsSection.first().select(".item, .item-relative .item, .poster, .movie-item, .serie-item")
+                    .mapNotNull { it.toSearchResult() }
+            } else {
+                // Fallback: procurar por seções que pareçam recomendações
+                val allSections = document.select(".content, .section, .widget")
+                val recommendedItems = mutableListOf<SearchResponse>()
+                
+                for (section in allSections) {
+                    val sectionTitle = section.select(".title, h2, h3, h4").text()
+                    if (sectionTitle.contains(Regex("(?i)(recomenda|similar|relacionado|também|outros|lançamento)"))) {
+                        val items = section.select(".item, .item-relative .item, .poster, .movie-item, .serie-item")
+                            .mapNotNull { it.toSearchResult() }
+                        recommendedItems.addAll(items)
+                    }
+                }
+                
+                // Se não encontrou recomendações específicas, pegar alguns itens aleatórios da página
+                if (recommendedItems.isEmpty()) {
+                    document.select(".item, .item-relative .item, .poster, .movie-item, .serie-item")
+                        .shuffled()
+                        .take(10)
+                        .mapNotNull { it.toSearchResult() }
+                } else {
+                    recommendedItems.distinctBy { it.url }
+                }
+            }
+            
+            // Limitar a 15 recomendações no máximo
+            recommendations.take(15)
+            
+        } catch (e: Exception) {
+            // Se falhar, retornar lista vazia
+            emptyList()
+        }
     }
 
+    // Melhorar a função load para incluir recomendações quando possível
     override suspend fun load(url: String): LoadResponse? {
-        return null
+        // Primeiro, tentar carregar a página para analisar o conteúdo
+        val document = try {
+            app.get(url).document
+        } catch (e: Exception) {
+            return null
+        }
+        
+        // Extrair informações básicas da página
+        val title = document.selectFirst("h1, .title, h2")?.text()?.trim() ?: "Título não encontrado"
+        val poster = document.selectFirst("img.poster, .poster img, img.thumbnail, .thumbnail img")?.attr("src")?.let { fixUrl(it) }
+        val description = document.selectFirst(".description, .sinopse, .plot, .content p")?.text()?.trim()
+        
+        // Determinar se é filme ou série baseado na URL e conteúdo
+        val isSerie = url.contains("/series-") || url.contains("/serie-") || url.contains("/tv-") || 
+                     url.contains("/series-online") ||
+                     document.select(".episodes, .seasons, .temporada, .episodio").isNotEmpty() ||
+                     document.text().contains(Regex("(?i)(temporada|episódio|season|episode)"))
+        
+        // Extrair ano
+        val year = document.selectFirst(".year, .date, time")?.text()?.toIntOrNull()
+            ?: Regex("(\\d{4})").find(title)?.groupValues?.get(1)?.toIntOrNull()
+        
+        // Extrair gêneros
+        val genres = document.select(".genres a, .genre a, .category a, a[href*='genero'], a[href*='categoria']")
+            .mapNotNull { it.text().trim() }
+            .takeIf { it.isNotEmpty() }
+        
+        // Extrair atores/diretores se disponível
+        val actors = document.select(".actors a, .cast a, .elenco a")
+            .mapNotNull { it.text().trim() }
+            .takeIf { it.isNotEmpty() }
+        
+        // Extrair duração (para filmes)
+        val duration = document.selectFirst(".duration, .runtime, .time")?.text()?.trim()
+        
+        // Extrair temporadas/episódios (para séries)
+        val seasons = mutableListOf<Episode>()
+        if (isSerie) {
+            val episodeElements = document.select(".episodes-list .episode, .episode-item, [data-episode]")
+            if (episodeElements.isNotEmpty()) {
+                // Se houver lista de episódios, criar temporadas
+                episodesToSeasons(episodeElements)
+            }
+        }
+        
+        return if (isSerie) {
+            newTvSeriesLoadResponse(title, url, TvType.TvSeries, seasons) {
+                this.posterUrl = poster
+                this.year = year
+                this.plot = description
+                this.tags = genres
+                this.actors = actors
+                this.recommendations = getRecommendations(url)
+            }
+        } else {
+            newMovieLoadResponse(title, url, TvType.Movie, url) {
+                this.posterUrl = poster
+                this.year = year
+                this.plot = description
+                this.tags = genres
+                this.actors = actors
+                this.duration = duration?.replace(Regex("[^0-9]"), "")?.toIntOrNull()
+                this.recommendations = getRecommendations(url)
+            }
+        }
+    }
+    
+    private fun episodesToSeasons(episodeElements: org.jsoup.select.Elements): List<Episode> {
+        val seasons = mutableListOf<Episode>()
+        val seasonMap = mutableMapOf<Int, MutableList<Episode>>()
+        
+        episodeElements.forEach { element ->
+            val episodeNumber = element.attr("data-episode")?.toIntOrNull() 
+                ?: Regex("E(\\d+)").find(element.text())?.groupValues?.get(1)?.toIntOrNull()
+                ?: 1
+            
+            val seasonNumber = element.attr("data-season")?.toIntOrNull()
+                ?: Regex("S(\\d+)").find(element.text())?.groupValues?.get(1)?.toIntOrNull()
+                ?: 1
+            
+            val title = element.selectFirst(".title, .name")?.text()?.trim()
+                ?: element.text().trim()
+            
+            val episodeUrl = element.selectFirst("a")?.attr("href")?.let { fixUrl(it) }
+            
+            if (episodeUrl != null) {
+                val episode = newEpisode(episodeUrl) {
+                    this.name = title
+                    this.season = seasonNumber
+                    this.episode = episodeNumber
+                }
+                
+                if (!seasonMap.containsKey(seasonNumber)) {
+                    seasonMap[seasonNumber] = mutableListOf()
+                }
+                seasonMap[seasonNumber]?.add(episode)
+            }
+        }
+        
+        // Ordenar por temporada e episódio
+        seasonMap.keys.sorted().forEach { seasonNum ->
+            seasonMap[seasonNum]?.sortedBy { it.episode }?.forEach { seasons.add(it) }
+        }
+        
+        return seasons
     }
 
     override suspend fun loadLinks(
