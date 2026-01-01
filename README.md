@@ -4,7 +4,7 @@
 <img src="https://img.shields.io/badge/Status-Experimental-yellow?style=for-the-badge" alt="Experimental">
 <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="MIT License">
 
-# LietRepo
+# lietrepo
 ## Repositório experimental de plugins para CloudStream 3
 
 ### 🇧🇷 A Extensão BR para CloudStream 3   
