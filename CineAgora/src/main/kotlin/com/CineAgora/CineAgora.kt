@@ -734,7 +734,16 @@ override suspend fun loadLinks(
     println("[CineAgora] loadLinks chamado com data: $data")
     println("[CineAgora] isCasting: $isCasting")
     
+    // Adiciona um pequeno delay para evitar rate limiting
+    kotlinx.coroutines.delay(1000)
+    
     // Usar o extractor separado
-    return CineAgoraExtractor.extractVideoLinks(data, name, callback)
-  }
+    val success = CineAgoraExtractor.extractVideoLinks(data, name, callback)
+    
+    if (!success) {
+        println("[CineAgora] Extração falhou, tentando método alternativo...")
+        // Pode tentar um método alternativo aqui se necessário
+    }
+    
+    return success
 }
