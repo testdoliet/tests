@@ -234,6 +234,91 @@ class CineAgora : MainAPI() {
         return items.mapNotNull { it.toSearchResult() }
     }
 
+    // FUNÇÃO PARA EXTRAIR RECOMENDAÇÕES DA PÁGINA INICIAL
+    private suspend fun getRecommendationsFromHomePage(): List<SearchResponse> {
+        return try {
+            // Carregar a página inicial
+            val document = app.get(mainUrl).document
+            
+            // TENTAR OS SELETORES ESPECÍFICOS DA SEÇÃO "ÚLTIMOS LANÇAMENTOS DO CINEMA"
+            
+            // 1. Primeiro tente o seletor baseado na análise do slider
+            val sliderItems = document.select(".sslider .slide-content .slide, .sslider .slide-content .item-relative")
+            
+            val recommendations = if (sliderItems.isNotEmpty()) {
+                // Extrair dos itens do slider
+                sliderItems.mapNotNull { element ->
+                    try {
+                        // Encontrar o link principal
+                        val linkElement = element.selectFirst("a")
+                        val href = linkElement?.attr("href") ?: return@mapNotNull null
+                        
+                        // Encontrar o título
+                        val titleElement = element.selectFirst(".info .title, .item-footer .title, .title")
+                        val title = titleElement?.text()?.trim() ?: return@mapNotNull null
+                        
+                        // Limpar título (remover ano)
+                        val cleanTitle = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
+                        
+                        // Encontrar a imagem
+                        val imgElement = element.selectFirst("img.thumbnail, .thumbnail-outer img, img")
+                        val posterUrl = imgElement?.attr("src")?.let { fixUrl(it) }
+                        
+                        // Extrair ano do título
+                        val year = Regex("\\((\\d{4})\\)").find(title)?.groupValues?.get(1)?.toIntOrNull()
+                        
+                        // Determinar se é filme ou série baseado na URL
+                        val isSerie = href.contains("/series-") || href.contains("/serie-") || href.contains("/tv-")
+                        
+                        if (isSerie) {
+                            newTvSeriesSearchResponse(cleanTitle, fixUrl(href)) {
+                                this.posterUrl = posterUrl
+                                this.year = year
+                            }
+                        } else {
+                            newMovieSearchResponse(cleanTitle, fixUrl(href)) {
+                                this.posterUrl = posterUrl
+                                this.year = year
+                            }
+                        }
+                    } catch (e: Exception) {
+                        null
+                    }
+                }
+            } else {
+                // 2. Fallback: Procurar por qualquer seção que tenha "Últimos lançamentos" no título
+                val sections = document.select(".film-list, .section, .widget, .content")
+                val allItems = mutableListOf<SearchResponse>()
+                
+                for (section in sections) {
+                    val sectionTitle = section.selectFirst(".title, h2, h3, h4")?.text()
+                    if (sectionTitle != null && sectionTitle.contains("Últimos lançamentos", ignoreCase = true)) {
+                        val items = section.select(".item, .item-relative, .slide, .card")
+                            .mapNotNull { it.toSearchResult() }
+                        allItems.addAll(items)
+                    }
+                }
+                
+                // 3. Se não encontrou, pegar alguns itens da página inicial
+                if (allItems.isEmpty()) {
+                    document.select(".item, .item-relative .item")
+                        .shuffled()
+                        .take(10) // Limitar a 10 recomendações
+                        .mapNotNull { it.toSearchResult() }
+                } else {
+                    allItems.distinctBy { it.url }
+                }
+            }
+            
+            // Limitar a 15 recomendações no máximo
+            recommendations.take(15)
+            
+        } catch (e: Exception) {
+            // Se falhar, retornar lista vazia
+            emptyList()
+        }
+    }
+
     private fun extractScoreAdvanced(element: Element): Pair<String?, String?> {
         val selectors = listOf(
             ".item-info-ust .rating" to "Seletor rating principal",
@@ -344,25 +429,6 @@ class CineAgora : MainAPI() {
                       lastEpisodeInfo?.contains(Regex("S\\d+.*E\\d+")) == true ||
                       title.contains(Regex("(?i)(temporada|episódio|season|episode)"))
         
-        // Construir badges para mostrar no Cloudstream
-        val badges = mutableListOf<String>()
-        
-        if (qualityBadge != null && qualityBadge.isNotBlank()) {
-            badges.add("📀 $qualityBadge")
-        }
-        
-        if (languageBadge != null && languageBadge.isNotBlank()) {
-            badges.add("🗣️ $languageBadge")
-        }
-        
-        if (scoreText != null && scoreText.isNotBlank() && scoreText != "N/A") {
-            badges.add("⭐ $scoreText")
-        }
-        
-        if (lastEpisodeInfo != null && lastEpisodeInfo.isNotBlank()) {
-            badges.add("📺 $lastEpisodeInfo")
-        }
-        
         // Determinar qualidade baseada na badge
         val quality = when {
             qualityBadge?.contains("HD", ignoreCase = true) == true -> SearchQuality.HD
@@ -393,7 +459,7 @@ class CineAgora : MainAPI() {
         }
     }
 
-    // Função load simplificada sem recomendações
+    // Função load com recomendações integradas
     override suspend fun load(url: String): LoadResponse? {
         // Primeiro, tentar carregar a página para analisar o conteúdo
         val document = try {
@@ -422,7 +488,7 @@ class CineAgora : MainAPI() {
             .mapNotNull { it.text().trim() }
             .takeIf { it.isNotEmpty() }
         
-        // Extrair atores - CORRIGIDO: usando Actor do Cloudstream
+        // Extrair atores
         val actorElements = document.select(".actors a, .cast a, .elenco a")
         val actors = if (actorElements.isNotEmpty()) {
             actorElements.mapNotNull { element ->
@@ -469,7 +535,10 @@ class CineAgora : MainAPI() {
             }
         }
         
-        // Construir LoadResponse
+        // OBTER RECOMENDAÇÕES DA PÁGINA INICIAL
+        val recommendations = getRecommendationsFromHomePage()
+        
+        // Construir LoadResponse com recomendações
         return if (isSerie) {
             newTvSeriesLoadResponse(title, url, TvType.TvSeries, seasons) {
                 this.posterUrl = poster
@@ -479,6 +548,11 @@ class CineAgora : MainAPI() {
                 
                 // Adicionar atores usando addActors
                 actors?.let { addActors(it) }
+                
+                // Adicionar recomendações do Cloudstream
+                if (recommendations.isNotEmpty()) {
+                    this.recommendations = recommendations
+                }
             }
         } else {
             newMovieLoadResponse(title, url, TvType.Movie, url) {
@@ -490,6 +564,11 @@ class CineAgora : MainAPI() {
                 
                 // Adicionar atores usando addActors
                 actors?.let { addActors(it) }
+                
+                // Adicionar recomendações do Cloudstream
+                if (recommendations.isNotEmpty()) {
+                    this.recommendations = recommendations
+                }
             }
         }
     }
