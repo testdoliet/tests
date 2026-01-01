@@ -724,12 +724,17 @@ class CineAgora : MainAPI() {
         return null
     }
 
-    override suspend fun loadLinks(
-        data: String,
-        isCasting: Boolean,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        return false
-    }
+    
+override suspend fun loadLinks(
+    data: String,
+    isCasting: Boolean,
+    subtitleCallback: (SubtitleFile) -> Unit,
+    callback: (ExtractorLink) -> Unit
+): Boolean {
+    println("[CineAgora] loadLinks chamado com data: $data")
+    println("[CineAgora] isCasting: $isCasting")
+    
+    // Usar o extractor separado
+    return CineAgoraExtractor.extractVideoLinks(data, name, callback)
+  }
 }
