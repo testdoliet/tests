@@ -15,7 +15,7 @@ class CineAgora : MainAPI() {
     override val usesWebView = false
 
     companion object {
-        // Seções que estão na página principal (sem URLs específicas)
+        // Seções que estão na página principal (com URLs específicas)
         private val HOME_SECTIONS = listOf(
             "ultimos-filmes" to "Últimos Filmes",
             "ultimas-series" to "Últimas Séries"
@@ -23,6 +23,10 @@ class CineAgora : MainAPI() {
         
         // Seções com URLs específicas
         private val SECTION_URLS = mapOf(
+            // Links específicos para as seções da home
+            "ultimos-filmes" to "https://cineagora.net/filmes-hd-online/",
+            "ultimas-series" to "https://cineagora.net/series-online-hd-gratis/",
+            // Outras seções
             "filmes-populares" to "https://cineagora.net/filmes-hd-online/filmes-populares-hd/",
             "series-populares" to "https://cineagora.net/series-online-hd-gratis/series-populares-hd/",
             "netflix" to "https://cineagora.net/netflix/",
@@ -59,13 +63,16 @@ class CineAgora : MainAPI() {
         *HOME_SECTIONS.map { (section, name) -> 
             "home_$section" to name 
         }.toTypedArray(),
-        *SECTION_URLS.map { (section, url) ->
-            "section_$section" to getSectionName(section)
-        }.toTypedArray()
+        *SECTION_URLS.filterKeys { it !in HOME_SECTIONS.map { it.first } }
+                     .map { (section, _) ->
+                         "section_$section" to getSectionName(section)
+                     }.toTypedArray()
     )
 
     private fun getSectionName(section: String): String {
         return when (section) {
+            "ultimos-filmes" -> "Últimos Filmes"
+            "ultimas-series" -> "Últimas Séries"
             "filmes-populares" -> "Filmes Populares"
             "series-populares" -> "Séries Populares"
             "netflix" -> "Netflix"
@@ -104,41 +111,19 @@ class CineAgora : MainAPI() {
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val sectionId = request.data.removePrefix("home_").removePrefix("section_")
         
-        val document = if (request.data.startsWith("home_")) {
-            // Seções da página principal
-            app.get(mainUrl).document
-        } else {
-            // Seções com URLs específicas
-            val url = SECTION_URLS[sectionId] ?: mainUrl
-            app.get(url).document
-        }
+        // Usar URL específica para cada seção
+        val url = SECTION_URLS[sectionId] ?: mainUrl
         
-        val items = extractSectionItems(document, sectionId, request.data.startsWith("home_"))
+        val document = app.get(url).document
+        
+        val items = extractSectionItems(document, sectionId)
         return newHomePageResponse(request.name, items.distinctBy { it.url }, false)
     }
 
-    private fun extractSectionItems(document: org.jsoup.nodes.Document, sectionId: String, isHomeSection: Boolean): List<SearchResponse> {
-        // Para seções da home, precisamos filtrar por tipo
-        val items = document.select(".item, .item-relative .item")
+    private fun extractSectionItems(document: org.jsoup.nodes.Document, sectionId: String): List<SearchResponse> {
+        val items = document.select(".item, .item-relative .item, .poster, .movie-item, .serie-item")
         
-        return if (isHomeSection) {
-            when (sectionId) {
-                "ultimos-filmes" -> items.filter { item ->
-                    val href = item.selectFirst("a")?.attr("href") ?: ""
-                    !href.contains("/series-") && !href.contains("/serie-") && !href.contains("/tv-")
-                }.mapNotNull { it.toSearchResult() }
-                
-                "ultimas-series" -> items.filter { item ->
-                    val href = item.selectFirst("a")?.attr("href") ?: ""
-                    href.contains("/series-") || href.contains("/serie-") || href.contains("/tv-") ||
-                    item.selectFirst(".data")?.text()?.contains(Regex("Temporada|Episódio")) == true
-                }.mapNotNull { it.toSearchResult() }
-                
-                else -> items.mapNotNull { it.toSearchResult() }
-            }
-        } else {
-            items.mapNotNull { it.toSearchResult() }
-        }
+        return items.mapNotNull { it.toSearchResult() }
     }
 
     private fun extractScoreAdvanced(element: Element): Pair<String?, String?> {
@@ -210,11 +195,11 @@ class CineAgora : MainAPI() {
         val href = linkElement?.attr("href")?.takeIf { it.isNotBlank() } ?: return null
         
         // Título do card
-        val titleElement = selectFirst(".item-footer .title")
+        val titleElement = selectFirst(".item-footer .title, .title, .poster-title, h3, h4")
         val title = titleElement?.text()?.trim() ?: return null
         
         // Extrair ano
-        val year = selectFirst(".info span:first-child")?.text()?.toIntOrNull()
+        val year = selectFirst(".info span:first-child, .year, .date")?.text()?.toIntOrNull()
             ?: Regex("\\((\\d{4})\\)").find(title)?.groupValues?.get(1)?.toIntOrNull()
         
         // Limpar título (remover ano e outros detalhes)
@@ -224,14 +209,14 @@ class CineAgora : MainAPI() {
             .trim()
         
         // Imagem/poster
-        val imgElement = selectFirst("img.thumbnail")
+        val imgElement = selectFirst("img.thumbnail, img.poster, img")
         val posterUrl = imgElement?.attr("src")?.let { fixUrl(it) }
         
         // 1. Qualidade (HD, TS, etc.) - Primeiro .item-info
-        val qualityBadge = select(".item-info").firstOrNull()?.selectFirst("div:first-child")?.text()?.trim()
+        val qualityBadge = select(".item-info, .quality, .badge").firstOrNull()?.selectFirst("div:first-child, span")?.text()?.trim()
         
         // 2. Idioma (Dublado/Legendado) - Primeiro .item-info
-        val languageBadge = select(".item-info").firstOrNull()?.selectFirst("div:nth-child(2)")?.text()?.trim()
+        val languageBadge = select(".item-info, .language, .badge").firstOrNull()?.selectFirst("div:nth-child(2), .lang")?.text()?.trim()
         
         // 3. Score/Rating (usando a função avançada do AnimeFire)
         val scoreResult = extractScoreAdvanced(this)
@@ -242,11 +227,12 @@ class CineAgora : MainAPI() {
         }
         
         // 4. Último episódio adicionado (para séries) - Segundo .item-info ou .data
-        val lastEpisodeInfo = select(".item-info").getOrNull(1)?.selectFirst("small")?.text()?.trim()
-            ?: selectFirst(".data")?.text()?.trim()
+        val lastEpisodeInfo = select(".item-info, .episode, .data").getOrNull(1)?.selectFirst("small, .last-ep")?.text()?.trim()
+            ?: selectFirst(".data, .episode-info")?.text()?.trim()
         
         // Determinar se é filme ou série
         val isSerie = href.contains("/series-") || href.contains("/serie-") || href.contains("/tv-") || 
+                      href.contains("/series-online") ||
                       lastEpisodeInfo?.contains(Regex("S\\d+.*E\\d+")) == true
         
         // Construir badges para mostrar no Cloudstream
@@ -273,8 +259,8 @@ class CineAgora : MainAPI() {
         // Determinar qualidade baseada na badge
         val quality = when {
             qualityBadge?.contains("HD", ignoreCase = true) == true -> SearchQuality.HD
-            qualityBadge?.contains("4K", ignoreCase = true) == true -> SearchQuality.HD
-            qualityBadge?.contains("FULLHD", ignoreCase = true) == true -> SearchQuality.HD
+            qualityBadge?.contains("4K", ignoreCase = true) == true -> SearchQuality.UltraHD
+            qualityBadge?.contains("FULLHD", ignoreCase = true) == true -> SearchQuality.FullHd
             qualityBadge?.contains("TS", ignoreCase = true) == true -> SearchQuality.Cam
             else -> null
         }
@@ -287,10 +273,6 @@ class CineAgora : MainAPI() {
                 if (quality != null) {
                     this.quality = quality
                 }
-                // Adicionar badges como descrição
-                if (badgeText.isNotBlank()) {
-                    // Pode ser usado como metadata
-                }
             }
         } else {
             newMovieSearchResponse(cleanTitle, fixUrl(href)) {
@@ -299,10 +281,6 @@ class CineAgora : MainAPI() {
                 this.score = score
                 if (quality != null) {
                     this.quality = quality
-                }
-                // Adicionar badges como descrição
-                if (badgeText.isNotBlank()) {
-                    // Pode ser usado como metadata
                 }
             }
         }
@@ -327,5 +305,3 @@ class CineAgora : MainAPI() {
         return false
     }
 }
-
-
