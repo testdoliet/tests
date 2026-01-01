@@ -112,12 +112,64 @@ class CineAgora : MainAPI() {
         val sectionId = request.data.removePrefix("home_").removePrefix("section_")
         
         // Usar URL específica para cada seção
-        val url = SECTION_URLS[sectionId] ?: mainUrl
+        val baseUrl = SECTION_URLS[sectionId] ?: mainUrl
         
-        val document = app.get(url).document
+        // Verificar se a página atual é maior que 1 para adicionar /page/N/
+        val url = if (page > 1) {
+            // Verificar se a URL base já tem uma barra no final
+            val cleanUrl = if (baseUrl.endsWith("/")) baseUrl else "$baseUrl/"
+            "$cleanUrl/page/$page/"
+        } else {
+            baseUrl
+        }
+        
+        val document = try {
+            app.get(url).document
+        } catch (e: Exception) {
+            // Se falhar na paginação, pode ser que a seção não suporte
+            if (page > 1) {
+                // Retorna lista vazia se não houver mais páginas
+                return newHomePageResponse(request.name, emptyList(), false)
+            } else {
+                throw e
+            }
+        }
         
         val items = extractSectionItems(document, sectionId)
-        return newHomePageResponse(request.name, items.distinctBy { it.url }, false)
+        
+        // Verificar se há botões de paginação para determinar se há mais páginas
+        val hasNextPage = checkForNextPage(document, page)
+        
+        return newHomePageResponse(request.name, items.distinctBy { it.url }, hasNextPage)
+    }
+
+    private fun checkForNextPage(document: org.jsoup.nodes.Document, currentPage: Int): Boolean {
+        // Verificar botões de paginação
+        val pagination = document.select(".pagination, .nav-links, .page-numbers, a[href*='page/']")
+        
+        // Verificar se há algum link para a próxima página
+        val nextPageLinks = pagination.filter { element ->
+            val href = element.attr("href")
+            val text = element.text().lowercase()
+            href.contains("/page/${currentPage + 1}/") || 
+            text.contains("próxima") || 
+            text.contains("next") ||
+            element.hasClass("next") ||
+            element.hasClass("next-page")
+        }
+        
+        // Ou verificar se há número da próxima página
+        val pageNumbers = document.select(".page-numbers, .page-number, [class*='page']")
+            .filter { it.text().matches(Regex("\\d+")) }
+            .mapNotNull { it.text().toIntOrNull() }
+            .sorted()
+        
+        // Se houver número maior que a página atual
+        if (pageNumbers.any { it > currentPage }) {
+            return true
+        }
+        
+        return nextPageLinks.isNotEmpty()
     }
 
     private fun extractSectionItems(document: org.jsoup.nodes.Document, sectionId: String): List<SearchResponse> {
