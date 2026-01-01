@@ -16,7 +16,7 @@
 
 **Copie esta URL e cole no CloudStream:**
 
-[![URL do Repositório](https://img.shields.io/badge/📋_COPIAR_URL-000000?style=for-the-badge&logo=github&logoColor=white)](https://raw.githubusercontent.com/lawlietbr/lietrepo/main/builds/repo.json)
+[![URL do Repositório](https://img.shields.io/badge/📋_COPY URL-000000?style=for-the-badge&logo=github&logoColor=white)](https://raw.githubusercontent.com/lawlietbr/lietrepo/main/builds/repo.json)
 
 
 </div>
