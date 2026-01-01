@@ -141,6 +141,69 @@ class CineAgora : MainAPI() {
         }
     }
 
+    private fun extractScoreAdvanced(element: Element): Pair<String?, String?> {
+        val selectors = listOf(
+            ".item-info-ust .rating" to "Seletor rating principal",
+            ".rating" to "Seletor .rating",
+            ".score" to "Seletor .score",
+            ".item-info + div" to "Próximo ao item-info",
+            ".item-footer span" to "No rodapé do item",
+            "span:contains(★)" to "Span com estrela",
+            "span:contains(/10)" to "Span com /10",
+            "[class*='rating']" to "Classe contém 'rating'",
+            "[class*='score']" to "Classe contém 'score'",
+            ".item-info-ust div" to "Div dentro de item-info-ust",
+            "small" to "Tag small",
+            "b" to "Tag bold",
+            "i" to "Tag italic"
+        )
+
+        for ((selector, _) in selectors) {
+            val found = element.selectFirst(selector)?.text()?.trim()
+            if (!found.isNullOrBlank() && isScoreLike(found)) {
+                return found to selector
+            }
+        }
+
+        element.parent()?.let { parent ->
+            for ((selector, _) in selectors) {
+                val found = parent.selectFirst(selector)?.text()?.trim()
+                if (!found.isNullOrBlank() && isScoreLike(found)) {
+                    return found to "parent.$selector"
+                }
+            }
+        }
+
+        val html = element.outerHtml()
+        val scoreRegexes = listOf(
+            Regex("""(\d+\.\d+|\d+)\s*(?:★|/10|pontos)"""),
+            Regex("""class="[^"]*(?:rating|score)[^"]*">([^<]+)""")
+        )
+
+        for (regex in scoreRegexes) {
+            val match = regex.find(html)
+            if (match != null) {
+                val found = match.groupValues[1].trim()
+                if (isScoreLike(found)) {
+                    return found to "regex"
+                }
+            }
+        }
+
+        return null to null
+    }
+
+    private fun isScoreLike(text: String): Boolean {
+        return when {
+            text.equals("N/A", ignoreCase = true) -> true
+            text.matches(Regex("""^\d+(\.\d+)?$""")) -> true
+            text.matches(Regex("""^\d+(\.\d+)?/10$""")) -> true
+            text.contains("★") -> true
+            text.contains("pontos", ignoreCase = true) -> true
+            else -> false
+        }
+    }
+
     private fun Element.toSearchResult(): SearchResponse? {
         // Pegar o link principal
         val linkElement = this.selectFirst("a")
@@ -170,9 +233,13 @@ class CineAgora : MainAPI() {
         // 2. Idioma (Dublado/Legendado) - Primeiro .item-info
         val languageBadge = select(".item-info").firstOrNull()?.selectFirst("div:nth-child(2)")?.text()?.trim()
         
-        // 3. Score/Rating (com estrela) - .item-info-ust .rating
-        val ratingText = selectFirst(".item-info-ust .rating")?.ownText()?.trim()
-        val rating = ratingText?.toFloatOrNull()
+        // 3. Score/Rating (usando a função avançada do AnimeFire)
+        val scoreResult = extractScoreAdvanced(this)
+        val scoreText = scoreResult.first
+        val score = when {
+            scoreText == null || scoreText == "N/A" -> null
+            else -> scoreText.toFloatOrNull()?.let { Score.from10(it) }
+        }
         
         // 4. Último episódio adicionado (para séries) - Segundo .item-info ou .data
         val lastEpisodeInfo = select(".item-info").getOrNull(1)?.selectFirst("small")?.text()?.trim()
@@ -182,24 +249,26 @@ class CineAgora : MainAPI() {
         val isSerie = href.contains("/series-") || href.contains("/serie-") || href.contains("/tv-") || 
                       lastEpisodeInfo?.contains(Regex("S\\d+.*E\\d+")) == true
         
-        // Construir descrição com badges
-        val description = buildString {
-            if (qualityBadge != null && qualityBadge.isNotBlank()) {
-                append("Qualidade: $qualityBadge")
-            }
-            if (languageBadge != null && languageBadge.isNotBlank()) {
-                if (isNotEmpty()) append(" | ")
-                append("Idioma: $languageBadge")
-            }
-            if (rating != null) {
-                if (isNotEmpty()) append(" | ")
-                append("⭐ $rating")
-            }
-            if (lastEpisodeInfo != null && lastEpisodeInfo.isNotBlank()) {
-                if (isNotEmpty()) append(" | ")
-                append("Último: $lastEpisodeInfo")
-            }
-        }.takeIf { it.isNotBlank() }
+        // Construir badges para mostrar no Cloudstream
+        val badges = mutableListOf<String>()
+        
+        if (qualityBadge != null && qualityBadge.isNotBlank()) {
+            badges.add("📀 $qualityBadge")
+        }
+        
+        if (languageBadge != null && languageBadge.isNotBlank()) {
+            badges.add("🗣️ $languageBadge")
+        }
+        
+        if (score != null) {
+            badges.add("⭐ ${score.value}/10")
+        }
+        
+        if (lastEpisodeInfo != null && lastEpisodeInfo.isNotBlank()) {
+            badges.add("📺 $lastEpisodeInfo")
+        }
+        
+        val badgeText = badges.joinToString(" • ")
         
         // Determinar qualidade baseada na badge
         val quality = when {
@@ -214,25 +283,26 @@ class CineAgora : MainAPI() {
             newTvSeriesSearchResponse(cleanTitle, fixUrl(href)) {
                 this.posterUrl = posterUrl
                 this.year = year
+                this.score = score
                 if (quality != null) {
                     this.quality = quality
                 }
-                // Adicionar descrição com badges
-                if (description != null) {
-                    // Podemos adicionar como um campo extra ou metadata
-                    // O Cloudstream geralmente mostra isso no hover/card
+                // Adicionar badges como descrição
+                if (badgeText.isNotBlank()) {
+                    // Pode ser usado como metadata
                 }
             }
         } else {
             newMovieSearchResponse(cleanTitle, fixUrl(href)) {
                 this.posterUrl = posterUrl
                 this.year = year
+                this.score = score
                 if (quality != null) {
                     this.quality = quality
                 }
-                // Adicionar descrição com badges
-                if (description != null) {
-                    // Podemos adicionar como um campo extra ou metadata
+                // Adicionar badges como descrição
+                if (badgeText.isNotBlank()) {
+                    // Pode ser usado como metadata
                 }
             }
         }
