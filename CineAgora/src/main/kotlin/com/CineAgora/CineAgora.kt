@@ -381,7 +381,7 @@ class CineAgora : MainAPI() {
                 }
                 // Adicionar badges como metadata
                 if (badges.isNotEmpty()) {
-                    this.description = badges.joinToString(" • ")
+                    this.plot = badges.joinToString(" • ")
                 }
             }
         } else {
@@ -394,14 +394,14 @@ class CineAgora : MainAPI() {
                 }
                 // Adicionar badges como metadata
                 if (badges.isNotEmpty()) {
-                    this.description = badges.joinToString(" • ")
+                    this.plot = badges.joinToString(" • ")
                 }
             }
         }
     }
 
-    // SISTEMA DE RECOMENDAÇÕES DO CLOUDSTREAM
-    override suspend fun getRecommendations(url: String): List<SearchResponse> {
+    // FUNÇÃO PARA OBTER RECOMENDAÇÕES (não é override)
+    private suspend fun getRecommendations(url: String): List<SearchResponse> {
         return try {
             // Carregar a página para obter recomendações
             val document = app.get(url).document
@@ -424,8 +424,8 @@ class CineAgora : MainAPI() {
                 val recommendedItems = mutableListOf<SearchResponse>()
                 
                 for (section in allSections) {
-                    val sectionTitle = section.select(".title, h2, h3, h4").text()
-                    if (sectionTitle.contains(Regex("(?i)(recomenda|similar|relacionado|também|outros|lançamento)"))) {
+                    val sectionTitle = section.selectFirst(".title, h2, h3, h4")?.text()
+                    if (sectionTitle != null && sectionTitle.contains(Regex("(?i)(recomenda|similar|relacionado|também|outros|lançamento)"))) {
                         val items = section.select(".item, .item-relative .item, .poster, .movie-item, .serie-item")
                             .mapNotNull { it.toSearchResult() }
                         recommendedItems.addAll(items)
@@ -452,7 +452,7 @@ class CineAgora : MainAPI() {
         }
     }
 
-    // Melhorar a função load para incluir recomendações quando possível
+    // Função load simplificada sem recomendações
     override suspend fun load(url: String): LoadResponse? {
         // Primeiro, tentar carregar a página para analisar o conteúdo
         val document = try {
@@ -464,7 +464,7 @@ class CineAgora : MainAPI() {
         // Extrair informações básicas da página
         val title = document.selectFirst("h1, .title, h2")?.text()?.trim() ?: "Título não encontrado"
         val poster = document.selectFirst("img.poster, .poster img, img.thumbnail, .thumbnail img")?.attr("src")?.let { fixUrl(it) }
-        val description = document.selectFirst(".description, .sinopse, .plot, .content p")?.text()?.trim()
+        val plot = document.selectFirst(".description, .sinopse, .plot, .content p")?.text()?.trim()
         
         // Determinar se é filme ou série baseado na URL e conteúdo
         val isSerie = url.contains("/series-") || url.contains("/serie-") || url.contains("/tv-") || 
@@ -481,10 +481,22 @@ class CineAgora : MainAPI() {
             .mapNotNull { it.text().trim() }
             .takeIf { it.isNotEmpty() }
         
-        // Extrair atores/diretores se disponível
-        val actors = document.select(".actors a, .cast a, .elenco a")
-            .mapNotNull { it.text().trim() }
-            .takeIf { it.isNotEmpty() }
+        // Extrair atores - precisa converter para List<ActorData>
+        val actorElements = document.select(".actors a, .cast a, .elenco a")
+        val actors = if (actorElements.isNotEmpty()) {
+            actorElements.mapNotNull { element ->
+                val name = element.text().trim()
+                if (name.isNotBlank()) {
+                    // Para ActorData precisamos de nome e opcionalmente imagem
+                    val actorImg = element.selectFirst("img")?.attr("src")?.let { fixUrl(it) }
+                    ActorData(name, actorImg)
+                } else {
+                    null
+                }
+            }
+        } else {
+            null
+        }
         
         // Extrair duração (para filmes)
         val duration = document.selectFirst(".duration, .runtime, .time")?.text()?.trim()
@@ -495,7 +507,7 @@ class CineAgora : MainAPI() {
             val episodeElements = document.select(".episodes-list .episode, .episode-item, [data-episode]")
             if (episodeElements.isNotEmpty()) {
                 // Se houver lista de episódios, criar temporadas
-                episodesToSeasons(episodeElements)
+                seasons.addAll(episodesToSeasons(episodeElements))
             }
         }
         
@@ -503,20 +515,20 @@ class CineAgora : MainAPI() {
             newTvSeriesLoadResponse(title, url, TvType.TvSeries, seasons) {
                 this.posterUrl = poster
                 this.year = year
-                this.plot = description
+                this.plot = plot
                 this.tags = genres
                 this.actors = actors
-                this.recommendations = getRecommendations(url)
+                // Não podemos adicionar recommendations diretamente no loadResponse
             }
         } else {
             newMovieLoadResponse(title, url, TvType.Movie, url) {
                 this.posterUrl = poster
                 this.year = year
-                this.plot = description
+                this.plot = plot
                 this.tags = genres
                 this.actors = actors
                 this.duration = duration?.replace(Regex("[^0-9]"), "")?.toIntOrNull()
-                this.recommendations = getRecommendations(url)
+                // Não podemos adicionar recommendations diretamente no loadResponse
             }
         }
     }
