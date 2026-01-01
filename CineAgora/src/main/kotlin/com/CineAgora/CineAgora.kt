@@ -204,6 +204,39 @@ class CineAgora : MainAPI() {
         }
     }
 
+    private fun extractEpisodeNumber(text: String): Int? {
+        return listOf(
+            Regex("""S\d+\s*E(\d+)""", RegexOption.IGNORE_CASE),
+            Regex("""Temporada\s*\d+\s*/\s*(\d+)""", RegexOption.IGNORE_CASE),
+            Regex("""Ep[\.\s]*(\d+)""", RegexOption.IGNORE_CASE),
+            Regex("""Epis[oó]dio\s*(\d+)""", RegexOption.IGNORE_CASE),
+            Regex("""E(\d+)""", RegexOption.IGNORE_CASE),
+            Regex("""(\d{3,})"""),
+            Regex("""(\d{1,2})$""")
+        ).firstNotNullOfOrNull { it.find(text)?.groupValues?.get(1)?.toIntOrNull() }
+    }
+
+    private fun extractSeasonNumber(text: String): Int? {
+        return listOf(
+            Regex("""S(\d+)\s*E\d+""", RegexOption.IGNORE_CASE),
+            Regex("""Temporada\s*(\d+)""", RegexOption.IGNORE_CASE),
+            Regex("""Temp\s*(\d+)""", RegexOption.IGNORE_CASE)
+        ).firstNotNullOfOrNull { it.find(text)?.groupValues?.get(1)?.toIntOrNull() } ?: 1
+    }
+
+    private fun cleanTitle(title: String): String {
+        return title
+            .replace(Regex("\\(\\d{4}\\)"), "")
+            .replace(Regex("\\d{4}$"), "")
+            .replace(Regex("\\(dublado\\)", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("\\(legendado\\)", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("-\\s*epis[oó]dio\\s*\\d+", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("S\\d+\\s*E\\d+", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("Temporada\\s*\\d+.*", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+    }
+
     private fun Element.toSearchResult(): SearchResponse? {
         // Pegar o link principal
         val linkElement = this.selectFirst("a")
@@ -211,17 +244,14 @@ class CineAgora : MainAPI() {
         
         // Título do card
         val titleElement = selectFirst(".item-footer .title")
-        val title = titleElement?.text()?.trim() ?: return null
+        val rawTitle = titleElement?.text()?.trim() ?: return null
         
         // Extrair ano
         val year = selectFirst(".info span:first-child")?.text()?.toIntOrNull()
-            ?: Regex("\\((\\d{4})\\)").find(title)?.groupValues?.get(1)?.toIntOrNull()
+            ?: Regex("\\((\\d{4})\\)").find(rawTitle)?.groupValues?.get(1)?.toIntOrNull()
         
-        // Limpar título (remover ano e outros detalhes)
-        val cleanTitle = title
-            .replace(Regex("\\(\\d{4}\\)"), "")
-            .replace(Regex("\\d{4}$"), "")
-            .trim()
+        // Limpar título (inspirado no AniTube)
+        val cleanTitle = cleanTitle(rawTitle)
         
         // Imagem/poster
         val imgElement = selectFirst("img.thumbnail")
@@ -230,8 +260,10 @@ class CineAgora : MainAPI() {
         // 1. Qualidade (HD, TS, etc.) - Primeiro .item-info
         val qualityBadge = select(".item-info").firstOrNull()?.selectFirst("div:first-child")?.text()?.trim()
         
-        // 2. Idioma (Dublado/Legendado) - Primeiro .item-info
+        // 2. Idioma (Dublado/Legendado) - Primeiro .item-info (como no AniTube)
         val languageBadge = select(".item-info").firstOrNull()?.selectFirst("div:nth-child(2)")?.text()?.trim()
+        val isDubbed = languageBadge?.contains("dublado", ignoreCase = true) == true
+        val isSubtitled = languageBadge?.contains("legendado", ignoreCase = true) == true
         
         // 3. Score/Rating (usando a função avançada do AnimeFire)
         val scoreResult = extractScoreAdvanced(this)
@@ -245,30 +277,14 @@ class CineAgora : MainAPI() {
         val lastEpisodeInfo = select(".item-info").getOrNull(1)?.selectFirst("small")?.text()?.trim()
             ?: selectFirst(".data")?.text()?.trim()
         
+        // Extrair número do episódio e temporada (como no AniTube)
+        val episodeNumber = lastEpisodeInfo?.let { extractEpisodeNumber(it) }
+        val seasonNumber = lastEpisodeInfo?.let { extractSeasonNumber(it) } ?: 1
+        
         // Determinar se é filme ou série
         val isSerie = href.contains("/series-") || href.contains("/serie-") || href.contains("/tv-") || 
-                      lastEpisodeInfo?.contains(Regex("S\\d+.*E\\d+")) == true
-        
-        // Construir badges para mostrar no Cloudstream
-        val badges = mutableListOf<String>()
-        
-        if (qualityBadge != null && qualityBadge.isNotBlank()) {
-            badges.add("📀 $qualityBadge")
-        }
-        
-        if (languageBadge != null && languageBadge.isNotBlank()) {
-            badges.add("🗣️ $languageBadge")
-        }
-        
-        if (scoreText != null && scoreText.isNotBlank() && scoreText != "N/A") {
-            badges.add("⭐ $scoreText")
-        }
-        
-        if (lastEpisodeInfo != null && lastEpisodeInfo.isNotBlank()) {
-            badges.add("📺 $lastEpisodeInfo")
-        }
-        
-        val badgeText = badges.joinToString(" • ")
+                      lastEpisodeInfo?.contains(Regex("S\\d+.*E\\d+")) == true ||
+                      episodeNumber != null
         
         // Determinar qualidade baseada na badge
         val quality = when {
@@ -279,30 +295,48 @@ class CineAgora : MainAPI() {
             else -> null
         }
         
+        // Formatar URL com poster (como no AniTube)
+        val urlWithPoster = if (posterUrl != null) {
+            "${fixUrl(href)}|poster=$posterUrl"
+        } else {
+            fixUrl(href)
+        }
+        
         return if (isSerie) {
-            newTvSeriesSearchResponse(cleanTitle, fixUrl(href)) {
+            // Para séries, incluindo o episódio se disponível
+            newTvSeriesSearchResponse(cleanTitle, urlWithPoster) {
                 this.posterUrl = posterUrl
                 this.year = year
                 this.score = score
                 if (quality != null) {
                     this.quality = quality
                 }
-                // Adicionar badges como descrição
-                if (badgeText.isNotBlank()) {
-                    // Pode ser usado como metadata
+                
+                // Adicionar status de dublagem/legenda (como no AniTube)
+                if (isDubbed) {
+                    addDubStatus(DubStatus.Dubbed, episodeNumber)
+                } else if (isSubtitled) {
+                    addDubStatus(DubStatus.Subbed, episodeNumber)
+                } else if (episodeNumber != null) {
+                    // Se tiver número de episódio mas não tem info de áudio, assume legendado
+                    addDubStatus(DubStatus.Subbed, episodeNumber)
                 }
             }
         } else {
-            newMovieSearchResponse(cleanTitle, fixUrl(href)) {
+            // Para filmes
+            newMovieSearchResponse(cleanTitle, urlWithPoster) {
                 this.posterUrl = posterUrl
                 this.year = year
                 this.score = score
                 if (quality != null) {
                     this.quality = quality
                 }
-                // Adicionar badges como descrição
-                if (badgeText.isNotBlank()) {
-                    // Pode ser usado como metadata
+                
+                // Para filmes também podemos adicionar status de áudio
+                if (isDubbed) {
+                    addDubStatus(DubStatus.Dubbed, null)
+                } else if (isSubtitled) {
+                    addDubStatus(DubStatus.Subbed, null)
                 }
             }
         }
