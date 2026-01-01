@@ -2,6 +2,7 @@ package com.CineAgora
 
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
+import com.lagradost.cloudstream3.LoadResponse.Companion.addActors
 import com.lagradost.cloudstream3.app
 import org.jsoup.nodes.Element
 import java.net.URLEncoder
@@ -379,10 +380,6 @@ class CineAgora : MainAPI() {
                 if (quality != null) {
                     this.quality = quality
                 }
-                // Adicionar badges como metadata
-                if (badges.isNotEmpty()) {
-                    this.plot = badges.joinToString(" • ")
-                }
             }
         } else {
             newMovieSearchResponse(cleanTitle, fixUrl(href)) {
@@ -392,63 +389,7 @@ class CineAgora : MainAPI() {
                 if (quality != null) {
                     this.quality = quality
                 }
-                // Adicionar badges como metadata
-                if (badges.isNotEmpty()) {
-                    this.plot = badges.joinToString(" • ")
-                }
             }
-        }
-    }
-
-    // FUNÇÃO PARA OBTER RECOMENDAÇÕES (não é override)
-    private suspend fun getRecommendations(url: String): List<SearchResponse> {
-        return try {
-            // Carregar a página para obter recomendações
-            val document = app.get(url).document
-            
-            // Primeiro tentar encontrar a seção "Últimos lançamentos do cinema" que você identificou
-            val recommendationsSection = document.select(".title--area:contains(Últimos lançamentos do cinema) + .content, " +
-                                                       ".title--area:contains(Recomendações) + .content, " +
-                                                       ".title--area:contains(Populares) + .content, " +
-                                                       ".section-recommendations, " +
-                                                       ".recommended, " +
-                                                       ".similar")
-            
-            val recommendations = if (recommendationsSection.isNotEmpty()) {
-                // Extrair itens da seção de recomendações
-                recommendationsSection.first().select(".item, .item-relative .item, .poster, .movie-item, .serie-item")
-                    .mapNotNull { it.toSearchResult() }
-            } else {
-                // Fallback: procurar por seções que pareçam recomendações
-                val allSections = document.select(".content, .section, .widget")
-                val recommendedItems = mutableListOf<SearchResponse>()
-                
-                for (section in allSections) {
-                    val sectionTitle = section.selectFirst(".title, h2, h3, h4")?.text()
-                    if (sectionTitle != null && sectionTitle.contains(Regex("(?i)(recomenda|similar|relacionado|também|outros|lançamento)"))) {
-                        val items = section.select(".item, .item-relative .item, .poster, .movie-item, .serie-item")
-                            .mapNotNull { it.toSearchResult() }
-                        recommendedItems.addAll(items)
-                    }
-                }
-                
-                // Se não encontrou recomendações específicas, pegar alguns itens aleatórios da página
-                if (recommendedItems.isEmpty()) {
-                    document.select(".item, .item-relative .item, .poster, .movie-item, .serie-item")
-                        .shuffled()
-                        .take(10)
-                        .mapNotNull { it.toSearchResult() }
-                } else {
-                    recommendedItems.distinctBy { it.url }
-                }
-            }
-            
-            // Limitar a 15 recomendações no máximo
-            recommendations.take(15)
-            
-        } catch (e: Exception) {
-            // Se falhar, retornar lista vazia
-            emptyList()
         }
     }
 
@@ -481,15 +422,14 @@ class CineAgora : MainAPI() {
             .mapNotNull { it.text().trim() }
             .takeIf { it.isNotEmpty() }
         
-        // Extrair atores - precisa converter para List<ActorData>
+        // Extrair atores - CORRIGIDO: usando Actor do Cloudstream
         val actorElements = document.select(".actors a, .cast a, .elenco a")
         val actors = if (actorElements.isNotEmpty()) {
             actorElements.mapNotNull { element ->
                 val name = element.text().trim()
                 if (name.isNotBlank()) {
-                    // Para ActorData precisamos de nome e opcionalmente imagem
                     val actorImg = element.selectFirst("img")?.attr("src")?.let { fixUrl(it) }
-                    ActorData(name, actorImg)
+                    Actor(name, actorImg)
                 } else {
                     null
                 }
@@ -501,24 +441,44 @@ class CineAgora : MainAPI() {
         // Extrair duração (para filmes)
         val duration = document.selectFirst(".duration, .runtime, .time")?.text()?.trim()
         
-        // Extrair temporadas/episódios (para séries)
+        // Para séries, extrair episódios
         val seasons = mutableListOf<Episode>()
         if (isSerie) {
-            val episodeElements = document.select(".episodes-list .episode, .episode-item, [data-episode]")
-            if (episodeElements.isNotEmpty()) {
-                // Se houver lista de episódios, criar temporadas
-                seasons.addAll(episodesToSeasons(episodeElements))
+            // Procurar por elementos de episódios
+            val episodeElements = document.select(".episode-item, .episode, [data-episode], button[data-url]")
+            
+            episodeElements.forEach { element ->
+                try {
+                    val episodeUrl = element.attr("data-url") ?: element.attr("href") ?: ""
+                    if (episodeUrl.isNotBlank()) {
+                        val episodeNumber = element.attr("data-episode").toIntOrNull() ?: 
+                                           Regex("E(\\d+)").find(element.text())?.groupValues?.get(1)?.toIntOrNull() ?: 1
+                        val seasonNumber = element.attr("data-season").toIntOrNull() ?: 1
+                        val episodeTitle = element.selectFirst(".title, .name")?.text()?.trim() ?: "Episódio $episodeNumber"
+                        
+                        val episode = newEpisode(fixUrl(episodeUrl)) {
+                            this.name = episodeTitle
+                            this.season = seasonNumber
+                            this.episode = episodeNumber
+                        }
+                        seasons.add(episode)
+                    }
+                } catch (e: Exception) {
+                    // Ignorar episódios com erro
+                }
             }
         }
         
+        // Construir LoadResponse
         return if (isSerie) {
             newTvSeriesLoadResponse(title, url, TvType.TvSeries, seasons) {
                 this.posterUrl = poster
                 this.year = year
                 this.plot = plot
                 this.tags = genres
-                this.actors = actors
-                // Não podemos adicionar recommendations diretamente no loadResponse
+                
+                // Adicionar atores usando addActors
+                actors?.let { addActors(it) }
             }
         } else {
             newMovieLoadResponse(title, url, TvType.Movie, url) {
@@ -526,51 +486,12 @@ class CineAgora : MainAPI() {
                 this.year = year
                 this.plot = plot
                 this.tags = genres
-                this.actors = actors
                 this.duration = duration?.replace(Regex("[^0-9]"), "")?.toIntOrNull()
-                // Não podemos adicionar recommendations diretamente no loadResponse
-            }
-        }
-    }
-    
-    private fun episodesToSeasons(episodeElements: org.jsoup.select.Elements): List<Episode> {
-        val seasons = mutableListOf<Episode>()
-        val seasonMap = mutableMapOf<Int, MutableList<Episode>>()
-        
-        episodeElements.forEach { element ->
-            val episodeNumber = element.attr("data-episode")?.toIntOrNull() 
-                ?: Regex("E(\\d+)").find(element.text())?.groupValues?.get(1)?.toIntOrNull()
-                ?: 1
-            
-            val seasonNumber = element.attr("data-season")?.toIntOrNull()
-                ?: Regex("S(\\d+)").find(element.text())?.groupValues?.get(1)?.toIntOrNull()
-                ?: 1
-            
-            val title = element.selectFirst(".title, .name")?.text()?.trim()
-                ?: element.text().trim()
-            
-            val episodeUrl = element.selectFirst("a")?.attr("href")?.let { fixUrl(it) }
-            
-            if (episodeUrl != null) {
-                val episode = newEpisode(episodeUrl) {
-                    this.name = title
-                    this.season = seasonNumber
-                    this.episode = episodeNumber
-                }
                 
-                if (!seasonMap.containsKey(seasonNumber)) {
-                    seasonMap[seasonNumber] = mutableListOf()
-                }
-                seasonMap[seasonNumber]?.add(episode)
+                // Adicionar atores usando addActors
+                actors?.let { addActors(it) }
             }
         }
-        
-        // Ordenar por temporada e episódio
-        seasonMap.keys.sorted().forEach { seasonNum ->
-            seasonMap[seasonNum]?.sortedBy { it.episode }?.forEach { seasons.add(it) }
-        }
-        
-        return seasons
     }
 
     override suspend fun loadLinks(
