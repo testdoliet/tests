@@ -25,12 +25,14 @@ https://raw.githubusercontent.com/lawlietbr/lietrepo/main/builds/repo.json
 
 # 🇧🇷 Sobre o Projeto
 O **LietRepo** é um projeto de desenvolvimento de plugins experimentais para CloudStream 3 com foco em otimização técnica.
+
 **Nota técnica:** Os plugins funcionam como buscadores especializados, localizando conteúdo disponível publicamente.
 
 ---
 
 # 🇺🇸 About the Project
 The **LietRepo** is an experimental plugin development project for CloudStream 3 focused on technical optimization.
+
 **Technical note:** Plugins function as specialized search tools, locating publicly available content.
 
 ---
