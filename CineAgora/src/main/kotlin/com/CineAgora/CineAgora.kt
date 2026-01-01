@@ -390,7 +390,7 @@ class CineAgora : MainAPI() {
         val plot = document.selectFirst(".description, .sinopse, .plot, .content p")?.text()?.trim()
         
         // Determinar se é filme ou série baseado na URL e conteúdo
-        val isSerie = url.contains("/series-") || url.contains("/serie-") || href.contains("/tv-") || 
+        val isSerie = url.contains("/series-") || url.contains("/serie-") || url.contains("/tv-") || 
                      url.contains("/series-online") ||
                      document.select(".episodes, .seasons, .temporada, .episodio").isNotEmpty() ||
                      document.text().contains(Regex("(?i)(temporada|episódio|season|episode)"))
@@ -578,7 +578,7 @@ class CineAgora : MainAPI() {
                         
                         // Construir URL do episódio
                         val episodeUrl = when {
-                            onclick.isNotBlank() && onclick.contains("loadEpisode") -> {
+                            onclick?.isNotBlank() == true && onclick.contains("loadEpisode") -> {
                                 // Extrair parâmetros da função loadEpisode
                                 val paramsRegex = Regex("""loadEpisode\s*\(\s*['"]([^'"]+)['"]""")
                                 val match = paramsRegex.find(onclick)
@@ -646,7 +646,7 @@ class CineAgora : MainAPI() {
                     val episodeUrl = when {
                         dataUrl.isNotBlank() -> fixUrl(dataUrl)
                         href?.isNotBlank() == true && href != "#" -> fixUrl(href)
-                        onclick.isNotBlank() && onclick.contains("http") -> {
+                        onclick?.isNotBlank() == true && onclick.contains("http") -> {
                             val urlRegex = Regex("""['"](https?://[^'"]+)['"]""")
                             val match = urlRegex.find(onclick)
                             match?.groupValues?.get(1)
