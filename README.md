@@ -7,19 +7,17 @@
 # LietRepo
 ## Repositório experimental de plugins para CloudStream 3
 
-### 🇧🇷 A Extensão BR para CloudStream 3 — simples, direta e focada em desempenho  
-### 🇺🇸 The BR extension for CloudStream 3 — simple, fast and performance-oriented
+### 🇧🇷 A Extensão BR para CloudStream 3   
+### 🇺🇸 The BR extension for CloudStream 3 
 
 <br>
 
 ### ⬇️ Instalação Direta / Direct Installation
 
 **Copie esta URL e cole no CloudStream:**
-https://raw.githubusercontent.com/lawlietbr/lietrepo/main/builds/repo.json
 
+[![URL do Repositório](https://img.shields.io/badge/📋_COPIAR_URL-000000?style=for-the-badge&logo=github&logoColor=white)](https://raw.githubusercontent.com/lawlietbr/lietrepo/main/builds/repo.json)
 
-*Ou escaneie o QR code abaixo:*
-![QR Code do Repositório](https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=https://raw.githubusercontent.com/lawlietbr/lietrepo/main/builds/repo.json)
 
 </div>
 
@@ -41,19 +39,14 @@ The **LietRepo** is an experimental plugin development project for CloudStream 3
 
 # 📦 Instalação / Installation
 
-## Método 1: Instalação Manual (Recomendado)
-1. Abra o CloudStream 3
-2. Vá em **Configurações → Repositórios**
-3. Clique em **"Adicionar Repositório"**
-4. Cole a URL: https://raw.githubusercontent.com/lawlietbr/lietrepo/refs/heads/main/builds/repo.json
+[![Passo 1](https://img.shields.io/badge/1_📱_Abrir_CloudStream_3-2196F3?style=flat-square&logo=android)]()
+[![Passo 2](https://img.shields.io/badge/2_⚙️_Configurações→Repositórios-4CAF50?style=flat-square&logo=settings)]()
+[![Passo 3](https://img.shields.io/badge/3_➕_Adicionar_Repositório-FF9800?style=flat-square&logo=plus)]()
+[![Passo 4](https://img.shields.io/badge/4_📋_Colar_URL-9C27B0?style=flat-square&logo=clipboard)]()
 
-5. Clique em **"Confirmar"**
+**URL para colar:**
+https://raw.githubusercontent.com/lawlietbr/lietrepo/refs/heads/main/builds/repo.json
 
-## Método 2: Via Código QR
-1. Abra o CloudStream 3
-2. Vá em **Configurações → Repositórios**
-3. Clique em **"Scan QR Code"**
-4. Aponte para o QR code acima
 
 ---
 
@@ -87,6 +80,8 @@ The access and viewing of any content originate **exclusively from third-party p
 
 </div>
 
+[![MIT License](https://img.shields.io/badge/License-MIT-8A2BE2?style=for-the-badge&logo=opensourceinitiative&logoColor=white)](https://opensource.org/licenses/MIT)
+
 A licença é a **[MIT License](https://opensource.org/licenses/MIT)**.
 
 O código é totalmente livre: use, copie, edite e mexa à vontade.
@@ -104,8 +99,9 @@ Só pedimos uma coisa: mantenha os créditos, por favor. É o mínimo, né? 😉
 Este repo existe graças à inspiração do **saimuelrepo**, o pioneiro dos repositórios BR de CloudStream. O trabalho do cara é de respeito.
 
 **Repositórios de referência:**
-- [saimuelrepo](https://raw.githubusercontent.com/saimuelbr/saimuelrepo/main/builds/repo.json)
-- [CloudStream Official](https://github.com/recloudstream/cloudstream)
+
+[![saimuelrepo](https://img.shields.io/badge/saimuelrepo-Repository-FF6B6B?style=for-the-badge&logo=github&logoColor=white)](https://raw.githubusercontent.com/saimuelbr/saimuelrepo/main/builds/repo.json)
+[![CloudStream Official](https://img.shields.io/badge/CloudStream_Official-GitHub-7289DA?style=for-the-badge&logo=github&logoColor=white)](https://github.com/recloudstream/cloudstream)
 
 ---
 
@@ -117,21 +113,25 @@ Este repo existe graças à inspiração do **saimuelrepo**, o pioneiro dos repo
 
 <br>
 
-**🔗 Links Úteis / Useful Links:**  
-[CloudStream Official](https://cloudstream.app) • 
-[CloudStream GitHub](https://github.com/recloudstream/cloudstream) • 
-[Documentação](https://docs.cloudstream.app) • 
-[Comunidade](https://discord.com/invite/cloudstream)
+**🔗 Links Úteis / Useful Links:**
+
+[![CloudStream App](https://img.shields.io/badge/🌐_CloudStream_App-2196F3?style=for-the-badge&logo=web)](https://cloudstream.app)
+[![CloudStream GitHub](https://img.shields.io/badge/💻_CloudStream_GitHub-181717?style=for-the-badge&logo=github)](https://github.com/recloudstream/cloudstream)
+[![Documentação](https://img.shields.io/badge/📚_Documentação-4CAF50?style=for-the-badge&logo=readthedocs)](https://docs.cloudstream.app)
+[![Comunidade Discord](https://img.shields.io/badge/💬_Comunidade_Discord-5865F2?style=for-the-badge&logo=discord)](https://discord.com/invite/cloudstream)
 
 <br>
 
-<img src="https://img.shields.io/github/last-commit/lawlietbr/lietrepo?style=flat-square&label=Último%20commit" alt="Último commit">
-<img src="https://img.shields.io/github/repo-size/lawlietbr/lietrepo?style=flat-square&label=Tamanho%20do%20repo" alt="Tamanho do repositório">
-<img src="https://img.shields.io/github/license/lawlietbr/lietrepo?style=flat-square&label=Licença" alt="Licença">
+[![Último commit](https://img.shields.io/github/last-commit/lawlietbr/lietrepo?style=for-the-badge&label=🔄%20Último%20commit&color=9C27B0)](https://github.com/lawlietbr/lietrepo/commits/main)
+[![Tamanho do repositório](https://img.shields.io/github/repo-size/lawlietbr/lietrepo?style=for-the-badge&label=📦%20Tamanho%20do%20repo&color=FF9800)](https://github.com/lawlietbr/lietrepo)
+[![Licença MIT](https://img.shields.io/badge/📄_Licença-MIT-8BC34A?style=for-the-badge&logo=book)](https://opensource.org/licenses/MIT)
+[![Stars](https://img.shields.io/github/stars/lawlietbr/lietrepo?style=for-the-badge&label=⭐%20Stars&color=FFD700)](https://github.com/lawlietbr/lietrepo/stargazers)
 
 <br>
 
 ### Valeu por passar aqui! Agora vai lá testar os plugins!  
 ### Thanks for stopping by! Now go test the plugins!  
+
+[![Deixe uma Star](https://img.shields.io/badge/⭐_Deixe_uma_Star_no_Repo-FFD700?style=for-the-badge&logo=github&logoColor=black)](https://github.com/lawlietbr/lietrepo/stargazers)
 
 </div>
