@@ -7,8 +7,8 @@
 # LietRepo
 ## Repositório experimental de plugins para CloudStream 3
 
-### 🇧🇷 Plugins BR para CloudStream 3 — foco em desempenho e estabilidade  
-### 🇺🇸 BR plugins for CloudStream 3 — performance and stability focused
+### 🇧🇷 Uma extensão BR para CloudStream 3 
+### 🇺🇸 A BR extension for CloudStream 3
 
 <br>
 
@@ -25,26 +25,12 @@ https://raw.githubusercontent.com/lawlietbr/lietrepo/main/builds/repo.json
 
 # 🇧🇷 Sobre o Projeto
 O **LietRepo** é um projeto de desenvolvimento de plugins experimentais para CloudStream 3 com foco em otimização técnica.
-
-**Características técnicas:**
-- 🎬 **Integração com APIs públicas** — implementação de clientes para consumo de metadados
-- 🔍 **Mecanismos de busca eficientes** — algoritmos para localização de conteúdo
-- ⚡ **Otimização de performance** — cache inteligente e parsing otimizado
-- 🛠️ **Ferramentas de desenvolvimento** — utilitários para processamento de dados
-
 **Nota técnica:** Os plugins funcionam como buscadores especializados, localizando conteúdo disponível publicamente.
 
 ---
 
 # 🇺🇸 About the Project
 The **LietRepo** is an experimental plugin development project for CloudStream 3 focused on technical optimization.
-
-**Technical features:**
-- 🎬 **Public API integration** — client implementations for metadata consumption
-- 🔍 **Efficient search mechanisms** — algorithms for content location
-- ⚡ **Performance optimization** — smart caching and optimized parsing
-- 🛠️ **Development tools** — utilities for data processing
-
 **Technical note:** Plugins function as specialized search tools, locating publicly available content.
 
 ---
