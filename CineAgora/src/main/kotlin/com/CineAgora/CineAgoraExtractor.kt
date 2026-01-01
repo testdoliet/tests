@@ -1,4 +1,3 @@
-
 package com.CineAgora
 
 import com.lagradost.cloudstream3.app
@@ -7,14 +6,13 @@ import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.M3u8Helper
 import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.newExtractorLink
-import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
-import org.json.JSONObject
 
 object CineAgoraExtractor {
     private const val TAG = "CineAgoraExtractor"
+    private const val BASE_PLAYER_URL = "https://watch.brplayer.cc"
     
     suspend fun extractVideoLinks(
-        url: String,
+        url: String,  // URL da página do CineAgora
         name: String,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
@@ -25,16 +23,23 @@ object CineAgoraExtractor {
             val doc = app.get(url).document
             println("[$TAG] Página carregada com sucesso")
             
-            // Tenta encontrar o iframe do brplayer.cc
-            println("[$TAG] Procurando iframe do player...")
-            val iframeSrc = findPlayerIframe(doc)
+            // AGORA: Precisamos encontrar o link do player brplayer.cc
+            println("[$TAG] Analisando HTML para encontrar link do player...")
             
-            if (iframeSrc != null) {
-                println("[$TAG] Iframe encontrado: $iframeSrc")
-                return extractFromIframe(iframeSrc, name, callback)
+            // 1. Primeiro, vamos salvar o HTML completo para análise
+            val html = doc.toString()
+            println("[$TAG] Tamanho do HTML: ${html.length} caracteres")
+            
+            // 2. Procura por padrões específicos do brplayer.cc
+            val playerUrl = findBrplayerUrl(html, url)
+            
+            if (playerUrl != null) {
+                println("[$TAG] URL do player encontrada: $playerUrl")
+                return extractFromBrplayer(playerUrl, name, callback)
             } else {
-                println("[$TAG] Iframe não encontrado, tentando extração direta...")
-                return tryDirectExtraction(doc, url, name, callback)
+                println("[$TAG] URL do player não encontrada no HTML")
+                println("[$TAG] Vamos analisar os scripts mais detalhadamente...")
+                return analyzeScriptsForPlayer(doc, url, name, callback)
             }
             
         } catch (e: Exception) {
@@ -44,330 +49,273 @@ object CineAgoraExtractor {
         }
     }
     
-    private suspend fun extractFromIframe(
-        iframeSrc: String,
+    private fun findBrplayerUrl(html: String, originalUrl: String): String? {
+        println("[$TAG] Procurando URLs do brplayer.cc no HTML...")
+        
+        // Padrões comuns para encontrar o player
+        val patterns = listOf(
+            // Padrão 1: https://watch.brplayer.cc/watch/XXXXX
+            Regex("""(https?://watch\.brplayer\.cc/watch/[a-zA-Z0-9]+)"""),
+            
+            // Padrão 2: URL com parâmetros
+            Regex("""(https?://watch\.brplayer\.cc/[^"'\s]+)"""),
+            
+            // Padrão 3: URL em atributos data-*
+            Regex("""data-(?:url|src|player)="(https?://watch\.brplayer\.cc/[^"]+)"""),
+            
+            // Padrão 4: Em scripts JavaScript
+            Regex("""['"](https?://watch\.brplayer\.cc/[^"']+)['"]"""),
+            
+            // Padrão 5: brplayer.cc sem https
+            Regex("""(//watch\.brplayer\.cc/[^"'\s]+)""")
+        )
+        
+        for ((index, pattern) in patterns.withIndex()) {
+            println("[$TAG] Testando padrão ${index + 1}...")
+            val matches = pattern.findAll(html).toList()
+            println("[$TAG] Encontrados ${matches.size} matches com padrão ${index + 1}")
+            
+            for (match in matches) {
+                var foundUrl = match.groupValues[1]
+                println("[$TAG] Match encontrado: $foundUrl")
+                
+                // Se a URL começar com //, adiciona https:
+                if (foundUrl.startsWith("//")) {
+                    foundUrl = "https:$foundUrl"
+                    println("[$TAG] URL corrigida: $foundUrl")
+                }
+                
+                // Verifica se é uma URL válida do player
+                if (isValidPlayerUrl(foundUrl)) {
+                    println("[$TAG] URL válida do player encontrada!")
+                    return foundUrl
+                }
+            }
+        }
+        
+        return null
+    }
+    
+    private fun isValidPlayerUrl(url: String): Boolean {
+        return url.contains("watch.brplayer.cc") && 
+               (url.contains("/watch/") || url.contains("watch?v="))
+    }
+    
+    private suspend fun analyzeScriptsForPlayer(
+        doc: org.jsoup.nodes.Document,
+        originalUrl: String,
         name: String,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
+        println("[$TAG] Analisando scripts detalhadamente...")
+        val scripts = doc.select("script")
+        
+        for ((index, script) in scripts.withIndex()) {
+            val scriptContent = script.data() + script.html()
+            if (scriptContent.isNotBlank()) {
+                println("[$TAG] Analisando script ${index + 1}/${scripts.size} (${scriptContent.length} chars)")
+                
+                // Procura por variáveis JavaScript que podem conter a URL
+                val patterns = listOf(
+                    // Padrão: playerUrl = "https://watch.brplayer.cc/watch/XXXXX"
+                    Regex("""player(?:Url|URL|_url)\s*[=:]\s*["'](https?://watch\.brplayer\.cc/[^"']+)["']"""),
+                    
+                    // Padrão: src: "https://watch.brplayer.cc/watch/XXXXX"
+                    Regex("""src\s*:\s*["'](https?://watch\.brplayer\.cc/[^"']+)["']"""),
+                    
+                    // Padrão: var video = { url: "https://..." }
+                    Regex("""url\s*:\s*["'](https?://watch\.brplayer\.cc/[^"']+)["']"""),
+                    
+                    // Padrão: loadPlayer("https://watch.brplayer.cc/...")
+                    Regex("""loadPlayer\s*\(\s*["'](https?://watch\.brplayer\.cc/[^"']+)["']"""),
+                    
+                    // Padrão: iframe.src = "https://watch.brplayer.cc/..."
+                    Regex("""iframe\.src\s*=\s*["'](https?://watch\.brplayer\.cc/[^"']+)["']""")
+                )
+                
+                for (pattern in patterns) {
+                    val match = pattern.find(scriptContent)
+                    if (match != null) {
+                        val playerUrl = match.groupValues[1]
+                        println("[$TAG] URL do player encontrada em script: $playerUrl")
+                        return extractFromBrplayer(playerUrl, name, callback)
+                    }
+                }
+                
+                // Procura por objetos JSON que podem conter a URL
+                if (scriptContent.contains("brplayer.cc")) {
+                    println("[$TAG] Script contém 'brplayer.cc', analisando mais...")
+                    // Tenta encontrar qualquer URL do brplayer
+                    val urlRegex = Regex("""(https?://watch\.brplayer\.cc/[^"'\s]+)""")
+                    val matches = urlRegex.findAll(scriptContent).toList()
+                    
+                    for (match in matches) {
+                        val foundUrl = match.groupValues[1]
+                        println("[$TAG] URL encontrada em script: $foundUrl")
+                        if (isValidPlayerUrl(foundUrl)) {
+                            println("[$TAG] URL válida encontrada em script!")
+                            return extractFromBrplayer(foundUrl, name, callback)
+                        }
+                    }
+                }
+            }
+        }
+        
+        println("[$TAG] Nenhuma URL de player encontrada nos scripts")
+        return false
+    }
+    
+    private suspend fun extractFromBrplayer(
+        playerUrl: String,
+        name: String,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        println("[$TAG] Extraindo do brplayer.cc: $playerUrl")
+        
         return try {
-            println("[$TAG] Acessando página do player: $iframeSrc")
-            val playerPage = app.get(iframeSrc).text
-            println("[$TAG] Página do player carregada (${playerPage.length} caracteres)")
+            println("[$TAG] Acessando página do brplayer.cc...")
+            val headers = mapOf(
+                "Referer" to "https://cineagora.net/",
+                "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36",
+                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+            )
             
-            // Extrai as variáveis do JavaScript
-            println("[$TAG] Extraindo variáveis JavaScript...")
-            val (uid, md5, videoId) = extractJsVariables(playerPage)
+            val response = app.get(playerUrl, headers = headers)
+            val html = response.text
+            println("[$TAG] Página do brplayer carregada (${html.length} caracteres)")
             
-            println("[$TAG] Variáveis extraídas - UID: '$uid', MD5: '$md5', VideoID: '$videoId'")
+            // Procura pelo objeto video no JavaScript
+            println("[$TAG] Procurando objeto 'var video = {...}'")
             
-            if (uid.isBlank() || md5.isBlank() || videoId.isBlank()) {
-                println("[$TAG] Variáveis incompletas, tentando método alternativo...")
-                return tryAlternativeExtraction(playerPage, name, iframeSrc, callback)
+            // Padrão: var video = { ... }
+            val videoPattern = Regex("""var\s+video\s*=\s*(\{[^}]+\})""")
+            val videoMatch = videoPattern.find(html)
+            
+            if (videoMatch == null) {
+                println("[$TAG] Objeto 'video' não encontrado, tentando padrões alternativos...")
+                // Tenta padrão alternativo: video = { ... } (sem var)
+                val altPattern = Regex("""video\s*=\s*(\{[^}]+\})""")
+                val altMatch = altPattern.find(html)
+                
+                if (altMatch != null) {
+                    return extractVideoData(altMatch.groupValues[1], playerUrl, name, callback)
+                }
+                
+                println("[$TAG] Nenhum objeto video encontrado")
+                return false
             }
             
-            // Constrói a URL HLS
-            val hlsUrl = "https://watch.brplayer.cc/m3u8/$uid/$md5/master.txt?s=1&id=$videoId&cache=1"
-            println("[$TAG] URL HLS construída: $hlsUrl")
-            
-            // Cria o link do extractor
-            return createExtractorLink(hlsUrl, name, iframeSrc, callback)
+            println("[$TAG] Objeto video encontrado!")
+            return extractVideoData(videoMatch.groupValues[1], playerUrl, name, callback)
             
         } catch (e: Exception) {
-            println("[$TAG] Erro ao extrair do iframe: ${e.message}")
+            println("[$TAG] Erro ao acessar brplayer.cc: ${e.message}")
             false
         }
     }
     
-    private fun findPlayerIframe(document: org.jsoup.nodes.Document): String? {
-        // 1. Procura por iframes do brplayer.cc
-        println("[$TAG] Procurando iframes...")
-        val iframes = document.select("iframe[src]")
-        println("[$TAG] Encontrados ${iframes.size} iframes")
+    private suspend fun extractVideoData(
+        videoJson: String,
+        playerUrl: String,
+        name: String,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        println("[$TAG] Extraindo dados do objeto video...")
+        println("[$TAG] JSON: $videoJson")
         
-        for (iframe in iframes) {
-            val src = iframe.attr("src")
-            println("[$TAG] Iframe encontrado: $src")
+        // Extrai os valores usando regex simples
+        val uid = extractFromJson(videoJson, "uid")
+        val md5 = extractFromJson(videoJson, "md5")
+        val videoId = extractFromJson(videoJson, "id")
+        
+        println("[$TAG] Valores extraídos - UID: '$uid', MD5: '$md5', ID: '$videoId'")
+        
+        if (uid.isBlank() || md5.isBlank() || videoId.isBlank()) {
+            println("[$TAG] Valores faltando no JSON")
             
-            if (src.contains("watch.brplayer.cc/watch?v=")) {
-                println("[$TAG] Iframe do brplayer.cc encontrado!")
-                return src
-            }
-            if (src.contains("brplayer.cc")) {
-                println("[$TAG] Iframe com brplayer.cc encontrado!")
-                return src
-            }
-            if (src.contains("player.")) {
-                println("[$TAG] Iframe de player genérico encontrado")
-                return src
-            }
-        }
-        
-        // 2. Procura por divs com data-url
-        println("[$TAG] Procurando elementos com data-url...")
-        val dataUrlElements = document.select("[data-url]")
-        println("[$TAG] Encontrados ${dataUrlElements.size} elementos com data-url")
-        
-        for (element in dataUrlElements) {
-            val dataUrl = element.attr("data-url")
-            println("[$TAG] data-url encontrado: $dataUrl")
+            // Tenta extrair de outros padrões no HTML
+            val html = videoJson // Na verdade, precisaríamos do HTML completo aqui
+            // Mas vamos tentar com o que temos
             
-            if (dataUrl.contains("brplayer.cc") || dataUrl.contains("watch?v=")) {
-                println("[$TAG] data-url do player encontrado!")
-                return dataUrl
-            }
+            val fallbackUid = extractFromJson(videoJson, "uid") ?: "12" // Valor padrão comum
+            val fallbackMd5 = extractFromJson(videoJson, "md5") ?: return false
+            val fallbackId = extractFromJson(videoJson, "id") ?: return false
+            
+            return createM3u8Link(fallbackUid, fallbackMd5, fallbackId, playerUrl, name, callback)
         }
         
-        // 3. Procura por scripts
-        println("[$TAG] Procurando em scripts...")
-        val scripts = document.select("script")
-        println("[$TAG] Encontrados ${scripts.size} scripts")
-        
-        for (script in scripts) {
-            val scriptContent = script.data() + script.html()
-            if (scriptContent.contains("brplayer.cc")) {
-                println("[$TAG] Script contém brplayer.cc")
-                val regex = Regex("""(https?://[^'"]*brplayer\.cc[^'"]*)""")
-                val match = regex.find(scriptContent)
-                if (match != null) {
-                    val url = match.groupValues[1]
-                    println("[$TAG] URL extraída do script: $url")
-                    return url
-                }
-            }
-        }
-        
-        println("[$TAG] Nenhum iframe ou player encontrado")
-        return null
+        return createM3u8Link(uid, md5, videoId, playerUrl, name, callback)
     }
     
-    private fun extractJsVariables(pageContent: String): Triple<String, String, String> {
-        var uid = ""
-        var md5 = ""
-        var videoId = ""
-        
-        println("[$TAG] Procurando variáveis JavaScript...")
-        
-        // Padrão 1: var video = { ... }
-        val videoObjPattern = Regex("""var\s+video\s*=\s*\{[^}]+\}""")
-        val videoObjMatch = videoObjPattern.find(pageContent)
-        
-        if (videoObjMatch != null) {
-            println("[$TAG] Objeto video encontrado")
-            val videoObj = videoObjMatch.value
-            
-            uid = extractFromJsonLike(videoObj, "uid") ?: ""
-            md5 = extractFromJsonLike(videoObj, "md5") ?: ""
-            videoId = extractFromJsonLike(videoObj, "id") ?: ""
-            
-            println("[$TAG] Extraído do objeto video: uid='$uid', md5='$md5', id='$videoId'")
-        }
-        
-        // Se não encontrou no objeto video, procura diretamente
-        if (uid.isBlank()) {
-            uid = extractVariable(pageContent, "uid")
-            println("[$TAG] uid extraído diretamente: '$uid'")
-        }
-        
-        if (md5.isBlank()) {
-            md5 = extractVariable(pageContent, "md5")
-            println("[$TAG] md5 extraído diretamente: '$md5'")
-        }
-        
-        if (videoId.isBlank()) {
-            videoId = extractVariable(pageContent, "id")
-            if (videoId.isBlank()) {
-                videoId = extractVariable(pageContent, "videoId")
-            }
-            println("[$TAG] videoId extraído: '$videoId'")
-        }
-        
-        // Fallback: tenta extrair do slug/URL
-        if (videoId.isBlank()) {
-            val slug = extractVariable(pageContent, "slug")
-            if (slug.isNotBlank()) {
-                videoId = slug
-                println("[$TAG] Usando slug como videoId: '$slug'")
-            }
-        }
-        
-        return Triple(uid, md5, videoId)
-    }
-    
-    private fun extractFromJsonLike(jsonLike: String, key: String): String? {
+    private fun extractFromJson(json: String, key: String): String {
         val pattern = Regex("""["']$key["']\s*:\s*["']([^"']+)["']""")
-        val match = pattern.find(jsonLike)
-        return match?.groupValues?.get(1)
+        val match = pattern.find(json)
+        return match?.groupValues?.get(1) ?: ""
     }
     
-    private fun extractVariable(content: String, varName: String): String {
-        val patterns = listOf(
-            Regex("""["']$varName["']\s*:\s*["']([^"']+)["']"""),
-            Regex("""var\s+$varName\s*=\s*["']([^"']+)["']"""),
-            Regex("""let\s+$varName\s*=\s*["']([^"']+)["']"""),
-            Regex("""const\s+$varName\s*=\s*["']([^"']+)["']"""),
-            Regex("""$varName\s*=\s*["']([^"']+)["']""")
+    private suspend fun createM3u8Link(
+        uid: String,
+        md5: String,
+        videoId: String,
+        playerUrl: String,
+        name: String,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        println("[$TAG] Criando URL M3U8...")
+        
+        // Constrói a URL M3U8 conforme o padrão
+        val m3u8Url = "$BASE_PLAYER_URL/m3u8/$uid/$md5/master.txt?s=1&id=$videoId&cache=1"
+        println("[$TAG] URL M3U8: $m3u8Url")
+        
+        // Headers importantes
+        val headers = mapOf(
+            "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36",
+            "Accept" to "*/*",
+            "Accept-Language" to "pt-BR,pt;q=0.9,en;q=0.8",
+            "Referer" to playerUrl,
+            "Origin" to BASE_PLAYER_URL
         )
         
-        for (pattern in patterns) {
-            val match = pattern.find(content)
-            if (match != null) {
-                return match.groupValues[1]
-            }
-        }
-        
-        return ""
-    }
-    
-    private suspend fun tryAlternativeExtraction(
-        playerPage: String,
-        name: String,
-        referer: String,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        println("[$TAG] Tentando extração alternativa...")
-        
-        // Tenta encontrar URL m3u8 diretamente
-        val m3u8Pattern = Regex("""(https?://[^"' ]*\.(?:m3u8|mp4)[^"' ]*)""")
-        val m3u8Matches = m3u8Pattern.findAll(playerPage).toList()
-        
-        println("[$TAG] Encontrados ${m3u8Matches.size} possíveis URLs m3u8/mp4")
-        
-        for (match in m3u8Matches) {
-            val url = match.groupValues[1]
-            println("[$TAG] URL encontrada: $url")
-            
-            if (url.contains("master.m3u8") || url.contains("master.txt") || url.contains("playlist.m3u8")) {
-                println("[$TAG] URL m3u8 master encontrada!")
-                return createExtractorLink(url, name, referer, callback)
-            }
-        }
-        
-        // Tenta encontrar em scripts JSON
-        val jsonPattern = Regex("""\{[^{}]*["']sources["'][^{}]*\}""")
-        val jsonMatches = jsonPattern.findAll(playerPage).toList()
-        
-        println("[$TAG] Encontrados ${jsonMatches.size} objetos JSON possíveis")
-        
-        for (match in jsonMatches) {
-            try {
-                val jsonStr = match.value
-                val json = tryParseJson<Map<String, Any>>(jsonStr)
-                
-                if (json != null) {
-                    val sources = json["sources"] as? List<Map<String, Any>>
-                    if (sources != null && sources.isNotEmpty()) {
-                        val firstSource = sources[0]
-                        val url = firstSource["url"] as? String
-                        if (url != null && (url.contains(".m3u8") || url.contains(".mp4"))) {
-                            println("[$TAG] URL encontrada em JSON: $url")
-                            return createExtractorLink(url, name, referer, callback)
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                println("[$TAG] Erro ao processar JSON: ${e.message}")
-            }
-        }
-        
-        println("[$TAG] Extração alternativa falhou")
-        return false
-    }
-    
-    private suspend fun tryDirectExtraction(
-        doc: org.jsoup.nodes.Document,
-        url: String,
-        name: String,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        println("[$TAG] Tentando extração direta da página...")
-        
-        // Procura por scripts com informações de vídeo
-        val scripts = doc.select("script")
-        println("[$TAG] Analisando ${scripts.size} scripts para extração direta")
-        
-        for (script in scripts) {
-            val content = script.data() + script.html()
-            
-            // Procura por objetos de vídeo
-            if (content.contains("video") || content.contains("player") || content.contains("stream")) {
-                println("[$TAG] Script pode conter informações de vídeo")
-                
-                // Tenta extrair URLs m3u8
-                val m3u8Pattern = Regex("""(https?://[^"' ]*\.m3u8[^"' ]*)""")
-                val matches = m3u8Pattern.findAll(content).toList()
-                
-                for (match in matches) {
-                    val m3u8Url = match.groupValues[1]
-                    println("[$TAG] URL m3u8 encontrada em script: $m3u8Url")
-                    
-                    if (createExtractorLink(m3u8Url, name, url, callback)) {
-                        return true
-                    }
-                }
-            }
-        }
-        
-        println("[$TAG] Extração direta falhou")
-        return false
-    }
-    
-    private suspend fun createExtractorLink(
-        hlsUrl: String,
-        name: String,
-        referer: String,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        return try {
-            println("[$TAG] Criando ExtractorLink para: $hlsUrl")
-            println("[$TAG] Referer: $referer")
-            
-            // Tenta gerar links M3U8 com qualidades
-            println("[$TAG] Gerando links M3U8...")
-            val headers = mapOf(
-                "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36",
-                "Accept" to "*/*",
-                "Accept-Language" to "pt-BR,pt;q=0.9",
-                "Referer" to referer,
-                "Origin" to "https://cineagora.net"
-            )
-            
+        try {
+            println("[$TAG] Gerando links M3U8 com qualidades...")
             val links = M3u8Helper.generateM3u8(
                 source = name,
-                streamUrl = hlsUrl,
-                referer = referer,
+                streamUrl = m3u8Url,
+                referer = playerUrl,
                 headers = headers
             )
             
             if (links.isNotEmpty()) {
                 println("[$TAG] ${links.size} links M3U8 gerados com sucesso!")
                 links.forEach { link ->
-                    println("[$TAG] Link gerado: ${link.url} (Qualidade: ${link.quality})")
+                    println("[$TAG] Link: ${link.url} (Qualidade: ${link.quality})")
                     callback(link)
                 }
                 return true
             }
             
-            println("[$TAG] Fallback: criando link simples M3U8")
-            // Fallback: link M3U8 simples
+            println("[$TAG] M3u8Helper não gerou links, criando link direto...")
+            
+            // Fallback: link M3U8 direto
             val fallbackLink = newExtractorLink(
                 source = name,
-                name = name,
-                url = hlsUrl,
+                name = "CineAgora HD",
+                url = m3u8Url,
                 type = ExtractorLinkType.M3U8
             ) {
-                this.referer = referer
+                this.referer = playerUrl
                 this.quality = Qualities.Unknown.value
                 this.headers = headers
             }
             
             callback(fallbackLink)
-            println("[$TAG] Link fallback criado com sucesso")
-            true
+            println("[$TAG] Link direto criado com sucesso")
+            return true
             
         } catch (e: Exception) {
-            println("[$TAG] Erro ao criar ExtractorLink: ${e.message}")
+            println("[$TAG] Erro ao criar links M3U8: ${e.message}")
             e.printStackTrace()
-            false
+            return false
         }
     }
 }
