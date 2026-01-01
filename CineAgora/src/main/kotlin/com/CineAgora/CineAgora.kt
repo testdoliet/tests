@@ -250,22 +250,22 @@ class CineAgora : MainAPI() {
         val year = selectFirst(".info span:first-child")?.text()?.toIntOrNull()
             ?: Regex("\\((\\d{4})\\)").find(rawTitle)?.groupValues?.get(1)?.toIntOrNull()
         
-        // Limpar título (inspirado no AniTube)
+        // Limpar título
         val cleanTitle = cleanTitle(rawTitle)
         
         // Imagem/poster
         val imgElement = selectFirst("img.thumbnail")
         val posterUrl = imgElement?.attr("src")?.let { fixUrl(it) }
         
-        // 1. Qualidade (HD, TS, etc.) - Primeiro .item-info
+        // 1. Qualidade (HD, TS, etc.)
         val qualityBadge = select(".item-info").firstOrNull()?.selectFirst("div:first-child")?.text()?.trim()
         
-        // 2. Idioma (Dublado/Legendado) - Primeiro .item-info (como no AniTube)
+        // 2. Idioma (Dublado/Legendado)
         val languageBadge = select(".item-info").firstOrNull()?.selectFirst("div:nth-child(2)")?.text()?.trim()
         val isDubbed = languageBadge?.contains("dublado", ignoreCase = true) == true
         val isSubtitled = languageBadge?.contains("legendado", ignoreCase = true) == true
         
-        // 3. Score/Rating (usando a função avançada do AnimeFire)
+        // 3. Score/Rating
         val scoreResult = extractScoreAdvanced(this)
         val scoreText = scoreResult.first
         val score = when {
@@ -273,13 +273,12 @@ class CineAgora : MainAPI() {
             else -> scoreText.toFloatOrNull()?.let { Score.from10(it) }
         }
         
-        // 4. Último episódio adicionado (para séries) - Segundo .item-info ou .data
+        // 4. Último episódio adicionado
         val lastEpisodeInfo = select(".item-info").getOrNull(1)?.selectFirst("small")?.text()?.trim()
             ?: selectFirst(".data")?.text()?.trim()
         
-        // Extrair número do episódio e temporada (como no AniTube)
+        // Extrair número do episódio
         val episodeNumber = lastEpisodeInfo?.let { extractEpisodeNumber(it) }
-        val seasonNumber = lastEpisodeInfo?.let { extractSeasonNumber(it) } ?: 1
         
         // Determinar se é filme ou série
         val isSerie = href.contains("/series-") || href.contains("/serie-") || href.contains("/tv-") || 
@@ -295,15 +294,34 @@ class CineAgora : MainAPI() {
             else -> null
         }
         
-        // Formatar URL com poster (como no AniTube)
+        // Formatar URL com poster
         val urlWithPoster = if (posterUrl != null) {
             "${fixUrl(href)}|poster=$posterUrl"
         } else {
             fixUrl(href)
         }
         
+        // Criar descrição com badges (para aparecer no hover ou como metadata)
+        val description = buildString {
+            if (qualityBadge != null && qualityBadge.isNotBlank()) {
+                append("📀 $qualityBadge")
+            }
+            if (languageBadge != null && languageBadge.isNotBlank()) {
+                if (isNotEmpty()) append(" • ")
+                append("🗣️ $languageBadge")
+            }
+            if (scoreText != null && scoreText != "N/A") {
+                if (isNotEmpty()) append(" • ")
+                append("⭐ $scoreText")
+            }
+            if (lastEpisodeInfo != null && lastEpisodeInfo.isNotBlank()) {
+                if (isNotEmpty()) append(" • ")
+                append("📺 $lastEpisodeInfo")
+            }
+        }.takeIf { it.isNotBlank() }
+        
         return if (isSerie) {
-            // Para séries, incluindo o episódio se disponível
+            // Para séries
             newTvSeriesSearchResponse(cleanTitle, urlWithPoster) {
                 this.posterUrl = posterUrl
                 this.year = year
@@ -311,16 +329,8 @@ class CineAgora : MainAPI() {
                 if (quality != null) {
                     this.quality = quality
                 }
-                
-                // Adicionar status de dublagem/legenda (como no AniTube)
-                if (isDubbed) {
-                    addDubStatus(DubStatus.Dubbed, episodeNumber)
-                } else if (isSubtitled) {
-                    addDubStatus(DubStatus.Subbed, episodeNumber)
-                } else if (episodeNumber != null) {
-                    // Se tiver número de episódio mas não tem info de áudio, assume legendado
-                    addDubStatus(DubStatus.Subbed, episodeNumber)
-                }
+                // Descrição com badges
+                this.description = description
             }
         } else {
             // Para filmes
@@ -331,13 +341,8 @@ class CineAgora : MainAPI() {
                 if (quality != null) {
                     this.quality = quality
                 }
-                
-                // Para filmes também podemos adicionar status de áudio
-                if (isDubbed) {
-                    addDubStatus(DubStatus.Dubbed, null)
-                } else if (isSubtitled) {
-                    addDubStatus(DubStatus.Subbed, null)
-                }
+                // Descrição com badges
+                this.description = description
             }
         }
     }
