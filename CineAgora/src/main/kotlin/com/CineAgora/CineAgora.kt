@@ -254,13 +254,11 @@ class CineAgora : MainAPI() {
             badges.add("📺 $lastEpisodeInfo")
         }
         
-        val badgeText = badges.joinToString(" • ")
-        
         // Determinar qualidade baseada na badge
         val quality = when {
             qualityBadge?.contains("HD", ignoreCase = true) == true -> SearchQuality.HD
-            qualityBadge?.contains("4K", ignoreCase = true) == true -> SearchQuality.UltraHD
-            qualityBadge?.contains("FULLHD", ignoreCase = true) == true -> SearchQuality.FullHd
+            qualityBadge?.contains("4K", ignoreCase = true) == true -> SearchQuality.HD
+            qualityBadge?.contains("FULLHD", ignoreCase = true) == true -> SearchQuality.HD
             qualityBadge?.contains("TS", ignoreCase = true) == true -> SearchQuality.Cam
             else -> null
         }
