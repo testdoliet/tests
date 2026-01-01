@@ -105,64 +105,16 @@ class CineAgora : MainAPI() {
         val sectionId = request.data.removePrefix("home_").removePrefix("section_")
         
         val document = if (request.data.startsWith("home_")) {
-            // Seções da página principal - URLs específicas com paginação
-            val baseUrl = when (sectionId) {
-                "ultimos-filmes" -> "https://cineagora.net/filmes-hd-online/"
-                "ultimas-series" -> "https://cineagora.net/series-online-hd-gratis/"
-                else -> mainUrl
-            }
-            
-            // Adicionar paginação se não for a primeira página
-            val url = if (page == 0) {
-                baseUrl
-            } else {
-                if (baseUrl.endsWith("/")) {
-                    "${baseUrl}page/${page + 1}/"
-                } else {
-                    "$baseUrl/page/${page + 1}/"
-                }
-            }
-            
-            app.get(url).document
+            // Seções da página principal
+            app.get(mainUrl).document
         } else {
-            // Seções com URLs específicas - adicionar paginação
-            val baseUrl = SECTION_URLS[sectionId] ?: mainUrl
-            
-            // Adicionar paginação se não for a primeira página
-            val url = if (page == 0) {
-                baseUrl
-            } else {
-                if (baseUrl.endsWith("/")) {
-                    "${baseUrl}page/${page + 1}/"
-                } else {
-                    "$baseUrl/page/${page + 1}/"
-                }
-            }
-            
+            // Seções com URLs específicas
+            val url = SECTION_URLS[sectionId] ?: mainUrl
             app.get(url).document
         }
         
         val items = extractSectionItems(document, sectionId, request.data.startsWith("home_"))
-        
-        // Verificar se tem próxima página
-        val hasNextPage = checkHasNextPage(document)
-        
-        return newHomePageResponse(request.name, items.distinctBy { it.url }, hasNextPage)
-    }
-
-    private fun checkHasNextPage(document: org.jsoup.nodes.Document): Boolean {
-        // Verificar se existe paginação
-        val paginationElements = document.select(".pagination a, .page-numbers a, .paginacao a, .nav-links a")
-        if (paginationElements.isEmpty()) return false
-        
-        // Verificar se há link para próxima página
-        return paginationElements.any { element ->
-            val text = element.text().trim()
-            text.contains("Próxima", ignoreCase = true) ||
-            text.contains(">") || 
-            text.contains("›") ||
-            element.attr("href").contains("/page/")
-        }
+        return newHomePageResponse(request.name, items.distinctBy { it.url }, false)
     }
 
     private fun extractSectionItems(document: org.jsoup.nodes.Document, sectionId: String, isHomeSection: Boolean): List<SearchResponse> {
@@ -257,7 +209,7 @@ class CineAgora : MainAPI() {
         val linkElement = this.selectFirst("a")
         val href = linkElement?.attr("href")?.takeIf { it.isNotBlank() } ?: return null
         
-        // Título do card - NÃO REMOVER NÚMEROS
+        // Título do card
         val titleElement = selectFirst(".item-footer .title")
         val title = titleElement?.text()?.trim() ?: return null
         
@@ -265,14 +217,10 @@ class CineAgora : MainAPI() {
         val year = selectFirst(".info span:first-child")?.text()?.toIntOrNull()
             ?: Regex("\\((\\d{4})\\)").find(title)?.groupValues?.get(1)?.toIntOrNull()
         
-        // Limpar título (remover apenas informações extras, manter números)
+        // Limpar título (remover ano e outros detalhes)
         val cleanTitle = title
-            .replace(Regex("\\(dublado\\)", RegexOption.IGNORE_CASE), "")
-            .replace(Regex("\\(legendado\\)", RegexOption.IGNORE_CASE), "")
-            .replace(Regex("-\\s*epis[oó]dio\\s*\\d+", RegexOption.IGNORE_CASE), "")
-            .replace(Regex("S\\d+\\s*E\\d+", RegexOption.IGNORE_CASE), "")
-            .replace(Regex("Temporada\\s*\\d+.*", RegexOption.IGNORE_CASE), "")
-            .replace(Regex("\\s+"), " ")
+            .replace(Regex("\\(\\d{4}\\)"), "")
+            .replace(Regex("\\d{4}$"), "")
             .trim()
         
         // Imagem/poster
@@ -379,3 +327,5 @@ class CineAgora : MainAPI() {
         return false
     }
 }
+
+
