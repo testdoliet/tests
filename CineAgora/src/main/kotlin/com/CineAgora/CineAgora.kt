@@ -724,8 +724,7 @@ class CineAgora : MainAPI() {
         return null
     }
 
-    
-override suspend fun loadLinks(
+    override suspend fun loadLinks(
     data: String,
     isCasting: Boolean,
     subtitleCallback: (SubtitleFile) -> Unit,
@@ -734,17 +733,21 @@ override suspend fun loadLinks(
     println("[CineAgora] loadLinks chamado com data: $data")
     println("[CineAgora] isCasting: $isCasting")
     
-    // Adiciona um pequeno delay para evitar rate limiting
-    kotlinx.coroutines.delay(1000)
-    
-    // Usar o extractor separado
-    val success = CineAgoraExtractor.extractVideoLinks(data, name, callback)
-    
-    if (!success) {
-        println("[CineAgora] Extração falhou, tentando método alternativo...")
-        // Pode tentar um método alternativo aqui se necessário
+    // Se for uma URL do YouTube, deixar o sistema padrão do CloudStream lidar
+    if (data.contains("youtube.com") || data.contains("youtu.be")) {
+        println("[CineAgora] URL do YouTube detectada, ignorando...")
+        return false
     }
     
-    return success
-  }
+    // Determinar se é série
+    val isSerie = data.contains("/series-") || 
+                 data.contains("/serie-") || 
+                 data.contains("/series-online") ||
+                 data.contains("/tv-")
+    
+    println("[CineAgora] É série: $isSerie")
+    
+    // Usar o extractor otimizado
+    return CineAgoraExtractor.extractVideoLinks(data, name, isSerie, callback)
+    }
 }
