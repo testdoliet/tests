@@ -115,14 +115,13 @@ Este repo existe graças à inspiração do **saimuelrepo**, o pioneiro dos repo
 
 **🔗 Links Úteis / Useful Links:**
 
-[![CloudStream App](https://img.shields.io/badge/🌐_CloudStream_App-2196F3?style=for-the-badge&logo=web)](https://cloudstream.app)
+[![CloudStream App](https://img.shields.io/badge/🌐_CloudStream_App-2196F3?style=for-the-badge&logo=web)](https://cloudstream-apk.com/)
 [![CloudStream GitHub](https://img.shields.io/badge/💻_CloudStream_GitHub-181717?style=for-the-badge&logo=github)](https://github.com/recloudstream/cloudstream)
-[![Documentação](https://img.shields.io/badge/📚_Documentação-4CAF50?style=for-the-badge&logo=readthedocs)](https://docs.cloudstream.app)
-[![Comunidade Discord](https://img.shields.io/badge/💬_Comunidade_Discord-5865F2?style=for-the-badge&logo=discord)](https://discord.com/invite/cloudstream)
+[![Documentação](https://img.shields.io/badge/📚_Documentação-4CAF50?style=for-the-badge&logo=readthedocs)](https://recloudstream.github.io/csdocs/)
 
 <br>
 
-[![Último commit](https://img.shields.io/github/last-commit/lawlietbr/lietrepo?style=for-the-badge&label=🔄%20Último%20commit&color=9C27B0)](https://github.com/lawlietbr/lietrepo/commits/main)
+[![Commits](https://img.shields.io/github/last-commit/lawlietbr/lietrepo?style=for-the-badge&label=🔄%20Último%20commit&color=9C27B0)](https://github.com/lawlietbr/lietrepo/activity)
 [![Tamanho do repositório](https://img.shields.io/github/repo-size/lawlietbr/lietrepo?style=for-the-badge&label=📦%20Tamanho%20do%20repo&color=FF9800)](https://github.com/lawlietbr/lietrepo)
 [![Licença MIT](https://img.shields.io/badge/📄_Licença-MIT-8BC34A?style=for-the-badge&logo=book)](https://opensource.org/licenses/MIT)
 [![Stars](https://img.shields.io/github/stars/lawlietbr/lietrepo?style=for-the-badge&label=⭐%20Stars&color=FFD700)](https://github.com/lawlietbr/lietrepo/stargazers)
