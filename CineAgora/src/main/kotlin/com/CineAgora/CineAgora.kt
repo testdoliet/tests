@@ -216,14 +216,6 @@ class CineAgora : MainAPI() {
         ).firstNotNullOfOrNull { it.find(text)?.groupValues?.get(1)?.toIntOrNull() }
     }
 
-    private fun extractSeasonNumber(text: String): Int? {
-        return listOf(
-            Regex("""S(\d+)\s*E\d+""", RegexOption.IGNORE_CASE),
-            Regex("""Temporada\s*(\d+)""", RegexOption.IGNORE_CASE),
-            Regex("""Temp\s*(\d+)""", RegexOption.IGNORE_CASE)
-        ).firstNotNullOfOrNull { it.find(text)?.groupValues?.get(1)?.toIntOrNull() } ?: 1
-    }
-
     private fun cleanTitle(title: String): String {
         return title
             .replace(Regex("\\(\\d{4}\\)"), "")
@@ -257,10 +249,10 @@ class CineAgora : MainAPI() {
         val imgElement = selectFirst("img.thumbnail")
         val posterUrl = imgElement?.attr("src")?.let { fixUrl(it) }
         
-        // 1. Qualidade (HD, TS, etc.)
+        // 1. Qualidade (HD, TS, etc.) - Primeiro .item-info
         val qualityBadge = select(".item-info").firstOrNull()?.selectFirst("div:first-child")?.text()?.trim()
         
-        // 2. Idioma (Dublado/Legendado)
+        // 2. Idioma (Dublado/Legendado) - Primeiro .item-info
         val languageBadge = select(".item-info").firstOrNull()?.selectFirst("div:nth-child(2)")?.text()?.trim()
         
         // 3. Score/Rating
@@ -271,7 +263,7 @@ class CineAgora : MainAPI() {
             else -> scoreText.toFloatOrNull()?.let { Score.from10(it) }
         }
         
-        // 4. Último episódio adicionado
+        // 4. Último episódio adicionado (para séries) - Segundo .item-info ou .data
         val lastEpisodeInfo = select(".item-info").getOrNull(1)?.selectFirst("small")?.text()?.trim()
             ?: selectFirst(".data")?.text()?.trim()
         
@@ -292,51 +284,30 @@ class CineAgora : MainAPI() {
             else -> null
         }
         
-        // Criar título com badges para aparecer na lista
-        val titleWithBadges = buildString {
-            append(cleanTitle)
-            
-            // Adicionar badges no final do título (aparece na lista)
-            if (languageBadge != null && languageBadge.isNotBlank()) {
-                append(" [")
-                append(languageBadge)
-                
-                // Adicionar episódio para séries
-                if (isSerie && lastEpisodeInfo != null && lastEpisodeInfo.isNotBlank()) {
-                    append(" • $lastEpisodeInfo")
-                }
-                
-                // Adicionar qualidade se disponível
-                if (qualityBadge != null && qualityBadge.isNotBlank()) {
-                    append(" • $qualityBadge")
-                }
-                
-                // Adicionar score se disponível
-                if (scoreText != null && scoreText != "N/A") {
-                    append(" • ⭐$scoreText")
-                }
-                
-                append("]")
+        // Criar lista de badges para mostrar (como no AniTube)
+        val badges = mutableListOf<String>()
+        
+        // Badge de idioma (se disponível)
+        if (languageBadge != null && languageBadge.isNotBlank()) {
+            badges.add(languageBadge)
+        }
+        
+        // Badge de episódio para séries
+        if (isSerie && lastEpisodeInfo != null && lastEpisodeInfo.isNotBlank()) {
+            // Formatar bonitinho o episódio
+            val formattedEpisode = if (lastEpisodeInfo.contains("S\\d+.*E\\d+".toRegex())) {
+                lastEpisodeInfo
+            } else if (episodeNumber != null) {
+                "Ep. $episodeNumber"
             } else {
-                // Se não tiver languageBadge, ainda adicionar outras informações
-                val badges = mutableListOf<String>()
-                
-                if (isSerie && lastEpisodeInfo != null && lastEpisodeInfo.isNotBlank()) {
-                    badges.add(lastEpisodeInfo)
-                }
-                
-                if (qualityBadge != null && qualityBadge.isNotBlank()) {
-                    badges.add(qualityBadge)
-                }
-                
-                if (scoreText != null && scoreText != "N/A") {
-                    badges.add("⭐$scoreText")
-                }
-                
-                if (badges.isNotEmpty()) {
-                    append(" [${badges.joinToString(" • ")}]")
-                }
+                lastEpisodeInfo
             }
+            badges.add(formattedEpisode)
+        }
+        
+        // Badge de qualidade
+        if (qualityBadge != null && qualityBadge.isNotBlank()) {
+            badges.add(qualityBadge)
         }
         
         // Formatar URL com poster (como no AniTube)
@@ -347,23 +318,41 @@ class CineAgora : MainAPI() {
         }
         
         return if (isSerie) {
-            // Para séries
-            newTvSeriesSearchResponse(titleWithBadges, urlWithPoster) {
+            // Para séries - O Cloudstream mostra as badges automaticamente
+            newTvSeriesSearchResponse(cleanTitle, urlWithPoster) {
                 this.posterUrl = posterUrl
                 this.year = year
                 this.score = score
                 if (quality != null) {
                     this.quality = quality
                 }
+                
+                // Adicionar informações extras que aparecem como badges
+                // O Cloudstream usa o campo 'name' e outras propriedades para badges
+                if (languageBadge != null && languageBadge.isNotBlank()) {
+                    // Para séries, podemos usar o campo de descrição ou outro
+                    this.description = buildString {
+                        if (languageBadge.isNotBlank()) append("Idioma: $languageBadge")
+                        if (lastEpisodeInfo != null && lastEpisodeInfo.isNotBlank()) {
+                            if (isNotEmpty()) append(" | ")
+                            append("Episódio: $lastEpisodeInfo")
+                        }
+                    }
+                }
             }
         } else {
             // Para filmes
-            newMovieSearchResponse(titleWithBadges, urlWithPoster) {
+            newMovieSearchResponse(cleanTitle, urlWithPoster) {
                 this.posterUrl = posterUrl
                 this.year = year
                 this.score = score
                 if (quality != null) {
                     this.quality = quality
+                }
+                
+                // Para filmes, adicionar idioma na descrição
+                if (languageBadge != null && languageBadge.isNotBlank()) {
+                    this.description = "Idioma: $languageBadge"
                 }
             }
         }
