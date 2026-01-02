@@ -2,8 +2,8 @@ package com.CineAgora
 
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
-import com.lagradost.cloudstream3.LoadResponse.Companion.addActors
 import com.lagradost.cloudstream3.LoadResponse.Companion.addTrailer
+import com.lagradost.cloudstream3.LoadResponse.Companion.addActors
 import com.lagradost.cloudstream3.app
 import org.jsoup.nodes.Element
 import java.net.URLEncoder
@@ -18,18 +18,14 @@ class CineAgora : MainAPI() {
     override val usesWebView = false
 
     companion object {
-        // Seções que estão na página principal (com URLs específicas)
         private val HOME_SECTIONS = listOf(
             "ultimos-filmes" to "Últimos Filmes",
             "ultimas-series" to "Últimas Séries"
         )
-        
-        // Seções com URLs específicas
+
         private val SECTION_URLS = mapOf(
-            // Links específicos para as seções da home
             "ultimos-filmes" to "https://cineagora.net/filmes-hd-online/",
             "ultimas-series" to "https://cineagora.net/series-online-hd-gratis/",
-            // Outras seções
             "filmes-populares" to "https://cineagora.net/filmes-hd-online/filmes-populares-hd/",
             "series-populares" to "https://cineagora.net/series-online-hd-gratis/series-populares-hd/",
             "netflix" to "https://cineagora.net/netflix/",
@@ -63,13 +59,11 @@ class CineAgora : MainAPI() {
     }
 
     override val mainPage = mainPageOf(
-        *HOME_SECTIONS.map { (section, name) -> 
-            "home_$section" to name 
+        *HOME_SECTIONS.map { (section, name) ->
+            "home_$section" to name
         }.toTypedArray(),
         *SECTION_URLS.filterKeys { it !in HOME_SECTIONS.map { it.first } }
-                     .map { (section, _) ->
-                         "section_$section" to getSectionName(section)
-                     }.toTypedArray()
+            .map { (section, _) -> "section_$section" to getSectionName(section) }.toTypedArray()
     )
 
     private fun getSectionName(section: String): String {
@@ -83,329 +77,126 @@ class CineAgora : MainAPI() {
             "disney" -> "Disney+"
             "apple" -> "Apple TV+"
             "hbo" -> "HBO Max"
-            "acao" -> "Ação"
-            "aventura" -> "Aventura"
-            "animacao" -> "Animação"
-            "biograficos" -> "Biográficos"
-            "comedia" -> "Comédia"
-            "crime" -> "Crime"
-            "documentarios" -> "Documentários"
-            "esporte" -> "Esporte"
-            "drama" -> "Drama"
-            "familia" -> "Família"
-            "fantasia" -> "Fantasia"
-            "historicos" -> "Históricos"
-            "terror" -> "Terror"
-            "musicais" -> "Musicais"
-            "misterio" -> "Mistério"
-            "romanticos" -> "Românticos"
-            "suspense" -> "Suspense"
-            "sci-fi" -> "Sci-Fi"
-            "tv" -> "TV"
-            "thriller" -> "Thriller"
-            "guerra" -> "Guerra"
-            "faroeste" -> "Faroeste"
-            else -> section.replace("-", " ").split(" ").joinToString(" ") { 
-                it.replaceFirstChar { char -> char.uppercase() }
-            }
+            else -> section.replace("-", " ").split(" ").joinToString(" ") { it.replaceFirstChar { c -> c.uppercase() } }
         }
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val sectionId = request.data.removePrefix("home_").removePrefix("section_")
-        
-        // Usar URL específica para cada seção
         val baseUrl = SECTION_URLS[sectionId] ?: mainUrl
-        
-        // Verificar se a página atual é maior que 1 para adicionar /page/N/
         val url = if (page > 1) {
-            // Verificar se a URL base já tem uma barra no final
             val cleanUrl = if (baseUrl.endsWith("/")) baseUrl else "$baseUrl/"
             "$cleanUrl/page/$page/"
-        } else {
-            baseUrl
-        }
-        
+        } else baseUrl
+
         val document = try {
             app.get(url).document
         } catch (e: Exception) {
-            // Se falhar na paginação, pode ser que a seção não suporte
-            if (page > 1) {
-                // Retorna lista vazia se não houver mais páginas
-                return newHomePageResponse(request.name, emptyList(), false)
-            } else {
-                throw e
-            }
+            if (page > 1) return newHomePageResponse(request.name, emptyList(), false)
+            throw e
         }
-        
+
         val items = extractSectionItems(document, sectionId)
-        
-        // Verificar se há botões de paginação para determinar se há mais páginas
         val hasNextPage = checkForNextPage(document, page)
-        
+
         return newHomePageResponse(request.name, items.distinctBy { it.url }, hasNextPage)
     }
 
     private fun checkForNextPage(document: org.jsoup.nodes.Document, currentPage: Int): Boolean {
-        // Verificar botões de paginação
-        val pagination = document.select(".pagination, .nav-links, .page-numbers, a[href*='page/']")
-        
-        // Verificar se há algum link para a próxima página
-        val nextPageLinks = pagination.filter { element ->
-            val href = element.attr("href")
-            val text = element.text().lowercase()
-            href.contains("/page/${currentPage + 1}/") || 
-            text.contains("próxima") || 
-            text.contains("next") ||
-            element.hasClass("next") ||
-            element.hasClass("next-page")
-        }
-        
-        // Ou verificar se há número da próxima página
-        val pageNumbers = document.select(".page-numbers, .page-number, [class*='page']")
-            .filter { it.text().matches(Regex("\\d+")) }
+        val nextLinks = document.select("a.next, a[href*='page/${currentPage + 1}/'], .pagination .next")
+        if (nextLinks.isNotEmpty()) return true
+
+        val pageNumbers = document.select(".page-numbers, .page-number")
             .mapNotNull { it.text().toIntOrNull() }
             .sorted()
-        
-        // Se houver número maior que a página atual
-        if (pageNumbers.any { it > currentPage }) {
-            return true
-        }
-        
-        return nextPageLinks.isNotEmpty()
+        return pageNumbers.any { it > currentPage }
     }
 
-    // IMPLEMENTAÇÃO DA PESQUISA COM BASE NA SUA DESCOBERTA
     override suspend fun search(query: String): List<SearchResponse> {
         if (query.isBlank()) return emptyList()
-        
-        // De acordo com sua análise, o site usa POST para a raiz com parâmetros específicos
+
         val searchUrl = mainUrl
-        
-        try {
+        return try {
             val document = app.post(
                 url = searchUrl,
-                data = mapOf(
-                    "do" to "search",
-                    "subaction" to "search",
-                    "story" to query
-                ),
-                referer = searchUrl,
-                headers = mapOf(
-                    "Content-Type" to "application/x-www-form-urlencoded",
-                    "Origin" to mainUrl,
-                    "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
-                )
+                data = mapOf("do" to "search", "subaction" to "search", "story" to query),
+                referer = searchUrl
             ).document
-            
-            // Processar os resultados da pesquisa
-            return extractSearchResults(document)
-            
+            extractSearchResults(document)
         } catch (e: Exception) {
-            // Fallback: tentar com GET se POST falhar
             try {
-                val encodedQuery = URLEncoder.encode(query, "UTF-8")
-                val fallbackUrl = "$mainUrl/?do=search&subaction=search&story=$encodedQuery"
-                
-                val document = app.get(fallbackUrl).document
-                return extractSearchResults(document)
+                val encoded = URLEncoder.encode(query, "UTF-8")
+                val doc = app.get("$mainUrl/?do=search&subaction=search&story=$encoded").document
+                extractSearchResults(doc)
             } catch (e2: Exception) {
-                // Retornar lista vazia se ambas as tentativas falharem
-                return emptyList()
+                emptyList()
             }
         }
     }
 
     private fun extractSearchResults(document: org.jsoup.nodes.Document): List<SearchResponse> {
-        // Primeiro tentar seletores específicos da página de busca
-        val searchItems = document.select(".film-list .content .col-6.col-sm-4.col-md-3.col-lg-2 .item-relative > a.item")
-        
-        return if (searchItems.isNotEmpty()) {
-            searchItems.mapNotNull { it.toSearchResult() }
-        } else {
-            // Fallback: seletores gerais (os mesmos da página principal)
-            document.select(".item, .item-relative .item, .poster, .movie-item, .serie-item")
-                .mapNotNull { it.toSearchResult() }
-        }
+        val items = document.select(".film-list .content .item-relative > a.item")
+        return if (items.isNotEmpty()) items.mapNotNull { it.toSearchResult() }
+        else document.select(".item, .item-relative .item").mapNotNull { it.toSearchResult() }
     }
 
     private fun extractSectionItems(document: org.jsoup.nodes.Document, sectionId: String): List<SearchResponse> {
-        val items = document.select(".item, .item-relative .item, .poster, .movie-item, .serie-item")
-        
-        return items.mapNotNull { it.toSearchResult() }
-    }
-
-    private fun extractScoreAdvanced(element: Element): Pair<String?, String?> {
-        val selectors = listOf(
-            ".item-info-ust .rating" to "Seletor rating principal",
-            ".rating" to "Seletor .rating",
-            ".score" to "Seletor .score",
-            ".item-info + div" to "Próximo ao item-info",
-            ".item-footer span" to "No rodapé do item",
-            "span:contains(★)" to "Span com estrela",
-            "span:contains(/10)" to "Span com /10",
-            "[class*='rating']" to "Classe contém 'rating'",
-            "[class*='score']" to "Classe contém 'score'",
-            ".item-info-ust div" to "Div dentro de item-info-ust",
-            "small" to "Tag small",
-            "b" to "Tag bold",
-            "i" to "Tag italic"
-        )
-
-        for ((selector, _) in selectors) {
-            val found = element.selectFirst(selector)?.text()?.trim()
-            if (!found.isNullOrBlank() && isScoreLike(found)) {
-                return found to selector
-            }
-        }
-
-        element.parent()?.let { parent ->
-            for ((selector, _) in selectors) {
-                val found = parent.selectFirst(selector)?.text()?.trim()
-                if (!found.isNullOrBlank() && isScoreLike(found)) {
-                    return found to "parent.$selector"
-                }
-            }
-        }
-
-        val html = element.outerHtml()
-        val scoreRegexes = listOf(
-            Regex("""(\d+\.\d+|\d+)\s*(?:★|/10|pontos)"""),
-            Regex("""class="[^"]*(?:rating|score)[^"]*">([^<]+)""")
-        )
-
-        for (regex in scoreRegexes) {
-            val match = regex.find(html)
-            if (match != null) {
-                val found = match.groupValues[1].trim()
-                if (isScoreLike(found)) {
-                    return found to "regex"
-                }
-            }
-        }
-
-        return null to null
-    }
-
-    private fun isScoreLike(text: String): Boolean {
-        return when {
-            text.equals("N/A", ignoreCase = true) -> true
-            text.matches(Regex("""^\d+(\.\d+)?$""")) -> true
-            text.matches(Regex("""^\d+(\.\d+)?/10$""")) -> true
-            text.contains("★") -> true
-            text.contains("pontos", ignoreCase = true) -> true
-            else -> false
-        }
+        return document.select(".item, .item-relative .item").mapNotNull { it.toSearchResult() }
     }
 
     private fun Element.toSearchResult(): SearchResponse? {
-        // Pegar o link principal
-        val linkElement = this.selectFirst("a")
-        val href = linkElement?.attr("href")?.takeIf { it.isNotBlank() } ?: return null
-        
-        // Título do card
-        val titleElement = selectFirst(".item-footer .title, .title, .poster-title, h3, h4")
-        val title = titleElement?.text()?.trim() ?: return null
-        
-        // Extrair ano
-        val year = selectFirst(".info span:first-child, .year, .date")?.text()?.toIntOrNull()
+        val linkEl = selectFirst("a") ?: return null
+        val href = fixUrl(linkEl.attr("href").takeIf { it.isNotBlank() } ?: return null)
+
+        val titleEl = selectFirst(".item-footer .title, .title, h3, h4") ?: return null
+        var title = titleEl.text().trim()
+
+        val year = selectFirst(".info span:first-child, .year")?.text()?.toIntOrNull()
             ?: Regex("\\((\\d{4})\\)").find(title)?.groupValues?.get(1)?.toIntOrNull()
-        
-        // Limpar título (remover ano e outros detalhes)
-        val cleanTitle = title
-            .replace(Regex("\\(\\d{4}\\)"), "")
-            .replace(Regex("\\d{4}$"), "")
-            .trim()
-        
-        // Imagem/poster
-        val imgElement = selectFirst("img.thumbnail, img.poster, img")
-        val posterUrl = imgElement?.attr("src")?.let { fixUrl(it) }
-        
-        // 1. Qualidade (HD, TS, etc.) - Primeiro .item-info
-        val qualityBadge = select(".item-info, .quality, .badge").firstOrNull()?.selectFirst("div:first-child, span")?.text()?.trim()
-        
-        // 2. Idioma (Dublado/Legendado) - Primeiro .item-info
-        val languageBadge = select(".item-info, .language, .badge").firstOrNull()?.selectFirst("div:nth-child(2), .lang")?.text()?.trim()
-        
-        // 3. Score/Rating (usando a função avançada do AnimeFire)
-        val scoreResult = extractScoreAdvanced(this)
-        val scoreText = scoreResult.first
-        val score = when {
-            scoreText == null || scoreText == "N/A" -> null
-            else -> scoreText.toFloatOrNull()?.let { Score.from10(it) }
-        }
-        
-        // 4. Último episódio adicionado (para séries) - Segundo .item-info ou .data
-        val lastEpisodeInfo = select(".item-info, .episode, .data").getOrNull(1)?.selectFirst("small, .last-ep")?.text()?.trim()
-            ?: selectFirst(".data, .episode-info")?.text()?.trim()
-        
-        // Determinar se é filme ou série
-        val isSerie = href.contains("/series-") || href.contains("/serie-") || href.contains("/tv-") || 
-                      href.contains("/series-online") ||
-                      lastEpisodeInfo?.contains(Regex("S\\d+.*E\\d+")) == true ||
-                      title.contains(Regex("(?i)(temporada|episódio|season|episode)"))
-        
-        // Determinar qualidade baseada na badge
+
+        val cleanTitle = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
+
+        val posterUrl = selectFirst("img.thumbnail, img")?.attr("src")?.let { fixUrl(it) }
+
+        val qualityBadge = selectFirst(".item-info div:first-child, .quality")?.text()?.trim()
+        val languageBadge = selectFirst(".item-info div:nth-child(2), .lang")?.text()?.trim()
+
         val quality = when {
             qualityBadge?.contains("HD", ignoreCase = true) == true -> SearchQuality.HD
             qualityBadge?.contains("4K", ignoreCase = true) == true -> SearchQuality.HD
-            qualityBadge?.contains("FULLHD", ignoreCase = true) == true -> SearchQuality.HD
             qualityBadge?.contains("TS", ignoreCase = true) == true -> SearchQuality.Cam
             else -> null
         }
-        
+
+        val isSerie = href.contains("/series-") || href.contains("/series-online") ||
+                selectFirst(".episode, .data")?.text()?.contains(Regex("S\\d+.*E\\d+")) == true
+
         return if (isSerie) {
-            newTvSeriesSearchResponse(cleanTitle, fixUrl(href)) {
+            newTvSeriesSearchResponse(cleanTitle, href) {
                 this.posterUrl = posterUrl
                 this.year = year
-                this.score = score
-                if (quality != null) {
-                    this.quality = quality
-                }
+                this.quality = quality
             }
         } else {
-            newMovieSearchResponse(cleanTitle, fixUrl(href)) {
+            newMovieSearchResponse(cleanTitle, href) {
                 this.posterUrl = posterUrl
                 this.year = year
-                this.score = score
-                if (quality != null) {
-                    this.quality = quality
-                }
+                this.quality = quality
             }
         }
     }
 
-    // =============================================
-    // FUNÇÕES AUXILIARES (PRIVADAS DA CLASSE)
-    // =============================================
-
     private fun extractBannerUrl(doc: org.jsoup.nodes.Document): String? {
-        // Procurar banner em várias fontes
-        val bannerSelectors = listOf(
-            "meta[property='og:image']",
-            ".cover-img",
-            "img.banner",
-            ".hero img",
-            "[class*='banner'] img",
-            "picture img",
-            ".poster.large"
-        )
-        
-        for (selector in bannerSelectors) {
-            val element = doc.selectFirst(selector)
-            if (element != null) {
-                val url = when (selector) {
-                    "meta[property='og:image']" -> element.attr("content")
-                    else -> element.attr("src")
-                }
-                
-                if (url.isNotBlank()) {
-                    return fixUrl(url)
-                }
-            }
-        }
-        
-        return null
+        // Prioridade: <picture> do player (banner grande)
+        val source = doc.selectFirst("picture source[srcset]")?.attr("srcset")
+        if (!source.isNullOrBlank()) return fixUrl(source.trim())
+
+        val imgInPicture = doc.selectFirst("picture img")?.attr("src")
+        if (!imgInPicture.isNullOrBlank()) return fixUrl(imgInPicture.trim())
+
+        // Fallbacks
+        return doc.selectFirst("meta[property='og:image']")?.attr("content")?.let { fixUrl(it) }
+            ?: doc.selectFirst(".cover-img, .hero img")?.attr("src")?.let { fixUrl(it) }
     }
 
     private fun extractYear(doc: org.jsoup.nodes.Document): Int? {
@@ -414,177 +205,100 @@ class CineAgora : MainAPI() {
     }
 
     private fun extractGenres(doc: org.jsoup.nodes.Document): List<String>? {
-        val genres = doc.select(".genres a, .genre a, .category a, a[href*='genero'], a[href*='categoria']")
+        return doc.select(".info a[href*='/filmes-hd-online/'], .genres a")
             .mapNotNull { it.text().trim() }
             .filter { it.isNotBlank() }
-        
-        return if (genres.isNotEmpty()) genres else null
+            .takeIf { it.isNotEmpty() }
     }
 
     private fun extractTrailer(doc: org.jsoup.nodes.Document): String? {
-        // Procurar por trailer no YouTube
-        val youtubePatterns = listOf(
+        val patterns = listOf(
             """youtube\.com/embed/([^"']+)""",
             """youtube\.com/watch\?v=([^"']+)""",
             """youtu\.be/([^"']+)"""
         )
-        
         val html = doc.html()
-        for (pattern in youtubePatterns) {
-            val regex = Regex(pattern)
-            val match = regex.find(html)
-            if (match != null) {
-                val videoId = match.groupValues[1]
-                return "https://www.youtube.com/watch?v=$videoId"
-            }
+        for (pattern in patterns) {
+            Regex(pattern).find(html)?.groupValues?.get(1)?.let { return "https://www.youtube.com/watch?v=$it" }
         }
-        
         return null
     }
 
     private fun extractSeriesSlug(url: String): String {
-        // Extrair slug da URL (ex: pluribus de https://cineagora.net/series-online-hd-gratis/2984-pluribus.html)
-        return url
-            .substringAfterLast("/")           // 2984-pluribus.html
-            .substringAfter("-")               // pluribus.html
-            .substringBefore(".html")          // pluribus
-            .trim()
+        return url.substringAfterLast("/").substringAfter("-").substringBefore(".html")
     }
 
     private suspend fun extractSeriesEpisodes(seriesUrl: String, seriesTitle: String): List<Episode> {
         val episodes = mutableListOf<Episode>()
-        
         try {
-            // Extrair slug da série da URL
-            val seriesSlug = extractSeriesSlug(seriesUrl)
-            println("[CineAgora] Slug da série: $seriesSlug")
-            
-            // Chamar API para obter episódios
-            val apiUrl = "https://watch.brplayer.cc/fetch_series_data.php?seriesSlug=$seriesSlug"
-            val response = app.get(apiUrl)
-            
-            // Usar parseJson do AppUtils corretamente
-            val jsonResponse = AppUtils.parseJson<Map<String, Any>>(response.text)
-            if (jsonResponse == null) {
-                println("[CineAgora] API retornou JSON inválido")
-                return episodes
-            }
-            
-            // Corrigir o acesso ao mapa
-            val seasons = jsonResponse["seasons"] as? Map<String, List<Map<String, Any>>> ?: emptyMap()
-            println("[CineAgora] Encontradas ${seasons.size} temporadas")
-            
-            seasons.forEach { (seasonNum, seasonEpisodes) ->
-                println("[CineAgora] Temporada $seasonNum com ${seasonEpisodes.size} episódios")
-                
-                seasonEpisodes.forEachIndexed { index, episode ->
-                    try {
-                        val episodeNumber = episode["episode_number"]?.toString()?.toIntOrNull() ?: (index + 1)
-                        val videoSlug = episode["video_slug"]?.toString()
-                        
-                        if (videoSlug != null && episodeNumber > 0) {
-                            // Construir URL do episódio (exatamente como mostrado no HTML)
-                            val episodeUrl = "https://watch.brplayer.cc/watch/$videoSlug"
-                            val episodeName = "$seriesTitle S${seasonNum.padStart(2, '0')}E${episodeNumber.toString().padStart(2, '0')}"
-                            
-                            val episodeItem = newEpisode(episodeUrl) {
-                                this.name = episodeName
-                                this.season = seasonNum.toIntOrNull() ?: 1
-                                this.episode = episodeNumber
-                            }
-                            
-                            episodes.add(episodeItem)
-                            println("[CineAgora] Adicionado episódio: $episodeName")
-                        }
-                    } catch (e: Exception) {
-                        println("[CineAgora] Erro ao processar episódio: ${e.message}")
-                    }
+            val slug = extractSeriesSlug(seriesUrl)
+            val json = app.get("https://watch.brplayer.cc/fetch_series_data.php?seriesSlug=$slug").text
+            val data = AppUtils.tryParseJson<Map<String, Any>>(json) ?: return episodes
+
+            @Suppress("UNCHECKED_CAST")
+            val seasons = data["seasons"] as? Map<String, List<Map<String, Any>>> ?: return episodes
+
+            seasons.forEach { (seasonNum, eps) ->
+                eps.forEachIndexed { i, ep ->
+                    val epNum = ep["episode_number"]?.toString()?.toIntOrNull() ?: (i + 1)
+                    val videoSlug = ep["video_slug"]?.toString() ?: return@forEachIndexed
+                    val epUrl = "https://watch.brplayer.cc/watch/$videoSlug"
+                    val name = "\( seriesTitle S \){seasonNum.padStart(2, '0')}E${epNum.toString().padStart(2, '0')}"
+
+                    episodes.add(newEpisode(epUrl) {
+                        this.name = name
+                        this.season = seasonNum.toIntOrNull()
+                        this.episode = epNum
+                    })
                 }
             }
-            
-        } catch (e: Exception) {
-            println("[CineAgora] Erro ao extrair episódios: ${e.message}")
-        }
-        
+        } catch (e: Exception) { /* silencioso */ }
         return episodes.sortedBy { it.episode }
     }
 
-    // =============================================
-    // FUNÇÃO LOAD PRINCIPAL (CORRIGIDA)
-    // =============================================
-
     override suspend fun load(url: String): LoadResponse? {
-        println("[CineAgora] Carregando URL: $url")
-        
         val doc = app.get(url).document
-        
-        // 1. EXTRAIR BANNER/POSTER - VERSÃO MELHOR QUALIDADE
+
         val bannerUrl = extractBannerUrl(doc)
-        // Pega a imagem do og:image ou do #info--box .cover-img para melhor qualidade
         val posterUrl = doc.selectFirst("meta[property='og:image']")?.attr("content")?.let { fixUrl(it) }
-            ?: doc.selectFirst("#info--box .cover-img")?.attr("src")?.let { fixUrl(it) }
+            ?: doc.selectFirst("#info--box .cover-img, .cover img")?.attr("src")?.let { fixUrl(it) }
             ?: bannerUrl
-        
-        // 2. TÍTULO
-        val title = doc.selectFirst("h1.title, h1, .title, h2")?.text()?.trim() ?: "Título não encontrado"
-        
-        // 3. DETERMINAR SE É SÉRIE OU FILME
-        val isSerie = url.contains("/series-") || url.contains("/serie-") || url.contains("/tv-") || 
-                     url.contains("/series-online") ||
-                     doc.select(".player-controls, #episodeDropdown, .seasons").isNotEmpty()
-        
-        println("[CineAgora] É série? $isSerie")
-        
+
+        val title = doc.selectFirst("h1.title, h1")?.text()?.trim() ?: return null
+
+        val isSerie = url.contains("/series-") || url.contains("/series-online") ||
+                doc.select("#seasons, .seasons").isNotEmpty()
+
+        val year = extractYear(doc)
+        val plot = doc.selectFirst(".info-description, .description")?.text()?.trim()
+        val genres = extractGenres(doc)
+        val trailer = extractTrailer(doc)
+
         if (isSerie) {
-            // 4. PARA SÉRIES: Extrair episódios via API
             val episodes = extractSeriesEpisodes(url, title)
-            
-            // 5. INFORMAÇÕES ADICIONAIS
-            val year = extractYear(doc)
-            val plot = doc.selectFirst(".info-description, .description, .sinopse, .plot")?.text()?.trim()
-            val genres = extractGenres(doc)
-            
             return newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes) {
                 this.posterUrl = posterUrl
                 this.backgroundPosterUrl = bannerUrl
                 this.year = year
                 this.plot = plot
                 this.tags = genres
-                
-                // Extrair e adicionar trailer
-                val trailer = extractTrailer(doc)
-                if (trailer != null) {
-                    addTrailer(trailer)
-                }
+                trailer?.let { addTrailer(it) }
             }
         } else {
-            // 6. PARA FILMES: NÃO extrair playerUrl aqui!
-            // 7. INFORMAÇÕES ADICIONAIS
-            val year = extractYear(doc)
-            val plot = doc.selectFirst(".info-description, .description, .sinopse, .plot")?.text()?.trim()
-            val genres = extractGenres(doc)
-            val duration = doc.selectFirst(".duration, .runtime, .time")?.text()?.trim()
-            
-            return newMovieLoadResponse(title, url, TvType.Movie, url) {  // ← PASSA URL DO FILME MESMO
+            val durationText = doc.selectFirst(".time, .duration")?.text()?.trim()
+            val duration = durationText?.let { Regex("""(\d+)""").find(it)?.groupValues?.get(1)?.toIntOrNull() }
+
+            return newMovieLoadResponse(title, url, TvType.Movie, url) {
                 this.posterUrl = posterUrl
                 this.backgroundPosterUrl = bannerUrl
                 this.year = year
                 this.plot = plot
                 this.tags = genres
-                this.duration = duration?.replace(Regex("[^0-9]"), "")?.toIntOrNull()
-                
-                // Extrair e adicionar trailer
-                val trailer = extractTrailer(doc)
-                if (trailer != null) {
-                    addTrailer(trailer)
-                }
+                this.duration = duration
+                trailer?.let { addTrailer(it) }
             }
         }
     }
-
-    // =============================================
-    // FUNÇÃO LOADLINKS (CORRIGIDA E ROBUSTA)
-    // =============================================
 
     override suspend fun loadLinks(
         data: String,
@@ -592,67 +306,27 @@ class CineAgora : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        println("[CineAgora] loadLinks chamado com data: $data")
-        println("[CineAgora] isCasting: $isCasting")
-        
-        // Ignorar URLs do YouTube
-        if (data.contains("youtube.com") || data.contains("youtu.be")) {
-            println("[CineAgora] URL do YouTube ignorada")
-            return false
-        }
-        
-        // Se já for direto o link do BRPlayer (episódios de séries), extrai direto
+        if (data.contains("youtube.com") || data.contains("youtu.be")) return false
+
         if (data.contains("watch.brplayer.cc/watch/")) {
-            println("[CineAgora] URL do BRPlayer detectada, extraindo diretamente...")
-            val name = data.substringAfterLast("/").replace("-", " ").replace("_", " ")
-            return CineAgoraExtractor.extractVideoLinks(data, name, callback)
+            return CineAgoraExtractor.extractVideoLinks(data, "Vídeo", callback)
         }
-        
-        // Caso contrário: data é a página do filme → baixa e extrai o player real
-        println("[CineAgora] Extraindo player da página: $data")
+
         val doc = app.get(data).document
-        
-        // Extrair título para nome dos links
-        val title = doc.selectFirst("h1.title, h1, .title, h2")?.text()?.trim() ?: "Filme"
-        
-        // Várias formas comuns de achar o link do BRPlayer nos filmes
-        val playerUrl = doc.selectFirst("iframe[src*=watch.brplayer.cc]")?.attr("abs:src")
-            ?: doc.selectFirst("iframe[src*=brplayer]")?.attr("abs:src")
-            ?: doc.selectFirst("iframe[data-src*=watch.brplayer.cc]")?.attr("abs:data-src")
-            ?: doc.selectFirst("a.button[data-link*=watch.brplayer.cc]")?.attr("abs:data-link")
-            ?: doc.selectFirst("span.button.active[data-link*=watch.brplayer.cc]")?.attr("abs:data-link")
-            ?: doc.selectFirst("div.mirrors a[data-link*=watch.brplayer.cc]")?.attr("abs:data-link")
-            ?: doc.selectFirst("div.player--footer a[data-link*=watch.brplayer.cc]")?.attr("abs:data-link")
-            ?: doc.selectFirst("a[href*=watch.brplayer.cc/watch/]")?.attr("abs:href")
-            // Fallback: procura em qualquer script
-            ?: doc.select("script").find { it.html().contains("watch.brplayer.cc/watch/") }
+        val title = doc.selectFirst("h1.title, h1")?.text()?.trim() ?: "Filme"
+
+        val playerUrl = doc.selectFirst(".mirrors .button.active[data-link*=watch.brplayer.cc], span.button.active[data-link*=watch.brplayer.cc]")
+            ?.attr("abs:data-link")
+            ?: doc.selectFirst(".mirrors .button[data-link*=watch.brplayer.cc]:contains(Dublado), span.button[data-link*=watch.brplayer.cc]")
+                ?.attr("abs:data-link")
+            ?: doc.selectFirst("iframe[src*=watch.brplayer.cc], iframe[data-src*=watch.brplayer.cc]")
+                ?.let { it.attr("abs:src").takeIf { it.isNotBlank() } ?: it.attr("abs:data-src") }
+            ?: doc.select("script").find { it.html().contains("watch.brplayer.cc/watch?v=") }
                 ?.html()
-                ?.let { 
-                    Regex("""(https?://watch\.brplayer\.cc/watch/[A-Za-z0-9]+)""").find(it)?.groupValues?.get(1)
-                }
-            // Fallback 2: procura por player em elementos com data-id
-            ?: doc.selectFirst("[data-player-id], [data-video-id]")?.let { element ->
-                val id = element.attr("data-player-id") ?: element.attr("data-video-id")
-                if (id.isNotBlank()) "https://watch.brplayer.cc/watch/$id" else null
-            }
+                ?.let { Regex("""(https?://watch\.brplayer\.cc/watch\?v=[A-Za-z0-9]+)""").find(it)?.groupValues?.get(1) }
 
-        if (playerUrl.isNullOrBlank()) {
-            println("[CineAgora] Nenhum link BRPlayer encontrado na página")
-            
-            // Último fallback: tentar encontrar iframe genérico
-            val genericIframe = doc.selectFirst("iframe[src*='player']")
-            if (genericIframe != null) {
-                val iframeSrc = genericIframe.attr("abs:src")
-                println("[CineAgora] Fallback: iframe genérico encontrado: $iframeSrc")
-                return CineAgoraExtractor.extractVideoLinks(iframeSrc, title, callback)
-            }
-            
-            return false
-        }
+        if (playerUrl.isNullOrBlank()) return false
 
-        println("[CineAgora] Player BRPlayer encontrado: $playerUrl")
-
-        // Agora sim, passa o link correto pro extractor
         return CineAgoraExtractor.extractVideoLinks(playerUrl, title, callback)
     }
 }
