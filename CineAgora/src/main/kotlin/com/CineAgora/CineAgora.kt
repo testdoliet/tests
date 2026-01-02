@@ -3,7 +3,6 @@ package com.CineAgora
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.LoadResponse.Companion.addTrailer
-import com.lagradost.cloudstream3.LoadResponse.Companion.addActors
 import com.lagradost.cloudstream3.app
 import org.jsoup.nodes.Element
 import java.net.URLEncoder
@@ -59,9 +58,7 @@ class CineAgora : MainAPI() {
     }
 
     override val mainPage = mainPageOf(
-        *HOME_SECTIONS.map { (section, name) ->
-            "home_$section" to name
-        }.toTypedArray(),
+        *HOME_SECTIONS.map { (section, name) -> "home_$section" to name }.toTypedArray(),
         *SECTION_URLS.filterKeys { it !in HOME_SECTIONS.map { it.first } }
             .map { (section, _) -> "section_$section" to getSectionName(section) }.toTypedArray()
     )
@@ -159,7 +156,6 @@ class CineAgora : MainAPI() {
         val posterUrl = selectFirst("img.thumbnail, img")?.attr("src")?.let { fixUrl(it) }
 
         val qualityBadge = selectFirst(".item-info div:first-child, .quality")?.text()?.trim()
-        val languageBadge = selectFirst(".item-info div:nth-child(2), .lang")?.text()?.trim()
 
         val quality = when {
             qualityBadge?.contains("HD", ignoreCase = true) == true -> SearchQuality.HD
@@ -187,14 +183,12 @@ class CineAgora : MainAPI() {
     }
 
     private fun extractBannerUrl(doc: org.jsoup.nodes.Document): String? {
-        // Prioridade: <picture> do player (banner grande)
         val source = doc.selectFirst("picture source[srcset]")?.attr("srcset")
         if (!source.isNullOrBlank()) return fixUrl(source.trim())
 
         val imgInPicture = doc.selectFirst("picture img")?.attr("src")
         if (!imgInPicture.isNullOrBlank()) return fixUrl(imgInPicture.trim())
 
-        // Fallbacks
         return doc.selectFirst("meta[property='og:image']")?.attr("content")?.let { fixUrl(it) }
             ?: doc.selectFirst(".cover-img, .hero img")?.attr("src")?.let { fixUrl(it) }
     }
