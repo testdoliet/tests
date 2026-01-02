@@ -751,3 +751,4 @@ return null
     // Passamos apenas os 3 parâmetros esperados: url, name, callback
     return CineAgoraExtractor.extractVideoLinks(data, name, callback)
     }
+}
