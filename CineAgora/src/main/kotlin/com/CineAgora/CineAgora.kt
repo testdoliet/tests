@@ -557,166 +557,214 @@ class CineAgora : MainAPI() {
                 }
             }
             
-            // Processar episódios por temporada
-            seasonsMap.forEach { (seasonNum, epElements) ->
-                epElements.forEachIndexed { epIndex, epElement ->
-                    try {
-                        val episodeNumber = epIndex + 1
-                        
-                        // Extrair informações do episódio
-                        val titleElement = epElement.selectFirst(".episode-name, .title, .name")
-                        val title = titleElement?.text()?.trim() ?: "Episódio $episodeNumber"
-                        
-                        // Tentar extrair número do episódio
-                        val epNumElement = epElement.selectFirst(".episode-number, .number, .ep-num")
-                        val epNum = epNumElement?.text()?.toIntOrNull() ?: episodeNumber
-                        
-                        // Tentar extrair URL do episódio
-                        val onclick = epElement.attr("onclick") ?: epElement.selectFirst("a")?.attr("onclick")
-                        val dataId = epElement.attr("data-id")
-                        val dataUrl = epElement.attr("data-url")
-                        
-                        // Construir URL do episódio
-                        val episodeUrl = when {
-                            onclick?.isNotBlank() == true && onclick.contains("loadEpisode") -> {
-                                // Extrair parâmetros da função loadEpisode
-                                val paramsRegex = Regex("""loadEpisode\s*\(\s*['"]([^'"]+)['"]""")
-                                val match = paramsRegex.find(onclick)
-                                if (match != null) {
-                                    // Construir URL baseada nos parâmetros
-                                    val params = match.groupValues[1]
-                                    "$mainUrl/episode/$params"
-                                } else {
-                                    null
-                                }
-                            }
-                            dataUrl.isNotBlank() -> fixUrl(dataUrl)
-                            dataId.isNotBlank() -> "$mainUrl/episode/$dataId"
-                            else -> null
-                        }
-                        
-                        if (episodeUrl != null) {
-                            val episode = newEpisode(episodeUrl) {
-                                this.name = title
-                                this.season = seasonNum
-                                this.episode = epNum
-                                
-                                // Tentar extrair descrição/data se disponível
-                                epElement.selectFirst(".episode-date, .date")?.text()?.trim()?.let { dateStr ->
-                                    this.description = dateStr
-                                }
-                                
-                                epElement.selectFirst(".episode-desc, .description")?.text()?.trim()?.let { desc ->
-                                    this.description = desc
-                                }
-                            }
-                            episodes.add(episode)
-                        }
-                    } catch (e: Exception) {
-                        // Ignorar episódio com erro
-                    }
-                }
+override suspend fun load(url: String): LoadResponse? {
+        println("[CineAgora] Carregando URL: $url")
+        
+        val doc = app.get(url).document
+        
+        // 1. EXTRAIR BANNER/POSTER
+        val bannerUrl = extractBannerUrl(doc)
+        val posterUrl = doc.selectFirst("meta[property='og:image']")?.attr("content")?.let { fixUrl(it) }
+        
+        // 2. TÍTULO
+        val title = doc.selectFirst("h1.title, h1, .title, h2")?.text()?.trim() ?: "Título não encontrado"
+        
+        // 3. DETERMINAR SE É SÉRIE OU FILME
+        val isSerie = url.contains("/series-") || url.contains("/serie-") || url.contains("/tv-") || 
+                     url.contains("/series-online") ||
+                     doc.select(".player-controls, #episodeDropdown, .seasons").isNotEmpty()
+        
+        println("[CineAgora] É série? $isSerie")
+        
+        if (isSerie) {
+            // 4. PARA SÉRIES: Extrair episódios via API
+            val episodes = extractSeriesEpisodes(url, title)
+            
+            // 5. INFORMAÇÕES ADICIONAIS
+            val year = extractYear(doc)
+            val plot = doc.selectFirst(".info-description, .description, .sinopse, .plot")?.text()?.trim()
+            val genres = extractGenres(doc)
+            
+            return newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes) {
+                this.posterUrl = posterUrl
+                this.backgroundPosterUrl = bannerUrl
+                this.year = year
+                this.plot = plot
+                this.tags = genres
+                
+                // Extrair e adicionar trailer
+                extractTrailer(doc)?.let { addTrailer(it) }
+            }
+        } else {
+            // 6. PARA FILMES: Extrair URL do player
+            val playerUrl = extractPlayerUrl(doc)
+            
+            // 7. INFORMAÇÕES ADICIONAIS
+            val year = extractYear(doc)
+            val plot = doc.selectFirst(".info-description, .description, .sinopse, .plot")?.text()?.trim()
+            val genres = extractGenres(doc)
+            val duration = doc.selectFirst(".duration, .runtime, .time")?.text()?.trim()
+            
+            return newMovieLoadResponse(title, url, TvType.Movie, playerUrl ?: url) {
+                this.posterUrl = posterUrl
+                this.backgroundPosterUrl = bannerUrl
+                this.year = year
+                this.plot = plot
+                this.tags = genres
+                this.duration = duration?.replace(Regex("[^0-9]"), "")?.toIntOrNull()
+                
+                // Extrair e adicionar trailer
+                extractTrailer(doc)?.let { addTrailer(it) }
             }
         }
-        
-        // 2. Fallback: Estrutura simples com lista de episódios
-        if (episodes.isEmpty()) {
-            val simpleEpisodeElements = document.select(".episode-list li, .episodes li, [data-episode], .episode")
-            simpleEpisodeElements.forEachIndexed { index, element ->
-                try {
-                    val episodeNumber = index + 1
-                    
-                    // Extrair número da temporada
-                    val seasonNumber = element.attr("data-season").toIntOrNull() ?: 
-                                      element.selectFirst("[data-season]")?.attr("data-season")?.toIntOrNull() ?: 1
-                    
-                    // Extrair número do episódio
-                    val epNum = element.attr("data-episode").toIntOrNull() ?: 
-                               element.selectFirst("[data-episode]")?.attr("data-episode")?.toIntOrNull() ?: episodeNumber
-                    
-                    // Extrair título
-                    val titleElement = element.selectFirst(".title, .name, .episode-title")
-                    val title = titleElement?.text()?.trim() ?: "Episódio $epNum"
-                    
-                    // Tentar extrair URL
-                    val dataUrl = element.attr("data-url")
-                    val href = element.selectFirst("a")?.attr("href")
-                    val onclick = element.attr("onclick")
-                    
-                    val episodeUrl = when {
-                        dataUrl.isNotBlank() -> fixUrl(dataUrl)
-                        href?.isNotBlank() == true && href != "#" -> fixUrl(href)
-                        onclick?.isNotBlank() == true && onclick.contains("http") -> {
-                            val urlRegex = Regex("""['"](https?://[^'"]+)['"]""")
-                            val match = urlRegex.find(onclick)
-                            match?.groupValues?.get(1)
-                        }
-                        else -> null
-                    }
-                    
-                    if (episodeUrl != null) {
-                        val episode = newEpisode(episodeUrl) {
-                            this.name = title
-                            this.season = seasonNumber
-                            this.episode = epNum
-                        }
-                        episodes.add(episode)
-                    }
-                } catch (e: Exception) {
-                    // Ignorar episódio com erro
-                }
-            }
-        }
-        
-        return episodes
     }
-
-    // Função para encontrar URL do player (para filmes)
-    private fun findPlayerUrl(document: org.jsoup.nodes.Document, baseUrl: String): String? {
-        // Procurar por elementos do player
-        val playerElements = document.select("iframe[src], video source[src], [data-url], button[data-url]")
+    
+    /**
+     * Extrai episódios de uma série usando a API brplayer
+     */
+    private suspend fun extractSeriesEpisodes(seriesUrl: String, seriesTitle: String): List<Episode> {
+        val episodes = mutableListOf<Episode>()
         
-        for (element in playerElements) {
-            // Verificar iframe
-            val iframeSrc = element.attr("src")
-            if (iframeSrc.isNotBlank() && (iframeSrc.contains("embed") || iframeSrc.contains("player") || 
-                iframeSrc.contains("m3u8") || iframeSrc.contains("mp4"))) {
-                return fixUrl(iframeSrc)
+        try {
+            // Extrair slug da série da URL
+            val seriesSlug = extractSeriesSlug(seriesUrl)
+            println("[CineAgora] Slug da série: $seriesSlug")
+            
+            // Chamar API para obter episódios
+            val apiUrl = "https://watch.brplayer.cc/fetch_series_data.php?seriesSlug=$seriesSlug"
+            val response = app.get(apiUrl)
+            
+            val json = tryParseJson<Map<String, Any>>(response.text)
+            if (json == null) {
+                println("[CineAgora] API retornou JSON inválido")
+                return episodes
             }
             
-            // Verificar data-url
-            val dataUrl = element.attr("data-url")
-            if (dataUrl.isNotBlank() && (dataUrl.contains("m3u8") || dataUrl.contains("mp4") || 
-                dataUrl.contains("embed"))) {
-                return fixUrl(dataUrl)
+            val seasons = json["seasons"] as? Map<String, List<Map<String, Any>>> ?: emptyMap()
+            println("[CineAgora] Encontradas ${seasons.size} temporadas")
+            
+            seasons.forEach { (seasonNum, seasonEpisodes) ->
+                println("[CineAgora] Temporada $seasonNum com ${seasonEpisodes.size} episódios")
+                
+                seasonEpisodes.forEach { episode ->
+                    val episodeNumber = episode["episode_number"]?.toString()?.toIntOrNull() ?: 0
+                    val videoSlug = episode["video_slug"]?.toString()
+                    
+                    if (videoSlug != null && episodeNumber > 0) {
+                        // Construir URL do episódio (exatamente como mostrado no HTML)
+                        val episodeUrl = "https://watch.brplayer.cc/watch/$videoSlug"
+                        val episodeName = "$seriesTitle S${seasonNum.padStart(2, '0')}E${episodeNumber.toString().padStart(2, '0')}"
+                        
+                        val episodeItem = newEpisode(episodeUrl) {
+                            this.name = episodeName
+                            this.season = seasonNum.toIntOrNull() ?: 1
+                            this.episode = episodeNumber
+                        }
+                        
+                        episodes.add(episodeItem)
+                        println("[CineAgora] Adicionado episódio: $episodeName")
+                    }
+                }
             }
             
-            // Verificar source
-            val sourceSrc = element.selectFirst("source")?.attr("src")
-            if (sourceSrc?.isNotBlank() == true && (sourceSrc.contains("m3u8") || sourceSrc.contains("mp4"))) {
-                return fixUrl(sourceSrc)
+        } catch (e: Exception) {
+            println("[CineAgora] Erro ao extrair episódios: ${e.message}")
+        }
+        
+        return episodes.sortedBy { it.episode }
+    }
+    
+    private fun extractSeriesSlug(url: String): String {
+        // Extrair slug da URL (ex: pluribus de https://cineagora.net/series-online-hd-gratis/2984-pluribus.html)
+        return url
+            .substringAfterLast("/")           // 2984-pluribus.html
+            .substringAfter("-")               // pluribus.html
+            .substringBefore(".html")          // pluribus
+            .trim()
+    }
+    
+    private fun extractBannerUrl(doc: org.jsoup.nodes.Document): String? {
+        // Procurar banner em várias fontes
+        val bannerSelectors = listOf(
+            "meta[property='og:image']",
+            ".cover-img",
+            "img.banner",
+            ".hero img",
+            "[class*='banner'] img",
+            "picture img",
+            ".poster.large"
+        )
+        
+        for (selector in bannerSelectors) {
+            val element = doc.selectFirst(selector)
+            if (element != null) {
+                val url = when (selector) {
+                    "meta[property='og:image']" -> element.attr("content")
+                    else -> element.attr("src")
+                }
+                
+                if (url.isNotBlank()) {
+                    return fixUrl(url)
+                }
+            }
+        }
+        
+        return null
+    }
+    
+    private fun extractYear(doc: org.jsoup.nodes.Document): Int? {
+        return doc.selectFirst(".year, .date, time")?.text()?.toIntOrNull()
+            ?: Regex("(\\d{4})").find(doc.selectFirst("h1")?.text() ?: "")?.groupValues?.get(1)?.toIntOrNull()
+    }
+    
+    private fun extractGenres(doc: org.jsoup.nodes.Document): List<String>? {
+        val genres = doc.select(".genres a, .genre a, .category a, a[href*='genero'], a[href*='categoria']")
+            .mapNotNull { it.text().trim() }
+            .filter { it.isNotBlank() }
+        
+        return if (genres.isNotEmpty()) genres else null
+    }
+    
+    private fun extractTrailer(doc: org.jsoup.nodes.Document): String? {
+        // Procurar por trailer no YouTube
+        val youtubePatterns = listOf(
+            """youtube\.com/embed/([^"']+)""",
+            """youtube\.com/watch\?v=([^"']+)""",
+            """youtu\.be/([^"']+)"""
+        )
+        
+        val html = doc.html()
+        for (pattern in youtubePatterns) {
+            val regex = Regex(pattern)
+            val match = regex.find(html)
+            if (match != null) {
+                val videoId = match.groupValues[1]
+                return "https://www.youtube.com/watch?v=$videoId"
+            }
+        }
+        
+        return null
+    }
+    
+    private fun extractPlayerUrl(doc: org.jsoup.nodes.Document): String? {
+        // Procurar iframe do player
+        val iframe = doc.selectFirst("iframe[src*='watch.brplayer.cc']")
+        if (iframe != null) {
+            val src = iframe.attr("src")
+            if (src.isNotBlank()) {
+                return fixUrl(src)
             }
         }
         
         // Procurar em scripts
-        val scripts = document.select("script:not([src])")
+        val scripts = doc.select("script:not([src])")
         for (script in scripts) {
-            val scriptContent = script.data()
-            if (scriptContent.contains("m3u8") || scriptContent.contains("mp4") || 
-                scriptContent.contains("player") || scriptContent.contains("video")) {
-                
-                // Tentar extrair URL
-                val urlRegex = Regex("""(https?://[^"' \s]*\.(?:m3u8|mp4)[^"' \s]*)""")
-                val match = urlRegex.find(scriptContent)
+            val content = script.html()
+            if (content.contains("watch.brplayer.cc")) {
+                val regex = Regex("""(https?://watch\.brplayer\.cc/watch/[A-Z0-9]+)""")
+                val match = regex.find(content)
                 if (match != null) {
                     return match.groupValues[1]
-                }
-                
-                // Tentar extrair URL de embed
-                val embedRegex = Regex("""['"](https?://[^'"]*(?:embed|player)[^'"]*)['"]""")
-                val embedMatch = embedRegex.find(scriptContent)
-                if (embedMatch != null) {
-                    return embedMatch.groupValues[1]
                 }
             }
         }
@@ -725,29 +773,23 @@ class CineAgora : MainAPI() {
     }
 
     override suspend fun loadLinks(
-    data: String,
-    isCasting: Boolean,
-    subtitleCallback: (SubtitleFile) -> Unit,
-    callback: (ExtractorLink) -> Unit
-): Boolean {
-    println("[CineAgora] loadLinks chamado com data: $data")
-    println("[CineAgora] isCasting: $isCasting")
-    
-    // Se for uma URL do YouTube, deixar o sistema padrão do CloudStream lidar
-    if (data.contains("youtube.com") || data.contains("youtu.be")) {
-        println("[CineAgora] URL do YouTube detectada, ignorando...")
-        return false
-    }
-    
-    // Determinar se é série
-    val isSerie = data.contains("/series-") || 
-                 data.contains("/serie-") || 
-                 data.contains("/series-online") ||
-                 data.contains("/tv-")
-    
-    println("[CineAgora] É série: $isSerie")
-    
-    // Usar o extractor otimizado
-    return CineAgoraExtractor.extractVideoLinks(data, name, isSerie, callback)
+        data: String,
+        isCasting: Boolean,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        println("[CineAgora] loadLinks chamado com data: $data")
+        
+        // Ignorar URLs do YouTube
+        if (data.contains("youtube.com") || data.contains("youtu.be")) {
+            println("[CineAgora] URL do YouTube ignorada")
+            return false
+        }
+        
+        // Extrair o nome do título da URL (para mostrar nos links)
+        val name = data.substringAfterLast("/").substringBefore("?").replace("-", " ").replace("_", " ")
+        
+        // Usar o extrator otimizado
+        return CineAgoraExtractor.extractVideoLinks(data, name, callback)
     }
 }
