@@ -1,10 +1,7 @@
 package com.CineAgora
 
 import com.lagradost.cloudstream3.app
-import com.lagradost.cloudstream3.utils.ExtractorLink
-import com.lagradost.cloudstream3.utils.M3u8Helper
-import com.lagradost.cloudstream3.utils.newExtractorLink
-import com.lagradost.cloudstream3.utils.Qualities
+import com.lagradost.cloudstream3.utils.*
 
 object CineAgoraExtractor {
     private const val TAG = "CineAgoraExtractor"
@@ -23,7 +20,11 @@ object CineAgoraExtractor {
             val directMaster = Regex("""['"](https?://[^'"]*master\.txt[^'"]*)['"]""").find(html)
             if (directMaster != null) {
                 val masterUrl = directMaster.groupValues[1]
-                M3u8Helper.generateM3u8("CineAgora", masterUrl, url).forEach { callback(it) }
+                M3u8Helper.generateM3u8(
+                    source = "CineAgora",
+                    streamUrl = masterUrl,
+                    referer = url
+                ).forEach { callback(it) }
                 return true
             }
 
@@ -40,17 +41,44 @@ object CineAgoraExtractor {
                 val headers = mapOf("Referer" to url, "Origin" to BASE_PLAYER)
 
                 val links = try {
-                    M3u8Helper.generateM3u8("CineAgora", masterUrl, url, headers)
-                } catch (e: Exception) { emptyList() }
+                    M3u8Helper.generateM3u8(
+                        source = "CineAgora",
+                        streamUrl = masterUrl,
+                        referer = url,
+                        headers = headers
+                    )
+                } catch (e: Exception) {
+                    emptyList()
+                }
 
                 if (links.isNotEmpty()) {
                     links.forEach { callback(it) }
                     return true
                 }
 
-                // Fallback único + alternativo
-                callback(newExtractorLink("CineAgora", name, masterUrl, url, Qualities.Unknown.value, true, headers))
-                callback(newExtractorLink("CineAgora (Alt)", "$name (Alt)", altUrl, url, Qualities.Unknown.value, true, headers))
+                // Fallback manual
+                newExtractorLink(
+                    source = "CineAgora",
+                    name = name,
+                    url = masterUrl,
+                    referer = url
+                ) {
+                    this.quality = Qualities.Unknown.value
+                    this.isM3u8 = true
+                    this.headers = headers
+                }.let(callback)
+
+                newExtractorLink(
+                    source = "CineAgora (Alt)",
+                    name = "$name (Alt)",
+                    url = altUrl,
+                    referer = url
+                ) {
+                    this.quality = Qualities.Unknown.value
+                    this.isM3u8 = true
+                    this.headers = headers
+                }.let(callback)
+
                 return true
             }
 
