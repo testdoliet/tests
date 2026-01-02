@@ -489,35 +489,41 @@ class CineAgora : MainAPI() {
             val apiUrl = "https://watch.brplayer.cc/fetch_series_data.php?seriesSlug=$seriesSlug"
             val response = app.get(apiUrl)
             
-            val json = tryParseJson<Map<String, Any>>(response.text)
-            if (json == null) {
+            // Usar parseJson do AppUtils corretamente
+            val jsonResponse = AppUtils.parseJson<Map<String, Any>>(response.text)
+            if (jsonResponse == null) {
                 println("[CineAgora] API retornou JSON inválido")
                 return episodes
             }
             
-            val seasons = json["seasons"] as? Map<String, List<Map<String, Any>>> ?: emptyMap()
+            // Corrigir o acesso ao mapa
+            val seasons = jsonResponse["seasons"] as? Map<String, List<Map<String, Any>>> ?: emptyMap()
             println("[CineAgora] Encontradas ${seasons.size} temporadas")
             
             seasons.forEach { (seasonNum, seasonEpisodes) ->
                 println("[CineAgora] Temporada $seasonNum com ${seasonEpisodes.size} episódios")
                 
-                seasonEpisodes.forEach { episode ->
-                    val episodeNumber = episode["episode_number"]?.toString()?.toIntOrNull() ?: 0
-                    val videoSlug = episode["video_slug"]?.toString()
-                    
-                    if (videoSlug != null && episodeNumber > 0) {
-                        // Construir URL do episódio (exatamente como mostrado no HTML)
-                        val episodeUrl = "https://watch.brplayer.cc/watch/$videoSlug"
-                        val episodeName = "$seriesTitle S${seasonNum.padStart(2, '0')}E${episodeNumber.toString().padStart(2, '0')}"
+                seasonEpisodes.forEachIndexed { index, episode ->
+                    try {
+                        val episodeNumber = episode["episode_number"]?.toString()?.toIntOrNull() ?: (index + 1)
+                        val videoSlug = episode["video_slug"]?.toString()
                         
-                        val episodeItem = newEpisode(episodeUrl) {
-                            this.name = episodeName
-                            this.season = seasonNum.toIntOrNull() ?: 1
-                            this.episode = episodeNumber
+                        if (videoSlug != null && episodeNumber > 0) {
+                            // Construir URL do episódio (exatamente como mostrado no HTML)
+                            val episodeUrl = "https://watch.brplayer.cc/watch/$videoSlug"
+                            val episodeName = "$seriesTitle S${seasonNum.padStart(2, '0')}E${episodeNumber.toString().padStart(2, '0')}"
+                            
+                            val episodeItem = newEpisode(episodeUrl) {
+                                this.name = episodeName
+                                this.season = seasonNum.toIntOrNull() ?: 1
+                                this.episode = episodeNumber
+                            }
+                            
+                            episodes.add(episodeItem)
+                            println("[CineAgora] Adicionado episódio: $episodeName")
                         }
-                        
-                        episodes.add(episodeItem)
-                        println("[CineAgora] Adicionado episódio: $episodeName")
+                    } catch (e: Exception) {
+                        println("[CineAgora] Erro ao processar episódio: ${e.message}")
                     }
                 }
             }
