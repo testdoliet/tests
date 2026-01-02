@@ -725,13 +725,13 @@ return null
 }
 
     override suspend fun loadLinks(
-data: String,
-isCasting: Boolean,
-subtitleCallback: (SubtitleFile) -> Unit,
-callback: (ExtractorLink) -> Unit
+    data: String,
+    isCasting: Boolean,
+    subtitleCallback: (SubtitleFile) -> Unit,
+    callback: (ExtractorLink) -> Unit
 ): Boolean {
-println("[CineAgora] loadLinks chamado com data: $data")
-println("[CineAgora] isCasting: $isCasting")
+    println("[CineAgora] loadLinks chamado com data: $data")
+    println("[CineAgora] isCasting: $isCasting")
 
     // Se for uma URL do YouTube, deixar o sistema padrão do CloudStream lidar
     if (data.contains("youtube.com") || data.contains("youtu.be")) {
@@ -747,7 +747,7 @@ println("[CineAgora] isCasting: $isCasting")
 
     println("[CineAgora] É série: $isSerie")
 
-    // Usar o extractor otimizado
-    return CineAgoraExtractor.extractVideoLinks(data, name, isSerie, callback)
-}
-}
+    // Usar o extractor otimizado com o nome correto
+    // Passamos apenas os 3 parâmetros esperados: url, name, callback
+    return CineAgoraExtractor.extractVideoLinks(data, name, callback)
+    }
