@@ -442,32 +442,6 @@ class CineAgora : MainAPI() {
         return null
     }
 
-    private fun extractPlayerUrl(doc: org.jsoup.nodes.Document): String? {
-        // Procurar iframe do player
-        val iframe = doc.selectFirst("iframe[src*='watch.brplayer.cc']")
-        if (iframe != null) {
-            val src = iframe.attr("src")
-            if (src.isNotBlank()) {
-                return fixUrl(src)
-            }
-        }
-        
-        // Procurar em scripts
-        val scripts = doc.select("script:not([src])")
-        for (script in scripts) {
-            val content = script.html()
-            if (content.contains("watch.brplayer.cc")) {
-                val regex = Regex("""(https?://watch\.brplayer\.cc/watch/[A-Z0-9]+)""")
-                val match = regex.find(content)
-                if (match != null) {
-                    return match.groupValues[1]
-                }
-            }
-        }
-        
-        return null
-    }
-
     private fun extractSeriesSlug(url: String): String {
         // Extrair slug da URL (ex: pluribus de https://cineagora.net/series-online-hd-gratis/2984-pluribus.html)
         return url
@@ -536,7 +510,7 @@ class CineAgora : MainAPI() {
     }
 
     // =============================================
-    // FUNÇÃO LOAD PRINCIPAL
+    // FUNÇÃO LOAD PRINCIPAL (CORRIGIDA)
     // =============================================
 
     override suspend fun load(url: String): LoadResponse? {
@@ -544,9 +518,12 @@ class CineAgora : MainAPI() {
         
         val doc = app.get(url).document
         
-        // 1. EXTRAIR BANNER/POSTER
+        // 1. EXTRAIR BANNER/POSTER - VERSÃO MELHOR QUALIDADE
         val bannerUrl = extractBannerUrl(doc)
+        // Pega a imagem do og:image ou do #info--box .cover-img para melhor qualidade
         val posterUrl = doc.selectFirst("meta[property='og:image']")?.attr("content")?.let { fixUrl(it) }
+            ?: doc.selectFirst("#info--box .cover-img")?.attr("src")?.let { fixUrl(it) }
+            ?: bannerUrl
         
         // 2. TÍTULO
         val title = doc.selectFirst("h1.title, h1, .title, h2")?.text()?.trim() ?: "Título não encontrado"
@@ -581,16 +558,14 @@ class CineAgora : MainAPI() {
                 }
             }
         } else {
-            // 6. PARA FILMES: Extrair URL do player
-            val playerUrl = extractPlayerUrl(doc)
-            
+            // 6. PARA FILMES: NÃO extrair playerUrl aqui!
             // 7. INFORMAÇÕES ADICIONAIS
             val year = extractYear(doc)
             val plot = doc.selectFirst(".info-description, .description, .sinopse, .plot")?.text()?.trim()
             val genres = extractGenres(doc)
             val duration = doc.selectFirst(".duration, .runtime, .time")?.text()?.trim()
             
-            return newMovieLoadResponse(title, url, TvType.Movie, playerUrl ?: url) {
+            return newMovieLoadResponse(title, url, TvType.Movie, url) {  // ← PASSA URL DO FILME MESMO
                 this.posterUrl = posterUrl
                 this.backgroundPosterUrl = bannerUrl
                 this.year = year
@@ -608,7 +583,7 @@ class CineAgora : MainAPI() {
     }
 
     // =============================================
-    // FUNÇÃO LOADLINKS
+    // FUNÇÃO LOADLINKS (CORRIGIDA E ROBUSTA)
     // =============================================
 
     override suspend fun loadLinks(
@@ -618,6 +593,7 @@ class CineAgora : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         println("[CineAgora] loadLinks chamado com data: $data")
+        println("[CineAgora] isCasting: $isCasting")
         
         // Ignorar URLs do YouTube
         if (data.contains("youtube.com") || data.contains("youtu.be")) {
@@ -625,10 +601,58 @@ class CineAgora : MainAPI() {
             return false
         }
         
-        // Extrair o nome do título da URL (para mostrar nos links)
-        val name = data.substringAfterLast("/").substringBefore("?").replace("-", " ").replace("_", " ")
+        // Se já for direto o link do BRPlayer (episódios de séries), extrai direto
+        if (data.contains("watch.brplayer.cc/watch/")) {
+            println("[CineAgora] URL do BRPlayer detectada, extraindo diretamente...")
+            val name = data.substringAfterLast("/").replace("-", " ").replace("_", " ")
+            return CineAgoraExtractor.extractVideoLinks(data, name, callback)
+        }
         
-        // Usar o extrator otimizado
-        return CineAgoraExtractor.extractVideoLinks(data, name, callback)
+        // Caso contrário: data é a página do filme → baixa e extrai o player real
+        println("[CineAgora] Extraindo player da página: $data")
+        val doc = app.get(data).document
+        
+        // Extrair título para nome dos links
+        val title = doc.selectFirst("h1.title, h1, .title, h2")?.text()?.trim() ?: "Filme"
+        
+        // Várias formas comuns de achar o link do BRPlayer nos filmes
+        val playerUrl = doc.selectFirst("iframe[src*=watch.brplayer.cc]")?.attr("abs:src")
+            ?: doc.selectFirst("iframe[src*=brplayer]")?.attr("abs:src")
+            ?: doc.selectFirst("iframe[data-src*=watch.brplayer.cc]")?.attr("abs:data-src")
+            ?: doc.selectFirst("a.button[data-link*=watch.brplayer.cc]")?.attr("abs:data-link")
+            ?: doc.selectFirst("span.button.active[data-link*=watch.brplayer.cc]")?.attr("abs:data-link")
+            ?: doc.selectFirst("div.mirrors a[data-link*=watch.brplayer.cc]")?.attr("abs:data-link")
+            ?: doc.selectFirst("div.player--footer a[data-link*=watch.brplayer.cc]")?.attr("abs:data-link")
+            ?: doc.selectFirst("a[href*=watch.brplayer.cc/watch/]")?.attr("abs:href")
+            // Fallback: procura em qualquer script
+            ?: doc.select("script").find { it.html().contains("watch.brplayer.cc/watch/") }
+                ?.html()
+                ?.let { 
+                    Regex("""(https?://watch\.brplayer\.cc/watch/[A-Za-z0-9]+)""").find(it)?.groupValues?.get(1)
+                }
+            // Fallback 2: procura por player em elementos com data-id
+            ?: doc.selectFirst("[data-player-id], [data-video-id]")?.let { element ->
+                val id = element.attr("data-player-id") ?: element.attr("data-video-id")
+                if (id.isNotBlank()) "https://watch.brplayer.cc/watch/$id" else null
+            }
+
+        if (playerUrl.isNullOrBlank()) {
+            println("[CineAgora] Nenhum link BRPlayer encontrado na página")
+            
+            // Último fallback: tentar encontrar iframe genérico
+            val genericIframe = doc.selectFirst("iframe[src*='player']")
+            if (genericIframe != null) {
+                val iframeSrc = genericIframe.attr("abs:src")
+                println("[CineAgora] Fallback: iframe genérico encontrado: $iframeSrc")
+                return CineAgoraExtractor.extractVideoLinks(iframeSrc, title, callback)
+            }
+            
+            return false
+        }
+
+        println("[CineAgora] Player BRPlayer encontrado: $playerUrl")
+
+        // Agora sim, passa o link correto pro extractor
+        return CineAgoraExtractor.extractVideoLinks(playerUrl, title, callback)
     }
 }
