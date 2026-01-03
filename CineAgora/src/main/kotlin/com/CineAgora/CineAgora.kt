@@ -608,146 +608,178 @@ class CineAgora : MainAPI() {
         return null
     }
 
-    // Função para extrair episódios (baseado na análise)
-    private fun extractEpisodesFromPage(document: org.jsoup.nodes.Document, baseUrl: String): List<Episode> {
-        val episodes = mutableListOf<Episode>()
+    // Função para extrair episódios (baseado na análise detalhada do HTML)
+private fun extractEpisodesFromPage(document: org.jsoup.nodes.Document, baseUrl: String): List<Episode> {
+    val episodes = mutableListOf<Episode>()
+    
+    println("[CineAgora] Buscando episódios na página")
 
-        // TENTAR DIFERENTES ESTRUTURAS DE EPISÓDIOS
-
-        // 1. Estrutura com temporadas e episódios (#seasons .list.episodes)
-        val seasonsContainer = document.selectFirst("#seasons, .seasons, .season-list")
-        if (seasonsContainer != null) {
-            // Extrair temporadas
-            val seasonElements = seasonsContainer.select(".list.seasons li, .season-tab, .season-item")
-            val seasonsMap = mutableMapOf<Int, MutableList<Element>>()
-
-            // Processar cada temporada
-            seasonElements.forEachIndexed { seasonIndex, seasonElement ->
-                val seasonNumber = seasonIndex + 1
-
-                // Encontrar episódios desta temporada
-                val episodeElements = seasonElement.parent()?.select(".list.episodes li, .episode-item") ?: 
-                    seasonsContainer.select(".list.episodes.show li, .episode-item")
-
-                episodeElements.forEach { episodeElement ->
-                    seasonsMap.getOrPut(seasonNumber) { mutableListOf() }.add(episodeElement)
-                }
-            }
-
-            // Processar episódios por temporada
-            seasonsMap.forEach { (seasonNum, epElements) ->
-                epElements.forEachIndexed { epIndex, epElement ->
-                    try {
-                        val episodeNumber = epIndex + 1
-
-                        // Extrair informações do episódio
-                        val titleElement = epElement.selectFirst(".episode-name, .title, .name")
-                        val title = titleElement?.text()?.trim() ?: "Episódio $episodeNumber"
-
-                        // Tentar extrair número do episódio
-                        val epNumElement = epElement.selectFirst(".episode-number, .number, .ep-num")
-                        val epNum = epNumElement?.text()?.toIntOrNull() ?: episodeNumber
-
-                        // Tentar extrair URL do episódio
-                        val onclick = epElement.attr("onclick") ?: epElement.selectFirst("a")?.attr("onclick")
-                        val dataId = epElement.attr("data-id")
-                        val dataUrl = epElement.attr("data-url")
-
-                        // Construir URL do episódio
-                        val episodeUrl = when {
-                            onclick?.isNotBlank() == true && onclick.contains("loadEpisode") -> {
-                                // Extrair parâmetros da função loadEpisode
-                                val paramsRegex = Regex("""loadEpisode\s*\(\s*['"]([^'"]+)['"]""")
-                                val match = paramsRegex.find(onclick)
-                                if (match != null) {
-                                    // Construir URL baseada nos parâmetros
-                                    val params = match.groupValues[1]
-                                    "$mainUrl/episode/$params"
-                                } else {
-                                    null
-                                }
-                            }
-                            dataUrl.isNotBlank() -> fixUrl(dataUrl)
-                            dataId.isNotBlank() -> "$mainUrl/episode/$dataId"
-                            else -> null
-                        }
-
-                        if (episodeUrl != null) {
-                            val episode = newEpisode(episodeUrl) {
-                                this.name = title
-                                this.season = seasonNum
-                                this.episode = epNum
-
-                                // Tentar extrair descrição/data se disponível
-                                epElement.selectFirst(".episode-date, .date")?.text()?.trim()?.let { dateStr ->
-                                    this.description = dateStr
-                                }
-
-                                epElement.selectFirst(".episode-desc, .description")?.text()?.trim()?.let { desc ->
-                                    this.description = desc
-                                }
-                            }
-                            episodes.add(episode)
-                        }
-                    } catch (e: Exception) {
-                        // Ignorar episódio com erro
-                    }
-                }
-            }
-        }
-
-        // 2. Fallback: Estrutura simples com lista de episódios
-        if (episodes.isEmpty()) {
-            val simpleEpisodeElements = document.select(".episode-list li, .episodes li, [data-episode], .episode")
-            simpleEpisodeElements.forEachIndexed { index, element ->
-                try {
-                    val episodeNumber = index + 1
-
-                    // Extrair número da temporada
-                    val seasonNumber = element.attr("data-season").toIntOrNull() ?: 
-                        element.selectFirst("[data-season]")?.attr("data-season")?.toIntOrNull() ?: 1
-
-                    // Extrair número do episódio
-                    val epNum = element.attr("data-episode").toIntOrNull() ?: 
-                        element.selectFirst("[data-episode]")?.attr("data-episode")?.toIntOrNull() ?: episodeNumber
-
-                    // Extrair título
-                    val titleElement = element.selectFirst(".title, .name, .episode-title")
-                    val title = titleElement?.text()?.trim() ?: "Episódio $epNum"
-
-                    // Tentar extrair URL
-                    val dataUrl = element.attr("data-url")
-                    val href = element.selectFirst("a")?.attr("href")
-                    val onclick = element.attr("onclick")
-
-                    val episodeUrl = when {
-                        dataUrl.isNotBlank() -> fixUrl(dataUrl)
-                        href?.isNotBlank() == true && href != "#" -> fixUrl(href)
-                        onclick?.isNotBlank() == true && onclick.contains("http") -> {
-                            val urlRegex = Regex("""['"](https?://[^'"]+)['"]""")
-                            val match = urlRegex.find(onclick)
-                            match?.groupValues?.get(1)
-                        }
-                        else -> null
-                    }
-
-                    if (episodeUrl != null) {
-                        val episode = newEpisode(episodeUrl) {
-                            this.name = title
-                            this.season = seasonNumber
-                            this.episode = epNum
-                        }
-                        episodes.add(episode)
-                    }
-                } catch (e: Exception) {
-                    // Ignorar episódio com erro
-                }
-            }
-        }
-
-        return episodes
+    // ESTRUTURA ESPECÍFICA IDENTIFICADA: #seasons .content.row
+    val seasonsContainer = document.selectFirst("#seasons.tv--section")
+    if (seasonsContainer == null) {
+        println("[CineAgora] Container de temporadas não encontrado")
+        return emptyList()
     }
 
+    println("[CineAgora] Container de temporadas encontrado")
+
+    // 1. Extrair temporadas
+    val seasonElements = seasonsContainer.select(".col-lg-3 ul.list.seasons li")
+    val seasonsList = mutableListOf<String>()
+    
+    seasonElements.forEachIndexed { index, seasonElement ->
+        val seasonText = seasonElement.text().trim()
+        if (seasonText.isNotBlank()) {
+            seasonsList.add(seasonText)
+            println("[CineAgora] Temporada encontrada: $seasonText")
+        }
+    }
+
+    // 2. Extrair episódios da coluna direita
+    val episodesContainer = seasonsContainer.selectFirst(".col-lg-9 ul.list.episodes")
+    if (episodesContainer == null) {
+        println("[CineAgora] Container de episódios vazio")
+        return emptyList()
+    }
+
+    val episodeElements = episodesContainer.select("li")
+    println("[CineAgora] ${episodeElements.size} episódio(s) encontrado(s)")
+
+    episodeElements.forEachIndexed { index, episodeElement ->
+        try {
+            // Encontrar link do episódio
+            val linkElement = episodeElement.selectFirst("a")
+            if (linkElement == null) {
+                println("[CineAgora] Episódio ${index + 1} sem link")
+                return@forEachIndexed
+            }
+
+            val episodeHref = linkElement.attr("href")
+            if (episodeHref.isBlank()) {
+                println("[CineAgora] Episódio ${index + 1} tem href vazio")
+                return@forEachIndexed
+            }
+
+            // Extrair número do episódio
+            val episodeNumberElement = episodeElement.selectFirst(".episode-number")
+            val episodeNumberText = episodeNumberElement?.text()?.trim() ?: "Episódio ${index + 1}"
+            
+            // Extrair número como inteiro
+            val episodeNumber = try {
+                val numMatch = Regex("""Episódio\s+(\d+)""").find(episodeNumberText)
+                numMatch?.groupValues?.get(1)?.toIntOrNull() ?: index + 1
+            } catch (e: Exception) {
+                index + 1
+            }
+
+            // Extrair nome do episódio
+            val episodeNameElement = episodeElement.selectFirst(".episode-name")
+            val episodeName = episodeNameElement?.text()?.trim() ?: episodeNumberText
+
+            // Extrair status (opcional)
+            val episodeStatusElement = episodeElement.selectFirst(".episode-not")
+            val episodeStatus = episodeStatusElement?.text()?.trim()
+
+            // Extrair data (opcional)
+            val episodeDateElement = episodeElement.selectFirst(".episode-date")
+            val episodeDate = episodeDateElement?.text()?.trim()
+
+            // Determinar temporada (começa com 1 se não encontrada)
+            val seasonNumber = if (seasonsList.isNotEmpty()) {
+                // Tentar extrair número da temporada do primeiro elemento
+                val seasonMatch = Regex("""Temporada\s+(\d+)""").find(seasonsList.firstOrNull() ?: "")
+                seasonMatch?.groupValues?.get(1)?.toIntOrNull() ?: 1
+            } else {
+                1
+            }
+
+            // Construir URL completa do episódio
+            val episodeUrl = if (episodeHref.startsWith("http")) {
+                episodeHref
+            } else {
+                fixUrl(episodeHref)
+            }
+
+            println("[CineAgora] Criando episódio: S${seasonNumber}E${episodeNumber} - $episodeName")
+
+            // Criar objeto Episode
+            val episode = newEpisode(episodeUrl) {
+                this.name = episodeName
+                this.season = seasonNumber
+                this.episode = episodeNumber
+                
+                // Adicionar descrição com status e data se disponíveis
+                val descriptionBuilder = StringBuilder()
+                episodeStatus?.let { descriptionBuilder.append("Status: $it\n") }
+                episodeDate?.let { descriptionBuilder.append("Data: $it") }
+                
+                if (descriptionBuilder.isNotEmpty()) {
+                    this.description = descriptionBuilder.toString()
+                }
+            }
+            
+            episodes.add(episode)
+            println("[CineAgora] Episódio adicionado com sucesso")
+
+        } catch (e: Exception) {
+            println("[CineAgora] Erro ao processar episódio ${index + 1}: ${e.message}")
+        }
+    }
+
+    // 3. Fallback: Procurar por outras estruturas comuns de episódios
+    if (episodes.isEmpty()) {
+        println("[CineAgora] Nenhum episódio encontrado, tentando fallback...")
+        
+        // Fallback 1: Estrutura simples com links
+        val simpleEpisodes = document.select("a[href*='episodio'], a[href*='episode'], .episode a")
+        simpleEpisodes.forEachIndexed { index, element ->
+            try {
+                val href = element.attr("href")
+                val text = element.text().trim()
+                
+                if (href.isNotBlank() && !href.startsWith("#") && !href.contains("javascript:")) {
+                    val episodeUrl = if (href.startsWith("http")) href else fixUrl(href)
+                    
+                    // Tentar extrair número do episódio do texto
+                    val epNumber = extractEpisodeNumber(text) ?: index + 1
+                    
+                    val episode = newEpisode(episodeUrl) {
+                        this.name = if (text.isNotBlank()) text else "Episódio ${index + 1}"
+                        this.season = 1
+                        this.episode = epNumber
+                    }
+                    
+                    episodes.add(episode)
+                    println("[CineAgora] Episódio fallback adicionado: ${episode.name}")
+                }
+            } catch (e: Exception) {
+                // Ignorar erro
+            }
+        }
+    }
+
+    println("[CineAgora] Total de episódios extraídos: ${episodes.size}")
+    return episodes
+}
+
+// Função auxiliar para extrair número do episódio do texto
+private fun extractEpisodeNumber(text: String): Int? {
+    val patterns = listOf(
+        Regex("""Epis[oó]dio\s+(\d+)""", RegexOption.IGNORE_CASE),
+        Regex("""Ep\.?\s*(\d+)""", RegexOption.IGNORE_CASE),
+        Regex("""E(\d+)""", RegexOption.IGNORE_CASE),
+        Regex("""\b(\d+)\b""")
+    )
+    
+    for (pattern in patterns) {
+        val match = pattern.find(text)
+        if (match != null) {
+            return match.groupValues[1].toIntOrNull()
+        }
+    }
+    
+    return null
+}
     // Função para encontrar URL do player (para filmes)
     private fun findPlayerUrl(document: org.jsoup.nodes.Document, baseUrl: String): String? {
         // Procurar por elementos do player
