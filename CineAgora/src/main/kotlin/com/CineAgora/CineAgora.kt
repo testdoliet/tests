@@ -497,9 +497,8 @@ class CineAgora : MainAPI() {
             return episodes
         }
 
-        // 3. É SÉRIE → extrair seriesSlug e chamar a API
-        val seriesSlug = watchUrl.split("/tv/").lastOrNull()?.split("?").firstOrNull()
-            ?: return episodes.also { println("[CineAgora] Não encontrou seriesSlug") }
+        val seriesSlug = watchUrl.split("/tv/").lastOrNull()?.split("?")?.firstOrNull()
+    ?: return episodes.also { println("[CineAgora] Não encontrou seriesSlug") }
 
         val apiUrl = "https://watch.brplayer.cc/fetch_series_data.php?seriesSlug=$seriesSlug"
 
