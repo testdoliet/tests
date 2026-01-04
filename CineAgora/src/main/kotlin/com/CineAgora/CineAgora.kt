@@ -436,8 +436,25 @@ class CineAgora : MainAPI() {
         }
     }
 
+    // Função suspend para obter a série de um video slug
+    private suspend fun getSeriesFromVideoSlug(videoSlug: String): String {
+        return try {
+            val apiUrl = "https://watch.brplayer.cc/get_series_from_video.php?videoSlug=$videoSlug"
+            val response = app.get(apiUrl).text.trim()
+            if (response.isNotBlank()) {
+                println("[CineAgora] Série encontrada via API: $response")
+                response
+            } else {
+                ""
+            }
+        } catch (e: Exception) {
+            println("[CineAgora] Erro ao obter série via API: ${e.message}")
+            ""
+        }
+    }
+
     // Função para extrair slug do iframe (baseado no HTML que você mostrou)
-    private fun extractSlugFromIframe(doc: org.jsoup.nodes.Document): String {
+    private suspend fun extractSlugFromIframe(doc: org.jsoup.nodes.Document): String {
         try {
             // Extrair do script que contém var seriesSlug = "ironheart";
             val scripts = doc.select("script")
@@ -464,16 +481,9 @@ class CineAgora : MainAPI() {
                     println("[CineAgora] Video slug do iframe: $videoSlug")
                     
                     // Tentar obter série da API usando o video slug
-                    val apiUrl = "https://watch.brplayer.cc/get_series_from_video.php?videoSlug=$videoSlug"
-                    try {
-                        val response = app.get(apiUrl).text
-                        val seriesSlug = response.trim()
-                        if (seriesSlug.isNotBlank()) {
-                            println("[CineAgora] Série encontrada via API: $seriesSlug")
-                            return seriesSlug
-                        }
-                    } catch (e: Exception) {
-                        println("[CineAgora] Erro ao obter série via API: ${e.message}")
+                    val seriesSlug = getSeriesFromVideoSlug(videoSlug)
+                    if (seriesSlug.isNotBlank()) {
+                        return seriesSlug
                     }
                 }
             }
