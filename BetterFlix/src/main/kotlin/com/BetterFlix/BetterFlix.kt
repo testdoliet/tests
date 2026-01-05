@@ -37,18 +37,14 @@ class BetterFlix : MainAPI() {
             else -> extractMediaContent(document)
         }
 
-        // Criar HomePageList com o nome da aba
+        // Criar HomePageList
         val homePageList = HomePageList(
             name = request.name,
-            list = home,
-            horizontalImages = true
+            list = home
         )
         
-        // Retornar HomePageResponse com a lista
-        return HomePageResponse(
-            list = listOf(homePageList),
-            hasNext = false
-        )
+        // Usar newHomePageResponse corretamente
+        return newHomePageResponse(homePageList, hasNextPage = false)
     }
 
     private fun extractMediaContent(document: org.jsoup.nodes.Document): List<SearchResponse> {
