@@ -202,7 +202,7 @@ class BetterFlix : MainAPI() {
                 
                 // Adicionar temporadas se disponível
                 if (episodes.isNotEmpty()) {
-                    val seasons = episodes.map { it.season }.distinct().sorted()
+                    val seasons = episodes.map { it.season }.distinct()
                     // Apenas definir o poster como background
                     this.backgroundPosterUrl = poster
                 }
@@ -345,7 +345,228 @@ class BetterFlix : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         return try {
-            BetterFlixExtractor().extractVideoLinks(data, name, subtitleCallback, callback)
+            // Usar extrator simples
+            extractVideoLinks(data, subtitleCallback, callback)
+        } catch (e: Exception) {
+            false
+        }
+    }
+    
+    private suspend fun extractVideoLinks(
+        url: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        return try {
+            // Extrair TMDB ID
+            val tmdbId = extractTmdbId(url) ?: return false
+            val isSeries = url.contains("type=tv")
+            
+            // Tentar diferentes fontes
+            val success = trySuperflixApi(tmdbId, isSeries, callback) ||
+                         tryMegaembed(tmdbId, isSeries, callback) ||
+                         tryVidPlay(tmdbId, isSeries, callback)
+            
+            success
+        } catch (e: Exception) {
+            false
+        }
+    }
+    
+    private suspend fun trySuperflixApi(
+        tmdbId: String,
+        isSeries: Boolean,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        return try {
+            val url = if (isSeries) {
+                "https://superflixapi.asia/serie/$tmdbId/1/1"
+            } else {
+                "https://superflixapi.asia/filme/$tmdbId"
+            }
+            
+            val headers = mapOf(
+                "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36",
+                "Referer" to "https://betterflix.vercel.app/"
+            )
+            
+            val response = app.get(url, headers = headers)
+            val html = response.text
+            
+            // Procurar por m3u8
+            val patterns = listOf(
+                Regex("""file["']?\s*:\s*["'](https?://[^"']+\.m3u8[^"']*)["']"""),
+                Regex("""src=["'](https?://[^"']+\.m3u8[^"']*)["']"""),
+                Regex("""(https?://[^"'\s]+\.m3u8[^\s"']*)""")
+            )
+            
+            for (pattern in patterns) {
+                val match = pattern.find(html)
+                if (match != null) {
+                    val m3u8Url = match.groupValues[1]
+                    createM3u8Link(m3u8Url, callback)
+                    return true
+                }
+            }
+            
+            false
+        } catch (e: Exception) {
+            false
+        }
+    }
+    
+    private suspend fun tryMegaembed(
+        tmdbId: String,
+        isSeries: Boolean,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        return try {
+            val url = if (isSeries) {
+                "https://megaembed.com/embed/series?tmdb=$tmdbId&sea=1&epi=1"
+            } else {
+                "https://megaembed.com/embed/movie?tmdb=$tmdbId"
+            }
+            
+            val headers = mapOf(
+                "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36",
+                "Referer" to "https://betterflix.vercel.app/"
+            )
+            
+            val response = app.get(url, headers = headers)
+            val html = response.text
+            
+            // Procurar por iframe
+            val iframePattern = Regex("""<iframe[^>]+src=["']([^"']+)["']""")
+            val iframeMatch = iframePattern.find(html)
+            
+            if (iframeMatch != null) {
+                var iframeUrl = iframeMatch.groupValues[1]
+                if (iframeUrl.startsWith("//")) {
+                    iframeUrl = "https:$iframeUrl"
+                }
+                
+                // Extrair do iframe
+                return extractFromIframe(iframeUrl, callback)
+            }
+            
+            false
+        } catch (e: Exception) {
+            false
+        }
+    }
+    
+    private suspend fun tryVidPlay(
+        tmdbId: String,
+        isSeries: Boolean,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        return try {
+            val url = if (isSeries) {
+                "https://vidplay.online/e/$tmdbId?c=1-1"
+            } else {
+                "https://vidplay.online/v/$tmdbId"
+            }
+            
+            val headers = mapOf(
+                "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36",
+                "Referer" to "https://betterflix.vercel.app/"
+            )
+            
+            val response = app.get(url, headers = headers)
+            val html = response.text
+            
+            // Procurar por m3u8
+            val patterns = listOf(
+                Regex("""sources:\s*\[\s*\{\s*file:\s*["'](https?://[^"']+\.m3u8[^"']*)["']"""),
+                Regex("""file["']?\s*:\s*["'](https?://[^"']+\.m3u8[^"']*)["']""")
+            )
+            
+            for (pattern in patterns) {
+                val match = pattern.find(html)
+                if (match != null) {
+                    val m3u8Url = match.groupValues[1]
+                    createM3u8Link(m3u8Url, callback)
+                    return true
+                }
+            }
+            
+            false
+        } catch (e: Exception) {
+            false
+        }
+    }
+    
+    private suspend fun extractFromIframe(
+        iframeUrl: String,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        return try {
+            val headers = mapOf(
+                "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36",
+                "Referer" to "https://betterflix.vercel.app/"
+            )
+            
+            val response = app.get(iframeUrl, headers = headers)
+            val html = response.text
+            
+            // Procurar por m3u8
+            val patterns = listOf(
+                Regex("""file["']?\s*:\s*["'](https?://[^"']+\.m3u8[^"']*)["']"""),
+                Regex("""src=["'](https?://[^"']+\.m3u8[^"']*)["']""")
+            )
+            
+            for (pattern in patterns) {
+                val match = pattern.find(html)
+                if (match != null) {
+                    val m3u8Url = match.groupValues[1]
+                    createM3u8Link(m3u8Url, callback)
+                    return true
+                }
+            }
+            
+            false
+        } catch (e: Exception) {
+            false
+        }
+    }
+    
+    private suspend fun createM3u8Link(
+        m3u8Url: String,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        return try {
+            val headers = mapOf(
+                "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36",
+                "Referer" to "https://betterflix.vercel.app/",
+                "Origin" to "https://betterflix.vercel.app"
+            )
+            
+            // Gerar múltiplas qualidades
+            val links = M3u8Helper.generateM3u8(
+                source = name,
+                streamUrl = m3u8Url,
+                referer = "https://betterflix.vercel.app/",
+                headers = headers
+            )
+            
+            if (links.isNotEmpty()) {
+                links.forEach { callback(it) }
+                true
+            } else {
+                // Link direto se M3u8Helper falhar
+                val link = newExtractorLink(
+                    source = name,
+                    name = "Video",
+                    url = m3u8Url,
+                    type = ExtractorLinkType.M3U8
+                ) {
+                    this.referer = "https://betterflix.vercel.app/"
+                    this.quality = 720
+                    this.headers = headers
+                }
+                callback(link)
+                true
+            }
         } catch (e: Exception) {
             false
         }
