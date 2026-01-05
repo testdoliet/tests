@@ -21,33 +21,43 @@ class BetterFlix : MainAPI() {
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val document = app.get(mainUrl).document
+        
+        // Criar listas separadas para cada seção
         val homeLists = mutableListOf<HomePageList>()
-
+        
         // 1. Tops da semana
         val tops = extractSection(document, "Tops da semana")
         if (tops.isNotEmpty()) {
             homeLists.add(HomePageList("Tops da semana", tops))
         }
-
+        
         // 2. Filmes do momento  
         val filmes = extractSection(document, "Filmes do momento")
         if (filmes.isNotEmpty()) {
             homeLists.add(HomePageList("Filmes do momento", filmes))
         }
-
+        
         // 3. Séries do momento
         val series = extractSection(document, "Séries do momento")
         if (series.isNotEmpty()) {
             homeLists.add(HomePageList("Séries do momento", series))
         }
-
+        
         // 4. Canais de TV Ao Vivo
         val canais = extractTVChannels(document)
         if (canais.isNotEmpty()) {
             homeLists.add(HomePageList("Canais de TV Ao Vivo", canais))
         }
-
-        return HomePageResponse(homeLists)
+        
+        // Usar newHomePageResponse corretamente
+        // Primeiro, criar uma lista única para a resposta
+        val allItems = homeLists.flatMap { it.list }
+        
+        return newHomePageResponse(
+            name = request.name,
+            list = allItems,
+            hasNext = false
+        )
     }
 
     private fun extractSection(doc: org.jsoup.nodes.Document, sectionTitle: String): List<SearchResponse> {
