@@ -37,14 +37,10 @@ class BetterFlix : MainAPI() {
             else -> extractMediaContent(document)
         }
 
-        // Retornar a HomePageResponse corretamente
-        return HomePageResponse(
-            list = listOf(
-                HomePageList(
-                    name = request.name,
-                    list = home
-                )
-            ),
+        // CORREÇÃO AQUI: Usando newHomePageResponse corretamente
+        return newHomePageResponse(
+            name = request.name,
+            list = home,
             hasNext = false
         )
     }
