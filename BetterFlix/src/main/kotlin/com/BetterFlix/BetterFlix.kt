@@ -12,7 +12,7 @@ class BetterFlix : MainAPI() {
     override var lang = "pt-br"
     override val hasDownloadSupport = true
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries, TvType.Anime, TvType.Live)
-    override val usesWebView = true
+    override val usesWebView = false
 
     companion object {
         private val MAIN_TABS = listOf(
@@ -21,10 +21,6 @@ class BetterFlix : MainAPI() {
             "/series" to "Séries do momento",
             "/tv" to "Canais de TV"
         )
-        
-        // Fontes de player
-        private const val SOURCE_1_BASE = "https://superflixapi.asia"
-        private const val SOURCE_2_BASE = "https://megaembed.com"
     }
 
     override val mainPage = mainPageOf(
@@ -41,22 +37,21 @@ class BetterFlix : MainAPI() {
             else -> extractMediaContent(document)
         }
 
-        return newHomePageResponse(request.name, home.distinctBy { it.url }, hasNextPage = false)
+        return newHomePageResponse(request.name, home, hasNextPage = false)
     }
 
     private fun extractMediaContent(document: org.jsoup.nodes.Document): List<SearchResponse> {
         val items = mutableListOf<SearchResponse>()
 
         // Carrossel principal
-        document.select("a[href*='?id='][target='_blank']").forEach { element ->
+        document.select("a[href*='?id=']").forEach { element ->
             try {
                 val href = element.attr("href") ?: return@forEach
-                if (href.startsWith("/canal")) return@forEach
+                if (href.startsWith("/canal") || !href.contains("?id=")) return@forEach
 
                 val imgElement = element.selectFirst("img")
                 val title = imgElement?.attr("alt") ?: 
-                           element.selectFirst("p.text-white")?.text() ?:
-                           element.selectFirst("p.text-xs")?.text() ?:
+                           element.selectFirst("p")?.text() ?:
                            return@forEach
 
                 val poster = imgElement?.attr("src")?.let { fixUrl(it) }
@@ -103,7 +98,7 @@ class BetterFlix : MainAPI() {
         document.select("a[href^='/canal']").forEach { element ->
             try {
                 val href = element.attr("href") ?: return@forEach
-                val nameElement = element.selectFirst("h3.text-xs, h3.text-sm")
+                val nameElement = element.selectFirst("h3")
                 val title = nameElement?.text() ?: return@forEach
 
                 val imgElement = element.selectFirst("img")
@@ -192,7 +187,7 @@ class BetterFlix : MainAPI() {
         
         // Extrair ID do TMDB
         val tmdbId = extractTmdbId(url)
-        
+
         if (isSeries || isAnime) {
             val type = if (isAnime) TvType.Anime else TvType.TvSeries
             
@@ -207,8 +202,9 @@ class BetterFlix : MainAPI() {
                 
                 // Adicionar temporadas se disponível
                 if (episodes.isNotEmpty()) {
-                    val seasons = episodes.groupBy { it.season }.keys.sorted()
-                    this.recommendedBackgroundUrl = poster
+                    val seasons = episodes.map { it.season }.distinct().sorted()
+                    // Apenas definir o poster como background
+                    this.backgroundPosterUrl = poster
                 }
             }
         } else {
@@ -218,7 +214,7 @@ class BetterFlix : MainAPI() {
                 this.year = year
                 this.plot = synopsis
                 this.tags = genres
-                this.recommendedBackgroundUrl = poster
+                this.backgroundPosterUrl = poster
             }
         }
     }
@@ -348,7 +344,11 @@ class BetterFlix : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        return BetterFlixExtractor.extractVideoLinks(data, name, subtitleCallback, callback)
+        return try {
+            BetterFlixExtractor().extractVideoLinks(data, name, subtitleCallback, callback)
+        } catch (e: Exception) {
+            false
+        }
     }
 }
 
