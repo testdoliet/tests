@@ -2,8 +2,6 @@ package com.BetterFlix
 
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
-import com.lagradost.cloudstream3.LoadResponse.Companion.addActors
-import com.lagradost.cloudstream3.LoadResponse.Companion.addTrailer
 import com.lagradost.cloudstream3.app
 import org.jsoup.nodes.Element
 
@@ -16,82 +14,54 @@ class BetterFlix : MainAPI() {
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries, TvType.Anime, TvType.Live)
     override val usesWebView = false
 
-    companion object {
-        private val MAIN_TABS = listOf(
-            "/" to "Tops da semana",
-            "/filmes" to "Filmes do momento", 
-            "/series" to "Séries do momento",
-            "/tv" to "Canais de TV"
-        )
-    }
-
+    // Agora temos apenas uma página principal com todas as seções
     override val mainPage = mainPageOf(
-        *MAIN_TABS.map { (path, name) -> 
-            "$mainUrl$path" to name 
-        }.toTypedArray()
+        "$mainUrl/" to "BetterFlix - Tudo"
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val document = app.get(request.data).document
+        val document = app.get(mainUrl).document
+        val homeLists = mutableListOf<HomePageList>()
 
-        val home = when {
-            request.data.contains("/tv") -> extractTVChannels(document)
-            else -> extractCarouselContent(document, request.data)
+        // 1. Tops da semana
+        val tops = extractSection(document, "Tops da semana")
+        if (tops.isNotEmpty()) {
+            homeLists.add(HomePageList("Tops da semana", tops))
         }
 
-        return newHomePageResponse(
-            name = request.name,
-            list = home.distinctBy { it.url },
-            hasNext = false
-        )
+        // 2. Filmes do momento  
+        val filmes = extractSection(document, "Filmes do momento")
+        if (filmes.isNotEmpty()) {
+            homeLists.add(HomePageList("Filmes do momento", filmes))
+        }
+
+        // 3. Séries do momento
+        val series = extractSection(document, "Séries do momento")
+        if (series.isNotEmpty()) {
+            homeLists.add(HomePageList("Séries do momento", series))
+        }
+
+        // 4. Canais de TV Ao Vivo
+        val canais = extractTVChannels(document)
+        if (canais.isNotEmpty()) {
+            homeLists.add(HomePageList("Canais de TV Ao Vivo", canais))
+        }
+
+        return HomePageResponse(homeLists)
     }
 
-    private fun extractCarouselContent(document: org.jsoup.nodes.Document, url: String): List<SearchResponse> {
+    private fun extractSection(doc: org.jsoup.nodes.Document, sectionTitle: String): List<SearchResponse> {
         val items = mutableListOf<SearchResponse>()
         
-        // Determinar qual carrossel extrair baseado na URL
-        when {
-            url.contains("/filmes") -> {
-                // Extrair do carrossel de filmes
-                extractFromCarousel(document, "Filmes do momento", isMovie = true)
-            }
-            url.contains("/series") -> {
-                // Extrair do carrossel de séries
-                extractFromCarousel(document, "Séries do momento", isSeries = true)
-            }
-            else -> {
-                // Extrair do carrossel principal (tudo)
-                extractFromCarousel(document, "Tops da semana")
-            }
-        }
-        
-        return items
-    }
-    
-    private fun extractFromCarousel(
-        document: org.jsoup.nodes.Document,
-        sectionTitle: String,
-        isMovie: Boolean = false,
-        isSeries: Boolean = false
-    ): List<SearchResponse> {
-        val items = mutableListOf<SearchResponse>()
-        
-        // Encontrar a seção pelo título
-        val sections = document.select("div.py-8.w-full.mx-auto")
-        
-        sections.forEach { section ->
-            val titleElement = section.selectFirst("h2")
-            val titleText = titleElement?.text() ?: ""
-            
-            // Se encontramos a seção correta
-            if (titleText.contains(sectionTitle, ignoreCase = true)) {
-                // Extrair os links dentro desta seção
-                val links = section.select("a[href*='?id=']")
-                
-                links.forEach { element ->
+        // Encontrar todas as seções com título
+        doc.select("div.py-8.w-full.mx-auto").forEach { section ->
+            val h2 = section.selectFirst("h2")?.text()?.trim()
+            if (h2 == sectionTitle) {
+                // Extrair links dentro desta seção
+                section.select("a[href*='?id=']").forEach { element ->
                     try {
                         val href = element.attr("href") ?: return@forEach
-                        if (href.startsWith("/canal") || !href.contains("?id=")) return@forEach
+                        if (href.startsWith("/canal")) return@forEach
 
                         val imgElement = element.selectFirst("img")
                         val title = imgElement?.attr("alt") ?: 
@@ -102,33 +72,25 @@ class BetterFlix : MainAPI() {
                         val cleanTitle = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
                         val year = Regex("\\((\\d{4})\\)").find(title)?.groupValues?.get(1)?.toIntOrNull()
 
-                        // Determinar tipo
-                        val hrefIsSeries = href.contains("type=tv")
-                        val hrefIsMovie = href.contains("type=movie")
-                        val hrefIsAnime = title.contains("(Anime)", ignoreCase = true) || 
-                                          href.contains("/anime")
+                        // Determinar tipo pelo URL
+                        val isSeries = href.contains("type=tv") || sectionTitle.contains("Séries")
+                        val isMovie = href.contains("type=movie") || sectionTitle.contains("Filmes")
+                        val isAnime = title.contains("(Anime)", ignoreCase = true)
 
                         when {
-                            hrefIsAnime -> {
+                            isAnime -> {
                                 newAnimeSearchResponse(cleanTitle, fixUrl(href), TvType.Anime) {
                                     this.posterUrl = poster
                                     this.year = year
                                 }.also { items.add(it) }
                             }
-                            hrefIsSeries || isSeries -> {
+                            isSeries -> {
                                 newTvSeriesSearchResponse(cleanTitle, fixUrl(href), TvType.TvSeries) {
                                     this.posterUrl = poster
                                     this.year = year
                                 }.also { items.add(it) }
                             }
-                            hrefIsMovie || isMovie -> {
-                                newMovieSearchResponse(cleanTitle, fixUrl(href), TvType.Movie) {
-                                    this.posterUrl = poster
-                                    this.year = year
-                                }.also { items.add(it) }
-                            }
                             else -> {
-                                // Fallback: tratar como filme
                                 newMovieSearchResponse(cleanTitle, fixUrl(href), TvType.Movie) {
                                     this.posterUrl = poster
                                     this.year = year
@@ -142,13 +104,13 @@ class BetterFlix : MainAPI() {
             }
         }
         
-        return items
+        return items.distinctBy { it.url }
     }
 
     private fun extractTVChannels(document: org.jsoup.nodes.Document): List<SearchResponse> {
         val channels = mutableListOf<SearchResponse>()
 
-        // Extrair da grid de canais
+        // Extrair canais da grid
         document.select("a.canal-card, a[href^='/canal']").forEach { element ->
             try {
                 val href = element.attr("href") ?: return@forEach
@@ -168,7 +130,7 @@ class BetterFlix : MainAPI() {
             }
         }
 
-        return channels
+        return channels.distinctBy { it.url }
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
@@ -216,134 +178,110 @@ class BetterFlix : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        val document = app.get(url).document
-
-        // Extrair título
-        val titleElement = document.selectFirst("h1")
-        val title = titleElement?.text() ?: return null
-        
-        // Extrair informações básicas
-        val year = extractYear(document)
-        val cleanTitle = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
-        
-        // Determinar tipo
-        val isSeries = url.contains("type=tv")
-        val isMovie = url.contains("type=movie")
-        val isAnime = cleanTitle.contains("(Anime)", ignoreCase = true)
-        
-        // Extrair sinopse
-        val synopsis = document.selectFirst("p.text-gray-200")?.text()
-        
-        // Extrair gêneros
-        val genres = document.select("span.bg-purple-600\\/80").map { it.text().trim() }
-            .takeIf { it.isNotEmpty() }
-        
-        // Extrair poster
-        val poster = extractPoster(document)
-        
-        // Extrair ID do TMDB
-        val tmdbId = extractTmdbId(url)
-
-        if (isSeries || isAnime) {
-            val type = if (isAnime) TvType.Anime else TvType.TvSeries
+        try {
+            // Primeiro testar se a URL ainda é válida
+            val response = app.get(url, timeout = 10_000)
+            if (response.code >= 400) {
+                // URL pode ter mudado, tentar formatos alternativos
+                return tryAlternativeLoad(url)
+            }
             
-            // Para séries, tentar extrair episódios
-            val episodes = extractEpisodes(url, tmdbId)
+            val document = response.document
+
+            // Extrair título
+            val titleElement = document.selectFirst("h1, .title, header h1")
+            val title = titleElement?.text() ?: return null
             
-            return newTvSeriesLoadResponse(cleanTitle, url, type, episodes) {
-                this.posterUrl = poster
-                this.year = year
-                this.plot = synopsis
-                this.tags = genres
+            // Extrair informações básicas
+            val year = extractYear(document)
+            val cleanTitle = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
+            
+            // Determinar tipo
+            val isSeries = url.contains("type=tv") || document.select(".episode-list, .season-list").isNotEmpty()
+            val isMovie = url.contains("type=movie") || (!isSeries && document.select(".movie-player").isNotEmpty())
+            val isAnime = cleanTitle.contains("(Anime)", ignoreCase = true)
+            
+            // Extrair sinopse
+            val synopsis = document.selectFirst("p.text-gray-200, .synopsis, .description, .plot")?.text()
+            
+            // Extrair gêneros
+            val genres = document.select("span.bg-purple-600\\/80, .genre, .tags, .category").map { it.text().trim() }
+                .takeIf { it.isNotEmpty() }
+            
+            // Extrair poster
+            val poster = extractPoster(document)
+            
+            if (isSeries || isAnime) {
+                val type = if (isAnime) TvType.Anime else TvType.TvSeries
                 
-                // Adicionar temporadas se disponível
-                if (episodes.isNotEmpty()) {
-                    // Apenas definir o poster como background
+                // Para séries, tentar extrair episódios
+                val episodes = tryExtractEpisodes(document, url)
+                
+                return newTvSeriesLoadResponse(cleanTitle, url, type, episodes) {
+                    this.posterUrl = poster
+                    this.year = year
+                    this.plot = synopsis
+                    this.tags = genres
+                    this.backgroundPosterUrl = poster
+                }
+            } else {
+                // Para filmes
+                return newMovieLoadResponse(cleanTitle, url, TvType.Movie, url) {
+                    this.posterUrl = poster
+                    this.year = year
+                    this.plot = synopsis
+                    this.tags = genres
                     this.backgroundPosterUrl = poster
                 }
             }
-        } else {
-            // Para filmes
-            return newMovieLoadResponse(cleanTitle, url, TvType.Movie, url) {
-                this.posterUrl = poster
-                this.year = year
-                this.plot = synopsis
-                this.tags = genres
-                this.backgroundPosterUrl = poster
-            }
+        } catch (e: Exception) {
+            // Fallback: tentar formato alternativo
+            return tryAlternativeLoad(url)
         }
     }
 
-    private fun extractYear(document: org.jsoup.nodes.Document): Int? {
-        // Tenta extrair do grid de informações
-        document.select("div.bg-gray-800\\/50").forEach { div ->
-            val label = div.selectFirst("p.text-gray-400")?.text()
-            if (label?.contains("Ano") == true) {
-                val yearText = div.selectFirst("p.text-white")?.text()
-                return yearText?.toIntOrNull()
-            }
-        }
-        
-        // Tenta extrair do título
-        val title = document.selectFirst("h1")?.text() ?: ""
-        return Regex("\\((\\d{4})\\)").find(title)?.groupValues?.get(1)?.toIntOrNull()
-    }
-
-    private fun extractPoster(document: org.jsoup.nodes.Document): String? {
-        // Tenta meta tag primeiro
-        val ogImage = document.selectFirst("meta[property='og:image']")?.attr("content")
-        if (ogImage != null) return fixUrl(ogImage)
-        
-        // Tenta qualquer imagem grande
-        return document.select("img[src*='tmdb.org']").firstOrNull()?.attr("src")?.let { fixUrl(it) }
-    }
-
-    private fun extractTmdbId(url: String): String? {
-        return Regex("[?&]id=(\\d+)").find(url)?.groupValues?.get(1)
-    }
-
-    private suspend fun extractEpisodes(url: String, tmdbId: String?): List<Episode> {
-        val episodes = mutableListOf<Episode>()
-        
-        if (tmdbId == null) return episodes
-        
-        try {
-            // Para séries, vamos tentar carregar múltiplas temporadas
-            for (season in 1..5) { // Tentar até 5 temporadas
-                val seasonEpisodes = tryLoadSeasonEpisodes(tmdbId, season)
-                episodes.addAll(seasonEpisodes)
-                
-                // Se não encontrou episódios nesta temporada, para
-                if (seasonEpisodes.isEmpty() && season > 1) {
-                    break
+    private suspend fun tryAlternativeLoad(url: String): LoadResponse? {
+        return try {
+            // Tentar extrair informações da URL direto
+            val tmdbMatch = Regex("[?&]id=(\\d+)").find(url)
+            val tmdbId = tmdbMatch?.groupValues?.get(1)
+            val type = if (url.contains("type=tv")) "tv" else "movie"
+            
+            if (tmdbId != null) {
+                val title = "Conteúdo TMDB $tmdbId"
+                if (type == "tv") {
+                    newTvSeriesLoadResponse(title, url, TvType.TvSeries, emptyList()) {
+                        this.posterUrl = "https://image.tmdb.org/t/p/w500"
+                    }
+                } else {
+                    newMovieLoadResponse(title, url, TvType.Movie, url) {
+                        this.posterUrl = "https://image.tmdb.org/t/p/w500"
+                    }
                 }
+            } else {
+                null
             }
         } catch (e: Exception) {
-            // Falha silenciosa
+            null
         }
-        
-        return episodes
     }
-    
-    private suspend fun tryLoadSeasonEpisodes(tmdbId: String, season: Int): List<Episode> {
+
+    private suspend fun tryExtractEpisodes(document: org.jsoup.nodes.Document, url: String): List<Episode> {
         val episodes = mutableListOf<Episode>()
         
         try {
-            // Tentar carregar página da temporada
-            val seasonUrl = "$mainUrl/serie?id=$tmdbId&type=tv&season=$season"
-            val document = app.get(seasonUrl).document
-            
-            // Procurar por botões de episódio
-            document.select("button[data-url], a[href*='episode']").forEachIndexed { index, element ->
+            // Tentar extrair botões de episódio
+            document.select("button[data-url], a[href*='episode'], .episode-item, .episode-link").forEachIndexed { index, element ->
                 try {
                     val dataUrl = element.attr("data-url") ?: element.attr("href") ?: ""
                     if (dataUrl.isBlank()) return@forEachIndexed
                     
                     val epNumber = extractEpisodeNumber(element, index + 1)
+                    val seasonNumber = element.attr("data-season").toIntOrNull() ?: 1
                     
                     val episode = newEpisode(fixUrl(dataUrl)) {
                         this.name = "Episódio $epNumber"
-                        this.season = season
+                        this.season = seasonNumber
                         this.episode = epNumber
                         
                         // Tentar extrair descrição
@@ -359,35 +297,40 @@ class BetterFlix : MainAPI() {
                     // Ignorar episódio com erro
                 }
             }
-            
-            // Se não encontrou botões, criar episódios baseados no padrão
-            if (episodes.isEmpty()) {
-                // Tentar encontrar contador de episódios
-                val episodeCount = document.select("div:contains(eps), span:contains(ep)").firstOrNull()
-                    ?.text()?.let { Regex("(\\d+)").find(it)?.groupValues?.get(1)?.toIntOrNull() }
-                    ?: 12 // Padrão: 12 episódios por temporada
-                
-                for (ep in 1..episodeCount) {
-                    val episodeUrl = "$mainUrl/episode?id=$tmdbId&type=tv&season=$season&episode=$ep"
-                    episodes.add(
-                        newEpisode(episodeUrl) {
-                            this.name = "Episódio $ep"
-                            this.season = season
-                            this.episode = ep
-                        }
-                    )
-                }
-            }
         } catch (e: Exception) {
-            // Falha ao carregar temporada
+            // Falha silenciosa
         }
         
         return episodes
     }
 
+    private fun extractYear(document: org.jsoup.nodes.Document): Int? {
+        // Tenta extrair do grid de informações
+        document.select("div.bg-gray-800\\/50, .info-grid, .metadata").forEach { div ->
+            val label = div.selectFirst("p.text-gray-400, .label, .info-label")?.text()
+            if (label?.contains("Ano") == true || label?.contains("Year") == true) {
+                val yearText = div.selectFirst("p.text-white, .value, .info-value")?.text()
+                return yearText?.toIntOrNull()
+            }
+        }
+        
+        // Tenta extrair do título
+        val title = document.selectFirst("h1, .title")?.text() ?: ""
+        return Regex("\\((\\d{4})\\)").find(title)?.groupValues?.get(1)?.toIntOrNull()
+    }
+
+    private fun extractPoster(document: org.jsoup.nodes.Document): String? {
+        // Tenta meta tag primeiro
+        val ogImage = document.selectFirst("meta[property='og:image']")?.attr("content")
+        if (ogImage != null) return fixUrl(ogImage)
+        
+        // Tenta qualquer imagem grande
+        return document.select("img[src*='tmdb.org'], img[src*='poster'], .poster img").firstOrNull()?.attr("src")?.let { fixUrl(it) }
+    }
+
     private fun extractEpisodeNumber(element: Element, default: Int): Int {
         return element.attr("data-ep").toIntOrNull() ?:
-               element.selectFirst(".ep-number, .number")?.text()?.toIntOrNull() ?:
+               element.selectFirst(".ep-number, .number, .episode-number")?.text()?.toIntOrNull() ?:
                Regex("Ep\\.?\\s*(\\d+)").find(element.text())?.groupValues?.get(1)?.toIntOrNull() ?:
                Regex("Epis[oó]dio\\s*(\\d+)").find(element.text())?.groupValues?.get(1)?.toIntOrNull() ?:
                default
@@ -400,149 +343,32 @@ class BetterFlix : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         return try {
-            // Usar extrator simples
-            extractVideoLinks(data, subtitleCallback, callback)
-        } catch (e: Exception) {
-            false
-        }
-    }
-    
-    private suspend fun extractVideoLinks(
-        url: String,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        return try {
-            // Extrair TMDB ID
-            val tmdbId = extractTmdbId(url) ?: return false
-            val isSeries = url.contains("type=tv")
+            // Tentar extrair links da página
+            val document = app.get(data).document
             
-            // Tentar diferentes fontes
-            val success = trySuperflixApi(tmdbId, isSeries, callback) ||
-                         tryMegaembed(tmdbId, isSeries, callback) ||
-                         tryVidPlay(tmdbId, isSeries, callback)
-            
-            success
-        } catch (e: Exception) {
-            false
-        }
-    }
-    
-    private suspend fun trySuperflixApi(
-        tmdbId: String,
-        isSeries: Boolean,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        return try {
-            val url = if (isSeries) {
-                "https://superflixapi.asia/serie/$tmdbId/1/1"
-            } else {
-                "https://superflixapi.asia/filme/$tmdbId"
+            // Procurar por iframes de player
+            val iframeSrc = document.selectFirst("iframe[src*='embed'], iframe[src*='player']")?.attr("src")
+            if (iframeSrc != null) {
+                return extractFromIframe(fixUrl(iframeSrc), callback)
             }
             
-            val headers = mapOf(
-                "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36",
-                "Referer" to "https://betterflix.vercel.app/"
-            )
-            
-            val response = app.get(url, headers = headers)
-            val html = response.text
-            
-            // Procurar por m3u8
-            val patterns = listOf(
-                Regex("""file["']?\s*:\s*["'](https?://[^"']+\.m3u8[^"']*)["']"""),
-                Regex("""src=["'](https?://[^"']+\.m3u8[^"']*)["']"""),
-                Regex("""(https?://[^"'\s]+\.m3u8[^\s"']*)""")
-            )
-            
-            for (pattern in patterns) {
-                val match = pattern.find(html)
+            // Procurar por scripts com m3u8
+            val scripts = document.select("script")
+            for (script in scripts) {
+                val html = script.html()
+                val m3u8Pattern = Regex("""(https?://[^"\s]+\.m3u8[^"\s]*)""")
+                val match = m3u8Pattern.find(html)
                 if (match != null) {
                     val m3u8Url = match.groupValues[1]
-                    createM3u8Link(m3u8Url, callback)
-                    return true
+                    return createM3u8Link(m3u8Url, callback)
                 }
             }
             
-            false
-        } catch (e: Exception) {
-            false
-        }
-    }
-    
-    private suspend fun tryMegaembed(
-        tmdbId: String,
-        isSeries: Boolean,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        return try {
-            val url = if (isSeries) {
-                "https://megaembed.com/embed/series?tmdb=$tmdbId&sea=1&epi=1"
-            } else {
-                "https://megaembed.com/embed/movie?tmdb=$tmdbId"
-            }
-            
-            val headers = mapOf(
-                "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36",
-                "Referer" to "https://betterflix.vercel.app/"
-            )
-            
-            val response = app.get(url, headers = headers)
-            val html = response.text
-            
-            // Procurar por iframe
-            val iframePattern = Regex("""<iframe[^>]+src=["']([^"']+)["']""")
-            val iframeMatch = iframePattern.find(html)
-            
-            if (iframeMatch != null) {
-                var iframeUrl = iframeMatch.groupValues[1]
-                if (iframeUrl.startsWith("//")) {
-                    iframeUrl = "https:$iframeUrl"
-                }
-                
-                // Extrair do iframe
-                return extractFromIframe(iframeUrl, callback)
-            }
-            
-            false
-        } catch (e: Exception) {
-            false
-        }
-    }
-    
-    private suspend fun tryVidPlay(
-        tmdbId: String,
-        isSeries: Boolean,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        return try {
-            val url = if (isSeries) {
-                "https://vidplay.online/e/$tmdbId?c=1-1"
-            } else {
-                "https://vidplay.online/v/$tmdbId"
-            }
-            
-            val headers = mapOf(
-                "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36",
-                "Referer" to "https://betterflix.vercel.app/"
-            )
-            
-            val response = app.get(url, headers = headers)
-            val html = response.text
-            
-            // Procurar por m3u8
-            val patterns = listOf(
-                Regex("""sources:\s*\[\s*\{\s*file:\s*["'](https?://[^"']+\.m3u8[^"']*)["']"""),
-                Regex("""file["']?\s*:\s*["'](https?://[^"']+\.m3u8[^"']*)["']""")
-            )
-            
-            for (pattern in patterns) {
-                val match = pattern.find(html)
-                if (match != null) {
-                    val m3u8Url = match.groupValues[1]
-                    createM3u8Link(m3u8Url, callback)
-                    return true
-                }
+            // Procurar por data-url em botões
+            val playButton = document.selectFirst("button[data-url], a[data-url]")
+            val dataUrl = playButton?.attr("data-url")
+            if (dataUrl != null) {
+                return extractVideoLinks(dataUrl, subtitleCallback, callback)
             }
             
             false
@@ -567,7 +393,8 @@ class BetterFlix : MainAPI() {
             // Procurar por m3u8
             val patterns = listOf(
                 Regex("""file["']?\s*:\s*["'](https?://[^"']+\.m3u8[^"']*)["']"""),
-                Regex("""src=["'](https?://[^"']+\.m3u8[^"']*)["']""")
+                Regex("""src=["'](https?://[^"']+\.m3u8[^"']*)["']"""),
+                Regex("""(https?://[^"\s]+\.m3u8[^"\s]*)""")
             )
             
             for (pattern in patterns) {
@@ -621,6 +448,30 @@ class BetterFlix : MainAPI() {
                 }
                 callback(link)
                 true
+            }
+        } catch (e: Exception) {
+            false
+        }
+    }
+    
+    private suspend fun extractVideoLinks(
+        url: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        // Tentar extrair do URL direto
+        if (url.contains(".m3u8")) {
+            return createM3u8Link(url, callback)
+        }
+        
+        // Se não for m3u8, tentar seguir o link
+        return try {
+            val document = app.get(url).document
+            val iframe = document.selectFirst("iframe[src]")
+            if (iframe != null) {
+                extractFromIframe(iframe.attr("src"), callback)
+            } else {
+                false
             }
         } catch (e: Exception) {
             false
