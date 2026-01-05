@@ -37,7 +37,8 @@ class BetterFlix : MainAPI() {
             else -> extractMediaContent(document)
         }
 
-        return newHomePageResponse(request.name, home, hasNextPage = false)
+        // Usar a assinatura correta: newHomePageResponse(list, hasNext)
+        return newHomePageResponse(list = home, hasNextPage = false)
     }
 
     private fun extractMediaContent(document: org.jsoup.nodes.Document): List<SearchResponse> {
@@ -202,7 +203,6 @@ class BetterFlix : MainAPI() {
                 
                 // Adicionar temporadas se disponível
                 if (episodes.isNotEmpty()) {
-                    val seasons = episodes.map { it.season }.distinct()
                     // Apenas definir o poster como background
                     this.backgroundPosterUrl = poster
                 }
