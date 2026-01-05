@@ -7,25 +7,28 @@ import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.SubtitleFile
 
-object BetterFlixExtractor {
-    suspend fun extractVideoLinks(
-        data: String,
-        sourceName: String,
+class BetterFlixExtractor : ExtractorApi() {
+    override val name = "BetterFlix"
+    override val mainUrl = "https://betterflix.vercel.app"
+    
+    override suspend fun getUrl(
+        url: String,
+        referer: String?,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         return try {
             // Extrair informações da URL
-            val tmdbId = extractTmdbId(data) ?: return false
-            val isSeries = data.contains("type=tv")
+            val tmdbId = extractTmdbId(url) ?: return false
+            val isSeries = url.contains("type=tv")
             
             // Tentar ambas as fontes
-            val success = trySource1(tmdbId, isSeries, sourceName, callback) ||
-                         trySource2(tmdbId, isSeries, sourceName, callback)
+            val success = trySource1(tmdbId, isSeries, subtitleCallback, callback) ||
+                         trySource2(tmdbId, isSeries, subtitleCallback, callback)
             
             // Se ambas falharem, tentar URL direta
             if (!success) {
-                tryDirectUrl(data, sourceName, callback)
+                tryDirectUrl(url, subtitleCallback, callback)
             } else {
                 true
             }
@@ -51,7 +54,7 @@ object BetterFlixExtractor {
     private suspend fun trySource1(
         tmdbId: String,
         isSeries: Boolean,
-        sourceName: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         return try {
@@ -63,7 +66,7 @@ object BetterFlixExtractor {
                 "https://superflixapi.asia/filme/$tmdbId"
             }
             
-            extractFromSuperflixApi(playerUrl, sourceName, callback)
+            extractFromSuperflixApi(playerUrl, subtitleCallback, callback)
         } catch (e: Exception) {
             false
         }
@@ -72,7 +75,7 @@ object BetterFlixExtractor {
     private suspend fun trySource2(
         tmdbId: String,
         isSeries: Boolean,
-        sourceName: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         return try {
@@ -84,7 +87,7 @@ object BetterFlixExtractor {
                 "https://megaembed.com/embed/movie?tmdb=$tmdbId"
             }
             
-            extractFromMegaembed(playerUrl, sourceName, callback)
+            extractFromMegaembed(playerUrl, subtitleCallback, callback)
         } catch (e: Exception) {
             false
         }
@@ -98,7 +101,7 @@ object BetterFlixExtractor {
     
     private suspend fun extractFromSuperflixApi(
         url: String,
-        sourceName: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         return try {
@@ -129,7 +132,7 @@ object BetterFlixExtractor {
                 for (match in matches) {
                     val m3u8Url = match.groupValues[1]
                     if (m3u8Url.contains(".m3u8")) {
-                        if (createM3u8Link(m3u8Url, sourceName, callback)) {
+                        if (createM3u8Link(m3u8Url, subtitleCallback, callback)) {
                             return true
                         }
                     }
@@ -142,7 +145,7 @@ object BetterFlixExtractor {
             
             if (iframeMatch != null) {
                 val iframeUrl = iframeMatch.groupValues[1]
-                return extractFromIframe(iframeUrl, sourceName, callback)
+                return extractFromIframe(iframeUrl, subtitleCallback, callback)
             }
             
             false
@@ -153,7 +156,7 @@ object BetterFlixExtractor {
     
     private suspend fun extractFromMegaembed(
         url: String,
-        sourceName: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         return try {
@@ -184,7 +187,7 @@ object BetterFlixExtractor {
                     iframeUrl = "https://megaembed.com${iframeUrl}"
                 }
                 
-                return extractFromIframe(iframeUrl, sourceName, callback)
+                return extractFromIframe(iframeUrl, subtitleCallback, callback)
             }
             
             // Procurar por m3u8 direto
@@ -193,7 +196,7 @@ object BetterFlixExtractor {
             
             if (m3u8Match != null) {
                 val m3u8Url = m3u8Match.groupValues[1]
-                return createM3u8Link(m3u8Url, sourceName, callback)
+                return createM3u8Link(m3u8Url, subtitleCallback, callback)
             }
             
             false
@@ -204,7 +207,7 @@ object BetterFlixExtractor {
     
     private suspend fun extractFromIframe(
         iframeUrl: String,
-        sourceName: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         return try {
@@ -235,7 +238,7 @@ object BetterFlixExtractor {
                 for (match in matches) {
                     val m3u8Url = match.groupValues[1]
                     if (m3u8Url.contains(".m3u8")) {
-                        if (createM3u8Link(m3u8Url, sourceName, callback)) {
+                        if (createM3u8Link(m3u8Url, subtitleCallback, callback)) {
                             return true
                         }
                     }
@@ -250,7 +253,7 @@ object BetterFlixExtractor {
     
     private suspend fun tryDirectUrl(
         data: String,
-        sourceName: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         return try {
@@ -269,7 +272,7 @@ object BetterFlixExtractor {
                 }
                 
                 // Tentar extrair do VidPlay
-                return extractFromVidPlay(directUrl, sourceName, callback)
+                return extractFromVidPlay(directUrl, subtitleCallback, callback)
             }
             
             false
@@ -280,7 +283,7 @@ object BetterFlixExtractor {
     
     private suspend fun extractFromVidPlay(
         url: String,
-        sourceName: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         return try {
@@ -308,7 +311,7 @@ object BetterFlixExtractor {
                 val match = pattern.find(html)
                 if (match != null) {
                     val m3u8Url = match.groupValues[1]
-                    return createM3u8Link(m3u8Url, sourceName, callback)
+                    return createM3u8Link(m3u8Url, subtitleCallback, callback)
                 }
             }
             
@@ -318,9 +321,9 @@ object BetterFlixExtractor {
         }
     }
     
-    private fun createM3u8Link(
+    private suspend fun createM3u8Link(
         m3u8Url: String,
-        sourceName: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         return try {
@@ -334,7 +337,7 @@ object BetterFlixExtractor {
             
             // Usar M3u8Helper para gerar múltiplas qualidades
             val links = M3u8Helper.generateM3u8(
-                source = sourceName,
+                source = name,
                 streamUrl = m3u8Url,
                 referer = "https://betterflix.vercel.app/",
                 headers = headers
@@ -346,7 +349,7 @@ object BetterFlixExtractor {
             } else {
                 // Se M3u8Helper falhar, criar link direto
                 val fallbackLink = newExtractorLink(
-                    source = sourceName,
+                    source = name,
                     name = "Video",
                     url = m3u8Url,
                     type = ExtractorLinkType.M3U8
