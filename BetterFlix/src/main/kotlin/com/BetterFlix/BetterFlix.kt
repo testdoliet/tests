@@ -2,6 +2,8 @@ package com.BetterFlix
 
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
+import com.lagradost.cloudstream3.LoadResponse.Companion.addActors
+import com.lagradost.cloudstream3.LoadResponse.Companion.addTrailer
 import com.lagradost.cloudstream3.app
 import org.jsoup.nodes.Element
 
@@ -17,7 +19,7 @@ class BetterFlix : MainAPI() {
     companion object {
         private val MAIN_TABS = listOf(
             "/" to "Tops da semana",
-            "/filmes" to "Filmes do momento",
+            "/filmes" to "Filmes do momento", 
             "/series" to "Séries do momento",
             "/tv" to "Canais de TV"
         )
@@ -34,75 +36,124 @@ class BetterFlix : MainAPI() {
 
         val home = when {
             request.data.contains("/tv") -> extractTVChannels(document)
-            else -> extractMediaContent(document)
+            else -> extractCarouselContent(document, request.data)
         }
 
-        // CORREÇÃO AQUI: Usando newHomePageResponse corretamente
         return newHomePageResponse(
             name = request.name,
-            list = home,
+            list = home.distinctBy { it.url },
             hasNext = false
         )
     }
 
-    private fun extractMediaContent(document: org.jsoup.nodes.Document): List<SearchResponse> {
+    private fun extractCarouselContent(document: org.jsoup.nodes.Document, url: String): List<SearchResponse> {
         val items = mutableListOf<SearchResponse>()
-
-        // Carrossel principal
-        document.select("a[href*='?id=']").forEach { element ->
-            try {
-                val href = element.attr("href") ?: return@forEach
-                if (href.startsWith("/canal") || !href.contains("?id=")) return@forEach
-
-                val imgElement = element.selectFirst("img")
-                val title = imgElement?.attr("alt") ?: 
-                           element.selectFirst("p")?.text() ?:
-                           return@forEach
-
-                val poster = imgElement?.attr("src")?.let { fixUrl(it) }
-                val cleanTitle = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
-                val year = Regex("\\((\\d{4})\\)").find(title)?.groupValues?.get(1)?.toIntOrNull()
-
-                // Determinar tipo
-                val isSeries = href.contains("type=tv")
-                val isMovie = href.contains("type=movie")
-                val isAnime = title.contains("(Anime)", ignoreCase = true) || 
-                              href.contains("/anime")
-
-                when {
-                    isAnime -> {
-                        newAnimeSearchResponse(cleanTitle, fixUrl(href), TvType.Anime) {
-                            this.posterUrl = poster
-                            this.year = year
-                        }.also { items.add(it) }
-                    }
-                    isSeries -> {
-                        newTvSeriesSearchResponse(cleanTitle, fixUrl(href), TvType.TvSeries) {
-                            this.posterUrl = poster
-                            this.year = year
-                        }.also { items.add(it) }
-                    }
-                    else -> {
-                        newMovieSearchResponse(cleanTitle, fixUrl(href), TvType.Movie) {
-                            this.posterUrl = poster
-                            this.year = year
-                        }.also { items.add(it) }
-                    }
-                }
-            } catch (e: Exception) {
-                // Ignorar erro
+        
+        // Determinar qual carrossel extrair baseado na URL
+        when {
+            url.contains("/filmes") -> {
+                // Extrair do carrossel de filmes
+                extractFromCarousel(document, "Filmes do momento", isMovie = true)
+            }
+            url.contains("/series") -> {
+                // Extrair do carrossel de séries
+                extractFromCarousel(document, "Séries do momento", isSeries = true)
+            }
+            else -> {
+                // Extrair do carrossel principal (tudo)
+                extractFromCarousel(document, "Tops da semana")
             }
         }
+        
+        return items
+    }
+    
+    private fun extractFromCarousel(
+        document: org.jsoup.nodes.Document,
+        sectionTitle: String,
+        isMovie: Boolean = false,
+        isSeries: Boolean = false
+    ): List<SearchResponse> {
+        val items = mutableListOf<SearchResponse>()
+        
+        // Encontrar a seção pelo título
+        val sections = document.select("div.py-8.w-full.mx-auto")
+        
+        sections.forEach { section ->
+            val titleElement = section.selectFirst("h2")
+            val titleText = titleElement?.text() ?: ""
+            
+            // Se encontramos a seção correta
+            if (titleText.contains(sectionTitle, ignoreCase = true)) {
+                // Extrair os links dentro desta seção
+                val links = section.select("a[href*='?id=']")
+                
+                links.forEach { element ->
+                    try {
+                        val href = element.attr("href") ?: return@forEach
+                        if (href.startsWith("/canal") || !href.contains("?id=")) return@forEach
 
+                        val imgElement = element.selectFirst("img")
+                        val title = imgElement?.attr("alt") ?: 
+                                   element.selectFirst("p")?.text() ?:
+                                   return@forEach
+
+                        val poster = imgElement?.attr("src")?.let { fixUrl(it) }
+                        val cleanTitle = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
+                        val year = Regex("\\((\\d{4})\\)").find(title)?.groupValues?.get(1)?.toIntOrNull()
+
+                        // Determinar tipo
+                        val hrefIsSeries = href.contains("type=tv")
+                        val hrefIsMovie = href.contains("type=movie")
+                        val hrefIsAnime = title.contains("(Anime)", ignoreCase = true) || 
+                                          href.contains("/anime")
+
+                        when {
+                            hrefIsAnime -> {
+                                newAnimeSearchResponse(cleanTitle, fixUrl(href), TvType.Anime) {
+                                    this.posterUrl = poster
+                                    this.year = year
+                                }.also { items.add(it) }
+                            }
+                            hrefIsSeries || isSeries -> {
+                                newTvSeriesSearchResponse(cleanTitle, fixUrl(href), TvType.TvSeries) {
+                                    this.posterUrl = poster
+                                    this.year = year
+                                }.also { items.add(it) }
+                            }
+                            hrefIsMovie || isMovie -> {
+                                newMovieSearchResponse(cleanTitle, fixUrl(href), TvType.Movie) {
+                                    this.posterUrl = poster
+                                    this.year = year
+                                }.also { items.add(it) }
+                            }
+                            else -> {
+                                // Fallback: tratar como filme
+                                newMovieSearchResponse(cleanTitle, fixUrl(href), TvType.Movie) {
+                                    this.posterUrl = poster
+                                    this.year = year
+                                }.also { items.add(it) }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        // Ignorar erro
+                    }
+                }
+            }
+        }
+        
         return items
     }
 
     private fun extractTVChannels(document: org.jsoup.nodes.Document): List<SearchResponse> {
         val channels = mutableListOf<SearchResponse>()
 
-        document.select("a[href^='/canal']").forEach { element ->
+        // Extrair da grid de canais
+        document.select("a.canal-card, a[href^='/canal']").forEach { element ->
             try {
                 val href = element.attr("href") ?: return@forEach
+                if (!href.contains("canal")) return@forEach
+
                 val nameElement = element.selectFirst("h3")
                 val title = nameElement?.text() ?: return@forEach
 
