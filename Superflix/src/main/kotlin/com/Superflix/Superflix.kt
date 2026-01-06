@@ -12,7 +12,7 @@ class SuperflixMain : MainAPI() {
     override var mainUrl = "https://superflix1.cloud"
     override var name = "Superflix"
     override val hasMainPage = true
-    override var lang = "pt-br"
+    override var lang = "pt"
     override val hasDownloadSupport = false
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries)
     override val usesWebView = false
@@ -166,26 +166,18 @@ class SuperflixMain : MainAPI() {
         val banner = document.selectFirst("div.bghd img.TPostBg, div.bgft img.TPostBg")
             ?.attr("src")?.let { fixUrl(it) }
 
-        // ANO - corrigindo a extração
-        val year = document.selectFirst("span:containsOwn(2024)")?.text()?.toIntOrNull()
-            ?: document.selectFirst("span.year")?.text()?.toIntOrNull()
-            ?: document.select("span").firstOrNull { 
-                it.text().matches(Regex("\\d{4}")) 
-            }?.text()?.toIntOrNull()
+        // ANO - usando o método original do código anterior
+        val year = document.selectFirst("span.year")?.text()?.toIntOrNull()
 
-        // DURAÇÃO - extraindo do HTML
+        // DURAÇÃO - como no exemplo do SuperFlix
         val duration = document.selectFirst("span:containsOwn(min.)")?.text()
             ?.replace(" min.", "")?.trim()?.toIntOrNull()
 
         // DESCRIÇÃO
         val description = document.selectFirst("div.description p")?.text()
-            ?: document.select("meta[property='og:description']")?.attr("content")
 
-        // GÊNEROS
-        val genres = document.select("span.genres a, a[href*='/category/']")
-            .map { it.text().trim() }
-            .filter { it.isNotBlank() && !it.contains("Ver") && !it.contains("Série") }
-            .distinct()
+        // TAGS - usando o método original do código anterior
+        val genres = document.select("span.genres a").map { it.text() }.filter { it.isNotBlank() }
 
         // DIRETOR
         val director = document.selectFirst("p:contains(Diretor)")?.ownText()?.trim()
@@ -209,9 +201,9 @@ class SuperflixMain : MainAPI() {
                 this.posterUrl = poster
                 this.backgroundPosterUrl = banner
                 this.year = year
-                this.duration = duration
+                this.duration = duration  // Duração para filmes
                 this.plot = description
-                this.tags = genres
+                this.tags = genres  // Tags como estava no código original
                 addActors(actors)
             }
         } else {
@@ -230,7 +222,7 @@ class SuperflixMain : MainAPI() {
                 this.backgroundPosterUrl = banner
                 this.year = year
                 this.plot = description
-                this.tags = genres
+                this.tags = genres  // Tags como estava no código original
                 addActors(actors)
             }
         }
