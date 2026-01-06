@@ -12,13 +12,12 @@ class SuperflixMain : MainAPI() {
     override var mainUrl = "https://superflix1.cloud"
     override var name = "Superflix"
     override val hasMainPage = true
-    override var lang = "pt"
+    override var lang = "pt-br"
     override val hasDownloadSupport = false
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries)
     override val usesWebView = false
 
     companion object {
-
         /** TODAS as categorias reais do site (sem repetir) */
         private val GENRE_URLS = listOf(
             "/category/acao/" to "Ação",
@@ -64,62 +63,62 @@ class SuperflixMain : MainAPI() {
     )
 
     override suspend fun getMainPage(
-    page: Int,
-    request: MainPageRequest
-): HomePageResponse {
+        page: Int,
+        request: MainPageRequest
+    ): HomePageResponse {
 
-    // ---------- RECOMENDADOS (HOME, SEM PAGINAÇÃO) ----------
-    if (request.name == "Filmes Recomendados" || request.name == "Séries Recomendadas") {
+        // ---------- RECOMENDADOS (HOME, SEM PAGINAÇÃO) ----------
+        if (request.name == "Filmes Recomendados" || request.name == "Séries Recomendadas") {
 
-        val document = app.get(mainUrl).document
+            val document = app.get(mainUrl).document
 
-        val selector = if (request.name == "Filmes Recomendados") {
-            "#widget_list_movies_series-6 article.post"
-        } else {
-            "#widget_list_movies_series-8 article.post"
+            val selector = if (request.name == "Filmes Recomendados") {
+                "#widget_list_movies_series-6 article.post"
+            } else {
+                "#widget_list_movies_series-8 article.post"
+            }
+
+            val home = document.select(selector)
+                .mapNotNull { it.toSearchResult() }
+                .distinctBy { it.url }
+
+            return newHomePageResponse(
+                request.name,
+                home,
+                false
+            )
         }
 
-        val home = document.select(selector)
+        // ---------- GÊNEROS / LANÇAMENTOS (COM PAGINAÇÃO) ----------
+        val baseUrl = if (request.data.endsWith("/")) {
+            request.data
+        } else {
+            "${request.data}/"
+        }
+
+        val url = if (page > 1) {
+            "${baseUrl}page/$page/"
+        } else {
+            baseUrl
+        }
+
+        val document = app.get(url).document
+
+        val home = document.select("article.post")
             .mapNotNull { it.toSearchResult() }
             .distinctBy { it.url }
+
+        // mesma lógica do plugin SuperFlix (mais permissiva)
+        val hasNext =
+            document.select("a:contains(Próxima)").isNotEmpty() ||
+            document.select(".page-numbers a[href*='page']").isNotEmpty() ||
+            document.select(".pagination").isNotEmpty()
 
         return newHomePageResponse(
             request.name,
             home,
-            false
+            hasNext
         )
-    }
-
-    // ---------- GÊNEROS / LANÇAMENTOS (COM PAGINAÇÃO) ----------
-    val baseUrl = if (request.data.endsWith("/")) {
-        request.data
-    } else {
-        "${request.data}/"
-    }
-
-    val url = if (page > 1) {
-        "${baseUrl}page/$page/"
-    } else {
-        baseUrl
-    }
-
-    val document = app.get(url).document
-
-    val home = document.select("article.post")
-        .mapNotNull { it.toSearchResult() }
-        .distinctBy { it.url }
-
-    // mesma lógica do plugin SuperFlix (mais permissiva)
-    val hasNext =
-        document.select("a:contains(Próxima)").isNotEmpty() ||
-        document.select(".page-numbers a[href*='page']").isNotEmpty() ||
-        document.select(".pagination").isNotEmpty()
-
-    return newHomePageResponse(
-        request.name,
-        home,
-        hasNext
-    )
     }
     
     private fun Element.toSearchResult(): SearchResponse? {
@@ -163,18 +162,56 @@ class SuperflixMain : MainAPI() {
         val poster = document.selectFirst("div.post-thumbnail img")
             ?.attr("src")?.let { fixUrl(it) }
 
-        val year = document.selectFirst("span.year")?.text()?.toIntOrNull()
-        val description = document.selectFirst("div.description p")?.text()
-        val genres = document.select("span.genres a").map { it.text() }.filter { it.isNotBlank() }
+        // BANNER REAL - extraído das divs no final do HTML
+        val banner = document.selectFirst("div.bghd img.TPostBg, div.bgft img.TPostBg")
+            ?.attr("src")?.let { fixUrl(it) }
 
+        // ANO - corrigindo a extração
+        val year = document.selectFirst("span:containsOwn(2024)")?.text()?.toIntOrNull()
+            ?: document.selectFirst("span.year")?.text()?.toIntOrNull()
+            ?: document.select("span").firstOrNull { 
+                it.text().matches(Regex("\\d{4}")) 
+            }?.text()?.toIntOrNull()
+
+        // DURAÇÃO - extraindo do HTML
+        val duration = document.selectFirst("span:containsOwn(min.)")?.text()
+            ?.replace(" min.", "")?.trim()?.toIntOrNull()
+
+        // DESCRIÇÃO
+        val description = document.selectFirst("div.description p")?.text()
+            ?: document.select("meta[property='og:description']")?.attr("content")
+
+        // GÊNEROS
+        val genres = document.select("span.genres a, a[href*='/category/']")
+            .map { it.text().trim() }
+            .filter { it.isNotBlank() && !it.contains("Ver") && !it.contains("Série") }
+            .distinct()
+
+        // DIRETOR
+        val director = document.selectFirst("p:contains(Diretor)")?.ownText()?.trim()
+            ?: document.select("p").firstOrNull { it.text().contains("Diretor") }?.text()
+                ?.replace("Diretor", "")?.trim()
+
+        // ELENCO
+        val actors = document.selectFirst("p:contains(Elenco)")?.ownText()?.trim()
+            ?.split(",")?.map { it.trim() }?.filter { it.isNotBlank() }
+            ?: emptyList()
+
+        // DETERMINAR SE É FILME OU SÉRIE
         return if (url.contains("/filme/")) {
             newMovieLoadResponse(title, url, TvType.Movie, url) {
                 this.posterUrl = poster
+                this.backgroundPosterUrl = banner
                 this.year = year
+                this.duration = duration
                 this.plot = description
                 this.tags = genres
+                this.directors = listOfNotNull(director)
+                addActors(actors)
             }
         } else {
+            // Para séries, você precisará extrair episódios da página
+            // Por enquanto, vou criar um episódio placeholder
             val episodes = listOf(
                 newEpisode(url) {
                     this.name = "Assistir Série"
@@ -185,9 +222,12 @@ class SuperflixMain : MainAPI() {
 
             newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes) {
                 this.posterUrl = poster
+                this.backgroundPosterUrl = banner
                 this.year = year
                 this.plot = description
                 this.tags = genres
+                this.directors = listOfNotNull(director)
+                addActors(actors)
             }
         }
     }
