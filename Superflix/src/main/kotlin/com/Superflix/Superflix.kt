@@ -64,62 +64,7 @@ class SuperflixMain : MainAPI() {
     )
 
     
-    override suspend fun getMainPage(
-    page: Int,
-    request: MainPageRequest
-): HomePageResponse {
-
-    // Recomendados NÃO têm paginação (HOME)
-    if (request.name == "Filmes Recomendados" || request.name == "Séries Recomendadas") {
-
-        val document = app.get(mainUrl).document
-
-        val selector = if (request.name == "Filmes Recomendados") {
-            "#widget_list_movies_series-6 article.post"
-        } else {
-            "#widget_list_movies_series-8 article.post"
-        }
-
-        val home = document.select(selector)
-            .mapNotNull { it.toSearchResult() }
-            .distinctBy { it.url }
-
-        return newHomePageResponse(
-            list = HomePageList(request.name, home, isHorizontalImages = false),
-            hasNext = false
-        )
-    }
-
-    // --- PAGINAÇÃO (PADRÃO SUPERFLIX) ---
-val baseUrl = if (request.data.endsWith("/")) {
-    request.data
-} else {
-    "${request.data}/"
-}
-
-val url = if (page > 1) {
-    "${baseUrl}page/$page/"
-} else {
-    baseUrl
-}
-
-val document = app.get(url).document
-
-val home = document.select("article.post")
-    .mapNotNull { it.toSearchResult() }
-    .distinctBy { it.url }
-
-// mesma lógica do SuperFlix
-val hasNext = document.select("a:contains(Próxima)").isNotEmpty() ||
-              document.select(".page-numbers a[href*='page']").isNotEmpty() ||
-              document.select(".pagination").isNotEmpty()
-
-return newHomePageResponse(
-    request.name,
-    home,
-    hasNext
-)
-
+    
     private fun Element.toSearchResult(): SearchResponse? {
         val title = selectFirst("h2.entry-title")?.text() ?: return null
         val href = selectFirst("a.lnk-blk")?.attr("href") ?: return null
