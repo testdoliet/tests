@@ -89,10 +89,18 @@ class SuperflixMain : MainAPI() {
             )
         }
 
-        /** Gêneros e lançamentos com paginação */
-        val url = if (page > 1) "${request.data}page/$page/" else request.data
-        val document = app.get(url).document
+        val baseUrl = if (request.data.endsWith("/")) {
+    request.data
+} else {
+    "${request.data}/"
+}
 
+val url = if (page > 1) {
+    "${baseUrl}page/$page/"
+} else {
+    baseUrl
+}
+      
         val home = document.select("article.post")
             .mapNotNull { it.toSearchResult() }
             .distinctBy { it.url }
