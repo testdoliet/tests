@@ -169,9 +169,9 @@ class SuperflixMain : MainAPI() {
         // ANO - usando o método original do código anterior
         val year = document.selectFirst("span.year")?.text()?.toIntOrNull()
 
-        // DURAÇÃO - extraindo do formato "1h 40m" ou "40m"
-        val durationText = document.selectFirst("span.duration, span.fa-clock")?.text()?.trim()
-        val duration = parseDuration(durationText)
+        // DURAÇÃO - como no exemplo do SuperFlix
+        val duration = document.selectFirst("span:containsOwn(min.)")?.text()
+            ?.replace(" min.", "")?.trim()?.toIntOrNull()
 
         // DESCRIÇÃO
         val description = document.selectFirst("div.description p")?.text()
@@ -207,15 +207,8 @@ class SuperflixMain : MainAPI() {
                 addActors(actors)
             }
         } else {
-            // Para séries, você precisará extrair episódios da página
-            // Por enquanto, vou criar um episódio placeholder
-            val episodes = listOf(
-                newEpisode(url) {
-                    this.name = "Assistir Série"
-                    this.season = 1
-                    this.episode = 1
-                }
-            )
+            // Extrair episódios do iframe
+            val episodes = extractEpisodes(document, url)
 
             newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes) {
                 this.posterUrl = poster
@@ -228,21 +221,96 @@ class SuperflixMain : MainAPI() {
         }
     }
 
-    // Função para converter duração no formato "1h 40m" ou "40m" para minutos
-    private fun parseDuration(durationText: String?): Int? {
-        if (durationText.isNullOrBlank()) return null
+    private suspend fun extractEpisodes(document: org.jsoup.nodes.Document, seriesUrl: String): List<Episode> {
+        val episodes = mutableListOf<Episode>()
         
-        return try {
-            val hoursMatch = Regex("(\\d+)h").find(durationText)
-            val minutesMatch = Regex("(\\d+)m").find(durationText)
+        try {
+            // Encontrar o iframe que contém os episódios
+            val iframeSrc = document.selectFirst("div#adangle-pop-iframe-container iframe")?.attr("src")
+                ?: document.selectFirst("iframe[src*='assistirseriesonline']")?.attr("src")
             
-            val hours = hoursMatch?.groupValues?.get(1)?.toIntOrNull() ?: 0
-            val minutes = minutesMatch?.groupValues?.get(1)?.toIntOrNull() ?: 0
+            if (iframeSrc != null) {
+                // Fazer requisição para o iframe
+                val iframeDoc = app.get(fixUrl(iframeSrc)).document
+                
+                // Extrair episódios do iframe
+                // Você precisa verificar como os episódios são estruturados no iframe
+                // Aqui estou usando um padrão comum, mas pode precisar de ajustes
+                iframeDoc.select("a[href*='episodio'], .episode-item, .episode-link").forEachIndexed { index, element ->
+                    try {
+                        val episodeUrl = element.attr("href")?.let { fixUrl(it) }
+                        if (episodeUrl != null) {
+                            val episodeNumber = extractEpisodeNumber(element, index + 1)
+                            val episodeName = element.text().trim().ifBlank { "Episódio $episodeNumber" }
+                            
+                            episodes.add(
+                                newEpisode(episodeUrl) {
+                                    this.name = episodeName
+                                    this.season = 1
+                                    this.episode = episodeNumber
+                                }
+                            )
+                        }
+                    } catch (e: Exception) {
+                        // Ignorar erros em episódios individuais
+                    }
+                }
+                
+                // Se não encontrou episódios no padrão acima, tentar outro padrão
+                if (episodes.isEmpty()) {
+                    iframeDoc.select("button[data-url], [data-episode]").forEachIndexed { index, element ->
+                        try {
+                            val episodeUrl = element.attr("data-url") ?: element.attr("href")
+                            if (episodeUrl != null) {
+                                val fixedUrl = fixUrl(episodeUrl)
+                                val episodeNumber = element.attr("data-episode").toIntOrNull() ?: (index + 1)
+                                val episodeName = element.text().trim().ifBlank { "Episódio $episodeNumber" }
+                                
+                                episodes.add(
+                                    newEpisode(fixedUrl) {
+                                        this.name = episodeName
+                                        this.season = 1
+                                        this.episode = episodeNumber
+                                    }
+                                )
+                            }
+                        } catch (e: Exception) {
+                            // Ignorar erros
+                        }
+                    }
+                }
+            }
             
-            (hours * 60) + minutes
+            // Se ainda não encontrou episódios, criar um placeholder
+            if (episodes.isEmpty()) {
+                episodes.add(
+                    newEpisode(seriesUrl) {
+                        this.name = "Assistir Série"
+                        this.season = 1
+                        this.episode = 1
+                    }
+                )
+            }
         } catch (e: Exception) {
-            null
+            // Em caso de erro, criar um episódio placeholder
+            episodes.add(
+                newEpisode(seriesUrl) {
+                    this.name = "Assistir Série"
+                    this.season = 1
+                    this.episode = 1
+                }
+            )
         }
+        
+        return episodes
+    }
+    
+    private fun extractEpisodeNumber(element: Element, default: Int): Int {
+        return element.attr("data-episode").toIntOrNull()
+            ?: element.selectFirst(".episode-number, .num-episode")?.text()?.toIntOrNull()
+            ?: Regex("Ep\\.?\\s*(\\d+)").find(element.text())?.groupValues?.get(1)?.toIntOrNull()
+            ?: Regex("Epis[oó]dio\\s*(\\d+)").find(element.text())?.groupValues?.get(1)?.toIntOrNull()
+            ?: default
     }
 
     override suspend fun loadLinks(
