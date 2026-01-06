@@ -16,9 +16,7 @@ class SuperflixMain : MainAPI() {
     override val hasDownloadSupport = false
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries)
     override val usesWebView = false
-    override val extractors = listOf(SuperflixExtractor())
-    
-    
+
     companion object {
         /** TODAS as categorias reais do site (sem repetir) */
         private val GENRE_URLS = listOf(
@@ -232,64 +230,67 @@ class SuperflixMain : MainAPI() {
                 ?: document.selectFirst("iframe[src*='assistirseriesonline']")?.attr("src")
             
             if (iframeSrc != null) {
+                println("[Superflix] Iframe encontrado: $iframeSrc")
+                
                 // Fazer requisição para o iframe
                 val iframeDoc = app.get(fixUrl(iframeSrc)).document
                 
-                // Extrair temporadas do header
-                val seasonElements = iframeDoc.select("header.header ul.header-navigation li")
-                
                 // Extrair todos os episódios
                 val episodeElements = iframeDoc.select("div.card-body ul li")
+                println("[Superflix] Encontrados ${episodeElements.size} elementos de episódio")
                 
                 episodeElements.forEach { episodeElement ->
                     try {
-                        // Extrair dados dos atributos data-*
-                        val seasonId = episodeElement.attr("data-season-id")
                         val episodeId = episodeElement.attr("data-episode-id")
-                        val seasonNumberAttr = episodeElement.attr("data-season-number")
+                        val seasonId = episodeElement.attr("data-season-id")
+                        
+                        println("[Superflix] Processando episódio ID: $episodeId, temporada ID: $seasonId")
                         
                         // Extrair número do episódio do texto
                         val episodeText = episodeElement.text().trim()
                         val episodeNumber = extractEpisodeNumber(episodeText)
                         
-                        // Determinar número da temporada
+                        // Extrair número da temporada do atributo ou do header
+                        val seasonNumberAttr = episodeElement.attr("data-season-number")
                         val seasonNumber = if (seasonNumberAttr.isNotBlank()) {
                             seasonNumberAttr.toIntOrNull() ?: 1
                         } else {
-                            // Tentar encontrar a temporada pelo season-id
-                            val matchingSeason = seasonElements.firstOrNull { 
-                                it.attr("data-season-id") == seasonId 
-                            }
-                            matchingSeason?.attr("data-season-number")?.toIntOrNull() ?: 1
+                            // Tentar extrair do header
+                            val headerItem = iframeDoc.select("li[data-season-id='$seasonId']").firstOrNull()
+                            headerItem?.attr("data-season-number")?.toIntOrNull() ?: 1
                         }
                         
                         // Nome do episódio
                         val episodeName = episodeElement.selectFirst("a")?.text()?.trim()
                             ?: "Episódio $episodeNumber"
                         
-                        // URL do episódio (os links são âncoras #)
-                        // Na verdade, quando clicado, deve disparar algum JavaScript
-                        // Vamos usar a URL do iframe como base
-                        val episodeUrl = "$iframeSrc#${seasonId}_$episodeId"
+                        // URL do episódio - será processada pelo extrator
+                        // Usamos a URL do player + ID do episódio
+                        val episodeUrl = "https://assistirseriesonline.icu/episodio/$episodeId"
                         
                         episodes.add(
-                            newEpisode(fixUrl(episodeUrl)) {
+                            newEpisode(episodeUrl) {
                                 this.name = episodeName
                                 this.season = seasonNumber
                                 this.episode = episodeNumber
+                                this.posterUrl = null // Poderia extrair thumbnail se disponível
                             }
                         )
+                        
+                        println("[Superflix] Episódio adicionado: T${seasonNumber}E$episodeNumber - $episodeName")
+                        
                     } catch (e: Exception) {
-                        // Ignorar erros em episódios individuais
+                        println("[Superflix] Erro ao processar episódio: ${e.message}")
                     }
                 }
                 
-                // Ordenar episódios por temporada e número do episódio
+                // Ordenar por temporada e episódio
                 episodes.sortWith(compareBy({ it.season }, { it.episode }))
             }
             
-            // Se não encontrou episódios, criar um placeholder
+            // Fallback se não encontrar episódios
             if (episodes.isEmpty()) {
+                println("[Superflix] Nenhum episódio encontrado, criando fallback")
                 episodes.add(
                     newEpisode(seriesUrl) {
                         this.name = "Assistir Série"
@@ -298,8 +299,9 @@ class SuperflixMain : MainAPI() {
                     }
                 )
             }
+            
         } catch (e: Exception) {
-            // Em caso de erro, criar um episódio placeholder
+            println("[Superflix] Erro ao extrair episódios: ${e.message}")
             episodes.add(
                 newEpisode(seriesUrl) {
                     this.name = "Assistir Série"
@@ -309,21 +311,17 @@ class SuperflixMain : MainAPI() {
             )
         }
         
+        println("[Superflix] Total de episódios extraídos: ${episodes.size}")
         return episodes
     }
     
     private fun extractEpisodeNumber(text: String): Int {
-        // Padrões para extrair número do episódio:
-        // "1 - Episódio" -> 1
-        // "Episódio 1" -> 1
-        // "1º Episódio" -> 1
-        // "Ep. 1" -> 1
-        
+        // Padrões: "1 - Episódio", "Episódio 1", "1º Episódio", "Ep. 1"
         val patterns = listOf(
-            Regex("^(\\d+)\\s*-"),
-            Regex("Episódio\\s*(\\d+)"),
-            Regex("Ep\\.?\\s*(\\d+)"),
-            Regex("(\\d+)\\s*º?\\s*Episódio")
+            Regex("""^(\d+)\s*-"""),
+            Regex("""Episódio\s*(\d+)"""),
+            Regex("""Ep\.?\s*(\d+)"""),
+            Regex("""(\d+)\s*º?\s*Episódio""")
         )
         
         for (pattern in patterns) {
@@ -336,7 +334,6 @@ class SuperflixMain : MainAPI() {
         return 1
     }
 
-    
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -344,11 +341,20 @@ class SuperflixMain : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         println("[SuperflixMain] loadLinks chamado com data: $data")
-        loadExtractor(data, mainUrl, subtitleCallback, callback)
-        return true
+        println("[SuperflixMain] isCasting: $isCasting")
+        
+        // Usar o extrator personalizado
+        val extractor = SuperflixExtractor()
+        try {
+            extractor.getUrl(data, mainUrl, subtitleCallback, callback)
+            return true
+        } catch (e: Exception) {
+            println("[SuperflixMain] Erro no extrator: ${e.message}")
+            return false
+        }
     }
-    }
-    
+}
+
 @CloudstreamPlugin
 class SuperflixPlugin : Plugin() {
     override fun load(context: Context) {
