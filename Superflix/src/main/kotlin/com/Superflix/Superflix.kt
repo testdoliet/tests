@@ -3,10 +3,7 @@ package com.Superflix
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.LoadResponse.Companion.addActors
-import com.lagradost.cloudstream3.LoadResponse.Companion.addTrailer
-import com.lagradost.cloudstream3.app
 import org.jsoup.nodes.Element
-import com.fasterxml.jackson.annotation.JsonProperty
 
 class SuperflixProvider : MainAPI() {
     override var mainUrl = "https://superflix1.cloud"
@@ -18,47 +15,46 @@ class SuperflixProvider : MainAPI() {
     override val usesWebView = false
 
     companion object {
-        private val GENRE_URLS = mapOf(
-            "Ação" to "https://superflix1.cloud/category/acao/",
-            "Animação" to "https://superflix1.cloud/category/animacao/",
-            "Aventura" to "https://superflix1.cloud/category/aventura/",
-            "Action & Adventure" to "https://superflix1.cloud/category/action-adventure/",
-            "Cinema TV" to "https://superflix1.cloud/category/cinema-tv/",
-            "Crime" to "https://superflix1.cloud/category/crime/",
-            "Fantasia" to "https://superflix1.cloud/category/fantasia/",
-            "Ficção Científica" to "https://superflix1.cloud/category/ficcao-cientifica/",
-            "História" to "https://superflix1.cloud/category/historia/",
-            "Mistério" to "https://superflix1.cloud/category/misterio/",
-            "Romance" to "https://superflix1.cloud/category/romance/",
-            "News" to "https://superflix1.cloud/category/news/",
-            "Soap" to "https://superflix1.cloud/category/soap/",
-            "Terror" to "https://superflix1.cloud/category/terror/",
-            "War & Politics" to "https://superflix1.cloud/category/war-politics/",
-            "Talk" to "https://superflix1.cloud/category/talk/",
-            "Thriller" to "https://superflix1.cloud/category/thriller/",
-            "Sci-fi & Fantasy" to "https://superflix1.cloud/category/sci-fi-fantasy/",
-            "Reality" to "https://superflix1.cloud/category/reality/",
-            "Música" to "https://superflix1.cloud/category/musica/",
-            "Kids" to "https://superflix1.cloud/category/kids/",
-            "Guerra" to "https://superflix1.cloud/category/guerra/",
-            "Faroeste" to "https://superflix1.cloud/category/faroeste/",
-            "Família" to "https://superflix1.cloud/category/familia/",
-            "Documentário" to "https://superflix1.cloud/category/documentario/",
-            "Comédia" to "https://superflix1.cloud/category/comedia/",
-            "Drama" to "https://superflix1.cloud/category/drama/"
+        private val GENRE_URLS = listOf(
+            "/category/acao/" to "Ação",
+            "/category/animacao/" to "Animação", 
+            "/category/aventura/" to "Aventura",
+            "/category/action-adventure/" to "Action & Adventure",
+            "/category/cinema-tv/" to "Cinema TV",
+            "/category/comedia/" to "Comédia",
+            "/category/crime/" to "Crime",
+            "/category/documentario/" to "Documentário",
+            "/category/drama/" to "Drama",
+            "/category/familia/" to "Família",
+            "/category/fantasia/" to "Fantasia",
+            "/category/faroeste/" to "Faroeste",
+            "/category/ficcao-cientifica/" to "Ficção Científica",
+            "/category/guerra/" to "Guerra",
+            "/category/historia/" to "História",
+            "/category/kids/" to "Kids",
+            "/category/misterio/" to "Mistério",
+            "/category/musica/" to "Música",
+            "/category/news/" to "News",
+            "/category/reality/" to "Reality",
+            "/category/romance/" to "Romance",
+            "/category/sci-fi-fantasy/" to "Sci-fi & Fantasy",
+            "/category/soap/" to "Soap",
+            "/category/talk/" to "Talk",
+            "/category/terror/" to "Terror",
+            "/category/thriller/" to "Thriller",
+            "/category/war-politics/" to "War & Politics"
         )
 
         private val FIXED_TABS = listOf(
-            "https://superflix1.cloud/filmes" to "Últimos Filmes",
-            "https://superflix1.cloud/series" to "Últimas Séries",
-            "https://superflix1.cloud/category/lancamentos/?type=movies" to "Lançamentos Filmes",
-            "https://superflix1.cloud/category/lancamentos/?type=series" to "Lançamentos Séries"
+            "/filmes" to "Últimos Filmes",
+            "/series" to "Últimas Séries",
+            "/category/lancamentos/" to "Lançamentos"
         )
     }
 
     override val mainPage = mainPageOf(
-        *FIXED_TABS.toTypedArray(),
-        *GENRE_URLS.map { (name, url) -> url to name }.toTypedArray()
+        *FIXED_TABS.map { (path, name) -> "$mainUrl$path" to name }.toTypedArray(),
+        *GENRE_URLS.map { (path, name) -> "$mainUrl$path" to name }.toTypedArray()
     )
 
     override suspend fun getMainPage(
@@ -73,11 +69,11 @@ class SuperflixProvider : MainAPI() {
 
         val document = app.get(url).document
         
-        val home = document.select("article.post, .post-lst li, .owl-item article, .post").mapNotNull { element ->
+        val home = document.select("article.post, .post-lst li").mapNotNull { element ->
             element.toSearchResult()
         }.distinctBy { it.url }
         
-        val hasNext = document.select("a.next.page-numbers, a[rel='next'], .pagination a:contains(›)").isNotEmpty()
+        val hasNext = document.select("a.next.page-numbers, .page-numbers a:contains('›')").isNotEmpty()
 
         return newHomePageResponse(
             list = HomePageList(request.name, home, isHorizontalImages = false),
@@ -86,16 +82,18 @@ class SuperflixProvider : MainAPI() {
     }
 
     private fun Element.toSearchResult(): SearchResponse? {
-        val title = selectFirst("h2.entry-title, .entry-title, h2")?.text() ?: return null
+        val title = selectFirst("h2.entry-title")?.text() ?: return null
         
-        val href = selectFirst("a.lnk-blk, a[href]")?.attr("href") ?: return null
+        val href = selectFirst("a.lnk-blk")?.attr("href") ?: return null
         
         val posterUrl = selectFirst("img")?.attr("src")?.let { fixUrl(it) }
         
-        val year = selectFirst("span.year, .year")?.text()?.toIntOrNull()
+        val year = selectFirst("span.year")?.text()?.toIntOrNull()
         
-        val tmdbRating = selectFirst("span.vote, .vote")?.text()?.substringBefore(" ")?.toFloatOrNull()
-        val rating = tmdbRating?.times(1000)?.toInt()
+        // Extrai a nota do TMDB
+        val tmdbRatingText = selectFirst("span.vote")?.text()
+        val tmdbRating = tmdbRatingText?.substringAfter(" ")?.toFloatOrNull()
+        val score = tmdbRating?.let { Score(it, name = "TMDB") }
         
         val isMovie = href.contains("/filme/") || selectFirst(".watch")?.text()?.contains("Ver Filme") == true
         val isSeries = href.contains("/serie/") || selectFirst(".watch")?.text()?.contains("Ver Série") == true
@@ -105,14 +103,14 @@ class SuperflixProvider : MainAPI() {
                 newMovieSearchResponse(title, href, TvType.Movie) {
                     this.posterUrl = posterUrl
                     this.year = year
-                    this.rating = rating
+                    this.score = score
                 }
             }
             isSeries -> {
                 newTvSeriesSearchResponse(title, href, TvType.TvSeries) {
                     this.posterUrl = posterUrl
                     this.year = year
-                    this.rating = rating
+                    this.score = score
                 }
             }
             else -> null
@@ -120,10 +118,10 @@ class SuperflixProvider : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        val searchUrl = "$mainUrl/?s=${query.encodeCleanQuery()}"
+        val searchUrl = "$mainUrl/?s=${query.replace(" ", "+")}"
         val document = app.get(searchUrl).document
         
-        return document.select("article.post, .post").mapNotNull { 
+        return document.select("article.post").mapNotNull { 
             it.toSearchResult() 
         }.distinctBy { it.url }
     }
@@ -132,23 +130,25 @@ class SuperflixProvider : MainAPI() {
         val document = app.get(url).document
         
         val title = document.selectFirst("h1.entry-title")?.text() ?: throw ErrorLoadingException("Título não encontrado")
-        val poster = document.selectFirst("div.post-thumbnail img, .post-thumbnail img")?.attr("src")?.let { fixUrl(it) }
-        val background = document.selectFirst(".TPostBg, .bghd img, .bgft img")?.attr("src")?.let { fixUrl(it) }
+        val poster = document.selectFirst("div.post-thumbnail img")?.attr("src")?.let { fixUrl(it) }
+        val background = document.selectFirst(".TPostBg")?.attr("src")?.let { fixUrl(it) }
         
-        val year = document.selectFirst("span.year, .year")?.text()?.toIntOrNull()
-        val duration = document.selectFirst("span.duration, .duration")?.text()?.parseDuration()
-        val description = document.selectFirst("div.description p, .description p, .sinopse")?.text()
+        val year = document.selectFirst("span.year")?.text()?.toIntOrNull()
+        val duration = document.selectFirst("span.duration")?.text()?.parseDuration()
+        val description = document.selectFirst("div.description p")?.text()
         
-        val tmdbRating = document.selectFirst("span.vote span.num, .vote .num")?.text()?.toFloatOrNull()
-        val rating = tmdbRating?.times(1000)?.toInt()
+        // Extrai nota do TMDB
+        val tmdbRatingText = document.selectFirst("span.vote span.num")?.text()
+        val tmdbRating = tmdbRatingText?.toFloatOrNull()
+        val score = tmdbRating?.let { Score(it, name = "TMDB") }
         
-        val genres = document.select("span.genres a, .genres a, a[href*='/category/']").map { it.text() }
-            .filter { it.isNotBlank() && it.length < 30 }
+        val genres = document.select("span.genres a").map { it.text() }
+            .filter { it.isNotBlank() }
         
         val directors = mutableListOf<String>()
         val actors = mutableListOf<Actor>()
         
-        document.select("ul.cast-lst li, .cast-lst li").forEach { li ->
+        document.select("ul.cast-lst li").forEach { li ->
             val spanText = li.selectFirst("span")?.text()?.lowercase() ?: ""
             when {
                 spanText.contains("diretor") -> {
@@ -164,7 +164,7 @@ class SuperflixProvider : MainAPI() {
             }
         }
         
-        val recommendations = document.select("section.episodes article.post, .owl-item article, .post").mapNotNull {
+        val recommendations = document.select("section.episodes article.post, .owl-item article").mapNotNull {
             it.toSearchResult()
         }.distinctBy { it.url }
         
@@ -177,7 +177,7 @@ class SuperflixProvider : MainAPI() {
                 this.year = year
                 this.plot = description
                 this.duration = duration
-                this.rating = rating
+                this.score = score
                 this.tags = genres
                 this.recommendations = recommendations
                 if (directors.isNotEmpty()) this.directors = directors
@@ -191,7 +191,7 @@ class SuperflixProvider : MainAPI() {
                 this.backgroundPosterUrl = background
                 this.year = year
                 this.plot = description
-                this.rating = rating
+                this.score = score
                 this.tags = genres
                 this.recommendations = recommendations
                 if (directors.isNotEmpty()) this.directors = directors
@@ -203,14 +203,14 @@ class SuperflixProvider : MainAPI() {
     private fun extractEpisodes(document: org.jsoup.nodes.Document, url: String): List<Episode> {
         val episodes = mutableListOf<Episode>()
         
-        val episodeElements = document.select("div.episode, .episode-item, [class*='episode']")
+        val episodeElements = document.select("div.episode, .episode-item")
         
         if (episodeElements.isNotEmpty()) {
             episodeElements.forEachIndexed { index, element ->
                 try {
-                    val epTitle = element.selectFirst("h3, h4, .title, span")?.text() ?: "Episódio ${index + 1}"
-                    val epData = element.selectFirst("a")?.attr("href") ?: url
-                    val epNumber = element.selectFirst("span.ep-num, .number, .episode")?.text()?.toIntOrNull() ?: (index + 1)
+                    val epTitle = element.selectFirst("h3, h4, .title")?.text() ?: "Episódio ${index + 1}"
+                                        val epData = element.selectFirst("a")?.attr("href") ?: url
+                    val epNumber = element.selectFirst("span.ep-num, .number")?.text()?.toIntOrNull() ?: (index + 1)
                     val season = element.selectFirst("span.se-num, .season")?.text()?.toIntOrNull() ?: 1
                     
                     episodes.add(
@@ -250,11 +250,6 @@ class SuperflixProvider : MainAPI() {
         } catch (e: Exception) {
             null
         }
-    }
-
-    // Função de encode para queries
-    private fun String.encodeCleanQuery(): String {
-        return this.replace(" ", "+")
     }
 
     // loadLinks desativado por enquanto
