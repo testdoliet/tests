@@ -16,7 +16,9 @@ class SuperflixMain : MainAPI() {
     override val hasDownloadSupport = false
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries)
     override val usesWebView = false
-
+    override val extractors = listOf(SuperflixExtractor())
+    
+    
     companion object {
         /** TODAS as categorias reais do site (sem repetir) */
         private val GENRE_URLS = listOf(
@@ -334,16 +336,19 @@ class SuperflixMain : MainAPI() {
         return 1
     }
 
+    
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        return false
+        println("[SuperflixMain] loadLinks chamado com data: $data")
+        loadExtractor(data, mainUrl, subtitleCallback, callback)
+        return true
     }
-}
-
+    }
+    
 @CloudstreamPlugin
 class SuperflixPlugin : Plugin() {
     override fun load(context: Context) {
