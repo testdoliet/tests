@@ -6,6 +6,7 @@ import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
 import com.lagradost.cloudstream3.plugins.Plugin
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import org.jsoup.nodes.Element
+import com.lagradost.cloudstream3.utils.SubtitleFile
 
 class SuperflixMain : MainAPI() {
 
@@ -162,34 +163,13 @@ class SuperflixMain : MainAPI() {
     }
 
     override suspend fun loadLinks(
-        data: String,
-        isCasting: Boolean,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        return false
-    }
-
-    private fun Element.toSearchResult(): SearchResponse? {
-
-        val title = selectFirst("h2.entry-title")?.text() ?: return null
-        val link = selectFirst("a.lnk-blk")?.attr("href") ?: return null
-        val poster = selectFirst("img")?.attr("src")?.let { fixUrl(it) }
-        val year = selectFirst("span.year")?.text()?.toIntOrNull()
-
-        return when {
-            link.contains("/filme/") ->
-                newMovieSearchResponse(title, link, TvType.Movie) {
-                    posterUrl = poster
-                    this.year = year
-                }
-
-            link.contains("/serie/") ->
-                newTvSeriesSearchResponse(title, link, TvType.TvSeries) {
-                    posterUrl = poster
-                    this.year = year
-                }
-
-            else -> null
+    data: String,
+    isCasting: Boolean,
+    subtitleCallback: (SubtitleFile) -> Unit,
+    callback: (ExtractorLink) -> Unit
+): Boolean {
+    // LoadLinks desativado propositalmente
+    return false
         }
     }
 }
