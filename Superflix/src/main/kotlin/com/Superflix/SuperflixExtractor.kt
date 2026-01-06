@@ -21,13 +21,20 @@ class SuperflixExtractor : ExtractorApi() {
         referer: String?,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
-    ): Boolean {
+    ) { // REMOVE O Boolean, retorna Unit
         println("[$TAG] ========== INICIANDO EXTRACTION ==========")
         println("[$TAG] URL recebida: $url")
         println("[$TAG] Referer: ${referer ?: "null"}")
         println("[$TAG] Main URL: $mainUrl")
 
         try {
+            // CORREÇÃO: Headers como Map<String, String>
+            val headers = mapOf<String, String>(
+                "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36",
+                "Referer" to referer ?: mainUrl,
+                "Origin" to mainUrl
+            )
+
             // ESTRATÉGIA 1: Tentar extrair episodeId da URL
             println("[$TAG] === ESTRATÉGIA 1: Extraindo IDs ===")
             val episodeId = extractEpisodeId(url)
@@ -38,12 +45,6 @@ class SuperflixExtractor : ExtractorApi() {
                 val videoUrl = tryGetVideoFromEpisode(episodeId, referer)
                 if (videoUrl != null) {
                     println("[$TAG] URL do vídeo encontrada: $videoUrl")
-                    
-                    val headers = mapOf(
-                        "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36",
-                        "Referer" to referer ?: mainUrl,
-                        "Origin" to mainUrl
-                    )
                     
                     callback(newExtractorLink(
                         source = name,
@@ -57,17 +58,12 @@ class SuperflixExtractor : ExtractorApi() {
                     })
                     
                     println("[$TAG] ========== EXTRACTION SUCESSO ==========")
-                    return true
+                    return
                 }
             }
             
             // ESTRATÉGIA 2: Analisar a página
             println("[$TAG] === ESTRATÉGIA 2: Analisando página ===")
-            val headers = mapOf(
-                "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36",
-                "Referer" to referer ?: mainUrl,
-                "Origin" to mainUrl
-            )
             
             val res = app.get(url, headers = headers, referer = referer)
             println("[$TAG] Status: ${res.code}, Tamanho: ${res.text.length}")
@@ -112,16 +108,14 @@ class SuperflixExtractor : ExtractorApi() {
             
             if (foundUrls.isNotEmpty()) {
                 println("[$TAG] ========== EXTRACTION SUCESSO (${foundUrls.size} links) ==========")
-                return true
+                return
             }
             
             println("[$TAG] ========== EXTRACTION FALHOU ==========")
-            return false
             
         } catch (e: Exception) {
             println("[$TAG] ERRO: ${e.message}")
             e.printStackTrace()
-            return false
         }
     }
     
@@ -153,7 +147,8 @@ class SuperflixExtractor : ExtractorApi() {
             val episodeUrl = "$PLAYER_DOMAIN/episodio/$episodeId"
             println("[$TAG] Acessando: $episodeUrl")
             
-            val headers = mapOf(
+            // CORREÇÃO: Headers como Map<String, String>
+            val headers = mapOf<String, String>(
                 "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36",
                 "Referer" to referer ?: mainUrl,
                 "Origin" to mainUrl
