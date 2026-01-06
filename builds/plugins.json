@@ -132,5 +132,27 @@
         "description": "SuperFlix - Filmes e S\u00e9ries em Portugu\u00eas",
         "url": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/SuperFlix.cs3",
         "name": "SuperFlix"
+    },
+    {
+        "iconUrl": "https://superflix1.cloud/wp-content/uploads/2024/07/FAVIFLIX-1-300x300.png",
+        "jarFileSize": 41018,
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/lawlietbt/lietrepo",
+        "fileSize": 11781,
+        "status": 1,
+        "language": "pt-br",
+        "authors": [
+            "lawlietbr"
+        ],
+        "tvTypes": [
+            "Movies",
+            "Series"
+        ],
+        "version": 1,
+        "internalName": "Superflix",
+        "jarUrl": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/Superflix.jar",
+        "description": "Superflix - Assistir Filmes e S\u00e9ries Online HD",
+        "url": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/Superflix.cs3",
+        "name": "Superflix"
     }
 ]
