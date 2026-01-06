@@ -8,7 +8,6 @@ import android.content.Context
 import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
 import com.lagradost.cloudstream3.plugins.Plugin
 
-// O provedor principal - MUDEI O NOME PARA SuperflixMain
 class SuperflixMain : MainAPI() {
     override var mainUrl = "https://superflix1.cloud"
     override var name = "Superflix"
@@ -19,24 +18,42 @@ class SuperflixMain : MainAPI() {
     override val usesWebView = false
 
     companion object {
+
+        /** TODAS as categorias reais do site (sem repetir) */
         private val GENRE_URLS = listOf(
             "/category/acao/" to "Ação",
-            "/category/animacao/" to "Animação", 
+            "/category/action-adventure/" to "Action & Adventure",
+            "/category/animacao/" to "Animação",
             "/category/aventura/" to "Aventura",
+            "/category/cinema-tv/" to "Cinema TV",
             "/category/comedia/" to "Comédia",
-            "/category/drama/" to "Drama",
             "/category/crime/" to "Crime",
             "/category/documentario/" to "Documentário",
+            "/category/drama/" to "Drama",
             "/category/familia/" to "Família",
             "/category/fantasia/" to "Fantasia",
+            "/category/faroeste/" to "Faroeste",
             "/category/ficcao-cientifica/" to "Ficção Científica",
+            "/category/guerra/" to "Guerra",
+            "/category/historia/" to "História",
+            "/category/kids/" to "Kids",
+            "/category/misterio/" to "Mistério",
+            "/category/musica/" to "Música",
+            "/category/news/" to "News",
+            "/category/reality/" to "Reality",
+            "/category/romance/" to "Romance",
+            "/category/sci-fi-fantasy/" to "Sci-Fi & Fantasy",
+            "/category/soap/" to "Soap",
+            "/category/talk/" to "Talk",
             "/category/terror/" to "Terror",
-            "/category/thriller/" to "Thriller"
+            "/category/thriller/" to "Thriller",
+            "/category/war-politics/" to "War & Politics"
         )
 
+        /** Abas fixas da HOME */
         private val FIXED_TABS = listOf(
-            "/filmes" to "Últimos Filmes",
-            "/series" to "Últimas Séries",
+            "/" to "Filmes Recomendados",
+            "/" to "Séries Recomendadas",
             "/category/lancamentos/" to "Lançamentos"
         )
     }
@@ -50,13 +67,36 @@ class SuperflixMain : MainAPI() {
         page: Int,
         request: MainPageRequest
     ): HomePageResponse {
+
+        /** Recomendados vêm da HOME (sem paginação) */
+        if (request.name == "Filmes Recomendados" || request.name == "Séries Recomendadas") {
+
+            val document = app.get(mainUrl).document
+
+            val selector = if (request.name == "Filmes Recomendados") {
+                "#widget_list_movies_series-6 article.post"
+            } else {
+                "#widget_list_movies_series-8 article.post"
+            }
+
+            val home = document.select(selector)
+                .mapNotNull { it.toSearchResult() }
+                .distinctBy { it.url }
+
+            return newHomePageResponse(
+                list = HomePageList(request.name, home, isHorizontalImages = false),
+                hasNext = false
+            )
+        }
+
+        /** Gêneros e lançamentos com paginação */
         val url = if (page > 1) "${request.data}page/$page/" else request.data
         val document = app.get(url).document
-        
-        val home = document.select("article.post").mapNotNull { element ->
-            element.toSearchResult()
-        }.distinctBy { it.url }
-        
+
+        val home = document.select("article.post")
+            .mapNotNull { it.toSearchResult() }
+            .distinctBy { it.url }
+
         val hasNext = document.select("a.next.page-numbers").isNotEmpty()
 
         return newHomePageResponse(
@@ -70,19 +110,20 @@ class SuperflixMain : MainAPI() {
         val href = selectFirst("a.lnk-blk")?.attr("href") ?: return null
         val posterUrl = selectFirst("img")?.attr("src")?.let { fixUrl(it) }
         val year = selectFirst("span.year")?.text()?.toIntOrNull()
-        
-        val isMovie = href.contains("/filme/")
-        val isSeries = href.contains("/serie/")
-        
+
         return when {
-            isMovie -> newMovieSearchResponse(title, href, TvType.Movie) {
-                this.posterUrl = posterUrl
-                this.year = year
-            }
-            isSeries -> newTvSeriesSearchResponse(title, href, TvType.TvSeries) {
-                this.posterUrl = posterUrl
-                this.year = year
-            }
+            href.contains("/filme/") ->
+                newMovieSearchResponse(title, href, TvType.Movie) {
+                    this.posterUrl = posterUrl
+                    this.year = year
+                }
+
+            href.contains("/serie/") ->
+                newTvSeriesSearchResponse(title, href, TvType.TvSeries) {
+                    this.posterUrl = posterUrl
+                    this.year = year
+                }
+
             else -> null
         }
     }
@@ -90,25 +131,27 @@ class SuperflixMain : MainAPI() {
     override suspend fun search(query: String): List<SearchResponse> {
         val searchUrl = "$mainUrl/?s=${query.replace(" ", "+")}"
         val document = app.get(searchUrl).document
-        
-        return document.select("article.post").mapNotNull { 
-            it.toSearchResult() 
-        }.distinctBy { it.url }
+
+        return document.select("article.post")
+            .mapNotNull { it.toSearchResult() }
+            .distinctBy { it.url }
     }
 
     override suspend fun load(url: String): LoadResponse {
         val document = app.get(url).document
-        
-        val title = document.selectFirst("h1.entry-title")?.text() ?: throw ErrorLoadingException("Título não encontrado")
-        val poster = document.selectFirst("div.post-thumbnail img")?.attr("src")?.let { fixUrl(it) }
+
+        val title = document.selectFirst("h1.entry-title")?.text()
+            ?: throw ErrorLoadingException("Título não encontrado")
+
+        val poster = document.selectFirst("div.post-thumbnail img")
+            ?.attr("src")?.let { fixUrl(it) }
+
         val year = document.selectFirst("span.year")?.text()?.toIntOrNull()
         val description = document.selectFirst("div.description p")?.text()
         val genres = document.select("span.genres a").map { it.text() }.filter { it.isNotBlank() }
-        
-        val isMovie = url.contains("/filme/")
-        
-        if (isMovie) {
-            return newMovieLoadResponse(title, url, TvType.Movie, url) {
+
+        return if (url.contains("/filme/")) {
+            newMovieLoadResponse(title, url, TvType.Movie, url) {
                 this.posterUrl = poster
                 this.year = year
                 this.plot = description
@@ -122,8 +165,8 @@ class SuperflixMain : MainAPI() {
                     this.episode = 1
                 }
             )
-            
-            return newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes) {
+
+            newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes) {
                 this.posterUrl = poster
                 this.year = year
                 this.plot = description
@@ -142,7 +185,6 @@ class SuperflixMain : MainAPI() {
     }
 }
 
-// O plugin - COM NOME DIFERENTE do provedor
 @CloudstreamPlugin
 class SuperflixPlugin : Plugin() {
     override fun load(context: Context) {
