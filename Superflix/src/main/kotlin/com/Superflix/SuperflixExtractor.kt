@@ -21,18 +21,18 @@ class SuperflixExtractor : ExtractorApi() {
         referer: String?,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
-    ) { // REMOVE O Boolean, retorna Unit
+    ) {
         println("[$TAG] ========== INICIANDO EXTRACTION ==========")
         println("[$TAG] URL recebida: $url")
         println("[$TAG] Referer: ${referer ?: "null"}")
         println("[$TAG] Main URL: $mainUrl")
 
         try {
-            // CORREÇÃO: Headers como Map<String, String>
-            val headers = mapOf<String, String>(
-                "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36",
-                "Referer" to referer ?: mainUrl,
-                "Origin" to mainUrl
+            // CORREÇÃO: Especificando tipo dos pares explicitamente
+            val headers = mapOf(
+                Pair("User-Agent", "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36"),
+                Pair("Referer", referer ?: mainUrl),
+                Pair("Origin", mainUrl)
             )
 
             // ESTRATÉGIA 1: Tentar extrair episodeId da URL
@@ -147,11 +147,11 @@ class SuperflixExtractor : ExtractorApi() {
             val episodeUrl = "$PLAYER_DOMAIN/episodio/$episodeId"
             println("[$TAG] Acessando: $episodeUrl")
             
-            // CORREÇÃO: Headers como Map<String, String>
-            val headers = mapOf<String, String>(
-                "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36",
-                "Referer" to referer ?: mainUrl,
-                "Origin" to mainUrl
+            // CORREÇÃO: Usando Pair explicitamente
+            val headers = mapOf(
+                Pair("User-Agent", "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36"),
+                Pair("Referer", referer ?: mainUrl),
+                Pair("Origin", mainUrl)
             )
             
             val res = app.get(episodeUrl, headers = headers, referer = referer)
