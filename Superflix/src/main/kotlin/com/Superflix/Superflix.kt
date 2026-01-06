@@ -114,7 +114,7 @@ class SuperflixMain : MainAPI() {
     ).isNotEmpty()
 
     return newHomePageResponse(
-        list = HomePageList(request.name, home, isHorizontalImages = false),
+        list = (HomePageList(request.name, home, isHorizontalImages = false)),
         hasNext = hasNext
     )
     }
