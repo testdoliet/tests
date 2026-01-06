@@ -90,34 +90,35 @@ class SuperflixMain : MainAPI() {
         )
     }
 
-    // --- PAGINAÇÃO CORRETA ---
-    val baseUrl = if (request.data.endsWith("/")) {
-        request.data
-    } else {
-        "${request.data}/"
-    }
+    // --- PAGINAÇÃO (PADRÃO SUPERFLIX) ---
+val baseUrl = if (request.data.endsWith("/")) {
+    request.data
+} else {
+    "${request.data}/"
+}
 
-    val url = if (page > 1) {
-        "${baseUrl}page/$page/"
-    } else {
-        baseUrl
-    }
+val url = if (page > 1) {
+    "${baseUrl}page/$page/"
+} else {
+    baseUrl
+}
 
-    val document = app.get(url).document
+val document = app.get(url).document
 
-    val home = document.select("article.post")
-        .mapNotNull { it.toSearchResult() }
-        .distinctBy { it.url }
+val home = document.select("article.post")
+    .mapNotNull { it.toSearchResult() }
+    .distinctBy { it.url }
 
-    val hasNext = document.select(
-        "a.next.page-numbers, .page-numbers a"
-    ).isNotEmpty()
+// mesma lógica do SuperFlix
+val hasNext = document.select("a:contains(Próxima)").isNotEmpty() ||
+              document.select(".page-numbers a[href*='page']").isNotEmpty() ||
+              document.select(".pagination").isNotEmpty()
 
-    return newHomePageResponse(
-        list = (HomePageList(request.name, home, isHorizontalImages = false)),
-        hasNext = hasNext
-    )
-    }
+return newHomePageResponse(
+    request.name,
+    home,
+    hasNext
+)
 
     private fun Element.toSearchResult(): SearchResponse? {
         val title = selectFirst("h2.entry-title")?.text() ?: return null
