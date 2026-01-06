@@ -193,9 +193,15 @@ class SuperflixMain : MainAPI() {
                 ?.replace("Diretor", "")?.trim()
 
         // ELENCO
-        val actors = document.selectFirst("p:contains(Elenco)")?.ownText()?.trim()
+        val actors = mutableListOf<String>()
+        
+        // Adiciona o diretor como primeiro item do elenco (se existir)
+        director?.let { actors.add("Diretor: $it") }
+        
+        // Adiciona o restante do elenco
+        document.selectFirst("p:contains(Elenco)")?.ownText()?.trim()
             ?.split(",")?.map { it.trim() }?.filter { it.isNotBlank() }
-            ?: emptyList()
+            ?.let { actors.addAll(it) }
 
         // DETERMINAR SE É FILME OU SÉRIE
         return if (url.contains("/filme/")) {
@@ -206,7 +212,6 @@ class SuperflixMain : MainAPI() {
                 this.duration = duration
                 this.plot = description
                 this.tags = genres
-                this.directors = listOfNotNull(director)
                 addActors(actors)
             }
         } else {
@@ -226,7 +231,6 @@ class SuperflixMain : MainAPI() {
                 this.year = year
                 this.plot = description
                 this.tags = genres
-                this.directors = listOfNotNull(director)
                 addActors(actors)
             }
         }
