@@ -63,54 +63,60 @@ class SuperflixMain : MainAPI() {
         *GENRE_URLS.map { (path, name) -> "$mainUrl$path" to name }.toTypedArray()
     )
 
+    
     override suspend fun getMainPage(
-        page: Int,
-        request: MainPageRequest
-    ): HomePageResponse {
+    page: Int,
+    request: MainPageRequest
+): HomePageResponse {
 
-        /** Recomendados vêm da HOME (sem paginação) */
-        if (request.name == "Filmes Recomendados" || request.name == "Séries Recomendadas") {
+    // Recomendados NÃO têm paginação (HOME)
+    if (request.name == "Filmes Recomendados" || request.name == "Séries Recomendadas") {
 
-            val document = app.get(mainUrl).document
+        val document = app.get(mainUrl).document
 
-            val selector = if (request.name == "Filmes Recomendados") {
-                "#widget_list_movies_series-6 article.post"
-            } else {
-                "#widget_list_movies_series-8 article.post"
-            }
-
-            val home = document.select(selector)
-                .mapNotNull { it.toSearchResult() }
-                .distinctBy { it.url }
-
-            return newHomePageResponse(
-                list = HomePageList(request.name, home, isHorizontalImages = false),
-                hasNext = false
-            )
+        val selector = if (request.name == "Filmes Recomendados") {
+            "#widget_list_movies_series-6 article.post"
+        } else {
+            "#widget_list_movies_series-8 article.post"
         }
 
-        val baseUrl = if (request.data.endsWith("/")) {
-    request.data
-} else {
-    "${request.data}/"
-}
-
-val url = if (page > 1) {
-    "${baseUrl}page/$page/"
-} else {
-    baseUrl
-}
-      
-        val home = document.select("article.post")
+        val home = document.select(selector)
             .mapNotNull { it.toSearchResult() }
             .distinctBy { it.url }
 
-        val hasNext = document.select("a.next.page-numbers").isNotEmpty()
-
         return newHomePageResponse(
             list = HomePageList(request.name, home, isHorizontalImages = false),
-            hasNext = hasNext
+            hasNext = false
         )
+    }
+
+    // --- PAGINAÇÃO CORRETA ---
+    val baseUrl = if (request.data.endsWith("/")) {
+        request.data
+    } else {
+        "${request.data}/"
+    }
+
+    val url = if (page > 1) {
+        "${baseUrl}page/$page/"
+    } else {
+        baseUrl
+    }
+
+    val document = app.get(url).document
+
+    val home = document.select("article.post")
+        .mapNotNull { it.toSearchResult() }
+        .distinctBy { it.url }
+
+    val hasNext = document.select(
+        "a.next.page-numbers, .page-numbers a"
+    ).isNotEmpty()
+
+    return newHomePageResponse(
+        list = HomePageList(request.name, home, isHorizontalImages = false),
+        hasNext = hasNext
+    )
     }
 
     private fun Element.toSearchResult(): SearchResponse? {
