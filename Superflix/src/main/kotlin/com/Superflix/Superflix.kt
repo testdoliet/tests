@@ -1,178 +1,148 @@
 package com.Superflix
 
-import android.content.Context
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
+import com.lagradost.cloudstream3.LoadResponse.Companion.addActors
+import org.jsoup.nodes.Element
+import android.content.Context
 import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
 import com.lagradost.cloudstream3.plugins.Plugin
-import org.jsoup.nodes.Element
 
+// O provedor principal - MUDEI O NOME PARA SuperflixMain
 class SuperflixMain : MainAPI() {
-
     override var mainUrl = "https://superflix1.cloud"
     override var name = "Superflix"
-    override var lang = "pt"
     override val hasMainPage = true
+    override var lang = "pt"
     override val hasDownloadSupport = false
+    override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries)
     override val usesWebView = false
 
-    override val supportedTypes = setOf(
-        TvType.Movie,
-        TvType.TvSeries
-    )
-
     companion object {
-
-        private val FIXED_TABS = listOf(
-            "/" to "Filmes Recomendados",
-            "/" to "Séries Recomendadas",
-            "/category/lancamentos/" to "Lançamentos"
-        )
-
         private val GENRE_URLS = listOf(
             "/category/acao/" to "Ação",
-            "/category/action-adventure/" to "Action & Adventure",
-            "/category/animacao/" to "Animação",
+            "/category/animacao/" to "Animação", 
             "/category/aventura/" to "Aventura",
-            "/category/cinema-tv/" to "Cinema TV",
             "/category/comedia/" to "Comédia",
+            "/category/drama/" to "Drama",
             "/category/crime/" to "Crime",
             "/category/documentario/" to "Documentário",
-            "/category/drama/" to "Drama",
             "/category/familia/" to "Família",
             "/category/fantasia/" to "Fantasia",
-            "/category/faroeste/" to "Faroeste",
             "/category/ficcao-cientifica/" to "Ficção Científica",
-            "/category/guerra/" to "Guerra",
-            "/category/historia/" to "História",
-            "/category/kids/" to "Kids",
-            "/category/misterio/" to "Mistério",
-            "/category/musica/" to "Música",
-            "/category/news/" to "News",
-            "/category/reality/" to "Reality",
-            "/category/romance/" to "Romance",
-            "/category/sci-fi-fantasy/" to "Sci-Fi & Fantasy",
-            "/category/soap/" to "Soap",
-            "/category/talk/" to "Talk",
             "/category/terror/" to "Terror",
-            "/category/thriller/" to "Thriller",
-            "/category/war-politics/" to "War & Politics"
+            "/category/thriller/" to "Thriller"
+        )
+
+        private val FIXED_TABS = listOf(
+            "/filmes" to "Últimos Filmes",
+            "/series" to "Últimas Séries",
+            "/category/lancamentos/" to "Lançamentos"
         )
     }
 
     override val mainPage = mainPageOf(
-        *FIXED_TABS.map { "$mainUrl${it.first}" to it.second }.toTypedArray(),
-        *GENRE_URLS.map { "$mainUrl${it.first}" to it.second }.toTypedArray()
+        *FIXED_TABS.map { (path, name) -> "$mainUrl$path" to name }.toTypedArray(),
+        *GENRE_URLS.map { (path, name) -> "$mainUrl$path" to name }.toTypedArray()
     )
 
     override suspend fun getMainPage(
         page: Int,
         request: MainPageRequest
     ): HomePageResponse {
-
-        if (request.name == "Filmes Recomendados" || request.name == "Séries Recomendadas") {
-
-            val document = app.get(mainUrl).document
-
-            val selector = if (request.name == "Filmes Recomendados") {
-                "#widget_list_movies_series-6 article.post"
-            } else {
-                "#widget_list_movies_series-8 article.post"
-            }
-
-            val items = document.select(selector)
-                .mapNotNull { element -> element.toSearchResult() }
-                .distinctBy { result -> result.url }
-
-            return newHomePageResponse(
-                list = HomePageList(request.name, items),
-                hasNext = false
-            )
-        }
-
-        val url = if (page == 1) {
-            request.data
-        } else {
-            "${request.data}page/$page/"
-        }
-
+        val url = if (page > 1) "${request.data}page/$page/" else request.data
         val document = app.get(url).document
-
-        val items = document.select("article.post")
-            .mapNotNull { element -> element.toSearchResult() }
-            .distinctBy { result -> result.url }
-
+        
+        val home = document.select("article.post").mapNotNull { element ->
+            element.toSearchResult()
+        }.distinctBy { it.url }
+        
         val hasNext = document.select("a.next.page-numbers").isNotEmpty()
 
         return newHomePageResponse(
-            list = HomePageList(request.name, items),
+            list = HomePageList(request.name, home, isHorizontalImages = false),
             hasNext = hasNext
         )
     }
 
-    override suspend fun search(query: String): List<SearchResponse> {
-        val document = app.get("$mainUrl/?s=${query.replace(" ", "+")}").document
+    private fun Element.toSearchResult(): SearchResponse? {
+        val title = selectFirst("h2.entry-title")?.text() ?: return null
+        val href = selectFirst("a.lnk-blk")?.attr("href") ?: return null
+        val posterUrl = selectFirst("img")?.attr("src")?.let { fixUrl(it) }
+        val year = selectFirst("span.year")?.text()?.toIntOrNull()
+        
+        val isMovie = href.contains("/filme/")
+        val isSeries = href.contains("/serie/")
+        
+        return when {
+            isMovie -> newMovieSearchResponse(title, href, TvType.Movie) {
+                this.posterUrl = posterUrl
+                this.year = year
+            }
+            isSeries -> newTvSeriesSearchResponse(title, href, TvType.TvSeries) {
+                this.posterUrl = posterUrl
+                this.year = year
+            }
+            else -> null
+        }
+    }
 
-        return document.select("article.post")
-            .mapNotNull { element -> element.toSearchResult() }
-            .distinctBy { result -> result.url }
+    override suspend fun search(query: String): List<SearchResponse> {
+        val searchUrl = "$mainUrl/?s=${query.replace(" ", "+")}"
+        val document = app.get(searchUrl).document
+        
+        return document.select("article.post").mapNotNull { 
+            it.toSearchResult() 
+        }.distinctBy { it.url }
     }
 
     override suspend fun load(url: String): LoadResponse {
-
         val document = app.get(url).document
-
-        val title = document.selectFirst("h1.entry-title")?.text()
-            ?: throw ErrorLoadingException("Título não encontrado")
-
-        val poster = document.selectFirst("div.post-thumbnail img")
-            ?.attr("src")
-            ?.let { fixUrl(it) }
-
+        
+        val title = document.selectFirst("h1.entry-title")?.text() ?: throw ErrorLoadingException("Título não encontrado")
+        val poster = document.selectFirst("div.post-thumbnail img")?.attr("src")?.let { fixUrl(it) }
         val year = document.selectFirst("span.year")?.text()?.toIntOrNull()
-        val plot = document.selectFirst("div.description p")?.text()
-        val tags = document.select("span.genres a").map { it.text() }
-
-        return if (url.contains("/filme/")) {
-
-            newMovieLoadResponse(title, url, TvType.Movie, url) {
-                posterUrl = poster
+        val description = document.selectFirst("div.description p")?.text()
+        val genres = document.select("span.genres a").map { it.text() }.filter { it.isNotBlank() }
+        
+        val isMovie = url.contains("/filme/")
+        
+        if (isMovie) {
+            return newMovieLoadResponse(title, url, TvType.Movie, url) {
+                this.posterUrl = poster
                 this.year = year
-                this.plot = plot
-                this.tags = tags
+                this.plot = description
+                this.tags = genres
             }
-
         } else {
-
             val episodes = listOf(
                 newEpisode(url) {
-                    name = "Assistir Série"
-                    season = 1
-                    episode = 1
+                    this.name = "Assistir Série"
+                    this.season = 1
+                    this.episode = 1
                 }
             )
-
-            newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes) {
-                posterUrl = poster
+            
+            return newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes) {
+                this.posterUrl = poster
                 this.year = year
-                this.plot = plot
-                this.tags = tags
+                this.plot = description
+                this.tags = genres
             }
         }
     }
 
     override suspend fun loadLinks(
-    data: String,
-    isCasting: Boolean,
-    subtitleCallback: (SubtitleFile) -> Unit,
-    callback: (ExtractorLink) -> Unit
-): Boolean {
-    // LoadLinks desativado propositalmente
-    return false
-        }
+        data: String,
+        isCasting: Boolean,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        return false
     }
 }
 
+// O plugin - COM NOME DIFERENTE do provedor
 @CloudstreamPlugin
 class SuperflixPlugin : Plugin() {
     override fun load(context: Context) {
