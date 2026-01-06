@@ -233,55 +233,60 @@ class SuperflixMain : MainAPI() {
                 // Fazer requisição para o iframe
                 val iframeDoc = app.get(fixUrl(iframeSrc)).document
                 
-                // Extrair episódios do iframe
-                // Você precisa verificar como os episódios são estruturados no iframe
-                // Aqui estou usando um padrão comum, mas pode precisar de ajustes
-                iframeDoc.select("a[href*='episodio'], .episode-item, .episode-link").forEachIndexed { index, element ->
+                // Extrair temporadas do header
+                val seasonElements = iframeDoc.select("header.header ul.header-navigation li")
+                
+                // Extrair todos os episódios
+                val episodeElements = iframeDoc.select("div.card-body ul li")
+                
+                episodeElements.forEach { episodeElement ->
                     try {
-                        val episodeUrl = element.attr("href")?.let { fixUrl(it) }
-                        if (episodeUrl != null) {
-                            val episodeNumber = extractEpisodeNumber(element, index + 1)
-                            val episodeName = element.text().trim().ifBlank { "Episódio $episodeNumber" }
-                            
-                            episodes.add(
-                                newEpisode(episodeUrl) {
-                                    this.name = episodeName
-                                    this.season = 1
-                                    this.episode = episodeNumber
-                                }
-                            )
+                        // Extrair dados dos atributos data-*
+                        val seasonId = episodeElement.attr("data-season-id")
+                        val episodeId = episodeElement.attr("data-episode-id")
+                        val seasonNumberAttr = episodeElement.attr("data-season-number")
+                        
+                        // Extrair número do episódio do texto
+                        val episodeText = episodeElement.text().trim()
+                        val episodeNumber = extractEpisodeNumber(episodeText)
+                        
+                        // Determinar número da temporada
+                        val seasonNumber = if (seasonNumberAttr.isNotBlank()) {
+                            seasonNumberAttr.toIntOrNull() ?: 1
+                        } else {
+                            // Tentar encontrar a temporada pelo season-id
+                            val matchingSeason = seasonElements.firstOrNull { 
+                                it.attr("data-season-id") == seasonId 
+                            }
+                            matchingSeason?.attr("data-season-number")?.toIntOrNull() ?: 1
                         }
+                        
+                        // Nome do episódio
+                        val episodeName = episodeElement.selectFirst("a")?.text()?.trim()
+                            ?: "Episódio $episodeNumber"
+                        
+                        // URL do episódio (os links são âncoras #)
+                        // Na verdade, quando clicado, deve disparar algum JavaScript
+                        // Vamos usar a URL do iframe como base
+                        val episodeUrl = "$iframeSrc#${seasonId}_$episodeId"
+                        
+                        episodes.add(
+                            newEpisode(fixUrl(episodeUrl)) {
+                                this.name = episodeName
+                                this.season = seasonNumber
+                                this.episode = episodeNumber
+                            }
+                        )
                     } catch (e: Exception) {
                         // Ignorar erros em episódios individuais
                     }
                 }
                 
-                // Se não encontrou episódios no padrão acima, tentar outro padrão
-                if (episodes.isEmpty()) {
-                    iframeDoc.select("button[data-url], [data-episode]").forEachIndexed { index, element ->
-                        try {
-                            val episodeUrl = element.attr("data-url") ?: element.attr("href")
-                            if (episodeUrl != null) {
-                                val fixedUrl = fixUrl(episodeUrl)
-                                val episodeNumber = element.attr("data-episode").toIntOrNull() ?: (index + 1)
-                                val episodeName = element.text().trim().ifBlank { "Episódio $episodeNumber" }
-                                
-                                episodes.add(
-                                    newEpisode(fixedUrl) {
-                                        this.name = episodeName
-                                        this.season = 1
-                                        this.episode = episodeNumber
-                                    }
-                                )
-                            }
-                        } catch (e: Exception) {
-                            // Ignorar erros
-                        }
-                    }
-                }
+                // Ordenar episódios por temporada e número do episódio
+                episodes.sortWith(compareBy({ it.season }, { it.episode }))
             }
             
-            // Se ainda não encontrou episódios, criar um placeholder
+            // Se não encontrou episódios, criar um placeholder
             if (episodes.isEmpty()) {
                 episodes.add(
                     newEpisode(seriesUrl) {
@@ -305,12 +310,28 @@ class SuperflixMain : MainAPI() {
         return episodes
     }
     
-    private fun extractEpisodeNumber(element: Element, default: Int): Int {
-        return element.attr("data-episode").toIntOrNull()
-            ?: element.selectFirst(".episode-number, .num-episode")?.text()?.toIntOrNull()
-            ?: Regex("Ep\\.?\\s*(\\d+)").find(element.text())?.groupValues?.get(1)?.toIntOrNull()
-            ?: Regex("Epis[oó]dio\\s*(\\d+)").find(element.text())?.groupValues?.get(1)?.toIntOrNull()
-            ?: default
+    private fun extractEpisodeNumber(text: String): Int {
+        // Padrões para extrair número do episódio:
+        // "1 - Episódio" -> 1
+        // "Episódio 1" -> 1
+        // "1º Episódio" -> 1
+        // "Ep. 1" -> 1
+        
+        val patterns = listOf(
+            Regex("^(\\d+)\\s*-"),
+            Regex("Episódio\\s*(\\d+)"),
+            Regex("Ep\\.?\\s*(\\d+)"),
+            Regex("(\\d+)\\s*º?\\s*Episódio")
+        )
+        
+        for (pattern in patterns) {
+            val match = pattern.find(text)
+            if (match != null) {
+                return match.groupValues[1].toIntOrNull() ?: 1
+            }
+        }
+        
+        return 1
     }
 
     override suspend fun loadLinks(
