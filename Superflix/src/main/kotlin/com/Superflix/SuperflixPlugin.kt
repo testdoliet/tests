@@ -7,7 +7,6 @@ import com.lagradost.cloudstream3.plugins.Plugin
 @CloudstreamPlugin
 class SuperflixProvider : Plugin() {
     override fun load(context: Context) {
-
-        registerMainAPI(Superflix())
+        registerMainAPI(com.lagradost.cloudstream3.superflix.SuperflixProvider())
     }
 }
