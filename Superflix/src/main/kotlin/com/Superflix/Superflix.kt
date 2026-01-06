@@ -183,39 +183,13 @@ class SuperflixMain : MainAPI() {
 
     /** Ainda não implementado (streams) */
     override suspend fun loadLinks(
-        data: String,
-        isCasting: Boolean,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        return false
+    data: String,
+    isCasting: Boolean,
+    subtitleCallback: (SubtitleFile) -> Unit,
+    callback: (ExtractorLink) -> Unit
+): Boolean {
+    return false
     }
-
-    /** Mapper de cards */
-    private fun Element.toSearchResult(): SearchResponse? {
-
-        val title = selectFirst("h2.entry-title")?.text() ?: return null
-        val link = selectFirst("a.lnk-blk")?.attr("href") ?: return null
-        val poster = selectFirst("img")?.attr("src")?.let { fixUrl(it) }
-        val year = selectFirst("span.year")?.text()?.toIntOrNull()
-
-        return when {
-            link.contains("/filme/") ->
-                newMovieSearchResponse(title, link, TvType.Movie) {
-                    posterUrl = poster
-                    this.year = year
-                }
-
-            link.contains("/serie/") ->
-                newTvSeriesSearchResponse(title, link, TvType.TvSeries) {
-                    posterUrl = poster
-                    this.year = year
-                }
-
-            else -> null
-        }
-    }
-}
 
 @CloudstreamPlugin
 class SuperflixPlugin : Plugin() {
