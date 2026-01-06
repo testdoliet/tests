@@ -5,7 +5,6 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
 import com.lagradost.cloudstream3.plugins.Plugin
 import com.lagradost.cloudstream3.utils.ExtractorLink
-import com.lagradost.cloudstream3.utils.SubtitleFile
 import org.jsoup.nodes.Element
 
 class SuperflixMain : MainAPI() {
@@ -24,14 +23,12 @@ class SuperflixMain : MainAPI() {
 
     companion object {
 
-        /** Abas fixas */
         private val FIXED_TABS = listOf(
             "/" to "Filmes Recomendados",
             "/" to "Séries Recomendadas",
             "/category/lancamentos/" to "Lançamentos"
         )
 
-        /** Gêneros reais do site */
         private val GENRE_URLS = listOf(
             "/category/acao/" to "Ação",
             "/category/action-adventure/" to "Action & Adventure",
@@ -73,34 +70,26 @@ class SuperflixMain : MainAPI() {
         request: MainPageRequest
     ): HomePageResponse {
 
-        /** Recomendados vêm apenas da HOME (sem paginação) */
         if (request.name == "Filmes Recomendados" || request.name == "Séries Recomendadas") {
 
             val document = app.get(mainUrl).document
 
-            val selector = when (request.name) {
-                "Filmes Recomendados" ->
-                    "#widget_list_movies_series-6 article.post"
-                "Séries Recomendadas" ->
-                    "#widget_list_movies_series-8 article.post"
-                else -> "article.post"
+            val selector = if (request.name == "Filmes Recomendados") {
+                "#widget_list_movies_series-6 article.post"
+            } else {
+                "#widget_list_movies_series-8 article.post"
             }
 
             val items = document.select(selector)
-                .mapNotNull { it.toSearchResult() }
-                .distinctBy { it.url }
+                .mapNotNull { element -> element.toSearchResult() }
+                .distinctBy { result -> result.url }
 
             return newHomePageResponse(
-                list = HomePageList(
-                    name = request.name,
-                    list = items,
-                    isHorizontalImages = false
-                ),
+                list = HomePageList(request.name, items),
                 hasNext = false
             )
         }
 
-        /** Gêneros e lançamentos COM paginação */
         val url = if (page == 1) {
             request.data
         } else {
@@ -110,32 +99,25 @@ class SuperflixMain : MainAPI() {
         val document = app.get(url).document
 
         val items = document.select("article.post")
-            .mapNotNull { it.toSearchResult() }
-            .distinctBy { it.url }
+            .mapNotNull { element -> element.toSearchResult() }
+            .distinctBy { result -> result.url }
 
         val hasNext = document.select("a.next.page-numbers").isNotEmpty()
 
         return newHomePageResponse(
-            list = HomePageList(
-                name = request.name,
-                list = items,
-                isHorizontalImages = false
-            ),
+            list = HomePageList(request.name, items),
             hasNext = hasNext
         )
     }
 
-    /** Search */
     override suspend fun search(query: String): List<SearchResponse> {
-        val url = "$mainUrl/?s=${query.replace(" ", "+")}"
-        val document = app.get(url).document
+        val document = app.get("$mainUrl/?s=${query.replace(" ", "+")}").document
 
         return document.select("article.post")
-            .mapNotNull { it.toSearchResult() }
-            .distinctBy { it.url }
+            .mapNotNull { element -> element.toSearchResult() }
+            .distinctBy { result -> result.url }
     }
 
-    /** Load */
     override suspend fun load(url: String): LoadResponse {
 
         val document = app.get(url).document
@@ -151,9 +133,7 @@ class SuperflixMain : MainAPI() {
         val plot = document.selectFirst("div.description p")?.text()
         val tags = document.select("span.genres a").map { it.text() }
 
-        val isMovie = url.contains("/filme/")
-
-        return if (isMovie) {
+        return if (url.contains("/filme/")) {
 
             newMovieLoadResponse(title, url, TvType.Movie, url) {
                 posterUrl = poster
@@ -181,15 +161,38 @@ class SuperflixMain : MainAPI() {
         }
     }
 
-    /** Ainda não implementado (streams) */
     override suspend fun loadLinks(
-    data: String,
-    isCasting: Boolean,
-    subtitleCallback: (SubtitleFile) -> Unit,
-    callback: (ExtractorLink) -> Unit
-): Boolean {
-    return false
+        data: String,
+        isCasting: Boolean,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        return false
     }
+
+    private fun Element.toSearchResult(): SearchResponse? {
+
+        val title = selectFirst("h2.entry-title")?.text() ?: return null
+        val link = selectFirst("a.lnk-blk")?.attr("href") ?: return null
+        val poster = selectFirst("img")?.attr("src")?.let { fixUrl(it) }
+        val year = selectFirst("span.year")?.text()?.toIntOrNull()
+
+        return when {
+            link.contains("/filme/") ->
+                newMovieSearchResponse(title, link, TvType.Movie) {
+                    posterUrl = poster
+                    this.year = year
+                }
+
+            link.contains("/serie/") ->
+                newTvSeriesSearchResponse(title, link, TvType.TvSeries) {
+                    posterUrl = poster
+                    this.year = year
+                }
+
+            else -> null
+        }
+    }
+}
 
 @CloudstreamPlugin
 class SuperflixPlugin : Plugin() {
