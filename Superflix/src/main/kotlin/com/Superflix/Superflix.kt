@@ -169,9 +169,9 @@ class SuperflixMain : MainAPI() {
         // ANO - usando o método original do código anterior
         val year = document.selectFirst("span.year")?.text()?.toIntOrNull()
 
-        // DURAÇÃO - como no exemplo do SuperFlix
-        val duration = document.selectFirst("span:containsOwn(min.)")?.text()
-            ?.replace(" min.", "")?.trim()?.toIntOrNull()
+        // DURAÇÃO - extraindo do formato "1h 40m" ou "40m"
+        val durationText = document.selectFirst("span.duration, span.fa-clock")?.text()?.trim()
+        val duration = parseDuration(durationText)
 
         // DESCRIÇÃO
         val description = document.selectFirst("div.description p")?.text()
@@ -225,6 +225,23 @@ class SuperflixMain : MainAPI() {
                 this.tags = genres  // Tags como estava no código original
                 addActors(actors)
             }
+        }
+    }
+
+    // Função para converter duração no formato "1h 40m" ou "40m" para minutos
+    private fun parseDuration(durationText: String?): Int? {
+        if (durationText.isNullOrBlank()) return null
+        
+        return try {
+            val hoursMatch = Regex("(\\d+)h").find(durationText)
+            val minutesMatch = Regex("(\\d+)m").find(durationText)
+            
+            val hours = hoursMatch?.groupValues?.get(1)?.toIntOrNull() ?: 0
+            val minutes = minutesMatch?.groupValues?.get(1)?.toIntOrNull() ?: 0
+            
+            (hours * 60) + minutes
+        } catch (e: Exception) {
+            null
         }
     }
 
