@@ -2,11 +2,10 @@ package com.Nexflix
 
 import com.lagradost.cloudstream3.utils.ExtractorApi
 import com.lagradost.cloudstream3.utils.ExtractorLink
-import com.lagradost.cloudstream3.utils.SubtitleFile
+import com.lagradost.cloudstream3.SubtitleFile // <--- IMPORT CRÍTICO ADICIONADO
 import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.M3u8Helper
 import com.lagradost.cloudstream3.app
-// --- IMPORTS ADICIONADOS CONFORME PEDIDO ---
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 
@@ -15,6 +14,7 @@ class NexEmbedExtractor : ExtractorApi() {
     override val mainUrl = "https://nexembed.xyz"
     override val requiresReferer = true
 
+    // A assinatura agora vai bater porque importamos SubtitleFile corretamente
     override suspend fun getUrl(
         url: String,
         referer: String?,
@@ -66,7 +66,7 @@ class NexEmbedExtractor : ExtractorApi() {
                 if (m3u8Links.isNotEmpty()) {
                     m3u8Links.forEach { callback(it) }
                 } else {
-                    // 2. Fallback usando a estrutura newExtractorLink que você pediu
+                    // 2. Fallback usando newExtractorLink (Agora funciona pois está dentro de suspend)
                     val fallbackLink = newExtractorLink(
                         source = "NexFlix",
                         name = "NexFlix (Original)",
@@ -86,10 +86,11 @@ class NexEmbedExtractor : ExtractorApi() {
         }
     }
 
-    private fun extractDirect(html: String, referer: String, callback: (ExtractorLink) -> Unit) {
+    // ADICIONADO 'suspend' AQUI PARA CORRIGIR O ERRO
+    private suspend fun extractDirect(html: String, referer: String, callback: (ExtractorLink) -> Unit) {
         val link = Regex("""file:\s*["']([^"']+)["']""").find(html)?.groupValues?.get(1)
         if (link != null) {
-            // Usando a mesma estrutura aqui também para manter padrão
+            // newExtractorLink é suspend, então esta função também precisa ser suspend
             val directLink = newExtractorLink(
                 source = "NexFlix",
                 name = "NexFlix",
