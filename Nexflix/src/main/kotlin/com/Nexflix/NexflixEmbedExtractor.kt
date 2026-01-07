@@ -112,58 +112,37 @@ object NexflixEmbedExtractor {
     /**
      * Extrair hash do JavaScript ofuscado
      */
-    private fun extractHashFromObfuscatedJs(html: String): String {
-        // Padrão 1: Buscar diretamente o hash MD5 (32 caracteres hex)
-        val md5Pattern = Regex("""([a-fA-F0-9]{32})\|FirePlayer""")
-        val match1 = md5Pattern.find(html)
-        if (match1 != null) {
-            val hash = match1.groupValues[1]
-            if (hash.isNotEmpty() && hash.length == 32) {
+    
+     private fun extractHashFromObfuscatedJs(html: String): String {
+    // Padrão mais específico: hash seguido de "FirePlayer" e parâmetros comuns
+    val patterns = listOf(
+        // Padrão 1: '89fcd07f20b6785b92134bd6c1d0fa42|FirePlayer|x59|netflix'
+        Regex("""([a-fA-F0-9]{32})\|FirePlayer\|[^'"]+"""),
+        
+        // Padrão 2: Dentro de eval(function
+        Regex("""eval\(function.*?'([a-fA-F0-9]{32})'.*?split\('\|'\)""", RegexOption.DOT_MATCHES_ALL),
+        
+        // Padrão 3: Em arrays JavaScript
+        Regex("""['"]([a-fA-F0-9]{32})['"]\s*[,\|]"""),
+        
+        // Padrão 4: Próximo a "skin" (visto no exemplo)
+        Regex("""skin\|([a-fA-F0-9]{32})\|""")
+    )
+    
+    for (pattern in patterns) {
+        val match = pattern.find(html)
+        if (match != null) {
+            val hash = match.groupValues[1]
+            if (hash.length == 32 && hash.matches(Regex("[a-fA-F0-9]{32}"))) {
+                println("✅ Hash encontrado com padrão: ${hash.lowercase()}")
                 return hash.lowercase()
             }
         }
-        
-        // Padrão 2: Buscar no array split('|')
-        val splitPattern = Regex("""\.split\('\|'\).*?\)""", RegexOption.DOT_MATCHES_ALL)
-        val splitMatch = splitPattern.find(html)
-        if (splitMatch != null) {
-            val splitContent = splitMatch.value
-            // Buscar hash no conteúdo do split
-            val hashInSplit = Regex("""'([a-fA-F0-9]{32})'""").find(splitContent)
-            if (hashInSplit != null) {
-                val hash = hashInSplit.groupValues[1]
-                if (hash.length == 32) {
-                    return hash.lowercase()
-                }
-            }
-        }
-        
-        // Padrão 3: Buscar em eval(function(p,a,c,k,e,d)
-        val evalPattern = Regex("""eval\(function\(p,a,c,k,e,d\).*?split\('\|'\)""", RegexOption.DOT_MATCHES_ALL)
-        val evalMatch = evalPattern.find(html)
-        if (evalMatch != null) {
-            val evalContent = evalMatch.value
-            // Extrair array de parâmetros
-            val arrayPattern = Regex("""'([^']+?)'\.split\('\|'\)""")
-            val arrayMatch = arrayPattern.find(evalContent)
-            if (arrayMatch != null) {
-                val arrayStr = arrayMatch.groupValues[1]
-                val parts = arrayStr.split("|")
-                // Procurar hash MD5 nas partes
-                for (part in parts) {
-                    if (part.matches(Regex("[a-fA-F0-9]{32}"))) {
-                        return part.lowercase()
-                    }
-                }
-            }
-        }
-        
-        return ""
     }
-
-    /**
-     * Métodos alternativos para extrair hash
-     */
+    
+    return ""
+     }
+  
     private fun extractHashAlternativeMethods(html: String): String {
         // Método 1: Buscar todas as ocorrências de 32 caracteres hex
         val all32hex = Regex("""[a-fA-F0-9]{32}""").findAll(html).toList()
@@ -202,48 +181,59 @@ object NexflixEmbedExtractor {
      * Passo 2: Fazer POST para API com o hash
      */
     private suspend fun getVideoFromApi(videoHash: String, refererUrl: String): String? {
-        return try {
-            val apiUrl = "$API_DOMAIN/player/index.php?data=$videoHash&do=getVideo"
-            
-            // Dados do POST exatamente como no cURL
-            val postData = mapOf(
-                "hash" to videoHash,
-                "r" to refererUrl
-            )
-            
-            println("📤 POST para: $apiUrl")
-            println("📦 Dados: $postData")
-            
-            // Adicionar referer aos headers
-            val finalHeaders = API_HEADERS.toMutableMap()
-            finalHeaders["referer"] = "$API_DOMAIN/"
-            
-            val response = app.post(apiUrl, headers = finalHeaders, data = postData)
-            
-            println("📥 Status: ${response.code}")
-            
-            if (response.code != 200) {
-                println("❌ Status inválido: ${response.code}")
-                return null
-            }
-            
-            val jsonText = response.text
-            if (jsonText.isBlank()) {
-                println("❌ Resposta vazia")
-                return null
-            }
-            
-            println("📄 Resposta JSON: ${jsonText.take(300)}...")
-            
-            // Parse da resposta
-            parseApiResponse(jsonText)
-            
-        } catch (e: Exception) {
-            println("❌ Erro na API: ${e.message}")
-            null
+    return try {
+        val apiUrl = "$API_DOMAIN/player/index.php?data=$videoHash&do=getVideo"
+        
+        val postData = mapOf(
+            "hash" to videoHash,
+            "r" to refererUrl
+        )
+        
+        println("📤 POST para: $apiUrl")
+        
+        // Tentar com headers diferentes
+        val finalHeaders = mapOf(
+            "accept" to "application/json, text/javascript, */*; q=0.01",
+            "accept-language" to "pt-BR,pt;q=0.9,en;q=0.8",
+            "content-type" to "application/x-www-form-urlencoded; charset=UTF-8",
+            "origin" to API_DOMAIN,
+            "referer" to "$API_DOMAIN/",
+            "sec-ch-ua" to "\"Chromium\";v=\"127\", \"Not)A;Brand\";v=\"99\"",
+            "sec-ch-ua-mobile" to "?1",
+            "sec-ch-ua-platform" to "\"Android\"",
+            "sec-fetch-dest" to "empty",
+            "sec-fetch-mode" to "cors",
+            "sec-fetch-site" to "same-origin",
+            "user-agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
+            "x-requested-with" to "XMLHttpRequest"
+        )
+        
+        val response = app.post(apiUrl, headers = finalHeaders, data = postData)
+        
+        println("📥 Status: ${response.code}")
+        println("📄 Resposta (primeiros 500 chars): ${response.text.take(500)}")
+        
+        if (response.code != 200) {
+            println("❌ Status inválido: ${response.code}")
+            return null
         }
+        
+        val responseText = response.text
+        
+        // Verificar se é HTML de erro
+        if (responseText.contains("<!DOCTYPE html") || responseText.contains("<html")) {
+            println("❌ API retornou HTML em vez de JSON")
+            println("📄 HTML: ${responseText.take(200)}...")
+            return null
+        }
+        
+        parseApiResponse(responseText)
+        
+    } catch (e: Exception) {
+        println("❌ Erro na API: ${e.message}")
+        null
     }
-
+    }
     /**
      * Parse da resposta JSON da API
      */
