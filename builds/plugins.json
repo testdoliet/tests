@@ -124,9 +124,8 @@
         "tvTypes": [
             "Movies",
             "Series",
-            "Animes",
             "AsianDrama",
-            "Telenovela"
+            "Animes"
         ],
         "version": 1,
         "internalName": "Nexflix",
