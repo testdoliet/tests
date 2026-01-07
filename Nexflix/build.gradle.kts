@@ -65,19 +65,13 @@ cloudstream {
     language = "pt-br"
     authors = listOf("lawlietbr")
     status = 1
-    tvTypes = listOf("Movies", "Series", "Animes", "AsianDrama", "Telenovela")
+    tvTypes = listOf("Movies", "Series", "AsianDrama", "Animes")
     iconUrl = "https://nexflix.vip/uploads/favicon.png"
     isCrossPlatform = true
     requiresResources = true
 }
 
-
-
 dependencies {
     val cloudstream by configurations
     cloudstream("com.lagradost:cloudstream3:pre-release")
-    
-
-    implementation("com.fasterxml.jackson.core:jackson-databind:2.15.2")
-    implementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.15.2")
 }
