@@ -59,7 +59,7 @@ fun getLocalProperty(key: String): String? {
     }
 }
 
-Cloudstream {
+cloudstream {
     name = "NexFlix"
     version = 1
     description = "Assistir filmes online, Assistir séries online, Lançamentos de filmes, Filmes 1080p, Séries, Animes e Doramas grátis."
