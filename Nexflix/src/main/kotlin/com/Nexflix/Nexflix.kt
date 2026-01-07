@@ -25,7 +25,8 @@ class NexFlix : MainAPI() {
     private val mapper = jacksonObjectMapper()
 
     companion object {
-        private const val SEARCH_PATH = "/search.php"
+        private const val SEARCH_PATH = "/search.php?q="
+        // Mantemos as tags apenas para diferenciar a URL, mas a extração será a mesma
         private const val TAG_DESTAQUE = "&filtro_plugin=destaque"
         private const val TAG_RECENTE = "&filtro_plugin=recente"
     }
@@ -38,9 +39,12 @@ class NexFlix : MainAPI() {
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val isDestaque = request.data.contains(TAG_DESTAQUE)
-        val cleanUrl = request.data.replace(TAG_DESTAQUE, "").replace(TAG_RECENTE, "")
+        // Limpa a URL (remove nossas tags internas)
+        val cleanUrl = request.data
+            .replace(TAG_DESTAQUE, "")
+            .replace(TAG_RECENTE, "")
         
+        // Paginação
         val url = if (page > 1) {
             if (cleanUrl.contains("?")) "$cleanUrl&page=$page" else "$cleanUrl?page=$page"
         } else {
@@ -50,64 +54,38 @@ class NexFlix : MainAPI() {
         val document = app.get(url).document
         val items = ArrayList<SearchResponse>()
 
-        if (isDestaque) {
-            // === DESTAQUES (Slider) ===
-            // Pega o BANNER original do site (style="background-image:url(...)")
-            document.select(".vf-hero-slide a.vf-hero-card").forEach { element ->
-                val title = element.selectFirst(".vf-hero-title")?.text()?.trim() ?: return@forEach
-                val href = element.attr("href")
-                
-                // Extrai a URL da imagem de fundo (Banner)
-                val style = element.attr("style")
-                val posterUrl = """url\(['"]?(.*?)['"]?\)""".toRegex().find(style)?.groupValues?.get(1)?.let { fixUrl(it) }
-                
-                val year = element.selectFirst(".vf-year")?.text()?.toIntOrNull()
-                val type = getType(href)
+        // === EXTRAÇÃO UNIFICADA (AGORA VAI!) ===
+        // Tanto Destaques quanto Recentes usam <article class="card"> com <img> vertical
+        document.select("article.card").forEach { element ->
+            val aTag = element.selectFirst("a") ?: return@forEach
+            
+            // Título: tenta pegar do .name, depois do .ci-title, depois do atributo title
+            val title = element.selectFirst(".name")?.text() 
+                ?: element.selectFirst(".ci-title")?.text() 
+                ?: aTag.attr("title")
+            
+            val href = aTag.attr("href")
+            
+            // Imagem: Pega direto do SRC da tag IMG (Vertical/Thumb)
+            val posterUrl = element.selectFirst("img")?.attr("src")?.let { fixUrl(it) }
+            
+            // Ano
+            val year = element.selectFirst(".year")?.text()?.toIntOrNull()
+            
+            val type = getType(href)
 
-                if (type == TvType.Movie || type == TvType.TvSeries) {
-                    val item = if (type == TvType.Movie) {
-                        newMovieSearchResponse(title, fixUrl(href), type) {
-                            this.posterUrl = posterUrl // Vai usar o banner horizontal
-                            this.year = year
-                        }
-                    } else {
-                        newTvSeriesSearchResponse(title, fixUrl(href), type) {
-                            this.posterUrl = posterUrl // Vai usar o banner horizontal
-                            this.year = year
-                        }
-                    }
-                    items.add(item)
+            val item = if (type == TvType.Movie) {
+                newMovieSearchResponse(title, fixUrl(href), type) {
+                    this.posterUrl = posterUrl
+                    this.year = year
+                }
+            } else {
+                newTvSeriesSearchResponse(title, fixUrl(href), type) {
+                    this.posterUrl = posterUrl
+                    this.year = year
                 }
             }
-        } else {
-            // === RECENTES (Grid) ===
-            // Pega a THUMB original do site (<img src="...">)
-            document.select("article.card").forEach { element ->
-                val aTag = element.selectFirst("a") ?: return@forEach
-                val title = element.selectFirst(".ci-title")?.text() ?: element.selectFirst(".name")?.text() ?: aTag.attr("title")
-                val href = aTag.attr("href")
-                
-                // Pega a imagem da tag img (Poster Vertical)
-                val posterUrl = element.selectFirst("img")?.attr("src")?.let { fixUrl(it) }
-                
-                val year = element.selectFirst(".year")?.text()?.toIntOrNull()
-                val type = getType(href)
-
-                if (type == TvType.Movie || type == TvType.TvSeries) {
-                    val item = if (type == TvType.Movie) {
-                        newMovieSearchResponse(title, fixUrl(href), type) {
-                            this.posterUrl = posterUrl
-                            this.year = year
-                        }
-                    } else {
-                        newTvSeriesSearchResponse(title, fixUrl(href), type) {
-                            this.posterUrl = posterUrl
-                            this.year = year
-                        }
-                    }
-                    items.add(item)
-                }
-            }
+            items.add(item)
         }
 
         val hasNextPage = document.select(".gd-pagination a:contains(›), .gd-pagination a:contains(»), .page-link.next").isNotEmpty()
@@ -127,7 +105,7 @@ class NexFlix : MainAPI() {
         val document = app.get(searchUrl).document
         return document.select("article.card").mapNotNull { element ->
             val aTag = element.selectFirst("a") ?: return@mapNotNull null
-            val title = element.selectFirst(".ci-title")?.text() ?: aTag.attr("title") ?: return@mapNotNull null
+            val title = element.selectFirst(".ci-title")?.text() ?: element.selectFirst(".name")?.text() ?: aTag.attr("title")
             val href = aTag.attr("href")
             val posterUrl = element.selectFirst("img")?.attr("src")?.let { fixUrl(it) }
             val type = getType(href)
@@ -163,6 +141,7 @@ class NexFlix : MainAPI() {
         }
     }
 
+    // --- Extratores e Helpers ---
     private fun extractEpisodesFromJson(html: String): List<Episode> {
         val episodes = mutableListOf<Episode>()
         try {
@@ -173,7 +152,8 @@ class NexFlix : MainAPI() {
                 val map = mapper.readValue(jsonMatch.groupValues[1], typeRef)
                 map.forEach { (_, epsList) ->
                     epsList.forEach { ep ->
-                        episodes.add(newEpisode("$mainUrl/player.php?type=serie&id=$tmdbId&season=${ep.temporada}&episode=${ep.episodio}") {
+                        val epUrl = "$mainUrl/player.php?type=serie&id=$tmdbId&season=${ep.temporada}&episode=${ep.episodio}"
+                        episodes.add(newEpisode(epUrl) {
                             this.name = ep.titulo ?: "Episódio ${ep.episodio}"
                             this.season = ep.temporada
                             this.episode = ep.episodio
