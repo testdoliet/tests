@@ -9,6 +9,7 @@ import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
+import java.net.URI
 
 class NexEmbedExtractor : ExtractorApi() {
     override val name = "NexEmbed"
@@ -23,23 +24,24 @@ class NexEmbedExtractor : ExtractorApi() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
-        // Headers iniciais
-        val initialHeaders = mapOf("Referer" to "https://nexflix.vip/")
+        println("[NexFlix] === Iniciando Extração ===")
         
         try {
-            // 1. Tenta extrair o ID direto da URL (se for player.php ou /e/)
-            var videoId = extractVideoId(url)
+            var videoId: String? = null
 
-            // 2. Se não achou ID, baixa o HTML para procurar o iframe
+            // PASSO 1: Obter o ID do vídeo
+            // Se a URL já tiver o ID (ex: player.php?id=tt123), pegamos direto
+            if (url.contains("id=") || url.contains("/e/")) {
+                videoId = extractId(url)
+            } 
+            
+            // Se não, baixamos a página para achar o link do player (data-src ou src)
             if (videoId == null) {
-                println("[NexFlix] ID não encontrado na URL. Baixando HTML...")
-                val response = app.get(url, headers = initialHeaders).text
+                val response = app.get(url, headers = mapOf("Referer" to "https://nexflix.vip/")).text
+                val playerLink = Regex("""(?:src|data-src)=["']([^"']+)["']""").find(response)?.groupValues?.get(1)
                 
-                // Procura o iframe (pode ser nexembed ou comprarebom)
-                val iframeUrl = Regex("""(?:src|data-src)=["'](https?://[^"']+)["']""").find(response)?.groupValues?.get(1)
-                
-                if (iframeUrl != null) {
-                    videoId = extractVideoId(iframeUrl)
+                if (playerLink != null) {
+                    videoId = extractId(playerLink)
                 }
             }
 
@@ -48,17 +50,16 @@ class NexEmbedExtractor : ExtractorApi() {
                 return
             }
 
-            // === O PULO DO GATO: DOMÍNIO FIXO ===
-            // Não importa se o iframe é nexembed.xyz, a API é SEMPRE comprarebom.xyz
+            // PASSO 2: Fazer o POST no CompraReBom (Domínio Fixo)
+            // Não importa se o iframe era nexembed.xyz, a API JSON é comprarebom.xyz
             val fixedDomain = "https://comprarebom.xyz"
             val apiUrl = "$fixedDomain/player/index.php?data=$videoId&do=getVideo"
 
-            println("[NexFlix] ID: $videoId | API Forçada: $apiUrl")
+            println("[NexFlix] ID: $videoId -> API: $apiUrl")
 
-            // Headers simulando estar no comprarebom.xyz
             val apiHeaders = mapOf(
                 "Host" to "comprarebom.xyz",
-                "Referer" to "$fixedDomain/e/$videoId",
+                "Referer" to "$fixedDomain/e/$videoId", // Referer simulando o player
                 "Origin" to fixedDomain,
                 "X-Requested-With" to "XMLHttpRequest",
                 "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8",
@@ -70,12 +71,11 @@ class NexEmbedExtractor : ExtractorApi() {
                 "r" to "https://nexflix.vip/"
             )
 
-            // Faz o POST
             val jsonResponse = app.post(apiUrl, headers = apiHeaders, data = body).text
             
             // Verifica se a resposta é HTML (erro)
             if (jsonResponse.trim().startsWith("<")) {
-                println("[NexFlix] ERRO: API retornou HTML. Resposta inválida.")
+                println("[NexFlix] ERRO: API retornou HTML. O servidor pode ter bloqueado ou o ID expirou.")
                 return
             }
 
@@ -84,9 +84,9 @@ class NexEmbedExtractor : ExtractorApi() {
                          ?: json["videoSource"]?.asText()
 
             if (!videoLink.isNullOrBlank()) {
-                println("[NexFlix] Link seguro encontrado: $videoLink")
+                println("[NexFlix] Link Seguro Encontrado: $videoLink")
                 
-                // Headers para o player (ExoPlayer)
+                // Headers cruciais para o Player tocar o m3u8
                 val videoHeaders = mapOf(
                     "Referer" to "$fixedDomain/",
                     "Origin" to fixedDomain,
@@ -103,20 +103,20 @@ class NexEmbedExtractor : ExtractorApi() {
                 if (m3u8Links.isNotEmpty()) {
                     m3u8Links.forEach { callback(it) }
                 } else {
-                    val fallbackLink = newExtractorLink(
-                        source = "NexFlix",
-                        name = "NexFlix (Original)",
-                        url = videoLink,
-                        type = ExtractorLinkType.M3U8
-                    ) {
-                        this.referer = "$fixedDomain/"
-                        this.quality = Qualities.Unknown.value
-                        this.headers = videoHeaders
-                    }
-                    callback(fallbackLink)
+                    callback(
+                        ExtractorLink(
+                            source = "NexFlix",
+                            name = "NexFlix (Original)",
+                            url = videoLink,
+                            referer = "$fixedDomain/",
+                            quality = Qualities.Unknown.value,
+                            isM3u8 = true,
+                            headers = videoHeaders
+                        )
+                    )
                 }
             } else {
-                println("[NexFlix] JSON válido mas sem 'securedLink' ou 'videoSource'.")
+                println("[NexFlix] ERRO: JSON não contém link de vídeo.")
             }
 
         } catch (e: Exception) {
@@ -125,8 +125,7 @@ class NexEmbedExtractor : ExtractorApi() {
         }
     }
 
-    // Função auxiliar para limpar a extração de ID
-    private fun extractVideoId(url: String): String? {
+    private fun extractId(url: String): String? {
         return when {
             url.contains("id=") -> url.substringAfter("id=").substringBefore("&")
             url.contains("/e/") -> url.substringAfter("/e/").substringBefore("?")
