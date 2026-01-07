@@ -6,7 +6,6 @@ import com.lagradost.cloudstream3.utils.M3u8Helper
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import org.json.JSONObject
-import java.net.URLEncoder
 
 object NexflixEmbedExtractor {
     // Domínios principais identificados
@@ -86,7 +85,7 @@ object NexflixEmbedExtractor {
             for (pattern in specificPatterns) {
                 val match = pattern.find(url)
                 if (match != null) {
-                    val foundId = match.groupValues.getOrNull(1)
+                    val foundId = match.groups[1]?.value
                     if (!foundId.isNullOrEmpty() && foundId.length > 3) {
                         return foundId
                     }
