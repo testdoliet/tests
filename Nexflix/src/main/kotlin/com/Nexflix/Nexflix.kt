@@ -213,14 +213,21 @@ class NexFlix : MainAPI() {
     }
 
     override suspend fun loadLinks(
-        data: String,
-        isCasting: Boolean,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        
-        NexEmbedExtractor().getUrl(data, data, subtitleCallback, callback)
-        return true
+    data: String,
+    isCasting: Boolean,
+    subtitleCallback: (SubtitleFile) -> Unit,
+    callback: (ExtractorLink) -> Unit
+): Boolean {
+    // CORREÇÃO: Use o nome correto e chame o método diretamente
+    val success = NexflixEmbedExtractor.extractVideoLinks(data, "Video", callback)
+    
+    // Se o extrator falhar, você pode tentar outros métodos aqui
+    if (!success) {
+        // Seu código fallback aqui...
+        println("❌ NexflixEmbedExtractor falhou")
+    }
+    
+    return success
     }
 
 
