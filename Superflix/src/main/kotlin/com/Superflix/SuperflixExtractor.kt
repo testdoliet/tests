@@ -56,9 +56,6 @@ class SuperflixExtractor : ExtractorApi() {
             val res = app.get(url, headers = headers)
             println("[$TAG] Status: ${res.code}, Tamanho: ${res.text.length}")
             
-            // Salvar página para debug (opcional)
-            // println("[$TAG] Primeiros 1000 chars: ${res.text.take(1000)}")
-            
             // Buscar URLs do service worker/player
             val playerUrls = extractPlayerUrls(res.text)
             println("[$TAG] Player URLs encontradas: ${playerUrls.size}")
@@ -336,7 +333,7 @@ class SuperflixExtractor : ExtractorApi() {
         return null
     }
     
-    private fun createExtractorLink(
+    private suspend fun createExtractorLink(
         videoUrl: String,
         referer: String,
         callback: (ExtractorLink) -> Unit
@@ -367,28 +364,32 @@ class SuperflixExtractor : ExtractorApi() {
             )
         }
         
-        callback(newExtractorLink(
+        // CORREÇÃO: Usar newExtractorLink corretamente (sem initializer suspenso)
+        val link = newExtractorLink(
             source = name,
             name = "Superflix ${if (isM3u8) "HLS" else if (isGoogleStorage) "Google Storage" else "Video"}",
             url = videoUrl,
             type = if (isM3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-        ) {
-            this.referer = referer
-            this.quality = quality
-            this.headers = headers
-        })
+        )
+        
+        // Configurar as propriedades diretamente
+        link.referer = referer
+        link.quality = quality
+        link.headers = headers
+        
+        callback(link)
     }
     
-    // Classes para parsear JSON
+    // Classes para parsear JSON (sem anotações Jackson)
     data class ApiResponse(
-        @JsonProperty("title") val title: String? = null,
-        @JsonProperty("source") val source: String? = null,
-        @JsonProperty("subtitles") val subtitles: String? = null,
-        @JsonProperty("player") val player: String? = null,
-        @JsonProperty("audio_type") val audio_type: String? = null,
-        @JsonProperty("owner_type") val owner_type: String? = null,
-        @JsonProperty("owner_id") val owner_id: Int? = null,
-        @JsonProperty("id") val id: Int? = null,
-        @JsonProperty("type") val type: String? = null
+        val title: String? = null,
+        val source: String? = null,
+        val subtitles: String? = null,
+        val player: String? = null,
+        val audio_type: String? = null,
+        val owner_type: String? = null,
+        val owner_id: Int? = null,
+        val id: Int? = null,
+        val type: String? = null
     )
 }
