@@ -212,14 +212,37 @@ class NexFlix : MainAPI() {
         } catch (e: Exception) { null }
     }
 
-    override suspend fun loadLinks(data: String, isCasting: Boolean, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit): Boolean {
-        if (data.contains("nexflix.vip")) {
-            val doc = app.get(data).document
-            val iframeSrc = doc.select("iframe.vip-iframe, iframe.player-iframe").attr("src")
-            if (iframeSrc.isNotBlank()) return loadExtractor(fixUrl(iframeSrc).replace("&amp;", "&"), subtitleCallback, callback)
-        } 
-        return loadExtractor(data, subtitleCallback, callback)
+        // ... dentro da classe NexFlix ...
+
+    override suspend fun loadLinks(
+        data: String,
+        isCasting: Boolean,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        // data = URL da página do episódio/filme (ex: https://nexflix.vip/player.php?...)
+        
+        try {
+            val document = app.get(data).document
+            
+            // Procura o iframe que contém o player (geralmente .vip-iframe ou .player-iframe)
+            val iframeSrc = document.select("iframe.vip-iframe, iframe.player-iframe").attr("src")
+
+            if (iframeSrc.isNotBlank()) {
+                // Corrige a URL (adiciona https e remove caracteres HTML encoded)
+                val fixedUrl = fixUrl(iframeSrc).replace("&amp;", "&")
+                
+                // Chama o loadExtractor com a URL do iframe (ex: https://nexembed.xyz/...)
+                // O Cloudstream vai identificar automaticamente o NexEmbedExtractor que criamos
+                return loadExtractor(fixedUrl, subtitleCallback, callback)
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+
+        return false
     }
+    
 
     private data class EpisodeJson(val temporada: Int, val episodio: Int, val titulo: String?)
     private data class TMDBInfo(val id: Int, val title: String?, val year: Int?, val posterUrl: String?, val backdropUrl: String?, val overview: String?, val genres: List<String>?, val actors: List<Actor>?, val youtubeTrailer: String?, val duration: Int?)
