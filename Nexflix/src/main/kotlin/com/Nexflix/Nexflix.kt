@@ -1,4 +1,4 @@
-package com.Superflix
+package com.Nexflix
 
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
