@@ -9,7 +9,7 @@ android {
    buildFeatures {
         buildConfig = true
     }
-    namespace = "com.SuperFlix"
+    namespace = "com.Nexflix"
     compileSdk = 33
 
     defaultConfig {
