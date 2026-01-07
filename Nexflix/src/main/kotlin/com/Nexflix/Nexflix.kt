@@ -214,26 +214,33 @@ class NexFlix : MainAPI() {
 
         // ... dentro da classe NexFlix ...
 
+        // ... Imports e resto do código ...
+
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // data = URL da página do episódio/filme (ex: https://nexflix.vip/player.php?...)
-        
         try {
             val document = app.get(data).document
             
-            // Procura o iframe que contém o player (geralmente .vip-iframe ou .player-iframe)
+            // Procura o iframe
             val iframeSrc = document.select("iframe.vip-iframe, iframe.player-iframe").attr("src")
 
             if (iframeSrc.isNotBlank()) {
-                // Corrige a URL (adiciona https e remove caracteres HTML encoded)
                 val fixedUrl = fixUrl(iframeSrc).replace("&amp;", "&")
                 
-                // Chama o loadExtractor com a URL do iframe (ex: https://nexembed.xyz/...)
-                // O Cloudstream vai identificar automaticamente o NexEmbedExtractor que criamos
+                // === CORREÇÃO DO ERRO NULLPOINTER ===
+                // Se o link for do nosso extrator (nexembed/comprarebom), chamamos ele DIRETO.
+                // Isso evita o erro do 'loadExtractor' genérico.
+                if (fixedUrl.contains("nexembed") || fixedUrl.contains("comprarebom")) {
+                    val extractor = NexEmbedExtractor()
+                    extractor.getUrl(fixedUrl, data, subtitleCallback, callback)
+                    return true
+                }
+                
+                // Se for outro tipo de link (ex: youtube, doodstream), tenta o genérico
                 return loadExtractor(fixedUrl, subtitleCallback, callback)
             }
         } catch (e: Exception) {
@@ -242,6 +249,7 @@ class NexFlix : MainAPI() {
 
         return false
     }
+
     
 
     private data class EpisodeJson(val temporada: Int, val episodio: Int, val titulo: String?)
