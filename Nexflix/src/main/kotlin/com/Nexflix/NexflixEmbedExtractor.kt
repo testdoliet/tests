@@ -9,7 +9,6 @@ import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
-import java.net.URI
 
 class NexEmbedExtractor : ExtractorApi() {
     override val name = "NexEmbed"
@@ -24,94 +23,73 @@ class NexEmbedExtractor : ExtractorApi() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
-        println("[NexFlix] === URL Recebida: $url")
-
-        // 1. Se a URL for do NexFlix (player.php), precisamos abrir para achar o link real
-        if (url.contains("nexflix.vip") || url.contains("/player.php")) {
-            println("[NexFlix] Detectado link interno. Baixando HTML para achar o iframe real...")
-            try {
-                val response = app.get(url, headers = mapOf("Referer" to "https://nexflix.vip/")).text
-                
-                // Busca o link do player real (comprarebom ou nexembed)
-                val realIframe = Regex("""(?:src|data-src)=["'](https?://(?:comprarebom|nexembed)[^"']+)["']""").find(response)?.groupValues?.get(1)
-                
-                if (realIframe != null) {
-                    println("[NexFlix] Iframe real encontrado: $realIframe")
-                    // Agora sim chamamos a API com o link do servidor de vídeo
-                    extractFromApi(realIframe, "https://nexflix.vip/", callback)
-                } else {
-                    println("[NexFlix] ERRO: Nenhum iframe encontrado no HTML.")
-                }
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-            return
-        }
-
-        // 2. Se a URL já for do servidor de vídeo, vai direto
-        extractFromApi(url, "https://nexflix.vip/", callback)
-    }
-
-    private suspend fun extractFromApi(playerUrl: String, originalReferer: String, callback: (ExtractorLink) -> Unit) {
+        // Headers iniciais
+        val headers = mapOf("Referer" to "https://nexflix.vip/")
+        
         try {
-            println("[NexFlix] Iniciando extração via API para: $playerUrl")
+            var videoId: String? = null
 
-            // Extrai o ID real do vídeo (hash ou tt...)
-            val videoId = if (playerUrl.contains("id=")) {
-                playerUrl.substringAfter("id=").substringBefore("&")
-            } else {
-                playerUrl.substringAfter("/e/").substringBefore("?")
+            // 1. Extração do ID
+            // Se já vier com ID na URL (do loadLinks)
+            if (url.contains("id=") || url.contains("/e/")) {
+                videoId = extractIdFromUrl(url)
+            } 
+            
+            // Se não, baixamos o HTML do NexFlix para achar o link do player
+            if (videoId == null) {
+                val response = app.get(url, headers = headers).text
+                // Procura links como nexembed.xyz/player.php?id=... ou comprarebom.xyz/e/...
+                val playerUrl = Regex("""(?:src|data-src)=["']([^"']+)["']""").find(response)?.groupValues?.get(1)
+                
+                if (playerUrl != null) {
+                    videoId = extractIdFromUrl(playerUrl)
+                }
             }
 
-            // Pega o domínio correto (ex: comprarebom.xyz)
-            val uri = URI(playerUrl)
-            val domainUrl = "https://${uri.host}" 
-            val apiUrl = "$domainUrl/player/index.php?data=$videoId&do=getVideo"
+            if (videoId.isNullOrBlank()) return
 
-            println("[NexFlix] ID: $videoId | API: $apiUrl")
+            // 2. Chamada para a API (SEMPRE no comprarebom.xyz)
+            // Ignoramos se o iframe era nexembed, o backend é comprarebom.
+            val targetDomain = "https://comprarebom.xyz"
+            val apiUrl = "$targetDomain/player/index.php?data=$videoId&do=getVideo"
 
-            // Headers simulando o player
             val apiHeaders = mapOf(
-                "Host" to uri.host,
-                "Referer" to "$domainUrl/e/$videoId",
-                "Origin" to domainUrl,
+                "Host" to "comprarebom.xyz",
+                "Referer" to "$targetDomain/e/$videoId", // Referer fingindo ser o player
+                "Origin" to targetDomain,
                 "X-Requested-With" to "XMLHttpRequest",
                 "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8",
                 "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             )
 
-            // Headers para o vídeo (M3U8)
-            val videoHeaders = mapOf(
-                "Referer" to "$domainUrl/",
-                "Origin" to domainUrl,
-                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-            )
-
             val body = mapOf(
                 "hash" to videoId,
-                "r" to originalReferer
+                "r" to "https://nexflix.vip/"
             )
 
-            // POST na API correta
+            // 3. Faz o POST
             val jsonResponse = app.post(apiUrl, headers = apiHeaders, data = body).text
             
-            // Debug da resposta (para ver se veio JSON mesmo)
-            if (jsonResponse.trim().startsWith("<")) {
-                println("[NexFlix] ERRO: A API retornou HTML em vez de JSON. Provavelmente o ID ou Domínio está errado.")
-                return
-            }
+            // Verifica erro de HTML
+            if (jsonResponse.trim().startsWith("<")) return 
 
             val json = mapper.readTree(jsonResponse)
             val videoLink = json["securedLink"]?.asText()?.takeIf { it.isNotBlank() } 
                          ?: json["videoSource"]?.asText()
 
             if (!videoLink.isNullOrBlank()) {
-                println("[NexFlix] Link encontrado: $videoLink")
                 
+                // Headers para rodar o vídeo (m3u8)
+                val videoHeaders = mapOf(
+                    "Referer" to "$targetDomain/",
+                    "Origin" to targetDomain,
+                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                )
+
                 val m3u8Links = M3u8Helper.generateM3u8(
                     source = "NexFlix",
                     streamUrl = videoLink,
-                    referer = "$domainUrl/",
+                    referer = "$targetDomain/",
                     headers = videoHeaders
                 )
 
@@ -124,19 +102,28 @@ class NexEmbedExtractor : ExtractorApi() {
                         url = videoLink,
                         type = ExtractorLinkType.M3U8
                     ) {
-                        this.referer = "$domainUrl/"
+                        this.referer = "$targetDomain/"
                         this.quality = Qualities.Unknown.value
                         this.headers = videoHeaders
                     }
                     callback(fallbackLink)
                 }
-            } else {
-                println("[NexFlix] ERRO: JSON válido, mas sem link de vídeo.")
             }
 
         } catch (e: Exception) {
-            println("[NexFlix] Exceção: ${e.message}")
             e.printStackTrace()
+        }
+    }
+
+    private fun extractIdFromUrl(url: String): String? {
+        return if (url.contains("id=")) {
+            // Caso: player.php?type=filme&id=tt27543632&...
+            url.substringAfter("id=").substringBefore("&")
+        } else if (url.contains("/e/")) {
+            // Caso: .../e/tt27543632
+            url.substringAfter("/e/").substringBefore("?")
+        } else {
+            null
         }
     }
 }
