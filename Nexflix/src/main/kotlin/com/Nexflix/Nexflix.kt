@@ -212,43 +212,17 @@ class NexFlix : MainAPI() {
         } catch (e: Exception) { null }
     }
 
-        // ... dentro da classe NexFlix ...
-
-        // ... Imports e resto do código ...
-
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        try {
-            val document = app.get(data).document
-            
-            // Procura o iframe
-            val iframeSrc = document.select("iframe.vip-iframe, iframe.player-iframe").attr("src")
-
-            if (iframeSrc.isNotBlank()) {
-                val fixedUrl = fixUrl(iframeSrc).replace("&amp;", "&")
-                
-                // === CORREÇÃO DO ERRO NULLPOINTER ===
-                // Se o link for do nosso extrator (nexembed/comprarebom), chamamos ele DIRETO.
-                // Isso evita o erro do 'loadExtractor' genérico.
-                if (fixedUrl.contains("nexembed") || fixedUrl.contains("comprarebom")) {
-                    val extractor = NexEmbedExtractor()
-                    extractor.getUrl(fixedUrl, data, subtitleCallback, callback)
-                    return true
-                }
-                
-                // Se for outro tipo de link (ex: youtube, doodstream), tenta o genérico
-                return loadExtractor(fixedUrl, subtitleCallback, callback)
-            }
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-
-        return false
+        
+        NexEmbedExtractor().getUrl(data, data, subtitleCallback, callback)
+        return true
     }
+
 
     
 
