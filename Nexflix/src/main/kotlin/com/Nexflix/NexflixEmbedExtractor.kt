@@ -6,123 +6,224 @@ import com.lagradost.cloudstream3.utils.M3u8Helper
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import org.json.JSONObject
+import java.util.regex.Pattern
 
 object NexflixEmbedExtractor {
-    // Domínios principais
     private const val API_DOMAIN = "https://comprarebom.xyz"
     
-    // User-Agent fixo para evitar problemas
-    private const val USER_AGENT = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36"
+    private val API_HEADERS = mapOf(
+        "accept" to "*/*",
+        "accept-language" to "pt-BR,pt;q=0.9,en;q=0.8",
+        "cache-control" to "no-cache",
+        "content-type" to "application/x-www-form-urlencoded; charset=UTF-8",
+        "origin" to API_DOMAIN,
+        "pragma" to "no-cache",
+        "priority" to "u=1, i",
+        "sec-ch-ua" to "\"Chromium\";v=\"127\", \"Not)A;Brand\";v=\"99\"",
+        "sec-ch-ua-mobile" to "?1",
+        "sec-ch-ua-platform" to "\"Android\"",
+        "sec-fetch-dest" to "empty",
+        "sec-fetch-mode" to "cors",
+        "sec-fetch-site" to "same-origin",
+        "user-agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
+        "x-requested-with" to "XMLHttpRequest"
+    )
 
     suspend fun extractVideoLinks(
-        url: String,
+        url: String,  // URL do iframe tipo: https://comprarebom.xyz/e/tt27543632
         name: String,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         return try {
             println("🔍 Iniciando extração para: $url")
             
-            // Extrair ID do vídeo
-            val videoId = extractVideoId(url)
-            if (videoId.isEmpty()) {
-                println("❌ Não foi possível extrair o ID do vídeo")
+            // 1. Buscar página do player para extrair hash
+            val videoHash = extractHashFromPlayerPage(url)
+            if (videoHash.isEmpty()) {
+                println("❌ Não foi possível extrair hash da página")
                 return false
             }
             
-            println("✅ ID extraído: $videoId")
+            println("✅ Hash extraído: $videoHash")
             
-            // Obter link M3U8
-            val m3u8Url = getVideoUrl(videoId, url)
+            // 2. Fazer POST para API com o hash
+            val m3u8Url = getVideoFromApi(videoHash, url)
             if (m3u8Url == null) {
-                println("❌ Não foi possível obter link do vídeo")
+                println("❌ Não foi possível obter link M3U8")
                 return false
             }
             
-            println("✅ Link obtido: ${m3u8Url.take(80)}...")
+            println("✅ Link M3U8: ${m3u8Url.take(80)}...")
             
-            // Criar e enviar link
-            createVideoLink(m3u8Url, name, videoId, callback)
+            // 3. Criar e enviar link
+            createVideoLink(m3u8Url, name, callback)
             
         } catch (e: Exception) {
             println("❌ Erro na extração: ${e.message}")
+            e.printStackTrace()
             false
         }
     }
 
     /**
-     * Extrai ID do vídeo da URL
+     * Passo 1: Extrair hash MD5 da página do player
      */
-    private fun extractVideoId(url: String): String {
+    private suspend fun extractHashFromPlayerPage(playerUrl: String): String {
         return try {
-            // Tentar padrões comuns
-            val patterns = listOf(
-                Regex("""/filme/([^/?]+)"""),
-                Regex("""/serie/([^/?]+)"""),
-                Regex("""(tt\d+)"""),
-                Regex("""/([^/?]+)(?:\?|$|/)""")
+            println("📄 Buscando página do player: $playerUrl")
+            
+            val headers = mapOf(
+                "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
+                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+                "Accept-Language" to "pt-BR",
+                "Cache-Control" to "no-cache",
+                "Pragma" to "no-cache",
+                "Referer" to "https://nexembed.xyz/",
+                "Sec-Fetch-Dest" to "iframe",
+                "Sec-Fetch-Mode" to "navigate",
+                "Sec-Fetch-Site" to "cross-site",
+                "Upgrade-Insecure-Requests" to "1"
             )
             
-            for (pattern in patterns) {
-                val match = pattern.find(url)
-                if (match != null) {
-                    val id = match.groups[1]?.value
-                    if (!id.isNullOrEmpty() && id.length > 3) {
-                        return cleanId(id)
-                    }
-                }
+            val response = app.get(playerUrl, headers = headers)
+            val html = response.text
+            
+            if (html.isEmpty()) {
+                println("❌ HTML vazio")
+                return ""
             }
             
-            // Fallback: última parte da URL
-            val lastPart = url.substringAfterLast("/").substringBefore("?")
-            cleanId(lastPart)
+            // Buscar hash no JavaScript ofuscado
+            val hash = extractHashFromObfuscatedJs(html)
+            if (hash.isNotEmpty()) {
+                println("✅ Hash encontrado no JS: $hash")
+                return hash
+            }
+            
+            // Tentar métodos alternativos
+            extractHashAlternativeMethods(html)
             
         } catch (e: Exception) {
-            println("❌ Erro ao extrair ID: ${e.message}")
+            println("❌ Erro ao buscar página: ${e.message}")
             ""
         }
     }
 
     /**
-     * Limpa o ID
+     * Extrair hash do JavaScript ofuscado
      */
-    private fun cleanId(id: String): String {
-        return id
-            .replace("-", "")
-            .replace("_", "")
-            .replace(".", "")
-            .trim()
+    private fun extractHashFromObfuscatedJs(html: String): String {
+        // Padrão 1: Buscar diretamente o hash MD5 (32 caracteres hex)
+        val md5Pattern = Regex("""([a-fA-F0-9]{32})\|FirePlayer""")
+        val match1 = md5Pattern.find(html)
+        if (match1 != null) {
+            val hash = match1.groupValues[1]
+            if (hash.isNotEmpty() && hash.length == 32) {
+                return hash.lowercase()
+            }
+        }
+        
+        // Padrão 2: Buscar no array split('|')
+        val splitPattern = Regex("""\.split\('\|'\).*?\)""", RegexOption.DOT_MATCHES_ALL)
+        val splitMatch = splitPattern.find(html)
+        if (splitMatch != null) {
+            val splitContent = splitMatch.value
+            // Buscar hash no conteúdo do split
+            val hashInSplit = Regex("""'([a-fA-F0-9]{32})'""").find(splitContent)
+            if (hashInSplit != null) {
+                val hash = hashInSplit.groupValues[1]
+                if (hash.length == 32) {
+                    return hash.lowercase()
+                }
+            }
+        }
+        
+        // Padrão 3: Buscar em eval(function(p,a,c,k,e,d)
+        val evalPattern = Regex("""eval\(function\(p,a,c,k,e,d\).*?split\('\|'\)""", RegexOption.DOT_MATCHES_ALL)
+        val evalMatch = evalPattern.find(html)
+        if (evalMatch != null) {
+            val evalContent = evalMatch.value
+            // Extrair array de parâmetros
+            val arrayPattern = Regex("""'([^']+?)'\.split\('\|'\)""")
+            val arrayMatch = arrayPattern.find(evalContent)
+            if (arrayMatch != null) {
+                val arrayStr = arrayMatch.groupValues[1]
+                val parts = arrayStr.split("|")
+                // Procurar hash MD5 nas partes
+                for (part in parts) {
+                    if (part.matches(Regex("[a-fA-F0-9]{32}"))) {
+                        return part.lowercase()
+                    }
+                }
+            }
+        }
+        
+        return ""
     }
 
     /**
-     * Obtém URL do vídeo da API
+     * Métodos alternativos para extrair hash
      */
-    private suspend fun getVideoUrl(videoId: String, refererUrl: String): String? {
+    private fun extractHashAlternativeMethods(html: String): String {
+        // Método 1: Buscar todas as ocorrências de 32 caracteres hex
+        val all32hex = Regex("""[a-fA-F0-9]{32}""").findAll(html).toList()
+        for (match in all32hex) {
+            val potentialHash = match.value
+            // Verificar se não é algo comum (like CSS colors, etc)
+            if (!potentialHash.matches(Regex("""\d+""")) && // Não é só números
+                potentialHash != "00000000000000000000000000000000" &&
+                !html.contains("$potentialHash.css") && // Não é nome de arquivo CSS
+                !html.contains("$potentialHash.js")) {  // Não é nome de arquivo JS
+                println("⚠️  Hash potencial encontrado: $potentialHash")
+                return potentialHash.lowercase()
+            }
+        }
+        
+        // Método 2: Buscar em scripts específicos
+        val scriptPattern = Regex("""<script[^>]*>(.*?)</script>""", RegexOption.DOT_MATCHES_ALL)
+        val scripts = scriptPattern.findAll(html).toList()
+        
+        for (script in scripts) {
+            val content = script.groups[1]?.value ?: continue
+            if (content.contains("FirePlayer")) {
+                // Buscar primeiro hash MD5 após FirePlayer
+                val firePlayerPattern = Regex("""FirePlayer.*?['"]([a-fA-F0-9]{32})['"]""")
+                val fpMatch = firePlayerPattern.find(content)
+                if (fpMatch != null) {
+                    return fpMatch.groupValues[1].lowercase()
+                }
+            }
+        }
+        
+        return ""
+    }
+
+    /**
+     * Passo 2: Fazer POST para API com o hash
+     */
+    private suspend fun getVideoFromApi(videoHash: String, refererUrl: String): String? {
         return try {
-            val apiUrl = "$API_DOMAIN/player/index.php?data=$videoId&do=getVideo"
+            val apiUrl = "$API_DOMAIN/player/index.php?data=$videoHash&do=getVideo"
             
-            // Headers simplificados
-            val headers = HashMap<String, String>().apply {
-                put("X-Requested-With", "XMLHttpRequest")
-                put("Referer", "$API_DOMAIN/e/$videoId")
-                put("Origin", API_DOMAIN)
-                put("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
-                put("User-Agent", USER_AGENT)
-                put("Accept", "application/json, text/javascript, */*; q=0.01")
-                put("Accept-Language", "pt-BR,pt;q=0.9,en;q=0.8")
-            }
-            
-            // Dados do POST
-            val data = HashMap<String, String>().apply {
-                put("hash", videoId)
-                put("r", refererUrl)
-            }
+            // Dados do POST exatamente como no cURL
+            val postData = mapOf(
+                "hash" to videoHash,
+                "r" to refererUrl
+            )
             
             println("📤 POST para: $apiUrl")
-            val response = app.post(apiUrl, headers = headers, data = data)
+            println("📦 Dados: $postData")
+            
+            // Adicionar referer aos headers
+            val finalHeaders = API_HEADERS.toMutableMap()
+            finalHeaders["referer"] = "$API_DOMAIN/"
+            
+            val response = app.post(apiUrl, headers = finalHeaders, data = postData)
             
             println("📥 Status: ${response.code}")
+            
             if (response.code != 200) {
-                println("❌ Status inválido")
+                println("❌ Status inválido: ${response.code}")
                 return null
             }
             
@@ -132,10 +233,10 @@ object NexflixEmbedExtractor {
                 return null
             }
             
-            println("📄 Resposta: ${jsonText.take(300)}...")
+            println("📄 Resposta JSON: ${jsonText.take(300)}...")
             
             // Parse da resposta
-            parseResponse(jsonText)
+            parseApiResponse(jsonText)
             
         } catch (e: Exception) {
             println("❌ Erro na API: ${e.message}")
@@ -144,106 +245,89 @@ object NexflixEmbedExtractor {
     }
 
     /**
-     * Parse da resposta JSON
+     * Parse da resposta JSON da API
      */
-    private fun parseResponse(jsonText: String): String? {
+    private fun parseApiResponse(jsonText: String): String? {
         return try {
-            val json = try {
-                JSONObject(jsonText)
-            } catch (e: Exception) {
-                // Tentar extrair JSON de string
-                val match = Regex("""(\{.*\})""", RegexOption.DOT_MATCHES_ALL).find(jsonText)
-                if (match != null) {
-                    JSONObject(match.groups[1]?.value ?: jsonText)
-                } else {
-                    println("❌ JSON inválido")
-                    return null
-                }
-            }
+            val json = JSONObject(jsonText)
             
-            // Procurar em diferentes caminhos
-            val paths = listOf(
-                listOf("securedLink"),
-                listOf("videoSource"),
-                listOf("url"),
-                listOf("link"),
-                listOf("data", "url"),
-                listOf("sources", "0", "file"),
-                listOf("sources", "0", "url")
-            )
-            
-            for (path in paths) {
-                var current: Any? = json
-                for (key in path) {
-                    current = when (current) {
-                        is JSONObject -> if (current.has(key)) current.get(key) else null
-                        else -> null
-                    }
-                    if (current == null) break
-                }
-                
-                if (current is String && current.isNotBlank()) {
-                    var url = current
-                    
-                    // Corrigir URL se necessário
-                    if (url.startsWith("//")) {
-                        url = "https:$url"
-                    } else if (url.startsWith("/")) {
-                        url = "$API_DOMAIN$url"
-                    }
-                    
-                    if (url.contains(".m3u8") || url.contains(".mp4") || url.contains(".txt")) {
-                        println("✅ Link encontrado: ${url.take(80)}...")
-                        return url
+            // Prioridade 1: securedLink (URL M3U8 direta)
+            if (json.has("securedLink")) {
+                val securedLink = json.getString("securedLink")
+                if (securedLink.isNotBlank() && (securedLink.contains(".m3u8") || securedLink.contains(".txt"))) {
+                    println("✅ Usando securedLink")
+                    // Converter .txt para .m3u8 se necessário
+                    return if (securedLink.contains(".txt")) {
+                        securedLink.replace(".txt", ".m3u8")
+                    } else {
+                        securedLink
                     }
                 }
             }
             
-            // Procurar por regex
-            val regex = Regex("""https?://[^"\s]+\.(?:m3u8|mp4|txt)[^"\s]*""")
-            val match = regex.find(jsonText)
-            match?.groups?.get(0)?.value
+            // Prioridade 2: videoSource (pode ser .txt que vira .m3u8)
+            if (json.has("videoSource")) {
+                val videoSource = json.getString("videoSource")
+                if (videoSource.isNotBlank()) {
+                    println("⚠️  Usando videoSource (fallback)")
+                    if (videoSource.contains(".txt")) {
+                        return videoSource.replace(".txt", ".m3u8")
+                    }
+                    return videoSource
+                }
+            }
+            
+            // Prioridade 3: hls com caminho específico
+            if (json.has("hls") && json.getBoolean("hls")) {
+                // Tentar construir URL baseada no padrão comum
+                val m3u8Url = "$API_DOMAIN/cdn/hls/VIDEO_ID/master.m3u8"
+                println("⚠️  Tentando padrão HLS comum")
+                return m3u8Url
+            }
+            
+            println("❌ Nenhum link válido encontrado no JSON")
+            println("📄 JSON completo: $jsonText")
+            null
             
         } catch (e: Exception) {
-            println("❌ Erro ao parsear: ${e.message}")
+            println("❌ Erro ao parsear JSON: ${e.message}")
             null
         }
     }
 
     /**
-     * Cria e envia o link do vídeo
+     * Passo 3: Criar link do vídeo
      */
     private suspend fun createVideoLink(
-        videoUrl: String,
+        m3u8Url: String,
         name: String,
-        videoId: String,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         return try {
             println("🎬 Preparando vídeo: $name")
             
             // Headers para o player
-            val headers = HashMap<String, String>().apply {
-                put("User-Agent", USER_AGENT)
-                put("Accept", "*/*")
-                put("Accept-Language", "pt-BR")
-                put("Referer", "$API_DOMAIN/")
-                put("Origin", API_DOMAIN)
-            }
+            val playerHeaders = mapOf(
+                "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
+                "Accept" to "*/*",
+                "Accept-Language" to "pt-BR",
+                "Referer" to "$API_DOMAIN/",
+                "Origin" to API_DOMAIN
+            )
             
             // Se for M3U8, usar M3u8Helper
-            if (videoUrl.contains(".m3u8")) {
-                println("📦 Processando M3U8...")
+            if (m3u8Url.contains(".m3u8")) {
+                println("📦 Processando stream M3U8...")
                 try {
                     val links = M3u8Helper.generateM3u8(
                         source = "Nexflix",
-                        streamUrl = videoUrl,
+                        streamUrl = m3u8Url,
                         referer = "$API_DOMAIN/",
-                        headers = headers
+                        headers = playerHeaders
                     )
                     
                     if (links.isNotEmpty()) {
-                        println("✅ ${links.size} links gerados")
+                        println("✅ ${links.size} qualidades geradas")
                         links.forEach { callback(it) }
                         return true
                     }
@@ -252,27 +336,27 @@ object NexflixEmbedExtractor {
                 }
             }
             
-            // Fallback: link direto
+            // Fallback: link direto simples
             println("⚠️  Usando link direto...")
             
             val quality = when {
-                name.contains("4k", ignoreCase = true) || name.contains("2160") -> 2160
+                name.contains("4k", true) || name.contains("2160") -> 2160
                 name.contains("1080") -> 1080
                 name.contains("720") -> 720
-                name.contains("hd", ignoreCase = true) -> 1080
-                name.contains("sd", ignoreCase = true) -> 480
+                name.contains("hd", true) -> 1080
+                name.contains("sd", true) -> 480
                 else -> 720
             }
             
             val link = newExtractorLink(
                 source = "Nexflix",
                 name = name,
-                url = videoUrl,
+                url = m3u8Url,
                 type = ExtractorLinkType.M3U8
             ) {
                 this.referer = "$API_DOMAIN/"
                 this.quality = quality
-                this.headers = headers
+                this.headers = playerHeaders
             }
             
             callback(link)
