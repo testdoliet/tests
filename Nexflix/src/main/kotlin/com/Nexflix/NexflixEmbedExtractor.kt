@@ -14,20 +14,7 @@ object NexflixEmbedExtractor {
     private const val API_DOMAIN = "https://comprarebom.xyz"
     
     // Headers padrão para simular navegador
-    private val DEFAULT_HEADERS = mapOf(
-        "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
-        "Accept" to "*/*",
-        "Accept-Language" to "pt-BR,pt;q=0.9,en;q=0.8",
-        "Accept-Encoding" to "gzip, deflate, br",
-        "DNT" to "1",
-        "Connection" to "keep-alive",
-        "Upgrade-Insecure-Requests" to "1",
-        "Sec-Fetch-Dest" to "document",
-        "Sec-Fetch-Mode" to "navigate",
-        "Sec-Fetch-Site" to "none",
-        "Sec-Fetch-User" to "?1",
-        "Cache-Control" to "max-age=0"
-    )
+    private val DEFAULT_HEADERS = createDefaultHeaders()
 
     suspend fun extractVideoLinks(
         url: String,
@@ -63,6 +50,26 @@ object NexflixEmbedExtractor {
             e.printStackTrace()
             false
         }
+    }
+
+    /**
+     * Cria headers padrão
+     */
+    private fun createDefaultHeaders(): Map<String, String> {
+        return mapOf(
+            "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
+            "Accept" to "*/*",
+            "Accept-Language" to "pt-BR,pt;q=0.9,en;q=0.8",
+            "Accept-Encoding" to "gzip, deflate, br",
+            "DNT" to "1",
+            "Connection" to "keep-alive",
+            "Upgrade-Insecure-Requests" to "1",
+            "Sec-Fetch-Dest" to "document",
+            "Sec-Fetch-Mode" to "navigate",
+            "Sec-Fetch-Site" to "none",
+            "Sec-Fetch-User" to "?1",
+            "Cache-Control" to "max-age=0"
+        )
     }
 
     /**
@@ -268,17 +275,7 @@ object NexflixEmbedExtractor {
             val apiUrl = "$API_DOMAIN/player/index.php?data=$videoId&do=getVideo"
             
             // Headers específicos para a API
-            val apiHeaders = mapOf(
-                "X-Requested-With" to "XMLHttpRequest",
-                "Referer" to "$API_DOMAIN/e/$videoId",
-                "Origin" to API_DOMAIN,
-                "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8",
-                "User-Agent" to DEFAULT_HEADERS["User-Agent"] ?: "Mozilla/5.0",
-                "Accept" to "application/json, text/javascript, */*; q=0.01",
-                "Accept-Language" to "pt-BR,pt;q=0.9,en;q=0.8",
-                "Cache-Control" to "no-cache",
-                "Pragma" to "no-cache"
-            )
+            val apiHeaders = createApiHeaders(videoId)
             
             // Body da requisição
             val postData = mapOf(
@@ -312,6 +309,23 @@ object NexflixEmbedExtractor {
             println("❌ Erro na chamada da API: ${e.message}")
             null
         }
+    }
+
+    /**
+     * Cria headers para a API
+     */
+    private fun createApiHeaders(videoId: String): Map<String, String> {
+        return mapOf(
+            "X-Requested-With" to "XMLHttpRequest",
+            "Referer" to "$API_DOMAIN/e/$videoId",
+            "Origin" to API_DOMAIN,
+            "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8",
+            "User-Agent" to DEFAULT_HEADERS["User-Agent"] ?: "Mozilla/5.0",
+            "Accept" to "application/json, text/javascript, */*; q=0.01",
+            "Accept-Language" to "pt-BR,pt;q=0.9,en;q=0.8",
+            "Cache-Control" to "no-cache",
+            "Pragma" to "no-cache"
+        )
     }
 
     /**
@@ -405,16 +419,7 @@ object NexflixEmbedExtractor {
             println("🎬 Preparando player para: $name")
             
             // Headers para o player
-            val playerHeaders = mapOf(
-                "User-Agent" to DEFAULT_HEADERS["User-Agent"] ?: "Mozilla/5.0",
-                "Accept" to "*/*",
-                "Accept-Language" to "pt-BR",
-                "Accept-Encoding" to "identity",
-                "Referer" to "$API_DOMAIN/",
-                "Origin" to API_DOMAIN,
-                "Sec-Fetch-Mode" to "no-cors",
-                "Sec-Fetch-Site" to "cross-site"
-            )
+            val playerHeaders = createPlayerHeaders()
             
             // Verificar se é M3U8
             if (m3u8Url.contains(".m3u8")) {
@@ -461,6 +466,22 @@ object NexflixEmbedExtractor {
             println("❌ Erro ao criar link: ${e.message}")
             false
         }
+    }
+
+    /**
+     * Cria headers para o player
+     */
+    private fun createPlayerHeaders(): Map<String, String> {
+        return mapOf(
+            "User-Agent" to DEFAULT_HEADERS["User-Agent"] ?: "Mozilla/5.0",
+            "Accept" to "*/*",
+            "Accept-Language" to "pt-BR",
+            "Accept-Encoding" to "identity",
+            "Referer" to "$API_DOMAIN/",
+            "Origin" to API_DOMAIN,
+            "Sec-Fetch-Mode" to "no-cors",
+            "Sec-Fetch-Site" to "cross-site"
+        )
     }
 
     /**
