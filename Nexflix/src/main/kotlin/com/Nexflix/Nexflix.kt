@@ -99,7 +99,64 @@ class NexFlix : MainAPI() {
 }
 }
 
-
+// --- Search ---
+override suspend fun search(query: String): List<SearchResponse> {
+    val searchUrl = "$mainUrl/search.php?q=${java.net.URLEncoder.encode(query, "UTF-8")}"
+    println("🔍 Buscando em: $searchUrl")
+    
+    val document = app.get(searchUrl).document
+    
+    // DEBUG: Verificar conteúdo da página
+    println("🔍 Elementos article encontrados: ${document.select("article").size}")
+    println("🔍 Elementos article.nx-card: ${document.select("article.nx-card").size}")
+    println("🔍 Elementos article.card: ${document.select("article.card").size}")
+    
+    // Verificar se há resultados
+    val hasResults = document.selectFirst(".nx-head h1")?.text()?.contains("Resultados") == true
+    println("📌 Página tem resultados? $hasResults")
+    
+    // Listar todos os links <a> dentro de .nx-grid para debug
+    document.select(".nx-grid a").forEachIndexed { index, aTag ->
+        println("🔗 Link #${index + 1}: ${aTag.attr("href")}")
+        println("   Título do link: ${aTag.attr("title")}")
+        println("   Texto do link: ${aTag.text()}")
+    }
+    
+    val results = document.select(".nx-grid a.nx-link").mapNotNull { aTag ->
+        println("\n🔍 Processando link: ${aTag.attr("href")}")
+        
+        // O título está no .nx-title dentro do article
+        val article = aTag.selectFirst("article")
+        val title = article?.selectFirst(".nx-title")?.text() 
+            ?: aTag.attr("title")
+            ?: return@mapNotNull null
+        
+        println("✅ Título encontrado: $title")
+        
+        val href = aTag.attr("href")
+        
+        // Imagem: está no img.nx-thumb dentro do article
+        val imgElement = article?.selectFirst("img.nx-thumb")
+        val posterUrl = imgElement?.attr("src")?.let { fixUrl(it) }
+        println("🖼️ Imagem encontrada: $posterUrl")
+        
+        val type = getType(href)
+        println("🎬 Tipo: $type")
+        
+        if (type == TvType.Movie) {
+            newMovieSearchResponse(title, fixUrl(href), type) { 
+                this.posterUrl = posterUrl 
+            }
+        } else {
+            newTvSeriesSearchResponse(title, fixUrl(href), type) { 
+                this.posterUrl = posterUrl 
+            }
+        }
+    }
+    
+    println("✅ Resultados encontrados: ${results.size}")
+    return results
+}
     // --- Load ---
     override suspend fun load(url: String): LoadResponse? {
         val responseText = app.get(url).text
@@ -126,73 +183,7 @@ class NexFlix : MainAPI() {
             createLoadResponseFromSite(document, responseText, url, title, year, desc, poster, isSerie, recommendations)
 }
     }
-// --- Search ---
-override suspend fun search(query: String): List<SearchResponse> {
-    val searchUrl = "$mainUrl/search.php?q=${java.net.URLEncoder.encode(query, "UTF-8")}"
-    println("🔍 Buscando em: $searchUrl")
-    
-    val response = app.get(searchUrl)
-    val document = response.document
-    
-    // DEBUG: Verificar conteúdo da página
-    println("📄 Tamanho do HTML: ${response.text.length}")
-    println("🔍 Elementos article encontrados: ${document.select("article").size}")
-    println("🔍 Elementos article.nx-card: ${document.select("article.nx-card").size}")
-    println("🔍 Elementos article.card: ${document.select("article.card").size}")
-    
-    // DEBUG: Mostrar algumas linhas do HTML
-    val html = response.text
-    val searchIndex = html.indexOf("nx-grid")
-    if (searchIndex > 0) {
-        val start = max(0, searchIndex - 200)
-        val end = min(html.length, searchIndex + 1000)
-        println("\n📄 Trecho do HTML (nx-grid):")
-        println("=".repeat(80))
-        println(html.substring(start, end))
-        println("=".repeat(80))
-    }
-    
-    val results = document.select("article.nx-card, article.card").mapNotNull { element ->
-        println("\n🔍 Processando elemento: ${element.className()}")
-        println("🔍 HTML do elemento: ${element.outerHtml().take(300)}...")
-        
-        val aTag = element.selectFirst("a") ?: return@mapNotNull null
-        println("🔍 Link encontrado: ${aTag.attr("href")}")
-        
-        // Para nx-card, o título está em .nx-title
-        // Para card, o título está em .ci-title ou .name
-        val title = element.selectFirst(".nx-title")?.text() 
-            ?: element.selectFirst(".ci-title")?.text() 
-            ?: element.selectFirst(".name")?.text() 
-            ?: aTag.attr("title")
-            ?: return@mapNotNull null
-        
-        println("✅ Título encontrado: $title")
-        
-        val href = aTag.attr("href")
-        
-        // Imagem: Pode estar em img.nx-thumb (nova) ou img (antiga)
-        val imgElement = element.selectFirst("img.nx-thumb") ?: element.selectFirst("img")
-        val posterUrl = imgElement?.attr("src")?.let { fixUrl(it) }
-        println("🖼️ Imagem encontrada: $posterUrl")
-        
-        val type = getType(href)
-        println("🎬 Tipo: $type")
-        
-        if (type == TvType.Movie) {
-            newMovieSearchResponse(title, fixUrl(href), type) { 
-                this.posterUrl = posterUrl 
-            }
-        } else {
-            newTvSeriesSearchResponse(title, fixUrl(href), type) { 
-                this.posterUrl = posterUrl 
-            }
-        }
-    }
-    
-    println("✅ Resultados encontrados: ${results.size}")
-    return results
-}
+
     // --- Extratores e Helpers ---
     private fun extractEpisodesFromJson(html: String): List<Episode> {
         val episodes = mutableListOf<Episode>()
