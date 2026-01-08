@@ -7,7 +7,7 @@ import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import org.json.JSONObject
 
-object NexflixExtractor {
+object NexflixEmbedExtractor {
     private const val API_DOMAIN = "https://comprarebom.xyz"
     
     private val API_HEADERS = mapOf(
