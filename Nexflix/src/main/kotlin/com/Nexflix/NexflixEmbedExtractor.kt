@@ -499,72 +499,99 @@ private fun debugHtmlForHash(html: String) {
      * Passo 4: Criar link do vídeo
      */
     private suspend fun createVideoLink(
-        m3u8Url: String,
-        name: String,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        return try {
-            println("🎬 Criando link para: $name")
-            
-            val playerHeaders = mapOf(
-                "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
-                "Accept" to "*/*",
-                "Accept-Language" to "pt-BR",
-                "Referer" to "$API_DOMAIN/",
-                "Origin" to API_DOMAIN
-            )
-            
-            if (m3u8Url.contains(".m3u8")) {
-                println("📦 Processando M3U8...")
-                try {
-                    val links = M3u8Helper.generateM3u8(
-                        source = "Nexflix",
-                        streamUrl = m3u8Url,
-                        referer = "$API_DOMAIN/",
-                        headers = playerHeaders
-                    )
+    m3u8Url: String,
+    name: String,
+    callback: (ExtractorLink) -> Unit
+): Boolean {
+    return try {
+        println("🎬 Criando link para: $name")
+        
+        val playerHeaders = mapOf(
+            "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
+            "Accept" to "*/*",
+            "Accept-Language" to "pt-BR",
+            "Referer" to "$API_DOMAIN/",
+            "Origin" to API_DOMAIN
+        )
+        
+        if (m3u8Url.contains(".m3u8")) {
+            println("📦 Processando M3U8...")
+            try {
+                val allLinks = M3u8Helper.generateM3u8(
+                    source = "Nexflix",
+                    streamUrl = m3u8Url,
+                    referer = "$API_DOMAIN/",
+                    headers = playerHeaders
+                )
+                
+                if (allLinks.isNotEmpty()) {
+                    println("✅ ${allLinks.size} qualidades geradas no total")
                     
-                    if (links.isNotEmpty()) {
-                        println("✅ ${links.size} qualidades geradas")
-                        links.forEach { callback(it) }
-                        return true
+                    // FILTRAR: Manter apenas "Nexflix" (sem qualidade especificada)
+                    val filteredLinks = allLinks.filter { link ->
+                        // Verificar se é exatamente "Nexflix" ou variações
+                        val linkName = link.name.lowercase().trim()
+                        val keep = linkName == "nexflix" || 
+                                   linkName.contains("nexflix") && !linkName.matches(Regex(".*\\d+p.*"))
+                        
+                        if (!keep) {
+                            println("🔇 Removendo qualidade sem áudio: '${link.name}'")
+                        } else {
+                            println("🔊 Mantendo qualidade com áudio: '${link.name}' (${link.quality}p)")
+                        }
+                        
+                        keep
                     }
-                } catch (e: Exception) {
-                    println("⚠️  Erro no M3u8Helper: ${e.message}")
+                    
+                    // Se não encontrou nenhum "Nexflix", usar o primeiro link
+                    val finalLinks = if (filteredLinks.isEmpty()) {
+                        println("⚠️  Nenhum link 'Nexflix' encontrado, usando a primeira qualidade")
+                        listOf(allLinks.first())
+                    } else {
+                        filteredLinks
+                    }
+                    
+                    println("🎯 ${finalLinks.size} qualidades com áudio disponíveis:")
+                    finalLinks.forEach { link ->
+                        println("   → '${link.name}' (${link.quality}p)")
+                    }
+                    
+                    finalLinks.forEach { callback(it) }
+                    return true
                 }
+            } catch (e: Exception) {
+                println("⚠️  Erro no M3u8Helper: ${e.message}")
             }
-            
-            println("⚠️  Usando link direto...")
-            
-            val quality = when {
-                name.contains("4k", true) || name.contains("2160") -> 2160
-                name.contains("1080") -> 1080
-                name.contains("720") -> 720
-                name.contains("hd", true) -> 1080
-                name.contains("sd", true) -> 480
-                else -> 720
-            }
-            
-            val link = newExtractorLink(
-                source = "Nexflix",
-                name = name,
-                url = m3u8Url,
-                type = ExtractorLinkType.M3U8
-            ) {
-                this.referer = "$API_DOMAIN/"
-                this.quality = quality
-                this.headers = playerHeaders
-            }
-            
-            callback(link)
-            true
-            
-        } catch (e: Exception) {
-            println("❌ Erro ao criar link: ${e.message}")
-            false
         }
+        
+        println("⚠️  Usando link direto...")
+        
+        val quality = when {
+            name.contains("4k", true) || name.contains("2160") -> 2160
+            name.contains("1080") -> 1080
+            name.contains("720") -> 720
+            name.contains("hd", true) -> 1080
+            name.contains("sd", true) -> 480
+            else -> 720
+        }
+        
+        val link = newExtractorLink(
+            source = "Nexflix",
+            name = name,
+            url = m3u8Url,
+            type = ExtractorLinkType.M3U8
+        ) {
+            this.referer = "$API_DOMAIN/"
+            this.quality = quality
+            this.headers = playerHeaders
+        }
+        
+        callback(link)
+        true
+        
+    } catch (e: Exception) {
+        println("❌ Erro ao criar link: ${e.message}")
+        false
+    }
     }
 }
-
-
-
