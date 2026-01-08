@@ -214,22 +214,6 @@ class Doramogo : MainAPI() {
                 this.year = year
                 this.plot = description
                 this.tags = tags
-                
-                // Status da série (usando ShowStatus como no AnimeFire)
-                castsInfo["status"]?.let { statusText ->
-                    this.status = when {
-                        statusText.contains("Em Produção", ignoreCase = true) -> ShowStatus.Ongoing
-                        statusText.contains("Concluído", ignoreCase = true) -> ShowStatus.Completed
-                        else -> null
-                    }
-                }
-                
-                // Informações de áudio
-                castsInfo["áudio"]?.let { audioText ->
-                    if (audioText.contains("Dublado", ignoreCase = true)) {
-                        addDubStatus(dubExist = true, subExist = audioText.contains("Legendado", ignoreCase = true))
-                    }
-                }
             }
         } else {
             // Para filmes
@@ -242,13 +226,6 @@ class Doramogo : MainAPI() {
                 // Duração
                 castsInfo["duraçã"]?.let { durationText ->
                     this.duration = durationText.parseDuration()
-                }
-                
-                // Informações de áudio
-                castsInfo["áudio"]?.let { audioText ->
-                    if (audioText.contains("Dublado", ignoreCase = true)) {
-                        addDubStatus(dubExist = true, subExist = audioText.contains("Legendado", ignoreCase = true))
-                    }
                 }
             }
         }
