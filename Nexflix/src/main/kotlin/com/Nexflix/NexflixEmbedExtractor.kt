@@ -30,7 +30,7 @@ object NexflixExtractor {
     )
 
     suspend fun extractVideoLinks(
-        url: String, // URL do player: https://nexflix.vip/player.php?type=serie&id=122226&season=1&episode=1
+        url: String,
         name: String,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
@@ -74,14 +74,7 @@ object NexflixExtractor {
         }
     }
 
-    /**
-     * Passo 1: Extrair ID da URL do player
-     */
     private fun extractIdFromPlayerUrl(playerUrl: String): String {
-        // Exemplos de URLs:
-        // https://nexflix.vip/player.php?type=serie&id=122226&season=1&episode=1
-        // https://nexflix.vip/player.php?type=filme&id=tt32212611
-        
         val idPattern = Regex("""[?&]id=([^&]+)""")
         val match = idPattern.find(playerUrl)
         
@@ -95,12 +88,8 @@ object NexflixExtractor {
         }
     }
 
-    /**
-     * Passo 2: Obter hash MD5 do player usando o ID
-     */
     private suspend fun getHashFromPlayer(videoId: String, refererUrl: String): String {
         return try {
-            // URL do player: https://comprarebom.xyz/e/tt32212611
             val playerUrl = "$API_DOMAIN/e/$videoId"
             println("🎬 Acessando player: $playerUrl")
             
@@ -125,6 +114,9 @@ object NexflixExtractor {
             
             println("📄 Tamanho do HTML: ${html.length} chars")
             
+            // DEBUG: Mostrar parte do HTML onde deve estar o hash
+            debugHtmlForHash(html)
+            
             // Extrair hash MD5 do JavaScript
             extractHashFromHtml(html)
             
@@ -134,66 +126,168 @@ object NexflixExtractor {
         }
     }
 
-    private fun extractHashFromHtml(html: String): String {
-        // Padrões para hash MD5 no JavaScript
+    /**
+     * DEBUG: Mostrar partes do HTML onde o hash pode estar
+     */
+    private fun debugHtmlForHash(html: String) {
+        println("\n=== DEBUG HTML PARA HASH ===")
         
-        // 1. skin|HASH|FirePlayer
+        // 1. Procurar por "FirePlayer" no HTML
+        val firePlayerIndex = html.indexOf("FirePlayer")
+        if (firePlayerIndex > 0) {
+            val start = maxOf(0, firePlayerIndex - 100)
+            val end = minOf(html.length, firePlayerIndex + 300)
+            val context = html.substring(start, end)
+            println("\n🔍 Contexto ao redor de 'FirePlayer':")
+            println("...${context}...")
+        } else {
+            println("❌ 'FirePlayer' não encontrado no HTML")
+        }
+        
+        // 2. Procurar por "eval(function" (código ofuscado)
+        val evalIndex = html.indexOf("eval(function")
+        if (evalIndex > 0) {
+            val start = maxOf(0, evalIndex)
+            val end = minOf(html.length, evalIndex + 800)
+            val context = html.substring(start, end)
+            println("\n🔍 Contexto ao redor de 'eval(function':")
+            println("${context}...")
+        } else {
+            println("❌ 'eval(function' não encontrado no HTML")
+        }
+        
+        // 3. Procurar por "skin|" (padrão visto)
+        val skinIndex = html.indexOf("skin|")
+        if (skinIndex > 0) {
+            val start = maxOf(0, skinIndex - 50)
+            val end = minOf(html.length, skinIndex + 200)
+            val context = html.substring(start, end)
+            println("\n🔍 Contexto ao redor de 'skin|':")
+            println("...${context}...")
+        }
+        
+        // 4. Procurar todos os hashes MD5 no HTML
+        val md5Pattern = Regex("""[a-fA-F0-9]{32}""")
+        val allHashes = md5Pattern.findAll(html).toList()
+        
+        println("\n🔍 Todos os hashes MD5 encontrados no HTML:")
+        if (allHashes.isEmpty()) {
+            println("❌ Nenhum hash MD5 encontrado")
+        } else {
+            allHashes.forEachIndexed { index, match ->
+                val hash = match.value
+                // Pegar contexto ao redor do hash
+                val start = maxOf(0, match.range.first - 30)
+                val end = minOf(html.length, match.range.last + 50)
+                val context = html.substring(start, end)
+                
+                println("\nHash #${index + 1}: $hash")
+                println("Contexto: ...${context}...")
+                
+                // Verificar se parece ser um hash de vídeo
+                when {
+                    context.contains("FirePlayer") -> println("✅ PRÓXIMO A FirePlayer!")
+                    context.contains("skin") -> println("✅ PRÓXIMO A skin!")
+                    context.contains("|") -> println("✅ TEM | (pipe) próximo")
+                    else -> println("⚠️  Sem indicadores claros")
+                }
+            }
+        }
+        
+        // 5. Procurar por scripts JavaScript
+        val scriptPattern = Regex("""<script[^>]*>(.*?)</script>""", RegexOption.DOT_MATCHES_ALL)
+        val scripts = scriptPattern.findAll(html).toList()
+        
+        println("\n🔍 Scripts encontrados: ${scripts.size}")
+        scripts.forEachIndexed { index, script ->
+            val content = script.groups[1]?.value ?: ""
+            if (content.contains("FirePlayer") || content.contains("eval(")) {
+                println("\nScript #${index + 1} (${content.length} chars) - CONTÉM FirePlayer/eval")
+                // Mostrar início do script
+                val preview = if (content.length > 500) {
+                    content.substring(0, 500) + "..."
+                } else {
+                    content
+                }
+                println("Preview: $preview")
+            }
+        }
+        
+        println("=== FIM DEBUG ===\n")
+    }
+
+    private fun extractHashFromHtml(html: String): String {
+        // Padrão mais específico baseado nos logs: skin|HASH|FirePlayer
         val pattern1 = Regex("""skin\|([a-fA-F0-9]{32})\|FirePlayer""")
         val match1 = pattern1.find(html)
         if (match1 != null) {
             val hash = match1.groupValues[1].lowercase()
-            println("✅ Hash encontrado (padrão 1): $hash")
+            println("✅ Hash encontrado (skin|HASH|FirePlayer): $hash")
             return hash
         }
         
-        // 2. 'HASH'|'FirePlayer'
+        // Padrão alternativo: 'HASH'|'FirePlayer'
         val pattern2 = Regex("""['"]([a-fA-F0-9]{32})['"][\s]*[|,][\s]*['"]FirePlayer['"]""")
         val match2 = pattern2.find(html)
         if (match2 != null) {
             val hash = match2.groupValues[1].lowercase()
-            println("✅ Hash encontrado (padrão 2): $hash")
+            println("✅ Hash encontrado ('HASH'|'FirePlayer'): $hash")
             return hash
         }
         
-        // 3. FirePlayer('HASH',
+        // Padrão: FirePlayer('HASH',
         val pattern3 = Regex("""FirePlayer\s*\(\s*['"]([a-fA-F0-9]{32})['"]""")
         val match3 = pattern3.find(html)
         if (match3 != null) {
             val hash = match3.groupValues[1].lowercase()
-            println("✅ Hash encontrado (padrão 3): $hash")
+            println("✅ Hash encontrado (FirePlayer('HASH')): $hash")
             return hash
         }
         
-        // 4. Dentro de eval(function
+        // Padrão em eval(function
         val pattern4 = Regex("""eval\(function.*?split\('\|'\).*?'([a-fA-F0-9]{32})'""", RegexOption.DOT_MATCHES_ALL)
         val match4 = pattern4.find(html)
         if (match4 != null) {
             val hash = match4.groupValues[1].lowercase()
-            println("✅ Hash encontrado (padrão 4): $hash")
+            println("✅ Hash encontrado (eval/split): $hash")
             return hash
         }
         
-        // 5. Buscar qualquer hash MD5 válido
+        // Buscar qualquer hash MD5 que não seja do CloudFlare
         val md5Pattern = Regex("""[a-fA-F0-9]{32}""")
         val allHashes = md5Pattern.findAll(html).toList()
         
+        // Filtrar hashes inválidos
+        val invalidHashes = listOf(
+            "cd15cbe7772f49c399c6a5babf22c124", // CloudFlare
+            "00000000000000000000000000000000"
+        )
+        
         for (match in allHashes) {
             val hash = match.value.lowercase()
-            // Filtrar hashes conhecidos/inválidos
-            if (hash != "cd15cbe7772f49c399c6a5babf22c124" && // CloudFlare
-                !hash.matches(Regex("""\d+"""))) { // Não é só números
-                println("⚠️  Hash potencial encontrado: $hash")
+            
+            // Ignorar hashes inválidos
+            if (invalidHashes.contains(hash) || hash.matches(Regex("""\d+"""))) {
+                continue
+            }
+            
+            // Pegar contexto para verificar
+            val start = maxOf(0, match.range.first - 20)
+            val end = minOf(html.length, match.range.last + 20)
+            val context = html.substring(start, end)
+            
+            // Verificar se tem indicadores de ser hash de vídeo
+            if (context.contains("|") || context.contains("FirePlayer") || 
+                context.contains("skin") || context.contains(",")) {
+                println("✅ Hash potencial encontrado: $hash (contexto: ...$context...)")
                 return hash
             }
         }
         
-        println("❌ Nenhum hash encontrado no HTML")
+        println("❌ Nenhum hash válido encontrado no HTML")
         return ""
     }
 
-    /**
-     * Passo 3: Obter link M3U8 da API usando o hash
-     */
     private suspend fun getVideoFromApi(videoHash: String, refererUrl: String): String? {
         return try {
             val apiUrl = "$API_DOMAIN/player/index.php?data=$videoHash&do=getVideo"
@@ -204,7 +298,6 @@ object NexflixExtractor {
             )
             
             println("📤 POST para API: $apiUrl")
-            println("📦 Dados: $postData")
             
             val response = app.post(apiUrl, headers = API_HEADERS, data = postData)
             
@@ -218,11 +311,15 @@ object NexflixExtractor {
             val responseText = response.text.trim()
             println("📄 Resposta (${responseText.length} chars): ${responseText.take(200)}...")
             
-            // Verificar se é JSON válido
+            // DEBUG: Mostrar resposta completa se for pequena
+            if (responseText.length < 1000) {
+                println("📄 Resposta completa: $responseText")
+            }
+            
             if (responseText.startsWith("{") && responseText.endsWith("}")) {
                 parseApiResponse(responseText)
             } else {
-                println("❌ Resposta não é JSON: ${responseText.take(100)}")
+                println("❌ Resposta não é JSON")
                 null
             }
             
@@ -236,21 +333,18 @@ object NexflixExtractor {
         return try {
             val json = JSONObject(jsonText)
             
-            // Prioridade 1: securedLink
             if (json.has("securedLink")) {
                 val securedLink = json.getString("securedLink")
                 if (securedLink.isNotBlank()) {
-                    println("✅ securedLink encontrado: ${securedLink.take(80)}...")
+                    println("✅ securedLink: ${securedLink.take(80)}...")
                     return securedLink
                 }
             }
             
-            // Prioridade 2: videoSource (pode ser .txt)
             if (json.has("videoSource")) {
                 val videoSource = json.getString("videoSource")
                 if (videoSource.isNotBlank()) {
-                    println("✅ videoSource encontrado: ${videoSource.take(80)}...")
-                    // Converter .txt para .m3u8 se necessário
+                    println("✅ videoSource: ${videoSource.take(80)}...")
                     return if (videoSource.contains(".txt")) {
                         videoSource.replace(".txt", ".m3u8")
                     } else {
@@ -259,20 +353,8 @@ object NexflixExtractor {
                 }
             }
             
-            // Prioridade 3: hls flag com construção manual
-            if (json.has("hls") && json.getBoolean("hls")) {
-                if (json.has("videoSource")) {
-                    val source = json.getString("videoSource")
-                    if (source.contains("/hls/")) {
-                        val m3u8Url = source.replace(".txt", ".m3u8")
-                        println("⚠️  Construído M3U8: ${m3u8Url.take(80)}...")
-                        return m3u8Url
-                    }
-                }
-            }
-            
             println("❌ Nenhum link encontrado no JSON")
-            println("📄 JSON completo: $jsonText")
+            println("📄 JSON: $jsonText")
             null
             
         } catch (e: Exception) {
@@ -281,9 +363,6 @@ object NexflixExtractor {
         }
     }
 
-    /**
-     * Passo 4: Criar link do vídeo
-     */
     private suspend fun createVideoLink(
         m3u8Url: String,
         name: String,
@@ -300,7 +379,6 @@ object NexflixExtractor {
                 "Origin" to API_DOMAIN
             )
             
-            // Se for M3U8, usar M3u8Helper
             if (m3u8Url.contains(".m3u8")) {
                 println("📦 Processando M3U8...")
                 try {
@@ -321,7 +399,6 @@ object NexflixExtractor {
                 }
             }
             
-            // Fallback: link direto
             println("⚠️  Usando link direto...")
             
             val quality = when {
