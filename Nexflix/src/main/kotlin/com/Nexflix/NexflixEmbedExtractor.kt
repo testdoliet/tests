@@ -7,7 +7,8 @@ import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import org.json.JSONObject
 
-object NexflixEmbedExtractor {
+object NexflixExtractor {
+    private const val PLAYER_DOMAIN = "https://nexembed.xyz"
     private const val API_DOMAIN = "https://comprarebom.xyz"
     
     private val API_HEADERS = mapOf(
@@ -29,24 +30,24 @@ object NexflixEmbedExtractor {
     )
 
     suspend fun extractVideoLinks(
-        url: String, // URL da página do filme: https://nexflix.vip/filme/sob-fogo-2025
+        url: String, // URL do player: https://nexflix.vip/player.php?type=serie&id=122226&season=1&episode=1
         name: String,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         return try {
             println("🔍 Iniciando extração para: $url")
             
-            // 1. Extrair IMDb ID (tt32212611) da página do filme
-            val imdbId = extractImdbIdFromPage(url)
-            if (imdbId.isEmpty()) {
-                println("❌ Não foi possível extrair IMDb ID")
+            // 1. Extrair ID da URL do player
+            val videoId = extractIdFromPlayerUrl(url)
+            if (videoId.isEmpty()) {
+                println("❌ Não foi possível extrair ID da URL")
                 return false
             }
             
-            println("✅ IMDb ID encontrado: $imdbId")
+            println("✅ ID extraído: $videoId")
             
-            // 2. Obter hash do player usando IMDb ID
-            val videoHash = getHashFromPlayer(imdbId, url)
+            // 2. Obter hash do player usando o ID
+            val videoHash = getHashFromPlayer(videoId, url)
             if (videoHash.isEmpty()) {
                 println("❌ Não foi possível obter hash do player")
                 return false
@@ -74,103 +75,40 @@ object NexflixEmbedExtractor {
     }
 
     /**
-     * Passo 1: Extrair IMDb ID (tt32212611) da página do filme
+     * Passo 1: Extrair ID da URL do player
      */
-    private suspend fun extractImdbIdFromPage(movieUrl: String): String {
-        return try {
-            println("📄 Buscando página do filme: $movieUrl")
-            
-            val headers = mapOf(
-                "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
-                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-                "Accept-Language" to "pt-BR",
-                "Referer" to "https://nexflix.vip/",
-                "Upgrade-Insecure-Requests" to "1"
-            )
-            
-            val response = app.get(movieUrl, headers = headers)
-            val html = response.text
-            
-            if (html.isEmpty()) {
-                println("❌ HTML vazio")
-                return ""
-            }
-            
-            // Procurar IMDb ID em iframes ou links
-            extractImdbId(html)
-            
-        } catch (e: Exception) {
-            println("❌ Erro ao buscar página: ${e.message}")
+    private fun extractIdFromPlayerUrl(playerUrl: String): String {
+        // Exemplos de URLs:
+        // https://nexflix.vip/player.php?type=serie&id=122226&season=1&episode=1
+        // https://nexflix.vip/player.php?type=filme&id=tt32212611
+        
+        val idPattern = Regex("""[?&]id=([^&]+)""")
+        val match = idPattern.find(playerUrl)
+        
+        return if (match != null) {
+            val id = match.groupValues[1]
+            println("✅ ID extraído da URL: $id")
+            id
+        } else {
+            println("❌ Não foi possível extrair ID da URL")
             ""
         }
     }
 
-    private fun extractImdbId(html: String): String {
-        // Padrão 1: player.php?type=filme&id=tt32212611
-        val pattern1 = Regex("""player\.php\?type=filme&id=(tt\d+)""")
-        val match1 = pattern1.find(html)
-        if (match1 != null) {
-            val imdbId = match1.groupValues[1]
-            println("✅ IMDb ID encontrado no player.php: $imdbId")
-            return imdbId
-        }
-        
-        // Padrão 2: /e/tt32212611
-        val pattern2 = Regex("""/e/(tt\d+)""")
-        val match2 = pattern2.find(html)
-        if (match2 != null) {
-            val imdbId = match2.groupValues[1]
-            println("✅ IMDb ID encontrado em /e/: $imdbId")
-            return imdbId
-        }
-        
-        // Padrão 3: nexembed.xyz/player.php?type=filme&id=tt32212611
-        val pattern3 = Regex("""nexembed\.xyz/player\.php\?[^"']*id=(tt\d+)""")
-        val match3 = pattern3.find(html)
-        if (match3 != null) {
-            val imdbId = match3.groupValues[1]
-            println("✅ IMDb ID encontrado em nexembed: $imdbId")
-            return imdbId
-        }
-        
-        // Padrão 4: data-id="tt32212611"
-        val pattern4 = Regex("""data-id=["'](tt\d+)["']""")
-        val match4 = pattern4.find(html)
-        if (match4 != null) {
-            val imdbId = match4.groupValues[1]
-            println("✅ IMDb ID encontrado em data-id: $imdbId")
-            return imdbId
-        }
-        
-        // Padrão 5: Qualquer tt\d+ na página
-        val pattern5 = Regex("""(tt\d{7,})""")
-        val matches = pattern5.findAll(html).toList()
-        for (match in matches) {
-            val imdbId = match.value
-            // Verificar se não é parte de outro texto
-            if (imdbId.length in 9..12) { // tt + 7-10 dígitos
-                println("⚠️  IMDb ID potencial encontrado: $imdbId")
-                return imdbId
-            }
-        }
-        
-        println("❌ Nenhum IMDb ID encontrado")
-        return ""
-    }
-
     /**
-     * Passo 2: Obter hash MD5 do player usando IMDb ID
+     * Passo 2: Obter hash MD5 do player usando o ID
      */
-    private suspend fun getHashFromPlayer(imdbId: String, refererUrl: String): String {
+    private suspend fun getHashFromPlayer(videoId: String, refererUrl: String): String {
         return try {
-            val playerUrl = "$API_DOMAIN/e/$imdbId"
+            // URL do player: https://comprarebom.xyz/e/tt32212611
+            val playerUrl = "$API_DOMAIN/e/$videoId"
             println("🎬 Acessando player: $playerUrl")
             
             val headers = mapOf(
                 "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
                 "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
                 "Accept-Language" to "pt-BR",
-                "Referer" to refererUrl,
+                "Referer" to PLAYER_DOMAIN,
                 "Sec-Fetch-Dest" to "iframe",
                 "Sec-Fetch-Mode" to "navigate",
                 "Sec-Fetch-Site" to "cross-site",
@@ -185,8 +123,10 @@ object NexflixEmbedExtractor {
                 return ""
             }
             
-            // Extrair hash MD5 do JavaScript ofuscado
-            extractHashFromPlayerHtml(html)
+            println("📄 Tamanho do HTML: ${html.length} chars")
+            
+            // Extrair hash MD5 do JavaScript
+            extractHashFromHtml(html)
             
         } catch (e: Exception) {
             println("❌ Erro ao acessar player: ${e.message}")
@@ -194,41 +134,60 @@ object NexflixEmbedExtractor {
         }
     }
 
-    private fun extractHashFromPlayerHtml(html: String): String {
-        // Padrão específico visto nos logs: skin|HASH|FirePlayer
-        val patterns = listOf(
-            Regex("""skin\|([a-fA-F0-9]{32})\|FirePlayer"""),
-            Regex("""['"]([a-fA-F0-9]{32})['"][\s]*[|,][\s]*['"]FirePlayer['"]"""),
-            Regex("""FirePlayer.*?['"]([a-fA-F0-9]{32})['"]"""),
-            Regex("""\.split\('\|'\).*?'([a-fA-F0-9]{32})'""", RegexOption.DOT_MATCHES_ALL)
-        )
+    private fun extractHashFromHtml(html: String): String {
+        // Padrões para hash MD5 no JavaScript
         
-        for (pattern in patterns) {
-            val match = pattern.find(html)
-            if (match != null) {
-                val hash = match.groupValues[1].lowercase()
-                if (hash.length == 32) {
-                    println("✅ Hash encontrado: $hash")
-                    return hash
-                }
-            }
+        // 1. skin|HASH|FirePlayer
+        val pattern1 = Regex("""skin\|([a-fA-F0-9]{32})\|FirePlayer""")
+        val match1 = pattern1.find(html)
+        if (match1 != null) {
+            val hash = match1.groupValues[1].lowercase()
+            println("✅ Hash encontrado (padrão 1): $hash")
+            return hash
         }
         
-        // Fallback: buscar qualquer hash MD5 válido
+        // 2. 'HASH'|'FirePlayer'
+        val pattern2 = Regex("""['"]([a-fA-F0-9]{32})['"][\s]*[|,][\s]*['"]FirePlayer['"]""")
+        val match2 = pattern2.find(html)
+        if (match2 != null) {
+            val hash = match2.groupValues[1].lowercase()
+            println("✅ Hash encontrado (padrão 2): $hash")
+            return hash
+        }
+        
+        // 3. FirePlayer('HASH',
+        val pattern3 = Regex("""FirePlayer\s*\(\s*['"]([a-fA-F0-9]{32})['"]""")
+        val match3 = pattern3.find(html)
+        if (match3 != null) {
+            val hash = match3.groupValues[1].lowercase()
+            println("✅ Hash encontrado (padrão 3): $hash")
+            return hash
+        }
+        
+        // 4. Dentro de eval(function
+        val pattern4 = Regex("""eval\(function.*?split\('\|'\).*?'([a-fA-F0-9]{32})'""", RegexOption.DOT_MATCHES_ALL)
+        val match4 = pattern4.find(html)
+        if (match4 != null) {
+            val hash = match4.groupValues[1].lowercase()
+            println("✅ Hash encontrado (padrão 4): $hash")
+            return hash
+        }
+        
+        // 5. Buscar qualquer hash MD5 válido
         val md5Pattern = Regex("""[a-fA-F0-9]{32}""")
         val allHashes = md5Pattern.findAll(html).toList()
         
         for (match in allHashes) {
             val hash = match.value.lowercase()
-            // Filtrar hashes comuns/inválidos
+            // Filtrar hashes conhecidos/inválidos
             if (hash != "cd15cbe7772f49c399c6a5babf22c124" && // CloudFlare
                 !hash.matches(Regex("""\d+"""))) { // Não é só números
-                println("⚠️  Hash potencial: $hash")
+                println("⚠️  Hash potencial encontrado: $hash")
                 return hash
             }
         }
         
-        println("❌ Nenhum hash encontrado no player")
+        println("❌ Nenhum hash encontrado no HTML")
         return ""
     }
 
@@ -245,6 +204,7 @@ object NexflixEmbedExtractor {
             )
             
             println("📤 POST para API: $apiUrl")
+            println("📦 Dados: $postData")
             
             val response = app.post(apiUrl, headers = API_HEADERS, data = postData)
             
@@ -280,7 +240,7 @@ object NexflixEmbedExtractor {
             if (json.has("securedLink")) {
                 val securedLink = json.getString("securedLink")
                 if (securedLink.isNotBlank()) {
-                    println("✅ securedLink encontrado")
+                    println("✅ securedLink encontrado: ${securedLink.take(80)}...")
                     return securedLink
                 }
             }
@@ -289,7 +249,7 @@ object NexflixEmbedExtractor {
             if (json.has("videoSource")) {
                 val videoSource = json.getString("videoSource")
                 if (videoSource.isNotBlank()) {
-                    println("✅ videoSource encontrado")
+                    println("✅ videoSource encontrado: ${videoSource.take(80)}...")
                     // Converter .txt para .m3u8 se necessário
                     return if (videoSource.contains(".txt")) {
                         videoSource.replace(".txt", ".m3u8")
@@ -299,20 +259,20 @@ object NexflixEmbedExtractor {
                 }
             }
             
-            // Prioridade 3: outros campos possíveis
-            val possibleFields = listOf("url", "link", "source", "file", "stream")
-            for (field in possibleFields) {
-                if (json.has(field)) {
-                    val value = json.getString(field)
-                    if (value.isNotBlank() && (value.contains("m3u8") || value.contains("mp4"))) {
-                        println("✅ Campo '$field' encontrado: ${value.take(80)}...")
-                        return value
+            // Prioridade 3: hls flag com construção manual
+            if (json.has("hls") && json.getBoolean("hls")) {
+                if (json.has("videoSource")) {
+                    val source = json.getString("videoSource")
+                    if (source.contains("/hls/")) {
+                        val m3u8Url = source.replace(".txt", ".m3u8")
+                        println("⚠️  Construído M3U8: ${m3u8Url.take(80)}...")
+                        return m3u8Url
                     }
                 }
             }
             
             println("❌ Nenhum link encontrado no JSON")
-            println("📄 JSON: $jsonText")
+            println("📄 JSON completo: $jsonText")
             null
             
         } catch (e: Exception) {
