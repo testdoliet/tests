@@ -224,7 +224,7 @@ return try {
     // Se o extrator falhar, você pode tentar outros métodos aqui
     if (!success) {
         // Seu código fallback aqui...
-        println("❌ NexflixEmbedExtractor falhou")
+        println("❌ NexflixExtractor falhou")
     }
     
     return success
