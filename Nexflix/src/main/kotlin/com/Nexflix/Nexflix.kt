@@ -1,246 +1,362 @@
 package com.Nexflix
 
-import com.lagradost.cloudstream3.*
-import com.lagradost.cloudstream3.utils.*
-import com.lagradost.cloudstream3.LoadResponse.Companion.addActors
-import com.lagradost.cloudstream3.LoadResponse.Companion.addTrailer
 import com.lagradost.cloudstream3.app
-import org.jsoup.nodes.Element
-import com.fasterxml.jackson.annotation.JsonProperty
-import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
-import com.fasterxml.jackson.module.kotlin.readValue
+import com.lagradost.cloudstream3.utils.ExtractorLink
+import com.lagradost.cloudstream3.utils.M3u8Helper
+import com.lagradost.cloudstream3.utils.newExtractorLink
+import com.lagradost.cloudstream3.utils.ExtractorLinkType
+import org.json.JSONObject
+import org.jsoup.Jsoup
 
-class NexFlix : MainAPI() {
-    override var mainUrl = "https://nexflix.vip"
-    override var name = "NexFlix"
-    override val hasMainPage = true
-    override var lang = "pt-br"
-    override val hasDownloadSupport = true
-    override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries)
-    override val usesWebView = false
-
-    private val tmdbImageUrl = "https://image.tmdb.org/t/p"
-    private val TMDB_API_KEY = BuildConfig.TMDB_API_KEY
-    private val TMDB_ACCESS_TOKEN = BuildConfig.TMDB_ACCESS_TOKEN
-    private val mapper = jacksonObjectMapper()
-
-    companion object {
-        private const val SEARCH_PATH = "/search.php?q="
-        // Mantemos as tags apenas para diferenciar a URL, mas a extração será a mesma
-        private const val TAG_DESTAQUE = "&filtro_plugin=destaque"
-        private const val TAG_RECENTE = "&filtro_plugin=recente"
+object NexflixEmbedExtractor {
+    private const val DEFAULT_DOMAIN = "https://comprarebom.xyz"
+    private var currentDomain = DEFAULT_DOMAIN
+    
+    private fun getHeaders(referer: String? = null): Map<String, String> {
+        val headers = mutableMapOf(
+            "accept" to "application/json, text/javascript, */*; q=0.01",
+            "accept-language" to "pt-BR,pt;q=0.9,en;q=0.8",
+            "content-type" to "application/x-www-form-urlencoded; charset=UTF-8",
+            "origin" to currentDomain,
+            "sec-ch-ua" to "\"Chromium\";v=\"127\", \"Not)A;Brand\";v=\"99\"",
+            "sec-ch-ua-mobile" to "?1",
+            "sec-ch-ua-platform" to "\"Android\"",
+            "sec-fetch-dest" to "empty",
+            "sec-fetch-mode" to "cors",
+            "sec-fetch-site" to "same-origin",
+            "user-agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
+            "x-requested-with" to "XMLHttpRequest"
+        )
+        
+        referer?.let { headers["referer"] = it }
+        return headers
     }
 
-    override val mainPage = mainPageOf(
-        "$mainUrl/filmes?tipo_lista=filmes$TAG_DESTAQUE" to "Filmes em Destaque",
-        "$mainUrl/filmes?tipo_lista=filmes$TAG_RECENTE" to "Filmes Recentes",
-        "$mainUrl/series?tipo_lista=series$TAG_DESTAQUE" to "Séries em Destaque",
-        "$mainUrl/series?tipo_lista=series$TAG_RECENTE" to "Séries Recentes"
-    )
-
-    override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        // Limpa a URL (remove nossas tags internas)
-        val cleanUrl = request.data
-            .replace(TAG_DESTAQUE, "")
-            .replace(TAG_RECENTE, "")
-        
-        // Paginação
-        val url = if (page > 1) {
-            if (cleanUrl.contains("?")) "$cleanUrl&page=$page" else "$cleanUrl?page=$page"
-        } else {
-            cleanUrl
-        }
-
-        val document = app.get(url).document
-        val items = ArrayList<SearchResponse>()
-
-        // === EXTRAÇÃO UNIFICADA (AGORA VAI!) ===
-        // Tanto Destaques quanto Recentes usam <article class="card"> com <img> vertical
-        document.select("article.card").forEach { element ->
-            val aTag = element.selectFirst("a") ?: return@forEach
+    suspend fun extractVideoLinks(
+        url: String,
+        name: String,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        return try {
+            println("🔍 Iniciando extração para: $url")
             
-            // Título: tenta pegar do .name, depois do .ci-title, depois do atributo title
-            val title = element.selectFirst(".name")?.text() 
-                ?: element.selectFirst(".ci-title")?.text() 
-                ?: aTag.attr("title")
+            // Primeiro tentar descobrir o domínio correto
+            currentDomain = discoverCorrectDomain(url)
+            println("🌐 Usando domínio: $currentDomain")
             
-            val href = aTag.attr("href")
-            
-            // Imagem: Pega direto do SRC da tag IMG (Vertical/Thumb)
-            val posterUrl = element.selectFirst("img")?.attr("src")?.let { fixUrl(it) }
-            
-            // Ano
-            val year = element.selectFirst(".year")?.text()?.toIntOrNull()
-            
-            val type = getType(href)
-
-            val item = if (type == TvType.Movie) {
-                newMovieSearchResponse(title, fixUrl(href), type) {
-                    this.posterUrl = posterUrl
-                    this.year = year
+            // 1. Buscar página do player
+            val (videoHash, playerHtml) = extractHashAndHtmlFromPlayerPage(url)
+            if (videoHash.isEmpty()) {
+                println("❌ Não foi possível extrair hash")
+                // Tentar extrair de forma alternativa
+                val altHash = extractHashFromHtml(playerHtml)
+                if (altHash.isEmpty()) {
+                    return false
                 }
-            } else {
-                newTvSeriesSearchResponse(title, fixUrl(href), type) {
-                    this.posterUrl = posterUrl
-                    this.year = year
+                return processWithHash(altHash, url, name, callback)
+            }
+            
+            return processWithHash(videoHash, url, name, callback)
+            
+        } catch (e: Exception) {
+            println("❌ Erro na extração: ${e.message}")
+            false
+        }
+    }
+    
+    private suspend fun processWithHash(
+        videoHash: String, 
+        refererUrl: String,
+        name: String,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        println("✅ Hash a ser usado: $videoHash")
+        
+        // 2. Fazer POST para API
+        val m3u8Url = getVideoFromApi(videoHash, refererUrl)
+        if (m3u8Url == null) {
+            println("❌ Não foi possível obter link M3U8")
+            return false
+        }
+        
+        println("✅ Link M3U8: ${m3u8Url.take(80)}...")
+        
+        // 3. Criar link
+        return createVideoLink(m3u8Url, name, callback)
+    }
+
+    /**
+     * Passo 1: Extrair hash e HTML da página
+     */
+    private suspend fun extractHashAndHtmlFromPlayerPage(playerUrl: String): Pair<String, String> {
+        return try {
+            println("📄 Buscando página do player: $playerUrl")
+            
+            val headers = mapOf(
+                "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
+                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+                "Accept-Language" to "pt-BR",
+                "Referer" to "https://nexembed.xyz/",
+                "Sec-Fetch-Dest" to "iframe",
+                "Sec-Fetch-Mode" to "navigate",
+                "Sec-Fetch-Site" to "cross-site",
+                "Upgrade-Insecure-Requests" to "1"
+            )
+            
+            val response = app.get(playerUrl, headers = headers)
+            val html = response.text
+            
+            if (html.isEmpty()) {
+                println("❌ HTML vazio")
+                return Pair("", "")
+            }
+            
+            // Salvar HTML para debug
+            println("📄 Tamanho HTML: ${html.length} chars")
+            
+            // Extrair hash
+            val hash = extractHashFromHtml(html)
+            Pair(hash, html)
+            
+        } catch (e: Exception) {
+            println("❌ Erro ao buscar página: ${e.message}")
+            Pair("", "")
+        }
+    }
+    
+    private fun extractHashFromHtml(html: String): String {
+        // Método 1: Buscar padrão específico visto no exemplo
+        val specificPattern = Regex("""skin\|([a-fA-F0-9]{32})\|FirePlayer""")
+        val specificMatch = specificPattern.find(html)
+        if (specificMatch != null) {
+            val hash = specificMatch.groupValues[1]
+            if (hash.length == 32) {
+                println("✅ Hash encontrado (padrão skin|hash|FirePlayer): $hash")
+                return hash.lowercase()
+            }
+        }
+        
+        // Método 2: Buscar em scripts
+        val doc = Jsoup.parse(html)
+        val scripts = doc.select("script:not([src])")
+        
+        for (script in scripts) {
+            val content = script.html()
+            if (content.contains("FirePlayer") || content.contains("eval(function")) {
+                // Padrão: 'hash'|'FirePlayer'|...
+                val pattern = Regex("""['"]([a-fA-F0-9]{32})['"][\s]*[|,][\s]*['"]FirePlayer['"]""")
+                val match = pattern.find(content)
+                if (match != null) {
+                    val hash = match.groupValues[1]
+                    println("✅ Hash encontrado em script: $hash")
+                    return hash.lowercase()
                 }
             }
-            items.add(item)
         }
-
-        val hasNextPage = document.select(".gd-pagination a:contains(›), .gd-pagination a:contains(»), .page-link.next").isNotEmpty()
-        return newHomePageResponse(request.name, items.distinctBy { it.url }, hasNextPage)
-    }
-
-    private fun getType(url: String): TvType {
-        return when {
-            url.contains("/serie") -> TvType.TvSeries
-            else -> TvType.Movie
-        }
-    }
-
-    // --- Search ---
-    override suspend fun search(query: String): List<SearchResponse> {
-        val searchUrl = "$mainUrl$SEARCH_PATH?q=${java.net.URLEncoder.encode(query, "UTF-8")}"
-        val document = app.get(searchUrl).document
-        return document.select("article.card").mapNotNull { element ->
-            val aTag = element.selectFirst("a") ?: return@mapNotNull null
-            val title = element.selectFirst(".ci-title")?.text() ?: element.selectFirst(".name")?.text() ?: aTag.attr("title")
-            val href = aTag.attr("href")
-            val posterUrl = element.selectFirst("img")?.attr("src")?.let { fixUrl(it) }
-            val type = getType(href)
-            if (type == TvType.Movie) newMovieSearchResponse(title, fixUrl(href), type) { this.posterUrl = posterUrl }
-            else newTvSeriesSearchResponse(title, fixUrl(href), type) { this.posterUrl = posterUrl }
-        }
-    }
-
-    // --- Load ---
-    override suspend fun load(url: String): LoadResponse? {
-        val responseText = app.get(url).text
-        val document = org.jsoup.Jsoup.parse(responseText)
-
-        val title = document.selectFirst(".title-body h1")?.text()?.replace("Assistir", "")?.replace("Online em HD", "")?.trim() ?: return null
-        val year = document.selectFirst(".meta span")?.text()?.toIntOrNull()
-        val poster = (document.selectFirst(".title-poster img")?.attr("src") ?: document.selectFirst("meta[property='og:image']")?.attr("content"))?.let { fixUrl(it) }
-        val desc = document.selectFirst(".desc")?.text()?.trim()
-        val type = getType(url)
-        val isSerie = type == TvType.TvSeries
         
-        val tmdbInfo = searchOnTMDB(title, year, isSerie)
-        val recommendations = document.select(".rail-card").mapNotNull {
-            val rt = it.selectFirst("img")?.attr("alt") ?: return@mapNotNull null
-            val rh = it.selectFirst("a")?.attr("href") ?: return@mapNotNull null
-            val rp = it.selectFirst("img")?.attr("src")
-            newMovieSearchResponse(rt, fixUrl(rh), TvType.Movie) { this.posterUrl = rp }
+        // Método 3: Buscar qualquer hash MD5 próximo a "FirePlayer"
+        val firePlayerPattern = Regex("""FirePlayer.*?['"]([a-fA-F0-9]{32})['"]""")
+        val fpMatch = firePlayerPattern.find(html)
+        if (fpMatch != null) {
+            val hash = fpMatch.groupValues[1]
+            println("✅ Hash próximo a FirePlayer: $hash")
+            return hash.lowercase()
         }
+        
+        // Método 4: Buscar o primeiro hash MD5 válido (não do CloudFlare)
+        val allHashes = Regex("""[a-fA-F0-9]{32}""").findAll(html).toList()
+        for (match in allHashes) {
+            val hash = match.value
+            // Filtrar hashes conhecidos do CloudFlare/outros
+            if (hash != "cd15cbe7772f49c399c6a5babf22c124" && // CloudFlare do log
+                hash != "00000000000000000000000000000000" &&
+                !hash.matches(Regex("""\d+"""))) { // Não é só números
+                println("⚠️  Hash potencial: $hash")
+                return hash.lowercase()
+            }
+        }
+        
+        return ""
+    }
 
-        return if (tmdbInfo != null) {
-            createLoadResponseWithTMDB(tmdbInfo, url, document, responseText, isSerie, recommendations)
-        } else {
-            createLoadResponseFromSite(document, responseText, url, title, year, desc, poster, isSerie, recommendations)
+    /**
+     * Passo 2: Obter vídeo da API
+     */
+    private suspend fun getVideoFromApi(videoHash: String, refererUrl: String): String? {
+        return try {
+            val apiUrl = "$currentDomain/player/index.php?data=$videoHash&do=getVideo"
+            
+            val postData = mapOf(
+                "hash" to videoHash,
+                "r" to refererUrl
+            )
+            
+            println("📤 POST para: $apiUrl")
+            
+            val response = app.post(apiUrl, headers = getHeaders("$currentDomain/"), data = postData)
+            
+            println("📥 Status: ${response.code}")
+            
+            if (response.code != 200) {
+                println("❌ Status inválido: ${response.code}")
+                return null
+            }
+            
+            val responseText = response.text.trim()
+            println("📄 Resposta (${responseText.length} chars): ${responseText.take(300)}")
+            
+            // Verificar se é JSON
+            if (responseText.startsWith("{") && responseText.endsWith("}")) {
+                return parseApiResponse(responseText)
+            } else {
+                println("❌ Resposta não é JSON: ${responseText.take(100)}")
+                return null
+            }
+            
+        } catch (e: Exception) {
+            println("❌ Erro na API: ${e.message}")
+            null
         }
     }
 
-    // --- Extratores e Helpers ---
-    private fun extractEpisodesFromJson(html: String): List<Episode> {
-        val episodes = mutableListOf<Episode>()
-        try {
-            val tmdbId = """const\s+tmdbId\s*=\s*(\d+);""".toRegex().find(html)?.groupValues?.get(1) ?: return emptyList()
-            val jsonMatch = """const\s+episodiosPorTemp\s*=\s*(\{[\s\S]*?\});""".toRegex().find(html)
-            if (jsonMatch != null) {
-                val typeRef = object : com.fasterxml.jackson.core.type.TypeReference<Map<String, List<EpisodeJson>>>() {}
-                val map = mapper.readValue(jsonMatch.groupValues[1], typeRef)
-                map.forEach { (_, epsList) ->
-                    epsList.forEach { ep ->
-                        val epUrl = "$mainUrl/player.php?type=serie&id=$tmdbId&season=${ep.temporada}&episode=${ep.episodio}"
-                        episodes.add(newEpisode(epUrl) {
-                            this.name = ep.titulo ?: "Episódio ${ep.episodio}"
-                            this.season = ep.temporada
-                            this.episode = ep.episodio
-                        })
+    /**
+     * Parse da resposta JSON
+     */
+    private fun parseApiResponse(jsonText: String): String? {
+        return try {
+            val json = JSONObject(jsonText)
+            
+            // Prioridade 1: securedLink
+            if (json.has("securedLink")) {
+                val securedLink = json.getString("securedLink")
+                if (securedLink.isNotBlank()) {
+                    println("✅ securedLink: ${securedLink.take(80)}...")
+                    return securedLink
+                }
+            }
+            
+            // Prioridade 2: videoSource
+            if (json.has("videoSource")) {
+                val videoSource = json.getString("videoSource")
+                if (videoSource.isNotBlank()) {
+                    println("✅ videoSource: ${videoSource.take(80)}...")
+                    // Converter .txt para .m3u8 se necessário
+                    return if (videoSource.contains(".txt")) {
+                        videoSource.replace(".txt", ".m3u8")
+                    } else {
+                        videoSource
                     }
                 }
             }
-        } catch (e: Exception) { e.printStackTrace() }
-        return episodes.sortedWith(compareBy({ it.season }, { it.episode }))
-    }
-
-    private suspend fun createLoadResponseFromSite(doc: org.jsoup.nodes.Document, txt: String, url: String, title: String, year: Int?, plot: String?, poster: String?, isSerie: Boolean, recs: List<SearchResponse>): LoadResponse {
-        val tags = doc.select(".genres .chip").map { it.text() }
-        val playerUrl = doc.selectFirst("iframe.player-iframe")?.attr("src")?.let { fixUrl(it) }
-        return if (isSerie) {
-            newTvSeriesLoadResponse(title, url, TvType.TvSeries, extractEpisodesFromJson(txt)) {
-                this.posterUrl = poster; this.year = year; this.plot = plot; this.tags = tags; this.recommendations = recs
+            
+            // Prioridade 3: URL direta em outros campos
+            val fields = listOf("url", "link", "source", "file", "stream")
+            for (field in fields) {
+                if (json.has(field)) {
+                    val value = json.getString(field)
+                    if (value.isNotBlank() && (value.contains("m3u8") || value.contains("mp4"))) {
+                        println("✅ Campo '$field': ${value.take(80)}...")
+                        return value
+                    }
+                }
             }
-        } else {
-            newMovieLoadResponse(title, url, TvType.Movie, playerUrl ?: url) {
-                this.posterUrl = poster; this.year = year; this.plot = plot; this.tags = tags; this.recommendations = recs
-            }
+            
+            println("❌ Nenhum link encontrado no JSON")
+            println("📄 JSON completo: $jsonText")
+            null
+            
+        } catch (e: Exception) {
+            println("❌ Erro ao parsear JSON: ${e.message}")
+            null
         }
     }
 
-    private suspend fun createLoadResponseWithTMDB(info: TMDBInfo, url: String, doc: org.jsoup.nodes.Document, txt: String, isSerie: Boolean, recs: List<SearchResponse>): LoadResponse {
-        val playerUrl = doc.selectFirst("iframe.player-iframe")?.attr("src")?.let { fixUrl(it) }
-        return if (isSerie) {
-            newTvSeriesLoadResponse(info.title ?: "", url, TvType.TvSeries, extractEpisodesFromJson(txt)) {
-                this.posterUrl = info.posterUrl; this.backgroundPosterUrl = info.backdropUrl; this.year = info.year; this.plot = info.overview; this.tags = info.genres; addActors(info.actors ?: emptyList()); info.youtubeTrailer?.let { addTrailer(it) }; this.recommendations = recs
+    /**
+     * Passo 3: Criar link do vídeo
+     */
+    private suspend fun createVideoLink(
+        m3u8Url: String,
+        name: String,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        return try {
+            println("🎬 Preparando vídeo: $name")
+            
+            // Headers para o player
+            val playerHeaders = mapOf(
+                "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
+                "Accept" to "*/*",
+                "Accept-Language" to "pt-BR",
+                "Referer" to "$currentDomain/",
+                "Origin" to currentDomain
+            )
+            
+            // Se for M3U8, usar M3u8Helper
+            if (m3u8Url.contains(".m3u8")) {
+                println("📦 Processando stream M3U8...")
+                try {
+                    val links = M3u8Helper.generateM3u8(
+                        source = "Nexflix",
+                        streamUrl = m3u8Url,
+                        referer = "$currentDomain/",
+                        headers = playerHeaders
+                    )
+                    
+                    if (links.isNotEmpty()) {
+                        println("✅ ${links.size} qualidades geradas")
+                        links.forEach { callback(it) }
+                        return true
+                    }
+                } catch (e: Exception) {
+                    println("⚠️  Erro no M3u8Helper: ${e.message}")
+                }
             }
-        } else {
-            newMovieLoadResponse(info.title ?: "", url, TvType.Movie, playerUrl ?: url) {
-                this.posterUrl = info.posterUrl; this.backgroundPosterUrl = info.backdropUrl; this.year = info.year; this.plot = info.overview; this.tags = info.genres; this.duration = info.duration; addActors(info.actors ?: emptyList()); info.youtubeTrailer?.let { addTrailer(it) }; this.recommendations = recs
+            
+            // Fallback: link direto simples
+            println("⚠️  Usando link direto...")
+            
+            val quality = when {
+                name.contains("4k", true) || name.contains("2160") -> 2160
+                name.contains("1080") -> 1080
+                name.contains("720") -> 720
+                name.contains("hd", true) -> 1080
+                name.contains("sd", true) -> 480
+                else -> 720
             }
+            
+            val link = newExtractorLink(
+                source = "Nexflix",
+                name = name,
+                url = m3u8Url,
+                type = ExtractorLinkType.M3U8
+            ) {
+                this.referer = "$currentDomain/"
+                this.quality = quality
+                this.headers = playerHeaders
+            }
+            
+            callback(link)
+            true
+            
+        } catch (e: Exception) {
+            println("❌ Erro ao criar link: ${e.message}")
+            false
         }
     }
 
-    private suspend fun searchOnTMDB(query: String, year: Int?, isTv: Boolean): TMDBInfo? {
-        return try {
-            val q = java.net.URLEncoder.encode(query, "UTF-8")
-            val y = year?.let { "&year=$it" } ?: ""
-            val t = if (isTv) "tv" else "movie"
-            val res = app.get("https://api.themoviedb.org/3/search/$t?api_key=$TMDB_API_KEY&query=$q&language=pt-BR$y", headers = mapOf("Authorization" to "Bearer $TMDB_ACCESS_TOKEN", "accept" to "application/json")).parsedSafe<TMDBSearchResponse>()?.results?.firstOrNull() ?: return null
-            getTMDBDetails(res.id, isTv, res)
-        } catch (e: Exception) { null }
+    /**
+     * Descobrir domínio correto
+     */
+    private suspend fun discoverCorrectDomain(playerUrl: String): String {
+        // Extrair domínio da URL do player
+        val domainPattern = Regex("""https?://([^/]+)""")
+        val match = domainPattern.find(playerUrl)
+        match?.let {
+            val extractedDomain = it.value
+            println("🌐 Domínio extraído da URL: $extractedDomain")
+            return extractedDomain
+        }
+        
+        return DEFAULT_DOMAIN
     }
-
-    private suspend fun getTMDBDetails(id: Int, isTv: Boolean, r: TMDBResult): TMDBInfo? {
-        return try {
-            val t = if (isTv) "tv" else "movie"
-            val d = app.get("https://api.themoviedb.org/3/$t/$id?api_key=$TMDB_API_KEY&language=pt-BR&append_to_response=credits,videos", headers = mapOf("Authorization" to "Bearer $TMDB_ACCESS_TOKEN", "accept" to "application/json")).parsedSafe<TMDBDetailsResponse>() ?: return null
-            val a = d.credits?.cast?.take(15)?.mapNotNull { if (it.name.isNotBlank()) Actor(it.name, it.profile_path?.let { p -> "$tmdbImageUrl/w185$p" }) else null }
-            val v = d.videos?.results?.find { it.site == "YouTube" && it.type == "Trailer" }?.key?.let { "https://www.youtube.com/watch?v=$it" }
-            TMDBInfo(id, if (isTv) r.name else r.title, (if (isTv) r.first_air_date else r.release_date)?.take(4)?.toIntOrNull(), r.poster_path?.let { "$tmdbImageUrl/w500$it" }, d.backdrop_path?.let { "$tmdbImageUrl/original$it" }, d.overview, d.genres?.map { it.name }, a, v, if (!isTv) d.runtime else null)
-        } catch (e: Exception) { null }
-    }
-
-    override suspend fun loadLinks(
-    data: String,
-    isCasting: Boolean,
-    subtitleCallback: (SubtitleFile) -> Unit,
-    callback: (ExtractorLink) -> Unit
-): Boolean {
-    // CORREÇÃO: Use o nome correto e chame o método diretamente
-    val success = NexflixEmbedExtractor.extractVideoLinks(data, "Video", callback)
-    
-    // Se o extrator falhar, você pode tentar outros métodos aqui
-    if (!success) {
-        // Seu código fallback aqui...
-        println("❌ NexflixEmbedExtractor falhou")
-    }
-    
-    return success
-    }
-
-
-    
-
-    private data class EpisodeJson(val temporada: Int, val episodio: Int, val titulo: String?)
-    private data class TMDBInfo(val id: Int, val title: String?, val year: Int?, val posterUrl: String?, val backdropUrl: String?, val overview: String?, val genres: List<String>?, val actors: List<Actor>?, val youtubeTrailer: String?, val duration: Int?)
-    private data class TMDBSearchResponse(@JsonProperty("results") val results: List<TMDBResult>)
-    private data class TMDBResult(@JsonProperty("id") val id: Int, @JsonProperty("title") val title: String?, @JsonProperty("name") val name: String?, @JsonProperty("release_date") val release_date: String?, @JsonProperty("first_air_date") val first_air_date: String?, @JsonProperty("poster_path") val poster_path: String?)
-    private data class TMDBDetailsResponse(@JsonProperty("overview") val overview: String?, @JsonProperty("backdrop_path") val backdrop_path: String?, @JsonProperty("runtime") val runtime: Int?, @JsonProperty("genres") val genres: List<TMDBGenre>?, @JsonProperty("credits") val credits: TMDBCredits?, @JsonProperty("videos") val videos: TMDBVideos?)
-    private data class TMDBGenre(@JsonProperty("name") val name: String)
-    private data class TMDBCredits(@JsonProperty("cast") val cast: List<TMDBCast>)
-    private data class TMDBCast(@JsonProperty("name") val name: String, @JsonProperty("profile_path") val profile_path: String?)
-    private data class TMDBVideos(@JsonProperty("results") val results: List<TMDBVideo>)
-    private data class TMDBVideo(@JsonProperty("key") val key: String, @JsonProperty("site") val site: String, @JsonProperty("type") val type: String)
 }
