@@ -99,19 +99,40 @@ class NexFlix : MainAPI() {
 }
 }
 
-    // --- Search ---
-    override suspend fun search(query: String): List<SearchResponse> {
-        val searchUrl = "$mainUrl$SEARCH_PATH?q=${java.net.URLEncoder.encode(query, "UTF-8")}"
-        val document = app.get(searchUrl).document
-        return document.select("article.card").mapNotNull { element ->
-            val aTag = element.selectFirst("a") ?: return@mapNotNull null
-            val title = element.selectFirst(".ci-title")?.text() ?: element.selectFirst(".name")?.text() ?: aTag.attr("title")
-            val href = aTag.attr("href")
-            val posterUrl = element.selectFirst("img")?.attr("src")?.let { fixUrl(it) }
-            val type = getType(href)
-            if (type == TvType.Movie) newMovieSearchResponse(title, fixUrl(href), type) { this.posterUrl = posterUrl }
-            else newTvSeriesSearchResponse(title, fixUrl(href), type) { this.posterUrl = posterUrl }
-}
+// --- Search ---
+override suspend fun search(query: String): List<SearchResponse> {
+    val searchUrl = "$mainUrl/search.php?q=${java.net.URLEncoder.encode(query, "UTF-8")}"
+    val document = app.get(searchUrl).document
+    
+    return document.select("article.nx-card, article.card").mapNotNull { element ->
+        val aTag = element.selectFirst("a") ?: return@mapNotNull null
+        
+        // Para nx-card, o título está em .nx-title
+        // Para card, o título está em .ci-title ou .name
+        val title = element.selectFirst(".nx-title")?.text() 
+            ?: element.selectFirst(".ci-title")?.text() 
+            ?: element.selectFirst(".name")?.text() 
+            ?: aTag.attr("title")
+            ?: return@mapNotNull null
+        
+        val href = aTag.attr("href")
+        
+        // Imagem: Pode estar em img.nx-thumb (nova) ou img (antiga)
+        val posterUrl = (element.selectFirst("img.nx-thumb")?.attr("src") 
+            ?: element.selectFirst("img")?.attr("src"))?.let { fixUrl(it) }
+        
+        val type = getType(href)
+        
+        if (type == TvType.Movie) {
+            newMovieSearchResponse(title, fixUrl(href), type) { 
+                this.posterUrl = posterUrl 
+            }
+        } else {
+            newTvSeriesSearchResponse(title, fixUrl(href), type) { 
+                this.posterUrl = posterUrl 
+            }
+        }
+    }
 }
 
     // --- Load ---
