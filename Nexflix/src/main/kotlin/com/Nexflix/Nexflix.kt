@@ -219,7 +219,7 @@ return try {
     callback: (ExtractorLink) -> Unit
 ): Boolean {
     // CORREÇÃO: Use o nome correto e chame o método diretamente
-    val success = NexflixEmbedExtractor.extractVideoLinks(data, "Video", callback)
+    val success = NexflixExtractor.extractVideoLinks(data, "Video", callback)
     
     // Se o extrator falhar, você pode tentar outros métodos aqui
     if (!success) {
