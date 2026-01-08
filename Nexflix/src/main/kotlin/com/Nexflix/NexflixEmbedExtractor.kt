@@ -164,9 +164,27 @@ object NexflixExtractor {
 
 private suspend fun getHashFromPlayer(imdbId: String, refererUrl: String): String {
     return try {
-        val playerUrl = "$API_DOMAIN/e/$imdbId"
+        // DETECTAR SE É FILME OU SÉRIE
+        val isMovie = imdbId.startsWith("tt") // IMDb IDs começam com "tt"
+        
+        val playerUrl = if (isMovie) {
+            // URL para filmes: https://comprarebom.xyz/e/tt123456
+            "$API_DOMAIN/e/$imdbId"
+        } else {
+            // URL para séries: https://comprarebom.xyz/e/246386/1/1
+            // Precisamos extrair temporada e episódio da URL do player
+            val seasonEpisode = extractSeasonEpisode(refererUrl)
+            if (seasonEpisode != null) {
+                "$API_DOMAIN/e/$imdbId/${seasonEpisode.first}/${seasonEpisode.second}"
+            } else {
+                // Fallback para temporada 1 episódio 1
+                "$API_DOMAIN/e/$imdbId/1/1"
+            }
+        }
+        
         println("🎬 Acessando player para hash: $playerUrl")
         println("🔗 Referer: $refererUrl")
+        println("📌 Tipo: ${if (isMovie) "FILME" else "SÉRIE"}")
         
         val headers = mapOf(
             "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
@@ -217,6 +235,33 @@ private suspend fun getHashFromPlayer(imdbId: String, refererUrl: String): Strin
     }
 }
 
+/**
+ * Extrai temporada e episódio da URL do player
+ * Exemplo: https://nexembed.xyz/player.php?type=serie&id=246386&season=1&episode=1
+ * Retorna: Pair(1, 1)
+ */
+private fun extractSeasonEpisode(playerUrl: String): Pair<Int, Int>? {
+    return try {
+        val seasonPattern = Regex("""[?&]season=(\d+)""")
+        val episodePattern = Regex("""[?&]episode=(\d+)""")
+        
+        val seasonMatch = seasonPattern.find(playerUrl)
+        val episodeMatch = episodePattern.find(playerUrl)
+        
+        if (seasonMatch != null && episodeMatch != null) {
+            val season = seasonMatch.groupValues[1].toInt()
+            val episode = episodeMatch.groupValues[1].toInt()
+            println("✅ Temporada/Episódio extraídos: S${season}E${episode}")
+            return Pair(season, episode)
+        }
+        
+        println("⚠️  Não foi possível extrair temporada/episódio da URL")
+        null
+    } catch (e: Exception) {
+        println("❌ Erro ao extrair temporada/episódio: ${e.message}")
+        null
+    }
+}
 private fun debugHtmlForHash(html: String) {
     println("\n=== DEBUG HTML PARA HASH ===")
     
