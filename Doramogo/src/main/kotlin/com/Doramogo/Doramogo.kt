@@ -86,9 +86,12 @@ class Doramogo : MainAPI() {
                 val episodeMatch = Regex("Episódio\\s*(\\d+)", RegexOption.IGNORE_CASE).find(episodeTitle)
                 val episodeNumber = episodeMatch?.groupValues?.get(1)?.toIntOrNull() ?: 1
                 
+                // CORREÇÃO AQUI: Use uma variável local para o nome final
+                val finalTitle = "$doramaName (Episódio $episodeNumber)"
+                
                 items.add(newTvSeriesSearchResponse(doramaName, fixUrl(href), TvType.TvSeries) {
                     this.posterUrl = posterUrl
-                    this.name = "$doramaName (Episódio $episodeNumber)"
+                    this.name = finalTitle // Agora funciona
                 })
             }
         } else {
@@ -232,20 +235,6 @@ class Doramogo : MainAPI() {
         // Gêneros
         val tags = document.select(".gens a").map { it.text().trim() }
         
-        // Informações adicionais
-        val castsInfo = mutableMapOf<String, String>()
-        document.select(".casts div").forEach { div ->
-            val text = div.text()
-            if (text.contains(":")) {
-                val parts = text.split(":", limit = 2)
-                if (parts.size == 2) {
-                    val key = parts[0].trim().lowercase()
-                    val value = parts[1].trim()
-                    castsInfo[key] = value
-                }
-            }
-        }
-        
         // Verificar se é filme ou série
         val isMovie = url.contains("/filmes/")
         val type = if (isMovie) TvType.Movie else TvType.TvSeries
@@ -296,11 +285,6 @@ class Doramogo : MainAPI() {
                 this.year = year
                 this.plot = description
                 this.tags = tags
-                
-                // Duração se disponível
-                castsInfo["duraçã"]?.let { durationText ->
-                    this.duration = durationText.parseDuration()
-                }
             }
         }
     }
