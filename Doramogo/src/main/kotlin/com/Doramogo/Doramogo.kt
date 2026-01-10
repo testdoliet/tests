@@ -27,11 +27,19 @@ class Doramogo : MainAPI() {
     override val mainPage = mainPageOf(
         "$mainUrl/" to "Em Destaque",
         "$mainUrl/episodios" to "Episódios Recentes",
-        "$mainUrl/dorama?slug=&status=&ano=&classificacao_idade=&idiomar=DUB" to "Dublados",
-        "$mainUrl/dorama?slug=&status=&ano=&classificacao_idade=&idiomar=LEG" to "Legendados",
+        "$mainUrl/dorama?slug=&status=&ano=&classificacao_idade=&idiomar=DUB" to "Doramas Dublados",
+        "$mainUrl/dorama?slug=&status=&ano=&classificacao_idade=&idiomar=LEG" to "Doramas Legendados",
         "$mainUrl/genero/dorama-acao" to "Ação",
+        "$mainUrl/genero/dorama-aventura" to "Aventura",
         "$mainUrl/genero/dorama-comedia" to "Comédia",
+        "$mainUrl/genero/dorama-crime" to "Crime",
         "$mainUrl/genero/dorama-drama" to "Drama",
+        "$mainUrl/genero/dorama-familia" to "Família",
+        "$mainUrl/genero/dorama-fantasia" to "Fantasia",
+        "$mainUrl/genero/dorama-ficcao-cientifica" to "Ficção Científica",
+        "$mainUrl/genero/dorama-misterio" to "Mistério",
+        "$mainUrl/genero/dorama-reality" to "Reality Shows",
+        "$mainUrl/genero/dorama-sci-fi" to "Sci-Fi",
         "$mainUrl/filmes" to "Filmes"
     )
 
@@ -53,7 +61,10 @@ class Doramogo : MainAPI() {
         val document = app.get(url).document
         val items = ArrayList<SearchResponse>()
 
-        if (request.data.contains("/episodios")) {
+        // Verificar se é a aba de episódios recentes
+        val isEpisodesPage = request.data.contains("/episodios") || request.name.contains("Episódios")
+
+        if (isEpisodesPage) {
             // Para página de episódios recentes - layout vertical
             document.select(".episode-card").forEach { card ->
                 val aTag = card.selectFirst("a") ?: return@forEach
@@ -71,8 +82,13 @@ class Doramogo : MainAPI() {
                     else -> null
                 }
                 
+                // Extrair número do episódio para título mais descritivo
+                val episodeMatch = Regex("Episódio\\s*(\\d+)", RegexOption.IGNORE_CASE).find(episodeTitle)
+                val episodeNumber = episodeMatch?.groupValues?.get(1)?.toIntOrNull() ?: 1
+                
                 items.add(newTvSeriesSearchResponse(doramaName, fixUrl(href), TvType.TvSeries) {
                     this.posterUrl = posterUrl
+                    this.name = "$doramaName (Episódio $episodeNumber)"
                 })
             }
         } else {
@@ -93,10 +109,7 @@ class Doramogo : MainAPI() {
                     else -> null
                 }
                 
-                // Extrair gênero/descrição se disponível
-                val genre = card.selectFirst("p.text-xs")?.text()?.trim()
-                
-                val isMovie = href.contains("/filmes/") || request.name.contains("Filmes") || genre?.contains("Filme") == true
+                val isMovie = href.contains("/filmes/") || request.name.contains("Filmes")
                 val type = if (isMovie) TvType.Movie else TvType.TvSeries
                 
                 if (type == TvType.Movie) {
@@ -110,7 +123,7 @@ class Doramogo : MainAPI() {
                 }
             }
             
-            // Também tentar pegar itens de outras estruturas
+            // Fallback: tentar pegar itens de outras estruturas se necessário
             if (items.isEmpty()) {
                 document.select(".grid .episode-card").forEach { card ->
                     val aTag = card.selectFirst("a") ?: return@forEach
@@ -145,7 +158,15 @@ class Doramogo : MainAPI() {
         val hasNextPage = document.select("""a[href*="pagina/"], a[href*="?page="], 
             .pagination a, .next-btn, a:contains(PRÓXIMA)""").isNotEmpty()
         
-        return newHomePageResponse(request.name, items.distinctBy { it.url }, hasNextPage)
+        // Criar HomePageList com configuração de layout
+        val homePageList = HomePageList(
+            request.name,
+            items.distinctBy { it.url },
+            // Episódios recentes são verticais (false), outros são horizontais (true)
+            isHorizontalImages = !isEpisodesPage
+        )
+        
+        return newHomePageResponse(listOf(homePageList), hasNextPage)
     }
 
     // --- Search ---
@@ -201,6 +222,7 @@ class Doramogo : MainAPI() {
         val poster = document.selectFirst("meta[property='og:image']")?.attr("content")?.let { fixUrl(it) }
             ?: document.selectFirst("#w-55")?.attr("src")?.let { fixUrl(it) }
             ?: document.selectFirst(".episode-image-container img")?.attr("src")?.let { fixUrl(it) }
+            ?: document.selectFirst(".thumbnail img")?.attr("src")?.let { fixUrl(it) }
         
         // Ano
         val infoText = document.selectFirst(".detail p.text-white")?.text() ?: ""
@@ -209,6 +231,20 @@ class Doramogo : MainAPI() {
         
         // Gêneros
         val tags = document.select(".gens a").map { it.text().trim() }
+        
+        // Informações adicionais
+        val castsInfo = mutableMapOf<String, String>()
+        document.select(".casts div").forEach { div ->
+            val text = div.text()
+            if (text.contains(":")) {
+                val parts = text.split(":", limit = 2)
+                if (parts.size == 2) {
+                    val key = parts[0].trim().lowercase()
+                    val value = parts[1].trim()
+                    castsInfo[key] = value
+                }
+            }
+        }
         
         // Verificar se é filme ou série
         val isMovie = url.contains("/filmes/")
@@ -231,6 +267,22 @@ class Doramogo : MainAPI() {
                 })
             }
             
+            // Se não encontrar episódios estruturados, tentar outros métodos
+            if (episodes.isEmpty()) {
+                document.select("a[href*='/episodio-'], a[href*='/episode-']").forEach { episodeLink ->
+                    val episodeUrl = episodeLink.attr("href")?.let { fixUrl(it) } ?: return@forEach
+                    val episodeTitle = episodeLink.text().trim().ifEmpty { "Episódio" }
+                    
+                    val seasonEpisode = extractSeasonEpisodeFromUrl(episodeUrl)
+                    
+                    episodes.add(newEpisode(episodeUrl) {
+                        this.name = episodeTitle
+                        this.season = seasonEpisode.first
+                        this.episode = seasonEpisode.second
+                    })
+                }
+            }
+            
             return newTvSeriesLoadResponse(title, url, type, episodes) {
                 this.posterUrl = poster
                 this.year = year
@@ -244,6 +296,11 @@ class Doramogo : MainAPI() {
                 this.year = year
                 this.plot = description
                 this.tags = tags
+                
+                // Duração se disponível
+                castsInfo["duraçã"]?.let { durationText ->
+                    this.duration = durationText.parseDuration()
+                }
             }
         }
     }
@@ -263,9 +320,36 @@ class Doramogo : MainAPI() {
         return match?.groupValues?.get(1)?.toIntOrNull()
     }
     
+    private fun extractSeasonEpisodeFromUrl(url: String): Pair<Int, Int> {
+        val seasonPattern = Regex("""temporada[_-](\d+)|season[_-](\d+)|/T(\d+)/""", RegexOption.IGNORE_CASE)
+        val episodePattern = Regex("""episodio[_-](\d+)|episode[_-](\d+)|/E(\d+)/""", RegexOption.IGNORE_CASE)
+        
+        val seasonMatch = seasonPattern.find(url)
+        val episodeMatch = episodePattern.find(url)
+        
+        val season = seasonMatch?.groupValues?.get(1)?.toIntOrNull()
+            ?: seasonMatch?.groupValues?.get(2)?.toIntOrNull()
+            ?: seasonMatch?.groupValues?.get(3)?.toIntOrNull()
+            ?: 1
+        
+        val episode = episodeMatch?.groupValues?.get(1)?.toIntOrNull()
+            ?: episodeMatch?.groupValues?.get(2)?.toIntOrNull()
+            ?: episodeMatch?.groupValues?.get(3)?.toIntOrNull()
+            ?: 1
+        
+        return Pair(season, episode)
+    }
+    
     private fun String.findYear(): Int? {
         val pattern = Regex("""\b(19\d{2}|20\d{2})\b""")
         return pattern.find(this)?.value?.toIntOrNull()
+    }
+    
+    private fun String?.parseDuration(): Int? {
+        if (this.isNullOrBlank()) return null
+        val pattern = Regex("""(\d+)\s*(min|minutes|minutos)""", RegexOption.IGNORE_CASE)
+        val match = pattern.find(this)
+        return match?.groupValues?.get(1)?.toIntOrNull()
     }
 
     // --- Load Links ---
