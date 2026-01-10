@@ -53,8 +53,8 @@ class Doramogo : MainAPI() {
         val document = app.get(url).document
         val items = ArrayList<SearchResponse>()
 
-        // Para páginas de episódios
         if (request.data.contains("/episodios")) {
+            // Para página de episódios recentes - layout vertical
             document.select(".episode-card").forEach { card ->
                 val aTag = card.selectFirst("a") ?: return@forEach
                 val titleElement = card.selectFirst("h3, .episode-title")
@@ -76,10 +76,11 @@ class Doramogo : MainAPI() {
                 })
             }
         } else {
-            // Para páginas normais
-            document.select("div.archive, .drama-card").forEach { card ->
+            // Para outras páginas (doramas, filmes, gêneros) - layout horizontal
+            document.select(".episode-card").forEach { card ->
                 val aTag = card.selectFirst("a") ?: return@forEach
-                val title = card.selectFirst("h2, .title")?.text()?.trim() 
+                val titleElement = card.selectFirst("h3")
+                val title = titleElement?.text()?.trim() 
                     ?: aTag.attr("title")?.trim()
                     ?: return@forEach
                 
@@ -92,7 +93,10 @@ class Doramogo : MainAPI() {
                     else -> null
                 }
                 
-                val isMovie = href.contains("/filmes/") || request.name.contains("Filmes")
+                // Extrair gênero/descrição se disponível
+                val genre = card.selectFirst("p.text-xs")?.text()?.trim()
+                
+                val isMovie = href.contains("/filmes/") || request.name.contains("Filmes") || genre?.contains("Filme") == true
                 val type = if (isMovie) TvType.Movie else TvType.TvSeries
                 
                 if (type == TvType.Movie) {
@@ -105,12 +109,43 @@ class Doramogo : MainAPI() {
                     })
                 }
             }
+            
+            // Também tentar pegar itens de outras estruturas
+            if (items.isEmpty()) {
+                document.select(".grid .episode-card").forEach { card ->
+                    val aTag = card.selectFirst("a") ?: return@forEach
+                    val titleElement = card.selectFirst("h3")
+                    val title = titleElement?.text()?.trim() 
+                        ?: return@forEach
+                    
+                    val href = aTag.attr("href")
+                    
+                    val imgElement = card.selectFirst("img")
+                    val posterUrl = when {
+                        imgElement?.hasAttr("data-src") == true -> fixUrl(imgElement.attr("data-src"))
+                        imgElement?.hasAttr("src") == true -> fixUrl(imgElement.attr("src"))
+                        else -> null
+                    }
+                    
+                    val type = if (href.contains("/filmes/")) TvType.Movie else TvType.TvSeries
+                    
+                    if (type == TvType.Movie) {
+                        items.add(newMovieSearchResponse(title, fixUrl(href), type) {
+                            this.posterUrl = posterUrl
+                        })
+                    } else {
+                        items.add(newTvSeriesSearchResponse(title, fixUrl(href), type) { 
+                            this.posterUrl = posterUrl
+                        })
+                    }
+                }
+            }
         }
 
         val hasNextPage = document.select("""a[href*="pagina/"], a[href*="?page="], 
-            .pagination a:contains(›), .next-page""").isNotEmpty()
+            .pagination a, .next-btn, a:contains(PRÓXIMA)""").isNotEmpty()
         
-        return newHomePageResponse(request.name, items, hasNextPage)
+        return newHomePageResponse(request.name, items.distinctBy { it.url }, hasNextPage)
     }
 
     // --- Search ---
@@ -118,9 +153,9 @@ class Doramogo : MainAPI() {
         val searchUrl = "$mainUrl/search/?q=${java.net.URLEncoder.encode(query, "UTF-8")}"
         val document = app.get(searchUrl).document
         
-        return document.select("div.archive, .search-result").mapNotNull { card ->
+        return document.select(".episode-card, .search-result").mapNotNull { card ->
             val aTag = card.selectFirst("a") ?: return@mapNotNull null
-            val title = card.selectFirst("h2, h3")?.text()?.trim() 
+            val title = card.selectFirst("h3, h2")?.text()?.trim() 
                 ?: aTag.attr("title") 
                 ?: return@mapNotNull null
             val href = aTag.attr("href")
@@ -165,6 +200,7 @@ class Doramogo : MainAPI() {
         // Poster
         val poster = document.selectFirst("meta[property='og:image']")?.attr("content")?.let { fixUrl(it) }
             ?: document.selectFirst("#w-55")?.attr("src")?.let { fixUrl(it) }
+            ?: document.selectFirst(".episode-image-container img")?.attr("src")?.let { fixUrl(it) }
         
         // Ano
         val infoText = document.selectFirst(".detail p.text-white")?.text() ?: ""
@@ -173,20 +209,6 @@ class Doramogo : MainAPI() {
         
         // Gêneros
         val tags = document.select(".gens a").map { it.text().trim() }
-        
-        // Extrair informações adicionais
-        val castsInfo = mutableMapOf<String, String>()
-        document.select(".casts div").forEach { div ->
-            val text = div.text()
-            if (text.contains(":")) {
-                val parts = text.split(":", limit = 2)
-                if (parts.size == 2) {
-                    val key = parts[0].trim().lowercase()
-                    val value = parts[1].trim()
-                    castsInfo[key] = value
-                }
-            }
-        }
         
         // Verificar se é filme ou série
         val isMovie = url.contains("/filmes/")
@@ -222,11 +244,6 @@ class Doramogo : MainAPI() {
                 this.year = year
                 this.plot = description
                 this.tags = tags
-                
-                // Duração
-                castsInfo["duraçã"]?.let { durationText ->
-                    this.duration = durationText.parseDuration()
-                }
             }
         }
     }
@@ -249,13 +266,6 @@ class Doramogo : MainAPI() {
     private fun String.findYear(): Int? {
         val pattern = Regex("""\b(19\d{2}|20\d{2})\b""")
         return pattern.find(this)?.value?.toIntOrNull()
-    }
-    
-    private fun String?.parseDuration(): Int? {
-        if (this.isNullOrBlank()) return null
-        val pattern = Regex("""(\d+)\s*(min|minutes|minutos)""", RegexOption.IGNORE_CASE)
-        val match = pattern.find(this)
-        return match?.groupValues?.get(1)?.toIntOrNull()
     }
 
     // --- Load Links ---
