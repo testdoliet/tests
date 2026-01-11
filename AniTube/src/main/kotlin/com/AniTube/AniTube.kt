@@ -232,7 +232,7 @@ class AniTube : MainAPI() {
             "Animes Recentes" -> {
                 var recentItems = listOf<AnimeSearchResponse>()
                 
-                for (container in document.select(".aniContainer")) {
+                for (container in document.select(".aniContainer)) {
                     val titleElement = container.selectFirst(".aniContainerTitulo")
                     if (titleElement != null && titleElement.text().contains("ANIMES RECENTES", true)) {
                         recentItems = container.select(".aniItem")
@@ -294,11 +294,9 @@ class AniTube : MainAPI() {
         
         val poster = thumbPoster ?: document.selectFirst(ANIME_POSTER)?.attr("src")?.let { fixUrl(it) }
         
-    
         val siteSynopsis = document.selectFirst(ANIME_SYNOPSIS)?.text()?.trim()
         
         val synopsis = if (actualUrl.contains("/video/")) {
-            
             siteSynopsis ?: "Episódio $episodeNumber de $title"
         } else {
             siteSynopsis ?: "Sinopse não disponível."
@@ -356,5 +354,364 @@ class AniTube : MainAPI() {
             if (sortedEpisodes.isNotEmpty()) addEpisodes(if (isDubbed) DubStatus.Dubbed else DubStatus.Subbed, sortedEpisodes)
         }
     }
-}
     
+    // ============== FUNÇÕES DE EXTRAÇÃO DE STREAMS ==============
+    
+    private suspend fun extractPlayerJW(html: String, videoUrl: String): List<ExtractorLink> {
+        return try {
+            val document = app.parseDocument(html)
+            
+            // Encontrar iframe - procura pelo iframe com classe metaframe ou que contenha bg.mp4 no src
+            val iframeSrc = document.selectFirst("iframe.metaframe")?.attr("src") ?: 
+                           document.selectFirst("iframe[src*=\"bg.mp4\"]")?.attr("src")
+            
+            if (iframeSrc.isNullOrEmpty()) return emptyList()
+            
+            // Primeiro salto: obter a URL de redirecionamento
+            val resPonte = app.get(
+                iframeSrc,
+                referer = videoUrl,
+                headers = mapOf(
+                    "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K)",
+                    "Referer" to videoUrl
+                ),
+                allowRedirects = false
+            )
+            
+            val urlApi = resPonte.headers["location"] ?: iframeSrc
+            
+            // Segundo salto: acessar a API do player com referer do anitube
+            val resApi = app.get(
+                urlApi,
+                headers = mapOf(
+                    "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K)",
+                    "Referer" to "https://www.anitube.news/"
+                )
+            )
+            
+            val playerHtml = resApi.text
+            
+            // Buscar por código packer (eval(function(p,a,c,k,e,d))
+            val packerRegex = """eval\(function\(p,a,c,k,e,d\).*?}\('(.*?)',(\d+),(\d+),'(.*?)'\.split\('\|'\)""".toRegex(
+                RegexOption.DOT_MATCHES_ALL
+            )
+            
+            val match = packerRegex.find(playerHtml)
+            
+            if (match != null) {
+                val (packed, aStr, cStr, kStr) = match.destructured
+                val a = aStr.toInt()
+                val c = cStr.toInt()
+                val dict = kStr.split("|")
+                
+                // Função unpack similar à do JavaScript
+                val decoded = unpack(packed, a, c, dict)
+                
+                // Buscar links de vídeo
+                val videoRegex = """https?://[^\s'"]+""".toRegex()
+                val videoLinks = videoRegex.findAll(decoded)
+                    .map { it.value }
+                    .filter { it.contains("videoplayback") }
+                    .toList()
+                
+                videoLinks.mapNotNull { link ->
+                    val quality = when {
+                        link.contains("itag=22") -> "720p"
+                        link.contains("itag=59") -> "480p"
+                        link.contains("itag=18") -> "360p"
+                        else -> "360p"
+                    }
+                    
+                    ExtractorLink(
+                        name,
+                        "JWPlayer ($quality)",
+                        link,
+                        mainUrl,
+                        getQualityFromString(quality),
+                        isM3u8 = false,
+                        headers = mapOf(
+                            "Referer" to "https://api.anivideo.net/",
+                            "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K)",
+                            "Origin" to "https://api.anivideo.net"
+                        )
+                    )
+                }
+            } else {
+                emptyList()
+            }
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+    
+    // Função unpack para decodificar base62
+    private fun unpack(packed: String, a: Int, c: Int, dict: List<String>): String {
+        val e = object : Function1<Int, String> {
+            override fun invoke(c: Int): String {
+                return if (c < a) {
+                    ""
+                } else {
+                    invoke(c / a) + (c % a).let { 
+                        if (it > 35) (it + 29).toChar() 
+                        else it.toString(36).single() 
+                    }
+                }
+            }
+        }
+        
+        val lookup = mutableMapOf<String, String>()
+        for (i in 0 until c) {
+            val key = e(i)
+            lookup[key] = dict.getOrNull(i) ?: key
+        }
+        
+        val tokenRegex = """\b\w+\b""".toRegex()
+        return tokenRegex.replace(packed) { match ->
+            lookup[match.value] ?: match.value
+        }
+    }
+    
+    // Função para extrair Player FHD (anivideo.net)
+    private fun extractPlayerFHD(html: String, videoUrl: String): List<ExtractorLink> {
+        val streams = mutableListOf<ExtractorLink>()
+        val document = app.parseDocument(html)
+        
+        // Método 1: API anivideo.net direta
+        val apiRegex = """https?://api\.anivideo\.net/videohls\.php\?[^"'\s]+""".toRegex()
+        val apiMatches = apiRegex.findAll(html)
+        
+        apiMatches.forEach { match ->
+            val apiLink = match.value
+            val cleanLink = extractM3u8FromUrl(apiLink)
+            if (cleanLink != null) {
+                val quality = extractQualityFromUrl(cleanLink)
+                streams.add(
+                    ExtractorLink(
+                        name,
+                        "FHD Player ($quality)",
+                        cleanLink,
+                        mainUrl,
+                        getQualityFromString(quality),
+                        isM3u8 = true,
+                        headers = mapOf(
+                            "Referer" to "https://api.anivideo.net/",
+                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                        )
+                    )
+                )
+            }
+        }
+        
+        // Método 2: Iframe FHD
+        document.select("iframe[src*=\"api.anivideo.net\"]").forEach { iframe ->
+            val src = iframe.attr("src")
+            val m3u8Url = extractM3u8FromUrl(src)
+            if (m3u8Url != null) {
+                val quality = extractQualityFromUrl(m3u8Url)
+                streams.add(
+                    ExtractorLink(
+                        name,
+                        "FHD Iframe ($quality)",
+                        m3u8Url,
+                        mainUrl,
+                        getQualityFromString(quality),
+                        isM3u8 = true,
+                        headers = mapOf(
+                            "Referer" to "https://api.anivideo.net/",
+                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                        )
+                    )
+                )
+            }
+        }
+        
+        return streams
+    }
+    
+    // Função para extrair Player M3U8 de scripts
+    private fun extractPlayerM3U8(html: String, videoUrl: String): List<ExtractorLink> {
+        val streams = mutableListOf<ExtractorLink>()
+        
+        // Buscar m3u8 em scripts
+        val m3u8Regex = """https?://[^\s'"]+\.m3u8[^\s'"]*""".toRegex(RegexOption.IGNORE_CASE)
+        val matches = m3u8Regex.findAll(html)
+        
+        matches.forEach { match ->
+            val m3u8Url = match.value
+            // Ignorar links já tratados no Player FHD
+            if (!m3u8Url.contains("anivideo.net")) {
+                val quality = extractQualityFromUrl(m3u8Url)
+                streams.add(
+                    ExtractorLink(
+                        name,
+                        "M3U8 Script ($quality)",
+                        m3u8Url,
+                        mainUrl,
+                        getQualityFromString(quality),
+                        isM3u8 = true,
+                        headers = mapOf(
+                            "Referer" to videoUrl,
+                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                        )
+                    )
+                )
+            }
+        }
+        
+        return streams
+    }
+    
+    // Função para detectar tipo de player
+    private fun detectPlayerType(html: String): String {
+        return when {
+            html.contains("api.anivideo.net/videohls.php") -> "FHD"
+            html.contains("<iframe") && html.contains("api.anivideo.net") -> "FHD"
+            html.contains("jwplayer().setup") -> "JWPLAYER"
+            html.contains("jwplayer(") -> "JWPLAYER"
+            html.contains("sources") && html.contains("googlevideo.com") -> "JWPLAYER"
+            html.contains(".m3u8") && !html.contains("api.anivideo.net") -> "M3U8_SCRIPT"
+            else -> "UNKNOWN"
+        }
+    }
+    
+    // Função para extrair qualidade da URL
+    private fun extractQualityFromUrl(url: String): String {
+        return when {
+            url.contains("1080") -> "1080p"
+            url.contains("720") -> "720p"
+            url.contains("480") -> "480p"
+            url.contains("360") -> "360p"
+            url.contains("hd") -> "720p"
+            url.contains("itag=37") -> "1080p"
+            url.contains("itag=22") -> "720p"
+            url.contains("itag=59") -> "480p"
+            url.contains("itag=18") -> "360p"
+            else -> "SD"
+        }
+    }
+    
+    // Função auxiliar para converter string de qualidade para valor numérico
+    private fun getQualityFromString(qualityStr: String): Int {
+        return when (qualityStr.lowercase()) {
+            "1080p" -> Qualities.FullHDP1080.value
+            "720p" -> Qualities.FullHDP720.value
+            "480p" -> Qualities.HD.value
+            "360p" -> Qualities.SD.value
+            else -> Qualities.Unknown.value
+        }
+    }
+    
+    // Função de extração de streams unificada (método híbrido)
+    private suspend fun extractAniTubeStreams(videoUrl: String, referer: String = ""): List<ExtractorLink> {
+        val streams = mutableListOf<ExtractorLink>()
+        val usedUrls = mutableSetOf<String>()
+        
+        try {
+            val actualReferer = if (referer.isNotEmpty()) referer else mainUrl
+            val html = app.get(videoUrl, referer = actualReferer).text
+            
+            // Detectar tipo de player
+            val playerType = detectPlayerType(html)
+            
+            // Extrair de todos os players possíveis
+            val extractionResults = mutableListOf<List<ExtractorLink>>()
+            
+            // Tentar Player FHD (anivideo.net iframe)
+            if (html.contains("api.anivideo.net") || playerType == "FHD" || playerType == "UNKNOWN") {
+                extractionResults.add(extractPlayerFHD(html, videoUrl))
+            }
+            
+            // Tentar Player JW (Player 1)
+            if (html.contains("jwplayer") || playerType == "JWPLAYER" || playerType == "UNKNOWN") {
+                val jwStreams = extractPlayerJW(html, videoUrl)
+                if (jwStreams.isNotEmpty()) {
+                    extractionResults.add(jwStreams)
+                }
+            }
+            
+            // Tentar M3U8 em scripts (fallback)
+            if (html.contains(".m3u8") || playerType == "M3U8_SCRIPT" || playerType == "UNKNOWN") {
+                extractionResults.add(extractPlayerM3U8(html, videoUrl))
+            }
+            
+            // Combinar resultados únicos
+            extractionResults.forEach { result ->
+                result.forEach { stream ->
+                    if (!usedUrls.contains(stream.url)) {
+                        usedUrls.add(stream.url)
+                        streams.add(stream)
+                    }
+                }
+            }
+            
+            // Fallback: buscar m3u8/mp4 diretamente no HTML
+            if (streams.isEmpty()) {
+                val mediaRegex = """https?://[^\s'"]+\.(m3u8|mp4)[^\s'"]*""".toRegex(RegexOption.IGNORE_CASE)
+                val matches = mediaRegex.findAll(html)
+                
+                matches.forEach { match ->
+                    val mediaUrl = match.value
+                    // Ignorar links da ponte que terminam em /bg.mp4
+                    if (!mediaUrl.contains("/bg.mp4") && !usedUrls.contains(mediaUrl)) {
+                        usedUrls.add(mediaUrl)
+                        
+                        val quality = extractQualityFromUrl(mediaUrl)
+                        val isM3u8 = mediaUrl.contains(".m3u8", ignoreCase = true)
+                        
+                        streams.add(
+                            ExtractorLink(
+                                name,
+                                "AniTube ($quality)",
+                                mediaUrl,
+                                mainUrl,
+                                getQualityFromString(quality),
+                                isM3u8 = isM3u8,
+                                headers = mapOf(
+                                    "Referer" to if (mediaUrl.contains("anivideo.net")) 
+                                        "https://api.anivideo.net/" 
+                                    else mainUrl,
+                                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                                )
+                            )
+                        )
+                    }
+                }
+            }
+            
+            // Ordenar por qualidade (1080p > 720p > 480p > 360p > SD)
+            streams.sortByDescending { stream ->
+                when {
+                    stream.quality >= Qualities.FullHDP1080.value -> 5
+                    stream.quality >= Qualities.FullHDP720.value -> 4
+                    stream.quality >= Qualities.HD.value -> 3
+                    stream.quality >= Qualities.SD.value -> 2
+                    else -> 1
+                }
+            }
+            
+        } catch (e: Exception) {
+            // Silenciar erro
+        }
+        
+        return streams
+    }
+    
+    override suspend fun loadLinks(
+        data: String,
+        isCasting: Boolean,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        return try {
+            val streams = extractAniTubeStreams(data, mainUrl)
+            if (streams.isNotEmpty()) {
+                streams.forEach(callback)
+                true
+            } else {
+                false
+            }
+        } catch (e: Exception) {
+            false
+        }
+    }
+}
