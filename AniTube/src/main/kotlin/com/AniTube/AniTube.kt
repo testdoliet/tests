@@ -2,7 +2,7 @@ package com.AniTube
 
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
-import com.lagradost.cloudstream3.network.get
+import com.lagradost.cloudstream3.network.*
 import org.jsoup.nodes.Element
 import java.net.URLDecoder
 
@@ -325,16 +325,18 @@ class AniTube : MainAPI() {
             val episodeUrl = element.attr("href")
             val epNumber = extractEpisodeNumber(episodeTitle) ?: 1
             
-            Episode(episodeUrl, "Episódio $epNumber").apply {
-                episode = epNumber
-                posterUrl = poster
+            newEpisode(episodeUrl) {
+                this.name = "Episódio $epNumber"
+                this.episode = epNumber
+                this.posterUrl = poster
             }
         }
         
         val allEpisodes = if (episodesList.isEmpty() && actualUrl.contains("/video/")) {
-            listOf(Episode(actualUrl, "Episódio $episodeNumber").apply {
-                episode = episodeNumber
-                posterUrl = poster
+            listOf(newEpisode(actualUrl) {
+                this.name = "Episódio $episodeNumber"
+                this.episode = episodeNumber
+                this.posterUrl = poster
             })
         } else {
             episodesList
@@ -423,19 +425,19 @@ class AniTube : MainAPI() {
                         else -> "360p"
                     }
                     
-                    newExtractorLink(
-                        name,
-                        "JWPlayer ($quality)",
-                        link,
-                        mainUrl,
-                        getQualityFromString(quality),
-                        isM3u8 = false,
-                        headers = mapOf(
+                    newExtractorLink {
+                        this.source = name
+                        this.name = "JWPlayer ($quality)"
+                        this.url = link
+                        this.referer = mainUrl
+                        this.quality = getQualityFromString(quality)
+                        this.isM3u8 = false
+                        this.headers = mapOf(
                             "Referer" to "https://api.anivideo.net/",
                             "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K)",
                             "Origin" to "https://api.anivideo.net"
                         )
-                    )
+                    }
                 }
             } else {
                 emptyList()
@@ -473,7 +475,7 @@ class AniTube : MainAPI() {
     }
     
     // Função para extrair Player FHD (anivideo.net)
-    private fun extractPlayerFHD(html: String, videoUrl: String): List<ExtractorLink> {
+    private suspend fun extractPlayerFHD(html: String, videoUrl: String): List<ExtractorLink> {
         val streams = mutableListOf<ExtractorLink>()
         
         // Método 1: API anivideo.net direta
@@ -486,18 +488,18 @@ class AniTube : MainAPI() {
             if (cleanLink != null) {
                 val quality = extractQualityFromUrl(cleanLink)
                 streams.add(
-                    newExtractorLink(
-                        name,
-                        "FHD Player ($quality)",
-                        cleanLink,
-                        mainUrl,
-                        getQualityFromString(quality),
-                        isM3u8 = true,
-                        headers = mapOf(
+                    newExtractorLink {
+                        this.source = name
+                        this.name = "FHD Player ($quality)"
+                        this.url = cleanLink
+                        this.referer = mainUrl
+                        this.quality = getQualityFromString(quality)
+                        this.isM3u8 = true
+                        this.headers = mapOf(
                             "Referer" to "https://api.anivideo.net/",
                             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
                         )
-                    )
+                    }
                 )
             }
         }
@@ -510,18 +512,18 @@ class AniTube : MainAPI() {
             if (m3u8Url != null) {
                 val quality = extractQualityFromUrl(m3u8Url)
                 streams.add(
-                    newExtractorLink(
-                        name,
-                        "FHD Iframe ($quality)",
-                        m3u8Url,
-                        mainUrl,
-                        getQualityFromString(quality),
-                        isM3u8 = true,
-                        headers = mapOf(
+                    newExtractorLink {
+                        this.source = name
+                        this.name = "FHD Iframe ($quality)"
+                        this.url = m3u8Url
+                        this.referer = mainUrl
+                        this.quality = getQualityFromString(quality)
+                        this.isM3u8 = true
+                        this.headers = mapOf(
                             "Referer" to "https://api.anivideo.net/",
                             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
                         )
-                    )
+                    }
                 )
             }
         }
@@ -530,7 +532,7 @@ class AniTube : MainAPI() {
     }
     
     // Função para extrair Player M3U8 de scripts
-    private fun extractPlayerM3U8(html: String, videoUrl: String): List<ExtractorLink> {
+    private suspend fun extractPlayerM3U8(html: String, videoUrl: String): List<ExtractorLink> {
         val streams = mutableListOf<ExtractorLink>()
         
         // Buscar m3u8 em scripts
@@ -543,18 +545,18 @@ class AniTube : MainAPI() {
             if (!m3u8Url.contains("anivideo.net")) {
                 val quality = extractQualityFromUrl(m3u8Url)
                 streams.add(
-                    newExtractorLink(
-                        name,
-                        "M3U8 Script ($quality)",
-                        m3u8Url,
-                        mainUrl,
-                        getQualityFromString(quality),
-                        isM3u8 = true,
-                        headers = mapOf(
+                    newExtractorLink {
+                        this.source = name
+                        this.name = "M3U8 Script ($quality)"
+                        this.url = m3u8Url
+                        this.referer = mainUrl
+                        this.quality = getQualityFromString(quality)
+                        this.isM3u8 = true
+                        this.headers = mapOf(
                             "Referer" to videoUrl,
                             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
                         )
-                    )
+                    }
                 )
             }
         }
@@ -660,20 +662,20 @@ class AniTube : MainAPI() {
                         val isM3u8 = mediaUrl.contains(".m3u8", ignoreCase = true)
                         
                         streams.add(
-                            newExtractorLink(
-                                name,
-                                "AniTube ($quality)",
-                                mediaUrl,
-                                mainUrl,
-                                getQualityFromString(quality),
-                                isM3u8 = isM3u8,
-                                headers = mapOf(
+                            newExtractorLink {
+                                this.source = name
+                                this.name = "AniTube ($quality)"
+                                this.url = mediaUrl
+                                this.referer = mainUrl
+                                this.quality = getQualityFromString(quality)
+                                this.isM3u8 = isM3u8
+                                this.headers = mapOf(
                                     "Referer" to if (mediaUrl.contains("anivideo.net")) 
                                         "https://api.anivideo.net/" 
                                     else mainUrl,
                                     "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
                                 )
-                            )
+                            }
                         )
                     }
                 }
