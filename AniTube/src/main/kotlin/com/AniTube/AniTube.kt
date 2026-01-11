@@ -2,6 +2,7 @@ package com.AniTube
 
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
+import com.lagradost.cloudstream3.network.get
 import org.jsoup.nodes.Element
 import java.net.URLDecoder
 
@@ -232,7 +233,7 @@ class AniTube : MainAPI() {
             "Animes Recentes" -> {
                 var recentItems = listOf<AnimeSearchResponse>()
                 
-                for (container in document.select(".aniContainer)) {
+                for (container in document.select(".aniContainer")) {
                     val titleElement = container.selectFirst(".aniContainerTitulo")
                     if (titleElement != null && titleElement.text().contains("ANIMES RECENTES", true)) {
                         recentItems = container.select(".aniItem")
@@ -324,18 +325,16 @@ class AniTube : MainAPI() {
             val episodeUrl = element.attr("href")
             val epNumber = extractEpisodeNumber(episodeTitle) ?: 1
             
-            newEpisode(episodeUrl) {
-                this.name = "Episódio $epNumber"
-                this.episode = epNumber
-                this.posterUrl = poster
+            Episode(episodeUrl, "Episódio $epNumber").apply {
+                episode = epNumber
+                posterUrl = poster
             }
         }
         
         val allEpisodes = if (episodesList.isEmpty() && actualUrl.contains("/video/")) {
-            listOf(newEpisode(actualUrl) {
-                this.name = "Episódio $episodeNumber"
-                this.episode = episodeNumber
-                this.posterUrl = poster
+            listOf(Episode(actualUrl, "Episódio $episodeNumber").apply {
+                episode = episodeNumber
+                posterUrl = poster
             })
         } else {
             episodesList
@@ -351,7 +350,9 @@ class AniTube : MainAPI() {
             this.tags = genres
             this.showStatus = showStatus
             
-            if (sortedEpisodes.isNotEmpty()) addEpisodes(if (isDubbed) DubStatus.Dubbed else DubStatus.Subbed, sortedEpisodes)
+            if (sortedEpisodes.isNotEmpty()) {
+                addEpisodes(if (isDubbed) DubStatus.Dubbed else DubStatus.Subbed, sortedEpisodes)
+            }
         }
     }
     
@@ -422,7 +423,7 @@ class AniTube : MainAPI() {
                         else -> "360p"
                     }
                     
-                    ExtractorLink(
+                    newExtractorLink(
                         name,
                         "JWPlayer ($quality)",
                         link,
@@ -474,7 +475,6 @@ class AniTube : MainAPI() {
     // Função para extrair Player FHD (anivideo.net)
     private fun extractPlayerFHD(html: String, videoUrl: String): List<ExtractorLink> {
         val streams = mutableListOf<ExtractorLink>()
-        val document = app.parseDocument(html)
         
         // Método 1: API anivideo.net direta
         val apiRegex = """https?://api\.anivideo\.net/videohls\.php\?[^"'\s]+""".toRegex()
@@ -486,7 +486,7 @@ class AniTube : MainAPI() {
             if (cleanLink != null) {
                 val quality = extractQualityFromUrl(cleanLink)
                 streams.add(
-                    ExtractorLink(
+                    newExtractorLink(
                         name,
                         "FHD Player ($quality)",
                         cleanLink,
@@ -503,13 +503,14 @@ class AniTube : MainAPI() {
         }
         
         // Método 2: Iframe FHD
+        val document = app.parseDocument(html)
         document.select("iframe[src*=\"api.anivideo.net\"]").forEach { iframe ->
             val src = iframe.attr("src")
             val m3u8Url = extractM3u8FromUrl(src)
             if (m3u8Url != null) {
                 val quality = extractQualityFromUrl(m3u8Url)
                 streams.add(
-                    ExtractorLink(
+                    newExtractorLink(
                         name,
                         "FHD Iframe ($quality)",
                         m3u8Url,
@@ -542,7 +543,7 @@ class AniTube : MainAPI() {
             if (!m3u8Url.contains("anivideo.net")) {
                 val quality = extractQualityFromUrl(m3u8Url)
                 streams.add(
-                    ExtractorLink(
+                    newExtractorLink(
                         name,
                         "M3U8 Script ($quality)",
                         m3u8Url,
@@ -593,10 +594,10 @@ class AniTube : MainAPI() {
     // Função auxiliar para converter string de qualidade para valor numérico
     private fun getQualityFromString(qualityStr: String): Int {
         return when (qualityStr.lowercase()) {
-            "1080p" -> Qualities.FullHDP1080.value
-            "720p" -> Qualities.FullHDP720.value
-            "480p" -> Qualities.HD.value
-            "360p" -> Qualities.SD.value
+            "1080p" -> Qualities.P1080.value
+            "720p" -> Qualities.P720.value
+            "480p" -> Qualities.P480.value
+            "360p" -> Qualities.P360.value
             else -> Qualities.Unknown.value
         }
     }
@@ -659,7 +660,7 @@ class AniTube : MainAPI() {
                         val isM3u8 = mediaUrl.contains(".m3u8", ignoreCase = true)
                         
                         streams.add(
-                            ExtractorLink(
+                            newExtractorLink(
                                 name,
                                 "AniTube ($quality)",
                                 mediaUrl,
@@ -681,10 +682,10 @@ class AniTube : MainAPI() {
             // Ordenar por qualidade (1080p > 720p > 480p > 360p > SD)
             streams.sortByDescending { stream ->
                 when {
-                    stream.quality >= Qualities.FullHDP1080.value -> 5
-                    stream.quality >= Qualities.FullHDP720.value -> 4
-                    stream.quality >= Qualities.HD.value -> 3
-                    stream.quality >= Qualities.SD.value -> 2
+                    stream.quality >= Qualities.P1080.value -> 5
+                    stream.quality >= Qualities.P720.value -> 4
+                    stream.quality >= Qualities.P480.value -> 3
+                    stream.quality >= Qualities.P360.value -> 2
                     else -> 1
                 }
             }
