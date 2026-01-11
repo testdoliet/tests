@@ -44,63 +44,93 @@ class Doramogo : MainAPI() {
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val url = if (page > 1) {
-            when {
-                request.data.contains("/dorama?") || request.data.contains("/filmes") -> 
-                    "${request.data}&pagina=$page"
-                request.data.contains("/genero/") -> 
-                    "${request.data}/pagina/$page"
-                request.data.contains("/episodios") -> 
-                    "${request.data}?pagina=$page"
-                else -> "${request.data}?page=$page"
-            }
-        } else {
-            request.data
+    val url = if (page > 1) {
+        when {
+            request.data.contains("/dorama?") || request.data.contains("/filmes") -> 
+                "${request.data}&pagina=$page"
+            request.data.contains("/genero/") -> 
+                "${request.data}/pagina/$page"
+            request.data.contains("/episodios") -> 
+                "${request.data}?pagina=$page"
+            else -> "${request.data}?page=$page"
         }
+    } else {
+        request.data
+    }
 
-        val document = app.get(url).document
-        val items = ArrayList<SearchResponse>()
+    val document = app.get(url).document
+    val items = ArrayList<SearchResponse>()
 
-        // Verificar se é a aba de episódios recentes
-        val isEpisodesPage = request.data.contains("/episodios") || request.name.contains("Episódios")
+    // Verificar se é a aba de episódios recentes
+    val isEpisodesPage = request.data.contains("/episodios") || request.name.contains("Episódios")
 
-        if (isEpisodesPage) {
-            // Para página de episódios recentes - layout vertical
-            document.select(".episode-card").forEach { card ->
-                val aTag = card.selectFirst("a") ?: return@forEach
-                val titleElement = card.selectFirst("h3, .episode-title")
-                val episodeTitle = titleElement?.text()?.trim() ?: return@forEach
-                
-                // Extrair nome do dorama
-                val doramaName = episodeTitle.replace(Regex("\\s*-\\s*Episódio\\s*\\d+.*$"), "").trim()
-                val href = aTag.attr("href")
-                
-                val imgElement = card.selectFirst("img")
-                val posterUrl = when {
-                    imgElement?.hasAttr("src") == true -> fixUrl(imgElement.attr("src"))
-                    imgElement?.hasAttr("data-src") == true -> fixUrl(imgElement.attr("data-src"))
-                    else -> null
-                }
-                
-                // Extrair número do episódio para título mais descritivo
-                val episodeMatch = Regex("Episódio\\s*(\\d+)", RegexOption.IGNORE_CASE).find(episodeTitle)
-                val episodeNumber = episodeMatch?.groupValues?.get(1)?.toIntOrNull() ?: 1
-                
-                // CORREÇÃO AQUI: Use uma variável local para o nome final
-                val finalTitle = "$doramaName (Episódio $episodeNumber)"
-                
-                items.add(newTvSeriesSearchResponse(doramaName, fixUrl(href), TvType.TvSeries) {
+    if (isEpisodesPage) {
+        // Para página de episódios recentes - layout vertical
+        document.select(".episode-card").forEach { card ->
+            val aTag = card.selectFirst("a") ?: return@forEach
+            val titleElement = card.selectFirst("h3, .episode-title")
+            val episodeTitle = titleElement?.text()?.trim() ?: return@forEach
+            
+            // Extrair nome do dorama
+            val doramaName = episodeTitle.replace(Regex("\\s*-\\s*Episódio\\s*\\d+.*$"), "").trim()
+            val href = aTag.attr("href")
+            
+            val imgElement = card.selectFirst("img")
+            val posterUrl = when {
+                imgElement?.hasAttr("src") == true -> fixUrl(imgElement.attr("src"))
+                imgElement?.hasAttr("data-src") == true -> fixUrl(imgElement.attr("data-src"))
+                else -> null
+            }
+            
+            // Extrair número do episódio para título mais descritivo
+            val episodeMatch = Regex("Episódio\\s*(\\d+)", RegexOption.IGNORE_CASE).find(episodeTitle)
+            val episodeNumber = episodeMatch?.groupValues?.get(1)?.toIntOrNull() ?: 1
+            
+            // CORREÇÃO: Usar o título final diretamente no construtor
+            val finalTitle = "$doramaName (Episódio $episodeNumber)"
+            
+            items.add(newTvSeriesSearchResponse(finalTitle, fixUrl(href), TvType.TvSeries) {
+                this.posterUrl = posterUrl
+            })
+        }
+    } else {
+        // Para outras páginas (doramas, filmes, gêneros) - layout horizontal
+        document.select(".episode-card").forEach { card ->
+            val aTag = card.selectFirst("a") ?: return@forEach
+            val titleElement = card.selectFirst("h3")
+            val title = titleElement?.text()?.trim() 
+                ?: aTag.attr("title")?.trim()
+                ?: return@forEach
+            
+            val href = aTag.attr("href")
+            
+            val imgElement = card.selectFirst("img")
+            val posterUrl = when {
+                imgElement?.hasAttr("data-src") == true -> fixUrl(imgElement.attr("data-src"))
+                imgElement?.hasAttr("src") == true -> fixUrl(imgElement.attr("src"))
+                else -> null
+            }
+            
+            val isMovie = href.contains("/filmes/") || request.name.contains("Filmes")
+            val type = if (isMovie) TvType.Movie else TvType.TvSeries
+            
+            if (type == TvType.Movie) {
+                items.add(newMovieSearchResponse(title, fixUrl(href), type) {
                     this.posterUrl = posterUrl
-                    this.name = finalTitle // Agora funciona
+                })
+            } else {
+                items.add(newTvSeriesSearchResponse(title, fixUrl(href), type) { 
+                    this.posterUrl = posterUrl
                 })
             }
-        } else {
-            // Para outras páginas (doramas, filmes, gêneros) - layout horizontal
-            document.select(".episode-card").forEach { card ->
+        }
+        
+        // Fallback: tentar pegar itens de outras estruturas se necessário
+        if (items.isEmpty()) {
+            document.select(".grid .episode-card").forEach { card ->
                 val aTag = card.selectFirst("a") ?: return@forEach
                 val titleElement = card.selectFirst("h3")
                 val title = titleElement?.text()?.trim() 
-                    ?: aTag.attr("title")?.trim()
                     ?: return@forEach
                 
                 val href = aTag.attr("href")
@@ -112,8 +142,7 @@ class Doramogo : MainAPI() {
                     else -> null
                 }
                 
-                val isMovie = href.contains("/filmes/") || request.name.contains("Filmes")
-                val type = if (isMovie) TvType.Movie else TvType.TvSeries
+                val type = if (href.contains("/filmes/")) TvType.Movie else TvType.TvSeries
                 
                 if (type == TvType.Movie) {
                     items.add(newMovieSearchResponse(title, fixUrl(href), type) {
@@ -125,52 +154,22 @@ class Doramogo : MainAPI() {
                     })
                 }
             }
-            
-            // Fallback: tentar pegar itens de outras estruturas se necessário
-            if (items.isEmpty()) {
-                document.select(".grid .episode-card").forEach { card ->
-                    val aTag = card.selectFirst("a") ?: return@forEach
-                    val titleElement = card.selectFirst("h3")
-                    val title = titleElement?.text()?.trim() 
-                        ?: return@forEach
-                    
-                    val href = aTag.attr("href")
-                    
-                    val imgElement = card.selectFirst("img")
-                    val posterUrl = when {
-                        imgElement?.hasAttr("data-src") == true -> fixUrl(imgElement.attr("data-src"))
-                        imgElement?.hasAttr("src") == true -> fixUrl(imgElement.attr("src"))
-                        else -> null
-                    }
-                    
-                    val type = if (href.contains("/filmes/")) TvType.Movie else TvType.TvSeries
-                    
-                    if (type == TvType.Movie) {
-                        items.add(newMovieSearchResponse(title, fixUrl(href), type) {
-                            this.posterUrl = posterUrl
-                        })
-                    } else {
-                        items.add(newTvSeriesSearchResponse(title, fixUrl(href), type) { 
-                            this.posterUrl = posterUrl
-                        })
-                    }
-                }
-            }
         }
-
-        val hasNextPage = document.select("""a[href*="pagina/"], a[href*="?page="], 
-            .pagination a, .next-btn, a:contains(PRÓXIMA)""").isNotEmpty()
-        
-        // Criar HomePageList com configuração de layout
-        val homePageList = HomePageList(
-            request.name,
-            items.distinctBy { it.url },
-            // Episódios recentes são verticais (false), outros são horizontais (true)
-            isHorizontalImages = !isEpisodesPage
-        )
-        
-        return newHomePageResponse(listOf(homePageList), hasNextPage)
     }
+
+    val hasNextPage = document.select("""a[href*="pagina/"], a[href*="?page="], 
+        .pagination a, .next-btn, a:contains(PRÓXIMA)""").isNotEmpty()
+    
+    // Criar HomePageList com configuração de layout
+    val homePageList = HomePageList(
+        request.name,
+        items.distinctBy { it.url },
+        // Episódios recentes são verticais (false), outros são horizontais (true)
+        isHorizontalImages = !isEpisodesPage
+    )
+    
+    return newHomePageResponse(listOf(homePageList), hasNextPage)
+}
 
     // --- Search ---
     override suspend fun search(query: String): List<SearchResponse> {
