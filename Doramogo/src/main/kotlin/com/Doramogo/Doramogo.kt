@@ -21,7 +21,7 @@ class Doramogo : MainAPI() {
     override val hasMainPage = true
     override var lang = "pt-br"
     override val hasDownloadSupport = false
-    override val supportedTypes = setOf(TvType.TvSeries, TvType.Movie)
+    override val supportedTypes = setOf(TvType.Anime, TvType.Movie)
     override val usesWebView = false
 
     override val mainPage = mainPageOf(
@@ -70,7 +70,7 @@ class Doramogo : MainAPI() {
                 val titleElement = card.selectFirst("h3")
                 val episodeTitle = titleElement?.text()?.trim() ?: return@forEach
                 
-                // Extrair nome do dorama removendo parênteses de legendado/dublado
+                // Extrair nome do dorama removendo parênteses
                 val cleanTitle = episodeTitle.replace(Regex("\\s*\\(.*\\)"), "").trim()
                 
                 // Extrair nome base sem "Episódio X"
@@ -88,7 +88,7 @@ class Doramogo : MainAPI() {
                 val episodeMatch = Regex("Episódio\\s*(\\d+)", RegexOption.IGNORE_CASE).find(cleanTitle)
                 val episodeNumber = episodeMatch?.groupValues?.get(1)?.toIntOrNull() ?: 1
                 
-                // Determinar se é DUB ou LEG da URL ou título
+                // Determinar se é DUB ou LEG
                 val isDub = href.contains("/dub/") || request.data.contains("idiomar=DUB") || 
                            episodeTitle.contains("Dublado", ignoreCase = true)
                 val isLeg = href.contains("/leg/") || request.data.contains("idiomar=LEG") || 
@@ -106,8 +106,15 @@ class Doramogo : MainAPI() {
                     "$doramaName - EP $episodeNumber"
                 }
                 
-                items.add(newTvSeriesSearchResponse(finalTitle, fixUrl(href), TvType.TvSeries) {
+                // Usar AnimeSearchResponse para ter acesso a addDubStatus
+                items.add(newAnimeSearchResponse(finalTitle, fixUrl(href)) {
                     this.posterUrl = posterUrl
+                    this.type = TvType.Anime
+                    
+                    // Adicionar status de dublado/legendado
+                    if (isDub || isLeg) {
+                        addDubStatus(dubExist = isDub, subExist = isLeg)
+                    }
                 })
             }
         } else {
@@ -119,12 +126,8 @@ class Doramogo : MainAPI() {
                     ?: aTag.attr("title")?.trim()
                     ?: return@forEach
                 
-                // REMOVER (Legendado) e (Dublado) dos títulos em outras páginas
-                title = title.replace(Regex("\\s*\\(Legendado\\)", RegexOption.IGNORE_CASE), "")
-                    .replace(Regex("\\s*\\(Dublado\\)", RegexOption.IGNORE_CASE), "")
-                    .replace(Regex("\\s*\\(.*Legendado.*\\)", RegexOption.IGNORE_CASE), "")
-                    .replace(Regex("\\s*\\(.*Dublado.*\\)", RegexOption.IGNORE_CASE), "")
-                    .trim()
+                // REMOVER (Legendado) e (Dublado) dos títulos
+                title = cleanTitle(title)
                 
                 val href = aTag.attr("href")
                 
@@ -136,52 +139,29 @@ class Doramogo : MainAPI() {
                 }
                 
                 val isMovie = href.contains("/filmes/") || request.name.contains("Filmes")
-                val type = if (isMovie) TvType.Movie else TvType.TvSeries
+                val type = if (isMovie) TvType.Movie else TvType.Anime
+                
+                // Verificar se é dublado ou legendado
+                val isDub = href.contains("/dub/") || request.data.contains("idiomar=DUB") || 
+                           titleElement?.text()?.contains("Dublado", ignoreCase = true) == true
+                val isLeg = href.contains("/leg/") || request.data.contains("idiomar=LEG") || 
+                           titleElement?.text()?.contains("Legendado", ignoreCase = true) == true
                 
                 if (type == TvType.Movie) {
                     items.add(newMovieSearchResponse(title, fixUrl(href), type) {
                         this.posterUrl = posterUrl
                     })
                 } else {
-                    items.add(newTvSeriesSearchResponse(title, fixUrl(href), type) { 
+                    // Usar AnimeSearchResponse para doramas
+                    items.add(newAnimeSearchResponse(title, fixUrl(href)) {
                         this.posterUrl = posterUrl
+                        this.type = TvType.Anime
+                        
+                        // Adicionar status de dublado/legendado
+                        if (isDub || isLeg) {
+                            addDubStatus(dubExist = isDub, subExist = isLeg)
+                        }
                     })
-                }
-            }
-            
-            // Fallback: tentar pegar itens de outras estruturas se necessário
-            if (items.isEmpty()) {
-                document.select(".grid .episode-card").forEach { card ->
-                    val aTag = card.selectFirst("a") ?: return@forEach
-                    val titleElement = card.selectFirst("h3")
-                    var title = titleElement?.text()?.trim() 
-                        ?: return@forEach
-                    
-                    // REMOVER (Legendado) e (Dublado) dos títulos
-                    title = title.replace(Regex("\\s*\\(Legendado\\)", RegexOption.IGNORE_CASE), "")
-                        .replace(Regex("\\s*\\(Dublado\\)", RegexOption.IGNORE_CASE), "")
-                        .trim()
-                    
-                    val href = aTag.attr("href")
-                    
-                    val imgElement = card.selectFirst("img")
-                    val posterUrl = when {
-                        imgElement?.hasAttr("data-src") == true -> fixUrl(imgElement.attr("data-src"))
-                        imgElement?.hasAttr("src") == true -> fixUrl(imgElement.attr("src"))
-                        else -> null
-                    }
-                    
-                    val type = if (href.contains("/filmes/")) TvType.Movie else TvType.TvSeries
-                    
-                    if (type == TvType.Movie) {
-                        items.add(newMovieSearchResponse(title, fixUrl(href), type) {
-                            this.posterUrl = posterUrl
-                        })
-                    } else {
-                        items.add(newTvSeriesSearchResponse(title, fixUrl(href), type) { 
-                            this.posterUrl = posterUrl
-                        })
-                    }
                 }
             }
         }
@@ -211,10 +191,8 @@ class Doramogo : MainAPI() {
                 ?: aTag.attr("title") 
                 ?: return@mapNotNull null
             
-            // REMOVER (Legendado) e (Dublado) dos títulos na busca também
-            title = title.replace(Regex("\\s*\\(Legendado\\)", RegexOption.IGNORE_CASE), "")
-                .replace(Regex("\\s*\\(Dublado\\)", RegexOption.IGNORE_CASE), "")
-                .trim()
+            // Limpar título
+            title = cleanTitle(title)
             
             val href = aTag.attr("href")
             
@@ -225,15 +203,26 @@ class Doramogo : MainAPI() {
                 else -> null
             }
             
-            val type = if (href.contains("/filmes/")) TvType.Movie else TvType.TvSeries
+            val type = if (href.contains("/filmes/")) TvType.Movie else TvType.Anime
+            
+            // Verificar se é dublado ou legendado
+            val isDub = href.contains("/dub/") || title.contains("Dublado", ignoreCase = true)
+            val isLeg = href.contains("/leg/") || title.contains("Legendado", ignoreCase = true)
             
             if (type == TvType.Movie) {
                 newMovieSearchResponse(title, fixUrl(href), type) { 
                     this.posterUrl = posterUrl 
                 }
             } else {
-                newTvSeriesSearchResponse(title, fixUrl(href), type) { 
-                    this.posterUrl = posterUrl 
+                // Usar AnimeSearchResponse para doramas
+                newAnimeSearchResponse(title, fixUrl(href)) { 
+                    this.posterUrl = posterUrl
+                    this.type = TvType.Anime
+                    
+                    // Adicionar status de dublado/legendado
+                    if (isDub || isLeg) {
+                        addDubStatus(dubExist = isDub, subExist = isLeg)
+                    }
                 }
             }
         }
@@ -243,34 +232,32 @@ class Doramogo : MainAPI() {
     override suspend fun load(url: String): LoadResponse? {
         val document = app.get(url).document
         
-        // Título - extrair do h1
+        // Título
         val fullTitle = document.selectFirst("h1")?.text()?.trim()
             ?: document.selectFirst("meta[property='og:title']")?.attr("content")
             ?: return null
         
-        // REMOVER " - Dublado e Legendado" e parenteses similares
-        var title = fullTitle.replace(Regex("\\s*-\\s*(Dublado|Legendado|Online|e|Dublado e Legendado).*"), "")
-            .replace(Regex("\\s*\\(.*\\)"), "")
-            .trim()
+        // Limpar título
+        var title = cleanTitle(fullTitle)
         
-        // Descrição - do HTML fornecido
+        // Descrição
         val description = document.selectFirst("meta[property='og:description']")?.attr("content")
             ?: document.selectFirst("#sinopse-text")?.text()?.trim()
             ?: ""
         
-        // Poster - do HTML fornecido
+        // Poster
         val poster = document.selectFirst("meta[property='og:image']")?.attr("content")?.let { fixUrl(it) }
             ?: document.selectFirst("#w-55")?.attr("src")?.let { fixUrl(it) }
         
-        // Ano - do texto de informações
+        // Ano
         val infoText = document.selectFirst(".detail p.text-white")?.text() ?: ""
         val year = Regex("""/(\d{4})/""").find(infoText)?.groupValues?.get(1)?.toIntOrNull()
             ?: title.findYear()
         
-        // Gêneros - do HTML fornecido
+        // Gêneros
         val tags = document.select(".gens a").map { it.text().trim() }
         
-        // Extrair informações adicionais do HTML
+        // Extrair informações adicionais
         val castsInfo = mutableMapOf<String, String>()
         document.select(".casts div").forEach { div ->
             val text = div.text()
@@ -284,12 +271,25 @@ class Doramogo : MainAPI() {
             }
         }
         
-        // Verificar se é filme ou série
-        val isMovie = url.contains("/filmes/")
-        val type = if (isMovie) TvType.Movie else TvType.TvSeries
+        // Status da série
+        val statusText = castsInfo["status"] ?: ""
+        val status = when {
+            statusText.contains("Finalizada", ignoreCase = true) -> ShowStatus.Completed
+            statusText.contains("Em Produção", ignoreCase = true) -> ShowStatus.Ongoing
+            else -> null
+        }
         
-        if (type == TvType.TvSeries) {
-            // Extrair episódios do HTML fornecido
+        // Áudio (Dublado/Legendado)
+        val audioInfo = castsInfo["áudio"] ?: ""
+        val isDub = audioInfo.contains("Dublado", ignoreCase = true)
+        val isSub = audioInfo.contains("Legendado", ignoreCase = true)
+        
+        // Verificar se é filme ou anime (dorama)
+        val isMovie = url.contains("/filmes/")
+        val type = if (isMovie) TvType.Movie else TvType.Anime
+        
+        if (type == TvType.Anime) {
+            // Extrair episódios
             val episodes = mutableListOf<Episode>()
             document.select(".dorama-one-episode-item").forEach { episodeItem ->
                 val episodeUrl = episodeItem.attr("href")?.let { fixUrl(it) } ?: return@forEach
@@ -305,40 +305,24 @@ class Doramogo : MainAPI() {
                 })
             }
             
-            // Status da série
-            val statusText = castsInfo["status"] ?: ""
-            val status = when {
-                statusText.contains("Finalizada", ignoreCase = true) -> ShowStatus.Completed
-                statusText.contains("Em Produção", ignoreCase = true) -> ShowStatus.Ongoing
-                else -> null
-            }
-            
-            // Áudio (Dublado/Legendado)
-            val audioInfo = castsInfo["áudio"] ?: ""
-            val isDub = audioInfo.contains("Dublado", ignoreCase = true)
-            val isSub = audioInfo.contains("Legendado", ignoreCase = true)
-            
-            return newTvSeriesLoadResponse(title, url, type, episodes) {
+            // Usar AnimeLoadResponse para ter acesso a status e addDubStatus
+            return newAnimeLoadResponse(title, url, type) {
                 this.posterUrl = poster
                 this.year = year
                 this.plot = description
                 this.tags = tags
                 this.status = status
                 
-                // Para série, adicionar informações de áudio se disponível
-                if (isDub) {
-                    this.dubStatus = true
+                // Adicionar episódios com status de áudio
+                if (episodes.isNotEmpty()) {
+                    val dubStatus = if (isDub) DubStatus.Dubbed else DubStatus.Subbed
+                    addEpisodes(dubStatus, episodes)
                 }
             }
         } else {
             // Para filmes
-            // Duração do HTML
             val durationText = castsInfo["duraçã"] ?: castsInfo["duração"]
             val duration = durationText?.parseDuration()
-            
-            // Áudio (Dublado/Legendado)
-            val audioInfo = castsInfo["áudio"] ?: ""
-            val isDub = audioInfo.contains("Dublado", ignoreCase = true)
             
             return newMovieLoadResponse(title, url, type, url) {
                 this.posterUrl = poster
@@ -346,12 +330,17 @@ class Doramogo : MainAPI() {
                 this.plot = description
                 this.tags = tags
                 this.duration = duration
-                
-                if (isDub) {
-                    this.dubStatus = true
-                }
             }
         }
+    }
+    
+    // Função auxiliar para limpar títulos
+    private fun cleanTitle(title: String): String {
+        return title.replace(Regex("\\s*\\(Legendado\\)", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("\\s*\\(Dublado\\)", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("\\s*-\\s*(Dublado|Legendado|Online|e|Dublado e Legendado).*"), "")
+            .replace(Regex("\\s*\\(.*\\)"), "")
+            .trim()
     }
     
     private fun extractEpisodeNumber(text: String): Int {
