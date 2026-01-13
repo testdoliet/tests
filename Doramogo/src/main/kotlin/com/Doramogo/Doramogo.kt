@@ -271,9 +271,9 @@ class Doramogo : MainAPI() {
             }
         }
         
-        // Status da série
+        // Status da série - CORRIGIDO: usar showStatus em vez de status
         val statusText = castsInfo["status"] ?: ""
-        val status = when {
+        val showStatus = when {
             statusText.contains("Finalizada", ignoreCase = true) -> ShowStatus.Completed
             statusText.contains("Em Produção", ignoreCase = true) -> ShowStatus.Ongoing
             else -> null
@@ -305,13 +305,13 @@ class Doramogo : MainAPI() {
                 })
             }
             
-            // Usar AnimeLoadResponse para ter acesso a status e addDubStatus
+            // Usar AnimeLoadResponse
             return newAnimeLoadResponse(title, url, type) {
                 this.posterUrl = poster
                 this.year = year
                 this.plot = description
                 this.tags = tags
-                this.status = status
+                this.showStatus = showStatus  // CORRIGIDO: usar showStatus
                 
                 // Adicionar episódios com status de áudio
                 if (episodes.isNotEmpty()) {
