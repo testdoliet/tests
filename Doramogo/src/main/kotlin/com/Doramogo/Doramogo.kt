@@ -25,7 +25,6 @@ class Doramogo : MainAPI() {
     override val usesWebView = false
 
     override val mainPage = mainPageOf(
-        "$mainUrl/" to "Em Destaque",
         "$mainUrl/episodios" to "Episódios Recentes",
         "$mainUrl/dorama?slug=&status=&ano=&classificacao_idade=&idiomar=DUB" to "Doramas Dublados",
         "$mainUrl/dorama?slug=&status=&ano=&classificacao_idade=&idiomar=LEG" to "Doramas Legendados",
@@ -68,11 +67,14 @@ class Doramogo : MainAPI() {
             // Para página de episódios recentes - layout HORIZONTAL
             document.select(".episode-card").forEach { card ->
                 val aTag = card.selectFirst("a") ?: return@forEach
-                val titleElement = card.selectFirst("h3, .episode-title")
+                val titleElement = card.selectFirst("h3")
                 val episodeTitle = titleElement?.text()?.trim() ?: return@forEach
                 
-                // Extrair nome do dorama
-                val doramaName = episodeTitle.replace(Regex("\\s*-\\s*Episódio\\s*\\d+.*$"), "").trim()
+                // Extrair nome do dorama removendo parênteses de legendado/dublado
+                val cleanTitle = episodeTitle.replace(Regex("\\s*\\(.*\\)"), "").trim()
+                
+                // Extrair nome base sem "Episódio X"
+                val doramaName = cleanTitle.replace(Regex("\\s*-\\s*Episódio\\s*\\d+.*$"), "").trim()
                 val href = aTag.attr("href")
                 
                 val imgElement = card.selectFirst("img")
@@ -82,12 +84,27 @@ class Doramogo : MainAPI() {
                     else -> null
                 }
                 
-                // Extrair número do episódio para título mais descritivo
-                val episodeMatch = Regex("Episódio\\s*(\\d+)", RegexOption.IGNORE_CASE).find(episodeTitle)
+                // Extrair número do episódio
+                val episodeMatch = Regex("Episódio\\s*(\\d+)", RegexOption.IGNORE_CASE).find(cleanTitle)
                 val episodeNumber = episodeMatch?.groupValues?.get(1)?.toIntOrNull() ?: 1
                 
-                // Usar o título final diretamente no construtor
-                val finalTitle = "$doramaName (Episódio $episodeNumber)"
+                // Determinar se é DUB ou LEG da URL ou título
+                val isDub = href.contains("/dub/") || request.data.contains("idiomar=DUB") || 
+                           episodeTitle.contains("Dublado", ignoreCase = true)
+                val isLeg = href.contains("/leg/") || request.data.contains("idiomar=LEG") || 
+                           episodeTitle.contains("Legendado", ignoreCase = true)
+                
+                // Formatar título final: Dorama - EP X LEG/DUB
+                val audioType = when {
+                    isDub -> "DUB"
+                    isLeg -> "LEG"
+                    else -> ""
+                }
+                val finalTitle = if (audioType.isNotEmpty()) {
+                    "$doramaName - EP $episodeNumber $audioType"
+                } else {
+                    "$doramaName - EP $episodeNumber"
+                }
                 
                 items.add(newTvSeriesSearchResponse(finalTitle, fixUrl(href), TvType.TvSeries) {
                     this.posterUrl = posterUrl
@@ -98,9 +115,16 @@ class Doramogo : MainAPI() {
             document.select(".episode-card").forEach { card ->
                 val aTag = card.selectFirst("a") ?: return@forEach
                 val titleElement = card.selectFirst("h3")
-                val title = titleElement?.text()?.trim() 
+                var title = titleElement?.text()?.trim() 
                     ?: aTag.attr("title")?.trim()
                     ?: return@forEach
+                
+                // REMOVER (Legendado) e (Dublado) dos títulos em outras páginas
+                title = title.replace(Regex("\\s*\\(Legendado\\)", RegexOption.IGNORE_CASE), "")
+                    .replace(Regex("\\s*\\(Dublado\\)", RegexOption.IGNORE_CASE), "")
+                    .replace(Regex("\\s*\\(.*Legendado.*\\)", RegexOption.IGNORE_CASE), "")
+                    .replace(Regex("\\s*\\(.*Dublado.*\\)", RegexOption.IGNORE_CASE), "")
+                    .trim()
                 
                 val href = aTag.attr("href")
                 
@@ -130,8 +154,13 @@ class Doramogo : MainAPI() {
                 document.select(".grid .episode-card").forEach { card ->
                     val aTag = card.selectFirst("a") ?: return@forEach
                     val titleElement = card.selectFirst("h3")
-                    val title = titleElement?.text()?.trim() 
+                    var title = titleElement?.text()?.trim() 
                         ?: return@forEach
+                    
+                    // REMOVER (Legendado) e (Dublado) dos títulos
+                    title = title.replace(Regex("\\s*\\(Legendado\\)", RegexOption.IGNORE_CASE), "")
+                        .replace(Regex("\\s*\\(Dublado\\)", RegexOption.IGNORE_CASE), "")
+                        .trim()
                     
                     val href = aTag.attr("href")
                     
@@ -164,7 +193,7 @@ class Doramogo : MainAPI() {
         val homePageList = HomePageList(
             request.name,
             items.distinctBy { it.url },
-            // CORREÇÃO FINAL: Episódios recentes são HORIZONTAIS (true), outros são VERTICAIS (false)
+            // Episódios recentes são HORIZONTAIS (true), outros são VERTICAIS (false)
             isHorizontalImages = isEpisodesPage
         )
         
@@ -178,9 +207,15 @@ class Doramogo : MainAPI() {
         
         return document.select(".episode-card, .search-result").mapNotNull { card ->
             val aTag = card.selectFirst("a") ?: return@mapNotNull null
-            val title = card.selectFirst("h3, h2")?.text()?.trim() 
+            var title = card.selectFirst("h3, h2")?.text()?.trim() 
                 ?: aTag.attr("title") 
                 ?: return@mapNotNull null
+            
+            // REMOVER (Legendado) e (Dublado) dos títulos na busca também
+            title = title.replace(Regex("\\s*\\(Legendado\\)", RegexOption.IGNORE_CASE), "")
+                .replace(Regex("\\s*\\(Dublado\\)", RegexOption.IGNORE_CASE), "")
+                .trim()
+            
             val href = aTag.attr("href")
             
             val imgElement = card.selectFirst("img")
@@ -208,38 +243,53 @@ class Doramogo : MainAPI() {
     override suspend fun load(url: String): LoadResponse? {
         val document = app.get(url).document
         
-        // Título
+        // Título - extrair do h1
         val fullTitle = document.selectFirst("h1")?.text()?.trim()
             ?: document.selectFirst("meta[property='og:title']")?.attr("content")
             ?: return null
         
-        val title = fullTitle.replace(Regex("\\s*-\\s*(Dublado|Legendado|Online).*"), "").trim()
+        // REMOVER " - Dublado e Legendado" e parenteses similares
+        var title = fullTitle.replace(Regex("\\s*-\\s*(Dublado|Legendado|Online|e|Dublado e Legendado).*"), "")
+            .replace(Regex("\\s*\\(.*\\)"), "")
+            .trim()
         
-        // Descrição
+        // Descrição - do HTML fornecido
         val description = document.selectFirst("meta[property='og:description']")?.attr("content")
             ?: document.selectFirst("#sinopse-text")?.text()?.trim()
             ?: ""
         
-        // Poster
+        // Poster - do HTML fornecido
         val poster = document.selectFirst("meta[property='og:image']")?.attr("content")?.let { fixUrl(it) }
             ?: document.selectFirst("#w-55")?.attr("src")?.let { fixUrl(it) }
-            ?: document.selectFirst(".episode-image-container img")?.attr("src")?.let { fixUrl(it) }
-            ?: document.selectFirst(".thumbnail img")?.attr("src")?.let { fixUrl(it) }
         
-        // Ano
+        // Ano - do texto de informações
         val infoText = document.selectFirst(".detail p.text-white")?.text() ?: ""
         val year = Regex("""/(\d{4})/""").find(infoText)?.groupValues?.get(1)?.toIntOrNull()
             ?: title.findYear()
         
-        // Gêneros
+        // Gêneros - do HTML fornecido
         val tags = document.select(".gens a").map { it.text().trim() }
+        
+        // Extrair informações adicionais do HTML
+        val castsInfo = mutableMapOf<String, String>()
+        document.select(".casts div").forEach { div ->
+            val text = div.text()
+            if (text.contains(":")) {
+                val parts = text.split(":", limit = 2)
+                if (parts.size == 2) {
+                    val key = parts[0].trim().lowercase()
+                    val value = parts[1].trim()
+                    castsInfo[key] = value
+                }
+            }
+        }
         
         // Verificar se é filme ou série
         val isMovie = url.contains("/filmes/")
         val type = if (isMovie) TvType.Movie else TvType.TvSeries
         
         if (type == TvType.TvSeries) {
-            // Extrair episódios
+            // Extrair episódios do HTML fornecido
             val episodes = mutableListOf<Episode>()
             document.select(".dorama-one-episode-item").forEach { episodeItem ->
                 val episodeUrl = episodeItem.attr("href")?.let { fixUrl(it) } ?: return@forEach
@@ -255,35 +305,51 @@ class Doramogo : MainAPI() {
                 })
             }
             
-            // Se não encontrar episódios estruturados, tentar outros métodos
-            if (episodes.isEmpty()) {
-                document.select("a[href*='/episodio-'], a[href*='/episode-']").forEach { episodeLink ->
-                    val episodeUrl = episodeLink.attr("href")?.let { fixUrl(it) } ?: return@forEach
-                    val episodeTitle = episodeLink.text().trim().ifEmpty { "Episódio" }
-                    
-                    val seasonEpisode = extractSeasonEpisodeFromUrl(episodeUrl)
-                    
-                    episodes.add(newEpisode(episodeUrl) {
-                        this.name = episodeTitle
-                        this.season = seasonEpisode.first
-                        this.episode = seasonEpisode.second
-                    })
-                }
+            // Status da série
+            val statusText = castsInfo["status"] ?: ""
+            val status = when {
+                statusText.contains("Finalizada", ignoreCase = true) -> ShowStatus.Completed
+                statusText.contains("Em Produção", ignoreCase = true) -> ShowStatus.Ongoing
+                else -> null
             }
+            
+            // Áudio (Dublado/Legendado)
+            val audioInfo = castsInfo["áudio"] ?: ""
+            val isDub = audioInfo.contains("Dublado", ignoreCase = true)
+            val isSub = audioInfo.contains("Legendado", ignoreCase = true)
             
             return newTvSeriesLoadResponse(title, url, type, episodes) {
                 this.posterUrl = poster
                 this.year = year
                 this.plot = description
                 this.tags = tags
+                this.status = status
+                
+                // Para série, adicionar informações de áudio se disponível
+                if (isDub) {
+                    this.dubStatus = true
+                }
             }
         } else {
             // Para filmes
+            // Duração do HTML
+            val durationText = castsInfo["duraçã"] ?: castsInfo["duração"]
+            val duration = durationText?.parseDuration()
+            
+            // Áudio (Dublado/Legendado)
+            val audioInfo = castsInfo["áudio"] ?: ""
+            val isDub = audioInfo.contains("Dublado", ignoreCase = true)
+            
             return newMovieLoadResponse(title, url, type, url) {
                 this.posterUrl = poster
                 this.year = year
                 this.plot = description
                 this.tags = tags
+                this.duration = duration
+                
+                if (isDub) {
+                    this.dubStatus = true
+                }
             }
         }
     }
@@ -301,26 +367,6 @@ class Doramogo : MainAPI() {
         val pattern = Regex("""temporada[_-](\d+)""", RegexOption.IGNORE_CASE)
         val match = pattern.find(url)
         return match?.groupValues?.get(1)?.toIntOrNull()
-    }
-    
-    private fun extractSeasonEpisodeFromUrl(url: String): Pair<Int, Int> {
-        val seasonPattern = Regex("""temporada[_-](\d+)|season[_-](\d+)|/T(\d+)/""", RegexOption.IGNORE_CASE)
-        val episodePattern = Regex("""episodio[_-](\d+)|episode[_-](\d+)|/E(\d+)/""", RegexOption.IGNORE_CASE)
-        
-        val seasonMatch = seasonPattern.find(url)
-        val episodeMatch = episodePattern.find(url)
-        
-        val season = seasonMatch?.groupValues?.get(1)?.toIntOrNull()
-            ?: seasonMatch?.groupValues?.get(2)?.toIntOrNull()
-            ?: seasonMatch?.groupValues?.get(3)?.toIntOrNull()
-            ?: 1
-        
-        val episode = episodeMatch?.groupValues?.get(1)?.toIntOrNull()
-            ?: episodeMatch?.groupValues?.get(2)?.toIntOrNull()
-            ?: episodeMatch?.groupValues?.get(3)?.toIntOrNull()
-            ?: 1
-        
-        return Pair(season, episode)
     }
     
     private fun String.findYear(): Int? {
