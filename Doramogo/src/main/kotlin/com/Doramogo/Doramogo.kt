@@ -257,6 +257,9 @@ class Doramogo : MainAPI() {
         val isMovie = url.contains("/filmes/")
         val type = if (isMovie) TvType.Movie else TvType.TvSeries
         
+        // Extrair recomendações (doramas relacionados)
+        val recommendations = extractRecommendationsFromSite(document)
+        
         if (type == TvType.TvSeries) {
             // Extrair episódios de múltiplas temporadas
             val episodes = mutableListOf<Episode>()
@@ -306,11 +309,7 @@ class Doramogo : MainAPI() {
                 this.year = year
                 this.plot = description
                 this.tags = allTags
-                
-                // Adicionar informações extras
-                infoMap["estúdio"]?.let { studio ->
-                    this.recommendations = listOf(Recommendation(studio))
-                }
+                this.recommendations = recommendations
             }
         } else {
             // Para filmes
@@ -320,11 +319,7 @@ class Doramogo : MainAPI() {
                 this.plot = description
                 this.tags = allTags
                 this.duration = duration
-                
-                // Adicionar informações extras
-                infoMap["estúdio"]?.let { studio ->
-                    this.recommendations = listOf(Recommendation(studio))
-                }
+                this.recommendations = recommendations
             }
         }
     }
@@ -376,6 +371,80 @@ class Doramogo : MainAPI() {
         return infoMap
     }
     
+    // Extrair recomendações (doramas relacionados) do site
+    private fun extractRecommendationsFromSite(document: Element): List<SearchResponse> {
+        val recommendations = mutableListOf<SearchResponse>()
+        
+        // Tentar diferentes seletores para recomendações
+        val selectors = listOf(
+            ".cover .thumbnail a", 
+            ".grid .cover a", 
+            ".rec-card a", 
+            ".related-content a",
+            "a[href*='/series/']", 
+            "a[href*='/filmes/']"
+        )
+        
+        for (selector in selectors) {
+            document.select(selector).forEach { element ->
+                try {
+                    val href = element.attr("href")?.takeIf { it.isNotBlank() } ?: return@forEach
+                    if (href == "#" || href.contains("javascript:")) return@forEach
+                    
+                    // Verificar se é uma URL do próprio site
+                    if (!href.contains(mainUrl) && !href.startsWith("/")) return@forEach
+                    
+                    val imgElement = element.selectFirst("img")
+                    val title = imgElement?.attr("alt")?.takeIf { it.isNotBlank() }
+                        ?: imgElement?.attr("title")?.takeIf { it.isNotBlank() }
+                        ?: element.attr("title")?.takeIf { it.isNotBlank() }
+                        ?: return@forEach
+                    
+                    // Verificar se não é o mesmo item atual
+                    if (title.equals(document.selectFirst("h1")?.text()?.trim(), ignoreCase = true)) {
+                        return@forEach
+                    }
+                    
+                    val poster = when {
+                        imgElement?.hasAttr("data-src") == true -> fixUrl(imgElement.attr("data-src"))
+                        imgElement?.hasAttr("src") == true -> fixUrl(imgElement.attr("src"))
+                        else -> null
+                    }
+                    
+                    val cleanTitle = cleanTitle(title)
+                    val year = extractYearFromUrl(href)
+                    
+                    // Determinar tipo pelo URL
+                    val type = when {
+                        href.contains("/filmes/") -> TvType.Movie
+                        else -> TvType.TvSeries
+                    }
+                    
+                    if (type == TvType.Movie) {
+                        recommendations.add(newMovieSearchResponse(cleanTitle, fixUrl(href), type) {
+                            this.posterUrl = poster
+                            this.year = year
+                        })
+                    } else {
+                        recommendations.add(newTvSeriesSearchResponse(cleanTitle, fixUrl(href), type) {
+                            this.posterUrl = poster
+                            this.year = year
+                        })
+                    }
+                    
+                    // Limitar a 10 recomendações
+                    if (recommendations.size >= 10) return recommendations
+                } catch (e: Exception) {
+                    // Ignorar erros e continuar
+                }
+            }
+            
+            if (recommendations.isNotEmpty()) break
+        }
+        
+        return recommendations.distinctBy { it.url }.take(10)
+    }
+    
     // Extrair ano da URL (ex: /kingdom-2019/)
     private fun extractYearFromUrl(url: String): Int? {
         val pattern = Regex("""/(?:series|filmes)/[^/]+-(\d{4})/""")
@@ -389,6 +458,7 @@ class Doramogo : MainAPI() {
             .replace(Regex("\\s*\\(Dublado\\)", RegexOption.IGNORE_CASE), "")
             .replace(Regex("\\s*-\\s*(Dublado|Legendado|Online|e|Dublado e Legendado).*"), "")
             .replace(Regex("\\s*\\(.*\\)"), "")
+            .replace(Regex("\\(\\d{4}\\)"), "") // Remover (2024)
             .trim()
     }
     
