@@ -2,11 +2,16 @@ package com.Doramogo
 
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
-import com.lagradost.cloudstream3.LoadResponse.Companion.addTrailer
+import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
+import com.lagradost.cloudstream3.utils.ExtractorLink
+import com.lagradost.cloudstream3.utils.ExtractorLinkType
+import com.lagradost.cloudstream3.utils.Qualities
+import com.lagradost.cloudstream3.utils.SubtitleFile
 import org.jsoup.nodes.Element
 import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
 import com.lagradost.cloudstream3.plugins.Plugin
 import android.content.Context
+import com.lagradost.cloudstream3.utils.newExtractorLink
 
 @CloudstreamPlugin
 class DoramogoPlugin: Plugin() {
@@ -333,6 +338,8 @@ class Doramogo : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
+        var linksFound = false
+        
         val document = app.get(data).document
         
         // Extrair informações da URL para construir o stream
@@ -375,30 +382,11 @@ class Doramogo : MainAPI() {
             // Verificar se a URL primária está acessível
             val testResponse = app.get(primaryStreamUrl, allowRedirects = false)
             if (testResponse.code in 200..299) {
-                callback(
-                    ExtractorLink(
-                        source = name,
-                        name = "Doramogo (Primário)",
-                        url = primaryStreamUrl,
-                        referer = mainUrl,
-                        quality = Qualities.P720.value,
-                        isM3u8 = true
-                    )
-                )
-                
-                // Também adicionar a URL de fallback como alternativa
-                callback(
-                    ExtractorLink(
-                        source = name,
-                        name = "Doramogo (Alternativo)",
-                        url = fallbackStreamUrl,
-                        referer = mainUrl,
-                        quality = Qualities.P720.value,
-                        isM3u8 = true
-                    )
-                )
-                
-                return true
+                callback(newExtractorLink(name, "Doramogo (Primário)", primaryStreamUrl, ExtractorLinkType.M3U8) {
+                    referer = mainUrl
+                    quality = Qualities.P720.value
+                })
+                linksFound = true
             }
         } catch (e: Exception) {
             // Se a primária falhar, tentar a de fallback
@@ -408,23 +396,38 @@ class Doramogo : MainAPI() {
         try {
             val testResponse = app.get(fallbackStreamUrl, allowRedirects = false)
             if (testResponse.code in 200..299) {
-                callback(
-                    ExtractorLink(
-                        source = name,
-                        name = "Doramogo",
-                        url = fallbackStreamUrl,
-                        referer = mainUrl,
-                        quality = Qualities.P720.value,
-                        isM3u8 = true
-                    )
-                )
-                return true
+                callback(newExtractorLink(name, "Doramogo (Alternativo)", fallbackStreamUrl, ExtractorLinkType.M3U8) {
+                    referer = mainUrl
+                    quality = Qualities.P720.value
+                })
+                linksFound = true
             }
         } catch (e: Exception) {
             // Ambas falharam
         }
         
-        return false
+        // Se não encontrou links com a lógica de construção, tentar extrair do JavaScript
+        if (!linksFound) {
+            val scriptContent = document.select("script").find { 
+                it.html().contains("construirStreamPath") 
+            }?.html()
+            
+            if (!scriptContent.isNullOrBlank()) {
+                // Tentar extrair URLs do JavaScript
+                val urls = extractUrlsFromJavaScript(scriptContent)
+                urls.forEach { url ->
+                    if (url.contains(".m3u8") && !url.contains("jwplatform.com")) {
+                        callback(newExtractorLink(name, "Doramogo (JS)", url, ExtractorLinkType.M3U8) {
+                            referer = mainUrl
+                            quality = Qualities.P720.value
+                        })
+                        linksFound = true
+                    }
+                }
+            }
+        }
+        
+        return linksFound
     }
     
     // --- Funções auxiliares ---
@@ -445,6 +448,33 @@ class Doramogo : MainAPI() {
         }
         
         return null
+    }
+    
+    // Extrair URLs do JavaScript
+    private fun extractUrlsFromJavaScript(script: String): List<String> {
+        val urls = mutableListOf<String>()
+        
+        // Padrões para extrair URLs
+        val patterns = listOf(
+            Regex("""(https?://[^"' >]+\.m3u8[^"' >]*)"""),
+            Regex("""PRIMARY_URL\s*=\s*['"]([^'"]+)['"]"""),
+            Regex("""FALLBACK_URL\s*=\s*['"]([^'"]+)['"]"""),
+            Regex("""url\s*=\s*['"]([^'"]+)['"]"""),
+            Regex("""file\s*:\s*['"]([^'"]+\.m3u8[^'"]*)['"]""")
+        )
+        
+        patterns.forEach { pattern ->
+            val matches = pattern.findAll(script)
+            matches.forEach { match ->
+                val url = match.groupValues[1]
+                if (url.isNotBlank() && (url.contains("http") || url.contains("//"))) {
+                    val fullUrl = if (url.startsWith("//")) "https:$url" else url
+                    urls.add(fullUrl)
+                }
+            }
+        }
+        
+        return urls.distinct()
     }
     
     // Extrair informações detalhadas do HTML
