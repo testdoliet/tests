@@ -773,4 +773,127 @@ class CineAgora : MainAPI() {
     
     private fun extractEpisodeNumberFromText(text: String): Int? {
         try {
-            // Padrões comuns: "Episódio 
+            // Padrões comuns: "Episódio 1", "Episódio 01", "E01", "EP 1"
+            val patterns = listOf(
+                Regex("""Episódio\s+(\d+)""", RegexOption.IGNORE_CASE),
+                Regex("""Episode\s+(\d+)""", RegexOption.IGNORE_CASE),
+                Regex("""E(\d+)""", RegexOption.IGNORE_CASE),
+                Regex("""EP\s*(\d+)""", RegexOption.IGNORE_CASE),
+                Regex("""\b(\d{1,3})\b""") // Qualquer número de 1-3 dígitos
+            )
+            
+            for (pattern in patterns) {
+                val match = pattern.find(text)
+                if (match != null) {
+                    return match.groupValues[1].toIntOrNull()
+                }
+            }
+        } catch (e: Exception) {
+            // Ignorar erro
+        }
+        
+        return null
+    }
+
+    // =============================================
+    // FUNÇÃO LOAD PRINCIPAL
+    // =============================================
+
+    override suspend fun load(url: String): LoadResponse? {
+        println("[CineAgora] Carregando URL: $url")
+        
+        val doc = app.get(url).document
+        
+        // 1. Extrair informações básicas
+        val bannerUrl = extractBannerUrl(doc)
+        val posterUrl = doc.selectFirst("meta[property='og:image']")?.attr("content")?.let { fixUrl(it) }
+            ?: doc.selectFirst("#info--box .cover-img")?.attr("src")?.let { fixUrl(it) }
+            ?: bannerUrl
+        
+        println("[CineAgora] Banner URL: $bannerUrl")
+        println("[CineAgora] Poster URL: $posterUrl")
+        
+        val title = doc.selectFirst("h1.title, h1, .title, h2")?.text()?.trim() ?: "Título não encontrado"
+        
+        // 2. Extrair episódios
+        val episodes = extractEpisodes(doc, url)
+        
+        println("[CineAgora] Total de episódios extraídos: ${episodes.size}")
+        
+        if (episodes.isEmpty()) {
+            println("[CineAgora] Nenhum episódio encontrado")
+            return null
+        }
+        
+        // 3. DETERMINAR SE É SÉRIE OU FILME
+        val isSerie = url.contains("/series-") || url.contains("/serie-") || url.contains("/tv-") || 
+                     url.contains("/series-online") ||
+                     doc.select(".player-controls, #episodeDropdown, .seasons").isNotEmpty() ||
+                     episodes.size > 1
+        
+        println("[CineAgora] É série? $isSerie (${episodes.size} episódios)")
+        
+        // 4. INFORMAÇÕES ADICIONAIS
+        val year = extractYear(doc)
+        val plot = doc.selectFirst(".info-description, .description, .sinopse, .plot")?.text()?.trim()
+        val genres = extractGenres(doc)
+        
+        if (isSerie) {
+            return newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes) {
+                this.posterUrl = posterUrl
+                this.backgroundPosterUrl = bannerUrl
+                this.year = year
+                this.plot = plot
+                this.tags = genres
+                
+                val trailer = extractTrailer(doc)
+                if (trailer != null) {
+                    addTrailer(trailer)
+                }
+            }
+        } else {
+            val duration = doc.selectFirst(".duration, .runtime, .time")?.text()?.trim()
+            
+            return newMovieLoadResponse(title, url, TvType.Movie, episodes.first().data) {
+                this.posterUrl = posterUrl
+                this.backgroundPosterUrl = bannerUrl
+                this.year = year
+                this.plot = plot
+                this.tags = genres
+                this.duration = duration?.replace(Regex("[^0-9]"), "")?.toIntOrNull()
+                
+                val trailer = extractTrailer(doc)
+                if (trailer != null) {
+                    addTrailer(trailer)
+                }
+            }
+        }
+    }
+
+    // =============================================
+    // FUNÇÃO LOADLINKS
+    // =============================================
+
+    override suspend fun loadLinks(
+        data: String,
+        isCasting: Boolean,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        println("[CineAgora] loadLinks chamado com data: $data")
+        println("[CineAgora] isCasting: $isCasting")
+        
+        if (data.contains("youtube.com") || data.contains("youtu.be")) {
+            println("[CineAgora] URL do YouTube ignorada")
+            return false
+        }
+        
+        val name = if (data.contains("/watch/")) {
+            data.substringAfterLast("/").replace("-", " ").replace("_", " ")
+        } else {
+            "Conteúdo"
+        }
+        
+        return CineAgoraExtractor.extractVideoLinks(data, name, callback)
+    }
+}
