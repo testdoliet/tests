@@ -719,35 +719,14 @@ private suspend fun extractSeriesSlugFromPage(doc: org.jsoup.nodes.Document, bas
         println("[CineAgora] Adicionado: Temporada $seasonNum, Episódio $epNumber - $episodeTitle")
     }
     
-    private fun cleanEpisodeTitle(rawTitle: String?, seasonNum: Int, episodeNum: Int): String {
-        if (rawTitle.isNullOrBlank()) {
-            return "Episódio $episodeNum"
-        }
-        
-        return try {
-            // Remover padrões comuns de nome de arquivo
-            var title = rawTitle
-                .replace(Regex("""(?i)\.S\d+E\d+\."""), " ") // Remove .S01E01.
-                .replace(Regex("""(?i)\.\d+p\."""), " ") // Remove .1080p.
-                .replace(Regex("""(?i)\.WEB-DL\."""), " ") // Remove .WEB-DL.
-                .replace(Regex("""(?i)\.DUAL\."""), " ") // Remove .DUAL.
-                .replace(Regex("""(?i)\.mkv$"""), "") // Remove .mkv
-                .replace(Regex("""(?i)\.mp4$"""), "") // Remove .mp4
-                .replace(Regex("""\."""), " ") // Troca pontos por espaços
-                .trim()
-            
-            // Se ficou vazio ou muito curto, usar padrão
-            if (title.length < 3 || title.matches(Regex("""^[Ss]\d+[Ee]\d+$"""))) {
-                title = "Episódio $episodeNum"
-            }
-            
-            title
-        } catch (e: Exception) {
-            "Episódio $episodeNum"
-        }
-    }
-
     // =============================================
+// FUNÇÃO PARA LIMPAR TÍTULO DO EPISÓDIO (SEMPRE "Episódio X")
+// =============================================
+
+private fun cleanEpisodeTitle(rawTitle: String?, seasonNum: Int, episodeNum: Int): String {
+    // Sempre retornar "Episódio X" ignorando completamente o título original
+    return "Episódio $episodeNum"
+}
     // FUNÇÃO PRINCIPAL PARA EXTRAIR EPISÓDIOS
     // =============================================
 
