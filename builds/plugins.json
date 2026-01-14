@@ -68,10 +68,10 @@
     },
     {
         "iconUrl": "https://cineagora.net/templates/cineagora/images/touch-icon-180x180.png",
-        "jarFileSize": 113895,
+        "jarFileSize": 120816,
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/lawlietbt/lietrepo",
-        "fileSize": 33417,
+        "fileSize": 34531,
         "status": 1,
         "language": "pt-br",
         "authors": [
@@ -91,10 +91,10 @@
     },
     {
         "iconUrl": "https://www.doramogo.net/assets/doramogo/images/apple-touch-icon.webp?version=200.50.10",
-        "jarFileSize": 53512,
+        "jarFileSize": 51099,
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/lawlietbt/lietrepo",
-        "fileSize": 16258,
+        "fileSize": 15803,
         "status": 1,
         "language": "pt-br",
         "authors": [
