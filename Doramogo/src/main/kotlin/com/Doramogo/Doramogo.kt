@@ -198,131 +198,133 @@ class Doramogo : MainAPI() {
     }
 
     // --- Load ---
-    override suspend fun load(url: String): LoadResponse? {
-        val document = app.get(url).document
-        
-        // Título
-        val fullTitle = document.selectFirst("h1")?.text()?.trim()
-            ?: document.selectFirst("meta[property='og:title']")?.attr("content")
-            ?: return null
-        
-        // Limpar título
-        var title = cleanTitle(fullTitle)
-        
-        // Descrição
-        val description = document.selectFirst("meta[property='og:description']")?.attr("content")
-            ?: document.selectFirst("#sinopse-text")?.text()?.trim()
-            ?: ""
-        
-        // Poster
-        val poster = document.selectFirst("meta[property='og:image']")?.attr("content")?.let { fixUrl(it) }
-            ?: document.selectFirst("#w-55")?.attr("src")?.let { fixUrl(it) }
-        
-        // Extrair informações detalhadas
-        val infoMap = extractInfoMap(document)
-        
-        // Ano - pegar do infoMap ou extrair da URL
-        val year = infoMap["ano"]?.toIntOrNull()
-            ?: extractYearFromUrl(url)
-            ?: title.findYear()
-        
-        // Gêneros principais
-        val mainTags = document.select(".gens a").map { it.text().trim() }
-        
-        // Tags adicionais: áudio e status
-        val additionalTags = mutableListOf<String>()
-        
-        // Adicionar áudio como tag
-        infoMap["áudio"]?.let { audio ->
-            when {
-                audio.contains("Dublado", ignoreCase = true) -> additionalTags.add("Dublado")
-                audio.contains("Legendado", ignoreCase = true) -> additionalTags.add("Legendado")
-                else -> additionalTags.add(audio)
-            }
-        }
-        
-        // Adicionar status como tag
-        infoMap["status"]?.let { status ->
-            additionalTags.add(status)
-        }
-        
-        // Tags combinadas
-        val allTags = (mainTags + additionalTags).distinct()
-        
-        // Duração (para filmes)
-        val durationText = infoMap["duração"] ?: infoMap["duraçã"]
-        val duration = durationText?.parseDuration()
-        
-        // Verificar se é filme ou série
-        val isMovie = url.contains("/filmes/")
-        val type = if (isMovie) TvType.Movie else TvType.TvSeries
-        
-        // Extrair recomendações (doramas relacionados)
-        val recommendations = extractRecommendationsFromSite(document)
-        
-        if (type == TvType.TvSeries) {
-            // Extrair episódios de múltiplas temporadas
-            val episodes = mutableListOf<Episode>()
-            
-            // Extrair cada temporada
-            document.select(".dorama-one-season-block").forEach { seasonBlock ->
-                // Extrair número da temporada do título
-                val seasonTitle = seasonBlock.selectFirst(".dorama-one-season-title")?.text()?.trim() ?: "1° Temporada"
-                val seasonNumber = extractSeasonNumber(seasonTitle)
-                
-                // Extrair episódios desta temporada
-                seasonBlock.select(".dorama-one-episode-item").forEach { episodeItem ->
-                    val episodeUrl = episodeItem.attr("href")?.let { fixUrl(it) } ?: return@forEach
-                    val episodeTitle = episodeItem.selectFirst(".episode-title")?.text()?.trim() ?: "Episódio"
-                    
-                    // Extrair número do episódio
-                    val episodeNumber = extractEpisodeNumberFromEpisodeItem(episodeItem)
-                    
-                    episodes.add(newEpisode(episodeUrl) {
-                        this.name = episodeTitle
-                        this.season = seasonNumber
-                        this.episode = episodeNumber
-                    })
-                }
-            }
-            
-            // Se não encontrou episódios estruturados por temporada, tentar método alternativo
-            if (episodes.isEmpty()) {
-                document.select(".dorama-one-episode-item").forEach { episodeItem ->
-                    val episodeUrl = episodeItem.attr("href")?.let { fixUrl(it) } ?: return@forEach
-                    val episodeTitle = episodeItem.selectFirst(".episode-title")?.text()?.trim() ?: "Episódio"
-                    
-                    val episodeNumber = extractEpisodeNumberFromEpisodeItem(episodeItem)
-                    // Tentar extrair temporada da URL (ex: /temporada-1/)
-                    val seasonNumber = extractSeasonNumberFromUrl(episodeUrl) ?: 1
-                    
-                    episodes.add(newEpisode(episodeUrl) {
-                        this.name = episodeTitle
-                        this.season = seasonNumber
-                        this.episode = episodeNumber
-                    })
-                }
-            }
-            
-            return newTvSeriesLoadResponse(title, url, type, episodes) {
-                this.posterUrl = poster
-                this.year = year
-                this.plot = description
-                this.tags = allTags
-                this.recommendations = recommendations
-            }
-        } else {
-            // Para filmes
-            return newMovieLoadResponse(title, url, type, url) {
-                this.posterUrl = poster
-                this.year = year
-                this.plot = description
-                this.tags = allTags
-                this.duration = duration
-                this.recommendations = recommendations
-            }
+override suspend fun load(url: String): LoadResponse? {
+    val document = app.get(url).document
+    
+    // Título
+    val fullTitle = document.selectFirst("h1")?.text()?.trim()
+        ?: document.selectFirst("meta[property='og:title']")?.attr("content")
+        ?: return null
+    
+    // Limpar título
+    var title = cleanTitle(fullTitle)
+    
+    // Descrição - CORREÇÃO AQUI
+    val description = document.selectFirst("#sinopse-text")?.text()?.trim()
+        ?: document.selectFirst("#synopsis p")?.text()?.trim()
+        ?: document.selectFirst(".synopsis-text")?.text()?.trim()
+        ?: document.selectFirst("meta[property='og:description']")?.attr("content")?.trim()
+        ?: ""
+    
+    // Poster
+    val poster = document.selectFirst("meta[property='og:image']")?.attr("content")?.let { fixUrl(it) }
+        ?: document.selectFirst("#w-55")?.attr("src")?.let { fixUrl(it) }
+    
+    // Extrair informações detalhadas
+    val infoMap = extractInfoMap(document)
+    
+    // Ano - pegar do infoMap ou extrair da URL
+    val year = infoMap["ano"]?.toIntOrNull()
+        ?: extractYearFromUrl(url)
+        ?: title.findYear()
+    
+    // Gêneros principais
+    val mainTags = document.select(".gens a").map { it.text().trim() }
+    
+    // Tags adicionais: áudio e status
+    val additionalTags = mutableListOf<String>()
+    
+    // Adicionar áudio como tag
+    infoMap["áudio"]?.let { audio ->
+        when {
+            audio.contains("Dublado", ignoreCase = true) -> additionalTags.add("Dublado")
+            audio.contains("Legendado", ignoreCase = true) -> additionalTags.add("Legendado")
+            else -> additionalTags.add(audio)
         }
     }
+    
+    // Adicionar status como tag
+    infoMap["status"]?.let { status ->
+        additionalTags.add(status)
+    }
+    
+    // Tags combinadas
+    val allTags = (mainTags + additionalTags).distinct()
+    
+    // Duração (para filmes)
+    val durationText = infoMap["duração"] ?: infoMap["duraçã"]
+    val duration = durationText?.parseDuration()
+    
+    // Verificar se é filme ou série
+    val isMovie = url.contains("/filmes/")
+    val type = if (isMovie) TvType.Movie else TvType.TvSeries
+    
+    // Extrair recomendações (doramas relacionados)
+    val recommendations = extractRecommendationsFromSite(document)
+    
+    if (type == TvType.TvSeries) {
+        // Extrair episódios de múltiplas temporadas
+        val episodes = mutableListOf<Episode>()
+        
+        // Extrair cada temporada
+        document.select(".dorama-one-season-block").forEach { seasonBlock ->
+            // Extrair número da temporada do título
+            val seasonTitle = seasonBlock.selectFirst(".dorama-one-season-title")?.text()?.trim() ?: "1° Temporada"
+            val seasonNumber = extractSeasonNumber(seasonTitle)
+            
+            // Extrair episódios desta temporada
+            seasonBlock.select(".dorama-one-episode-item").forEach { episodeItem ->
+                val episodeUrl = episodeItem.attr("href")?.let { fixUrl(it) } ?: return@forEach
+                val episodeTitle = episodeItem.selectFirst(".episode-title")?.text()?.trim() ?: "Episódio"
+                
+                // Extrair número do episódio
+                val episodeNumber = extractEpisodeNumberFromEpisodeItem(episodeItem)
+                
+                episodes.add(newEpisode(episodeUrl) {
+                    this.name = episodeTitle
+                    this.season = seasonNumber
+                    this.episode = episodeNumber
+                })
+            }
+        }
+        
+        // Se não encontrou episódios estruturados por temporada, tentar método alternativo
+        if (episodes.isEmpty()) {
+            document.select(".dorama-one-episode-item").forEach { episodeItem ->
+                val episodeUrl = episodeItem.attr("href")?.let { fixUrl(it) } ?: return@forEach
+                val episodeTitle = episodeItem.selectFirst(".episode-title")?.text()?.trim() ?: "Episódio"
+                
+                val episodeNumber = extractEpisodeNumberFromEpisodeItem(episodeItem)
+                // Tentar extrair temporada da URL (ex: /temporada-1/)
+                val seasonNumber = extractSeasonNumberFromUrl(episodeUrl) ?: 1
+                
+                episodes.add(newEpisode(episodeUrl) {
+                    this.name = episodeTitle
+                    this.season = seasonNumber
+                    this.episode = episodeNumber
+                })
+            }
+        }
+        
+        return newTvSeriesLoadResponse(title, url, type, episodes) {
+            this.posterUrl = poster
+            this.year = year
+            this.plot = description
+            this.tags = allTags
+            this.recommendations = recommendations
+        }
+    } else {
+        // Para filmes
+        return newMovieLoadResponse(title, url, type, url) {
+            this.posterUrl = poster
+            this.year = year
+            this.plot = description
+            this.tags = allTags
+            this.duration = duration
+            this.recommendations = recommendations
+        }
+    }
+}
     
     // --- Funções auxiliares ---
     
