@@ -198,135 +198,254 @@ class Doramogo : MainAPI() {
     }
 
     // --- Load ---
-override suspend fun load(url: String): LoadResponse? {
-    val document = app.get(url).document
-    
-    // Título
-    val fullTitle = document.selectFirst("h1")?.text()?.trim()
-        ?: document.selectFirst("meta[property='og:title']")?.attr("content")
-        ?: return null
-    
-    // Limpar título
-    var title = cleanTitle(fullTitle)
-    
-    // Descrição - CORREÇÃO AQUI
-    val description = document.selectFirst("#sinopse-text")?.text()?.trim()
-        ?: document.selectFirst("#synopsis p")?.text()?.trim()
-        ?: document.selectFirst(".synopsis-text")?.text()?.trim()
-        ?: document.selectFirst("meta[property='og:description']")?.attr("content")?.trim()
-        ?: ""
-    
-    // Poster
-    val poster = document.selectFirst("meta[property='og:image']")?.attr("content")?.let { fixUrl(it) }
-        ?: document.selectFirst("#w-55")?.attr("src")?.let { fixUrl(it) }
-    
-    // Extrair informações detalhadas
-    val infoMap = extractInfoMap(document)
-    
-    // Ano - pegar do infoMap ou extrair da URL
-    val year = infoMap["ano"]?.toIntOrNull()
-        ?: extractYearFromUrl(url)
-        ?: title.findYear()
-    
-    // Gêneros principais
-    val mainTags = document.select(".gens a").map { it.text().trim() }
-    
-    // Tags adicionais: áudio e status
-    val additionalTags = mutableListOf<String>()
-    
-    // Adicionar áudio como tag
-    infoMap["áudio"]?.let { audio ->
-        when {
-            audio.contains("Dublado", ignoreCase = true) -> additionalTags.add("Dublado")
-            audio.contains("Legendado", ignoreCase = true) -> additionalTags.add("Legendado")
-            else -> additionalTags.add(audio)
-        }
-    }
-    
-    // Adicionar status como tag
-    infoMap["status"]?.let { status ->
-        additionalTags.add(status)
-    }
-    
-    // Tags combinadas
-    val allTags = (mainTags + additionalTags).distinct()
-    
-    // Duração (para filmes)
-    val durationText = infoMap["duração"] ?: infoMap["duraçã"]
-    val duration = durationText?.parseDuration()
-    
-    // Verificar se é filme ou série
-    val isMovie = url.contains("/filmes/")
-    val type = if (isMovie) TvType.Movie else TvType.TvSeries
-    
-    // Extrair recomendações (doramas relacionados)
-    val recommendations = extractRecommendationsFromSite(document)
-    
-    if (type == TvType.TvSeries) {
-        // Extrair episódios de múltiplas temporadas
-        val episodes = mutableListOf<Episode>()
+    override suspend fun load(url: String): LoadResponse? {
+        val document = app.get(url).document
         
-        // Extrair cada temporada
-        document.select(".dorama-one-season-block").forEach { seasonBlock ->
-            // Extrair número da temporada do título
-            val seasonTitle = seasonBlock.selectFirst(".dorama-one-season-title")?.text()?.trim() ?: "1° Temporada"
-            val seasonNumber = extractSeasonNumber(seasonTitle)
+        // Título
+        val fullTitle = document.selectFirst("h1")?.text()?.trim()
+            ?: document.selectFirst("meta[property='og:title']")?.attr("content")
+            ?: return null
+        
+        // Limpar título
+        var title = cleanTitle(fullTitle)
+        
+        // Descrição
+        val description = document.selectFirst("#sinopse-text")?.text()?.trim()
+            ?: document.selectFirst("#synopsis p")?.text()?.trim()
+            ?: document.selectFirst(".synopsis-text")?.text()?.trim()
+            ?: document.selectFirst("meta[property='og:description']")?.attr("content")?.trim()
+            ?: ""
+        
+        // Poster
+        val poster = document.selectFirst("meta[property='og:image']")?.attr("content")?.let { fixUrl(it) }
+            ?: document.selectFirst("#w-55")?.attr("src")?.let { fixUrl(it) }
+        
+        // Extrair informações detalhadas
+        val infoMap = extractInfoMap(document)
+        
+        // Ano - pegar do infoMap ou extrair da URL
+        val year = infoMap["ano"]?.toIntOrNull()
+            ?: extractYearFromUrl(url)
+            ?: title.findYear()
+        
+        // Gêneros principais
+        val mainTags = document.select(".gens a").map { it.text().trim() }
+        
+        // Tags adicionais: áudio e status
+        val additionalTags = mutableListOf<String>()
+        
+        // Adicionar áudio como tag
+        infoMap["áudio"]?.let { audio ->
+            when {
+                audio.contains("Dublado", ignoreCase = true) -> additionalTags.add("Dublado")
+                audio.contains("Legendado", ignoreCase = true) -> additionalTags.add("Legendado")
+                else -> additionalTags.add(audio)
+            }
+        }
+        
+        // Adicionar status como tag
+        infoMap["status"]?.let { status ->
+            additionalTags.add(status)
+        }
+        
+        // Tags combinadas
+        val allTags = (mainTags + additionalTags).distinct()
+        
+        // Duração (para filmes)
+        val durationText = infoMap["duração"] ?: infoMap["duraçã"]
+        val duration = durationText?.parseDuration()
+        
+        // Verificar se é filme ou série
+        val isMovie = url.contains("/filmes/")
+        val type = if (isMovie) TvType.Movie else TvType.TvSeries
+        
+        // Extrair recomendações (doramas relacionados)
+        val recommendations = extractRecommendationsFromSite(document)
+        
+        if (type == TvType.TvSeries) {
+            // Extrair episódios de múltiplas temporadas
+            val episodes = mutableListOf<Episode>()
             
-            // Extrair episódios desta temporada
-            seasonBlock.select(".dorama-one-episode-item").forEach { episodeItem ->
-                val episodeUrl = episodeItem.attr("href")?.let { fixUrl(it) } ?: return@forEach
-                val episodeTitle = episodeItem.selectFirst(".episode-title")?.text()?.trim() ?: "Episódio"
+            // Extrair cada temporada
+            document.select(".dorama-one-season-block").forEach { seasonBlock ->
+                // Extrair número da temporada do título
+                val seasonTitle = seasonBlock.selectFirst(".dorama-one-season-title")?.text()?.trim() ?: "1° Temporada"
+                val seasonNumber = extractSeasonNumber(seasonTitle)
                 
-                // Extrair número do episódio
-                val episodeNumber = extractEpisodeNumberFromEpisodeItem(episodeItem)
-                
-                episodes.add(newEpisode(episodeUrl) {
-                    this.name = episodeTitle
-                    this.season = seasonNumber
-                    this.episode = episodeNumber
-                })
+                // Extrair episódios desta temporada
+                seasonBlock.select(".dorama-one-episode-item").forEach { episodeItem ->
+                    val episodeUrl = episodeItem.attr("href")?.let { fixUrl(it) } ?: return@forEach
+                    val episodeTitle = episodeItem.selectFirst(".episode-title")?.text()?.trim() ?: "Episódio"
+                    
+                    // Extrair número do episódio
+                    val episodeNumber = extractEpisodeNumberFromEpisodeItem(episodeItem)
+                    
+                    episodes.add(newEpisode(episodeUrl) {
+                        this.name = episodeTitle
+                        this.season = seasonNumber
+                        this.episode = episodeNumber
+                    })
+                }
             }
-        }
-        
-        // Se não encontrou episódios estruturados por temporada, tentar método alternativo
-        if (episodes.isEmpty()) {
-            document.select(".dorama-one-episode-item").forEach { episodeItem ->
-                val episodeUrl = episodeItem.attr("href")?.let { fixUrl(it) } ?: return@forEach
-                val episodeTitle = episodeItem.selectFirst(".episode-title")?.text()?.trim() ?: "Episódio"
-                
-                val episodeNumber = extractEpisodeNumberFromEpisodeItem(episodeItem)
-                // Tentar extrair temporada da URL (ex: /temporada-1/)
-                val seasonNumber = extractSeasonNumberFromUrl(episodeUrl) ?: 1
-                
-                episodes.add(newEpisode(episodeUrl) {
-                    this.name = episodeTitle
-                    this.season = seasonNumber
-                    this.episode = episodeNumber
-                })
+            
+            // Se não encontrou episódios estruturados por temporada, tentar método alternativo
+            if (episodes.isEmpty()) {
+                document.select(".dorama-one-episode-item").forEach { episodeItem ->
+                    val episodeUrl = episodeItem.attr("href")?.let { fixUrl(it) } ?: return@forEach
+                    val episodeTitle = episodeItem.selectFirst(".episode-title")?.text()?.trim() ?: "Episódio"
+                    
+                    val episodeNumber = extractEpisodeNumberFromEpisodeItem(episodeItem)
+                    // Tentar extrair temporada da URL (ex: /temporada-1/)
+                    val seasonNumber = extractSeasonNumberFromUrl(episodeUrl) ?: 1
+                    
+                    episodes.add(newEpisode(episodeUrl) {
+                        this.name = episodeTitle
+                        this.season = seasonNumber
+                        this.episode = episodeNumber
+                    })
+                }
             }
-        }
-        
-        return newTvSeriesLoadResponse(title, url, type, episodes) {
-            this.posterUrl = poster
-            this.year = year
-            this.plot = description
-            this.tags = allTags
-            this.recommendations = recommendations
-        }
-    } else {
-        // Para filmes
-        return newMovieLoadResponse(title, url, type, url) {
-            this.posterUrl = poster
-            this.year = year
-            this.plot = description
-            this.tags = allTags
-            this.duration = duration
-            this.recommendations = recommendations
+            
+            return newTvSeriesLoadResponse(title, url, type, episodes) {
+                this.posterUrl = poster
+                this.year = year
+                this.plot = description
+                this.tags = allTags
+                this.recommendations = recommendations
+            }
+        } else {
+            // Para filmes
+            return newMovieLoadResponse(title, url, type, url) {
+                this.posterUrl = poster
+                this.year = year
+                this.plot = description
+                this.tags = allTags
+                this.duration = duration
+                this.recommendations = recommendations
+            }
         }
     }
-}
+    
+    // --- Load Links ---
+    override suspend fun loadLinks(
+        data: String,
+        isCasting: Boolean,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        val document = app.get(data).document
+        
+        // Extrair informações da URL para construir o stream
+        val urlParts = data.split("/")
+        val slug = urlParts.getOrNull(urlParts.indexOf("series") + 1) 
+            ?: urlParts.getOrNull(urlParts.indexOf("filmes") + 1)
+            ?: return false
+        
+        // Extrair temporada e episódio da URL
+        val temporada = extractSeasonNumberFromUrl(data) ?: 1
+        val episodio = extractEpisodeNumberFromUrl(data) ?: 1
+        
+        // Verificar se é filme ou dorama
+        val isFilme = data.contains("/filmes/")
+        val tipo = if (isFilme) "filmes" else "doramas"
+        
+        // Construir o path do stream conforme a lógica do JavaScript
+        val streamPath = if (isFilme) {
+            // Para filmes: P/slug/stream/stream.m3u8
+            val pt = slug.first().uppercase()
+            "$pt/$slug/stream/stream.m3u8?nocache=${System.currentTimeMillis()}"
+        } else {
+            // Para doramas: P/slug/XX-temporada/YY/stream.m3u8
+            val pt = slug.first().uppercase()
+            val tempNum = temporada.toString().padStart(2, '0')
+            val epNum = episodio.toString().padStart(2, '0')
+            "$pt/$slug/$tempNum-temporada/$epNum/stream.m3u8?nocache=${System.currentTimeMillis()}"
+        }
+        
+        // URLs dos proxies (conforme definido no JavaScript)
+        val PRIMARY_URL = "https://proxy-us-east1-outbound-series.xreadycf.site"
+        val FALLBACK_URL = "https://proxy-us-east1-forks-doramas.xreadycf.site"
+        
+        // Construir URLs completas
+        val primaryStreamUrl = "$PRIMARY_URL/$streamPath"
+        val fallbackStreamUrl = "$FALLBACK_URL/$streamPath"
+        
+        // Tentar primeiro com a URL primária
+        try {
+            // Verificar se a URL primária está acessível
+            val testResponse = app.get(primaryStreamUrl, allowRedirects = false)
+            if (testResponse.code in 200..299) {
+                callback(
+                    ExtractorLink(
+                        source = name,
+                        name = "Doramogo (Primário)",
+                        url = primaryStreamUrl,
+                        referer = mainUrl,
+                        quality = Qualities.P720.value,
+                        isM3u8 = true
+                    )
+                )
+                
+                // Também adicionar a URL de fallback como alternativa
+                callback(
+                    ExtractorLink(
+                        source = name,
+                        name = "Doramogo (Alternativo)",
+                        url = fallbackStreamUrl,
+                        referer = mainUrl,
+                        quality = Qualities.P720.value,
+                        isM3u8 = true
+                    )
+                )
+                
+                return true
+            }
+        } catch (e: Exception) {
+            // Se a primária falhar, tentar a de fallback
+        }
+        
+        // Tentar com a URL de fallback
+        try {
+            val testResponse = app.get(fallbackStreamUrl, allowRedirects = false)
+            if (testResponse.code in 200..299) {
+                callback(
+                    ExtractorLink(
+                        source = name,
+                        name = "Doramogo",
+                        url = fallbackStreamUrl,
+                        referer = mainUrl,
+                        quality = Qualities.P720.value,
+                        isM3u8 = true
+                    )
+                )
+                return true
+            }
+        } catch (e: Exception) {
+            // Ambas falharam
+        }
+        
+        return false
+    }
     
     // --- Funções auxiliares ---
+    
+    // Extrair número do episódio da URL
+    private fun extractEpisodeNumberFromUrl(url: String): Int? {
+        val patterns = listOf(
+            Regex("""episodio-(\d+)""", RegexOption.IGNORE_CASE),
+            Regex("""ep-(\d+)""", RegexOption.IGNORE_CASE),
+            Regex("""ep(\d+)""", RegexOption.IGNORE_CASE)
+        )
+        
+        for (pattern in patterns) {
+            val match = pattern.find(url)
+            if (match != null) {
+                return match.groupValues[1].toIntOrNull()
+            }
+        }
+        
+        return null
+    }
     
     // Extrair informações detalhadas do HTML
     private fun extractInfoMap(document: Element): Map<String, String> {
@@ -509,16 +628,5 @@ override suspend fun load(url: String): LoadResponse? {
         val pattern = Regex("""(\d+)\s*(min|minutes|minutos)""", RegexOption.IGNORE_CASE)
         val match = pattern.find(this)
         return match?.groupValues?.get(1)?.toIntOrNull()
-    }
-
-    // --- Load Links ---
-    override suspend fun loadLinks(
-        data: String,
-        isCasting: Boolean,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        // Temporariamente desativado
-        return false
     }
 }
