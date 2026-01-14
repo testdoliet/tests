@@ -486,126 +486,70 @@ class CineAgora : MainAPI() {
         return null
     }
 
-    // =============================================
-    // FUNÇÃO PRINCIPAL PARA EXTRAIR EPISÓDIOS (OPÇÃO 1 CORRIGIDA)
-    // =============================================
+// =============================================
+// FUNÇÃO PRINCIPAL PARA EXTRAIR EPISÓDIOS (CORRIGIDA)
+// =============================================
 
-    private suspend fun extractEpisodesFromCineAgoraPage(doc: org.jsoup.nodes.Document, baseUrl: String): List<Episode> {
-        val episodes = mutableListOf<Episode>()
-        
-        println("[CineAgora] Extraindo episódios da página do CineAgora: $baseUrl")
-        
-        // 1. Tentar obter o seriesSlug
-        val seriesSlug = getSeriesSlugFromCineAgoraPage(doc, baseUrl)
-        
-        if (seriesSlug.isNullOrBlank()) {
-            println("[CineAgora] Não encontrou seriesSlug, usando fallback")
-            // Fallback mínimo
-            episodes.add(
-                newEpisode(baseUrl) {
-                    name = "Episódio 1"
-                    season = 1
-                    episode = 1
-                }
-            )
-            return episodes
+private suspend fun extractEpisodesFromCineAgoraPage(doc: org.jsoup.nodes.Document, baseUrl: String): List<Episode> {
+    val episodes = mutableListOf<Episode>()
+    
+    println("[CineAgora] Extraindo episódios da página do CineAgora: $baseUrl")
+    
+    // 1. PRIMEIRO: Tentar extrair diretamente do HTML (SEM API)
+    val episodesFromHtml = extractEpisodesFromHtml(doc, baseUrl)
+    if (episodesFromHtml.isNotEmpty()) {
+        println("[CineAgora] Encontrados ${episodesFromHtml.size} episódios no HTML")
+        return episodesFromHtml.sortedWith(compareBy({ it.season }, { it.episode }))
+    }
+    
+    // 2. SEGUNDO: Se não encontrou no HTML, tentar API
+    println("[CineAgora] Nenhum episódio encontrado no HTML, tentando API...")
+    val seriesSlug = getSeriesSlugFromCineAgoraPage(doc, baseUrl)
+    
+    if (!seriesSlug.isNullOrBlank()) {
+        val episodesFromApi = extractEpisodesFromApi(seriesSlug, baseUrl)
+        if (episodesFromApi.isNotEmpty()) {
+            println("[CineAgora] Encontrados ${episodesFromApi.size} episódios via API")
+            return episodesFromApi
         }
+    }
+    
+    // 3. TERCEIRO: Fallback final
+    println("[CineAgora] Fallback final: criando episódio básico")
+    episodes.add(
+        newEpisode(baseUrl) {
+            name = "Episódio 1"
+            season = 1
+            episode = 1
+        }
+    )
+    
+    return episodes
+}
+
+// =============================================
+// FUNÇÃO PARA EXTRAIR EPISÓDIOS DO HTML (NOVA)
+// =============================================
+
+private fun extractEpisodesFromHtml(doc: org.jsoup.nodes.Document, baseUrl: String): List<Episode> {
+    val episodes = mutableListOf<Episode>()
+    
+    // CASO 1: Série com MÚLTIPLAS TEMPORADAS
+    val seasonDropdown = doc.selectFirst("#seasonDropdown")
+    if (seasonDropdown != null) {
+        println("[CineAgora] Encontrado dropdown de temporadas")
         
-        println("[CineAgora] Usando seriesSlug: $seriesSlug para obter episódios")
+        // Extrair todas as temporadas disponíveis
+        val seasonButtons = seasonDropdown.select("button")
+        println("[CineAgoras] Temporadas encontradas: ${seasonButtons.size}")
         
-        // 2. Usar a API para obter todas as temporadas e episódios
-        val apiUrl = "https://watch.brplayer.cc/fetch_series_data.php?seriesSlug=$seriesSlug"
-        println("[CineAgora] Chamando API: $apiUrl")
-        
-        try {
-            val jsonResponse = app.get(apiUrl, referer = baseUrl).text
-            println("[CineAgora] Resposta da API: ${jsonResponse.take(200)}...")
-            
-            val responseMap: Map<String, Any>? = AppUtils.parseJson(jsonResponse)
-            
-            if (responseMap == null) {
-                println("[CineAgora] Erro: JSON inválido da API")
-                throw Exception("JSON inválido")
-            }
-            
-            val seasonsMap = responseMap["seasons"] as? Map<String, List<Map<String, Any>>>
-            
-            if (seasonsMap == null) {
-                println("[CineAgora] Erro: Não encontrou 'seasons' no JSON")
-                // Tentar ver estrutura do JSON
-                println("[CineAgora] Estrutura do JSON: ${responseMap.keys}")
-                throw Exception("Estrutura 'seasons' não encontrada")
-            }
-            
-            println("[CineAgora] API carregada com sucesso. ${seasonsMap.keys.size} temporada(s) encontrada(s)")
-            
-            seasonsMap.forEach { (seasonStr, episodeList) ->
-                val seasonNum = seasonStr.toIntOrNull() ?: 1
-                println("[CineAgora] Processando temporada $seasonNum com ${episodeList.size} episódios")
-                
-                episodeList.forEachIndexed { index, epMap ->
-                    try {
-                        val videoSlug = epMap["video_slug"] as? String
-                        val epNumberStr = epMap["episode_number"] as? String
-                        val epTitleRaw = epMap["episode_title"] as? String
-                        
-                        // Determinar número do episódio
-                        val epNumber = when {
-                            epNumberStr?.isNotBlank() == true -> epNumberStr.toIntOrNull() ?: (index + 1)
-                            else -> index + 1
-                        }
-                        
-                        // Determinar título do episódio
-                        val episodeTitle = when {
-                            epTitleRaw?.isNotBlank() == true -> {
-                                val decoded = try {
-                                    java.net.URLDecoder.decode(epTitleRaw, "UTF-8")
-                                } catch (e: Exception) {
-                                    epTitleRaw
-                                }
-                                decoded
-                            }
-                            else -> "Episódio $epNumber"
-                        }
-                        
-                        // Determinar URL do episódio
-                        val episodeUrl = if (videoSlug?.isNotBlank() == true) {
-                            "https://watch.brplayer.cc/watch/$videoSlug"
-                        } else {
-                            baseUrl // Fallback para URL da página
-                        }
-                        
-                        episodes.add(
-                            newEpisode(episodeUrl) {
-                                name = episodeTitle
-                                season = seasonNum
-                                episode = epNumber
-                                description = "Temporada $seasonNum • Episódio $epNumber"
-                            }
-                        )
-                        
-                        println("[CineAgora] Adicionado: Temporada $seasonNum, Episódio $epNumber - $episodeTitle")
-                        
-                    } catch (e: Exception) {
-                        println("[CineAgora] Erro ao processar episódio ${index + 1}: ${e.message}")
-                    }
-                }
-            }
-            
-            println("[CineAgora] Total de ${episodes.size} episódios criados a partir da API!")
-            
-        } catch (e: Exception) {
-            println("[CineAgora] Erro na API: ${e.message}")
-            println("[CineAgora] Stack trace: ${e.stackTraceToString()}")
-            
-            // Fallback: tentar extrair do dropdown de episódios no HTML
-            println("[CineAgora] Fallback: tentando extrair episódios do HTML")
-            
-            // Verificar se há dropdown de episódios
-            val episodeDropdown = doc.selectFirst("#episodeDropdown")
-            if (episodeDropdown != null) {
+        // Verificar se há episódios no dropdown de episódios
+        val episodeDropdown = doc.selectFirst("#episodeDropdown")
+        if (episodeDropdown != null) {
+            // Se houver apenas uma temporada no dropdown, pegar todos episódios
+            if (seasonButtons.size == 1) {
                 val episodeButtons = episodeDropdown.select("button[data-id]")
-                println("[CineAgora] Encontrados ${episodeButtons.size} episódios no dropdown")
+                println("[CineAgora] Encontrados ${episodeButtons.size} episódios para temporada única")
                 
                 episodeButtons.forEachIndexed { index, button ->
                     try {
@@ -624,75 +568,187 @@ class CineAgora : MainAPI() {
                         episodes.add(
                             newEpisode(episodeUrl) {
                                 name = episodeTitle
-                                season = 1  // Temporada 1 por padrão
-                                episode = episodeNum
-                                description = "Episódio $episodeNum"
-                            }
-                        )
-                        
-                        println("[CineAgora] Adicionado do dropdown: $episodeTitle")
-                    } catch (e: Exception) {
-                        println("[CineAgora] Erro ao extrair episódio do dropdown: ${e.message}")
-                    }
-                }
-            }
-            
-            // Fallback 2: verificar se há lista de episódios na página
-            if (episodes.isEmpty()) {
-                val episodeLinks = doc.select("a[href*='watch.brplayer.cc'], a[href*='/episodio'], a[href*='/episode']")
-                println("[CineAgora] Encontrados ${episodeLinks.size} links de episódios")
-                
-                episodeLinks.forEachIndexed { index, link ->
-                    try {
-                        val episodeNum = index + 1
-                        val href = link.attr("href")
-                        val linkText = link.text().trim()
-                        
-                        val episodeTitle = if (linkText.isNotBlank()) {
-                            linkText
-                        } else {
-                            "Episódio $episodeNum"
-                        }
-                        
-                        val episodeUrl = if (href.startsWith("http")) {
-                            href
-                        } else {
-                            "https://watch.brplayer.cc$href"
-                        }
-                        
-                        episodes.add(
-                            newEpisode(episodeUrl) {
-                                name = episodeTitle
                                 season = 1
                                 episode = episodeNum
                                 description = "Episódio $episodeNum"
                             }
                         )
                         
-                        println("[CineAgora] Adicionado de link: $episodeTitle")
                     } catch (e: Exception) {
-                        println("[CineAgora] Erro ao extrair episódio de link: ${e.message}")
+                        println("[CineAgora] Erro ao extrair episódio: ${e.message}")
+                    }
+                }
+            } else {
+                // Para múltiplas temporadas, precisamos da API
+                println("[CineAgora] Múltiplas temporadas detectadas, será necessário usar API")
+            }
+        }
+    } 
+    // CASO 2: Série com APENAS EPISÓDIOS (sem dropdown de temporadas)
+    else {
+        val episodeDropdown = doc.selectFirst("#episodeDropdown")
+        if (episodeDropdown != null) {
+            val episodeButtons = episodeDropdown.select("button[data-id]")
+            println("[CineAgora] Encontrados ${episodeButtons.size} episódios (sem temporadas)")
+            
+            episodeButtons.forEachIndexed { index, button ->
+                try {
+                    val episodeNum = index + 1
+                    val videoSlug = button.attr("data-id")
+                    val buttonText = button.text().trim()
+                    
+                    // Extrair número do episódio do texto do botão
+                    val epNumberFromText = extractEpisodeNumberFromText(buttonText)
+                    val finalEpisodeNum = epNumberFromText ?: episodeNum
+                    
+                    val episodeTitle = if (buttonText.isNotBlank()) {
+                        buttonText
+                    } else {
+                        "Episódio $finalEpisodeNum"
+                    }
+                    
+                    val episodeUrl = "https://watch.brplayer.cc/watch/$videoSlug"
+                    
+                    episodes.add(
+                        newEpisode(episodeUrl) {
+                            name = episodeTitle
+                            season = 1  // Temporada 1 por padrão
+                            episode = finalEpisodeNum
+                            description = "Episódio $finalEpisodeNum"
+                        }
+                    )
+                    
+                    println("[CineAgora] Adicionado do HTML: $episodeTitle")
+                    
+                } catch (e: Exception) {
+                    println("[CineAgora] Erro ao extrair episódio: ${e.message}")
+                }
+            }
+        }
+    }
+    
+    // CASO 3: Procurar episódios em outros lugares do HTML
+    if (episodes.isEmpty()) {
+        // Buscar por todos os botões com data-id que possam ser episódios
+        val allEpisodeButtons = doc.select("button[data-id]")
+        if (allEpisodeButtons.isNotEmpty()) {
+            println("[CineAgora] Encontrados ${allEpisodeButtons.size} botões com data-id")
+            
+            allEpisodeButtons.forEachIndexed { index, button ->
+                try {
+                    val buttonText = button.text().trim()
+                    if (buttonText.contains("Episódio", ignoreCase = true) || 
+                        buttonText.contains("Episode", ignoreCase = true)) {
+                        
+                        val videoSlug = button.attr("data-id")
+                        val episodeNum = extractEpisodeNumberFromText(buttonText) ?: (index + 1)
+                        
+                        val episodeUrl = "https://watch.brplayer.cc/watch/$videoSlug"
+                        
+                        episodes.add(
+                            newEpisode(episodeUrl) {
+                                name = buttonText
+                                season = 1
+                                episode = episodeNum
+                                description = buttonText
+                            }
+                        )
+                        
+                        println("[CineAgora] Adicionado de botão genérico: $buttonText")
+                    }
+                } catch (e: Exception) {
+                    println("[CineAgora] Erro ao extrair botão: ${e.message}")
+                }
+            }
+        }
+    }
+    
+    return episodes
+}
+
+// =============================================
+// FUNÇÃO AUXILIAR: EXTRAIR NÚMERO DO EPISÓDIO DO TEXTO
+// =============================================
+
+private fun extractEpisodeNumberFromText(text: String): Int? {
+    try {
+        // Padrões comuns: "Episódio 1", "Episódio 01", "E01", "EP 1"
+        val patterns = listOf(
+            Regex("""Episódio\s+(\d+)"""),
+            Regex("""Episode\s+(\d+)"""),
+            Regex("""E(\d+)"""),
+            Regex("""EP\s*(\d+)"""),
+            Regex("""\b(\d{1,3})\b""") // Qualquer número de 1-3 dígitos
+        )
+        
+        for (pattern in patterns) {
+            val match = pattern.find(text)
+            if (match != null) {
+                return match.groupValues[1].toIntOrNull()
+            }
+        }
+    } catch (e: Exception) {
+        println("[CineAgora] Erro ao extrair número do episódio: ${e.message}")
+    }
+    
+    return null
+}
+
+// =============================================
+// FUNÇÃO PARA EXTRAIR EPISÓDIOS DA API (SIMPLIFICADA)
+// =============================================
+
+private suspend fun extractEpisodesFromApi(seriesSlug: String, baseUrl: String): List<Episode> {
+    val episodes = mutableListOf<Episode>()
+    
+    val apiUrl = "https://watch.brplayer.cc/fetch_series_data.php?seriesSlug=$seriesSlug"
+    println("[CineAgora] Chamando API: $apiUrl")
+    
+    try {
+        val jsonResponse = app.get(apiUrl, referer = baseUrl).text
+        val responseMap: Map<String, Any>? = AppUtils.parseJson(jsonResponse)
+        
+        val seasonsMap = responseMap?.get("seasons") as? Map<String, List<Map<String, Any>>>
+        
+        if (seasonsMap != null) {
+            println("[CineAgora] API carregada. ${seasonsMap.size} temporada(s)")
+            
+            seasonsMap.forEach { (seasonStr, episodeList) ->
+                val seasonNum = seasonStr.toIntOrNull() ?: 1
+                println("[CineAgora] Temporada $seasonNum: ${episodeList.size} episódios")
+                
+                episodeList.forEachIndexed { index, epMap ->
+                    try {
+                        val videoSlug = epMap["video_slug"] as? String ?: return@forEach
+                        val epNumberStr = epMap["episode_number"] as? String
+                        val epTitleRaw = epMap["episode_title"] as? String
+                        
+                        val epNumber = epNumberStr?.toIntOrNull() ?: (index + 1)
+                        val episodeTitle = epTitleRaw?.takeIf { it.isNotBlank() } ?: "Episódio $epNumber"
+                        
+                        val episodeUrl = "https://watch.brplayer.cc/watch/$videoSlug"
+                        
+                        episodes.add(
+                            newEpisode(episodeUrl) {
+                                name = episodeTitle
+                                season = seasonNum
+                                episode = epNumber
+                                description = "Temporada $seasonNum • Episódio $epNumber"
+                            }
+                        )
+                        
+                    } catch (e: Exception) {
+                        println("[CineAgora] Erro ao processar episódio da API: ${e.message}")
                     }
                 }
             }
-            
-            // Fallback final: se nada funcionou, criar pelo menos um episódio
-            if (episodes.isEmpty()) {
-                println("[CineAgora] Fallback final: criando episódio básico")
-                episodes.add(
-                    newEpisode(baseUrl) {
-                        name = "Episódio 1"
-                        season = 1
-                        episode = 1
-                    }
-                )
-            }
         }
-        
-        // Ordenar episódios por temporada e episódio
-        return episodes.sortedWith(compareBy({ it.season }, { it.episode }))
+    } catch (e: Exception) {
+        println("[CineAgora] Erro na API: ${e.message}")
     }
-
+    
+    return episodes
+}
     // =============================================
     // FUNÇÃO LOAD PRINCIPAL (SIMPLIFICADA)
     // =============================================
