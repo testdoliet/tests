@@ -38,6 +38,23 @@ class Doramogo : MainAPI() {
     private val TMDB_API_KEY = BuildConfig.TMDB_API_KEY
     private val TMDB_ACCESS_TOKEN = BuildConfig.TMDB_ACCESS_TOKEN
 
+    // Países de doramas (códigos ISO 3166-1)
+    private val doramaCountries = setOf("KR", "JP", "CN", "TW", "TH", "PH", "ID", "VN", "MY", "SG")
+    
+    // Idiomas de doramas (códigos ISO 639-1)
+    private val doramaLanguages = setOf("ko", "ja", "zh", "th", "tl", "id", "vi")
+    
+    // Gêneros relacionados a doramas
+    private val doramaGenres = setOf(
+        "Drama", "Romance", "Melodrama", "Family", "Comedy", 
+        "Fantasy", "Mystery", "Thriller", "Action"
+    )
+    
+    // Gêneros para excluir
+    private val excludeGenres = setOf(
+        "Reality", "Talk Show", "News", "Documentary", "Game Show"
+    )
+
     override val mainPage = mainPageOf(
         "$mainUrl/episodios" to "Episódios Recentes",
         "$mainUrl/dorama?slug=&status=&ano=&classificacao_idade=&idiomar=DUB" to "Doramas Dublados",
@@ -314,9 +331,17 @@ class Doramogo : MainAPI() {
             ?: document.selectFirst("meta[property='og:description']")?.attr("content")?.trim()
             ?: ""
         
-        // === BUSCAR NO TMDB ===
+        // === BUSCAR NO TMDB COM DETECÇÃO INTELIGENTE ===
         val isMovie = url.contains("/filmes/")
-        val tmdbInfo = searchOnTMDB(title, null, isMovie)
+        
+        // Primeiro, tentar buscar como dorama (série)
+        val tmdbInfo = if (!isMovie) {
+            // Buscar séries com foco em doramas
+            searchOnTMDBAsDorama(title, url)
+        } else {
+            // Para filmes, busca normal
+            searchOnTMDB(title, null, true)
+        }
         
         // Poster - TMDB PRIMEIRO
         val poster = tmdbInfo?.posterUrl ?: 
@@ -715,8 +740,200 @@ class Doramogo : MainAPI() {
         return recommendations.distinctBy { it.url }.take(10)
     }
     
-    // === FUNÇÕES DO TMDB ===
+    // === FUNÇÕES INTELIGENTES DO TMDB PARA DORAMAS ===
     
+    private suspend fun searchOnTMDBAsDorama(query: String, url: String): TMDBInfo? {
+        // Primeiro, buscar como série
+        val searchResults = searchTMDBWithStrategy(query, url.contains("/filmes/"))
+        
+        // Se encontrou algo, usar o primeiro resultado
+        return searchResults.firstOrNull()
+    }
+    
+    private suspend fun searchTMDBWithStrategy(query: String, isMovie: Boolean): List<TMDBInfo> {
+        val results = mutableListOf<TMDBInfo>()
+        
+        // Para séries, usar estratégia especial para doramas
+        if (!isMovie) {
+            val tvResults = searchAndFilterDoramas(query)
+            results.addAll(tvResults)
+        } else {
+            // Para filmes, busca normal
+            val movieResult = searchOnTMDB(query, null, true)
+            movieResult?.let { results.add(it) }
+        }
+        
+        return results
+    }
+    
+    private suspend fun searchAndFilterDoramas(query: String): List<TMDBInfo> {
+        val encodedQuery = java.net.URLEncoder.encode(query, "UTF-8")
+        
+        // Buscar séries em geral
+        val searchUrl = "https://api.themoviedb.org/3/search/tv?api_key=$TMDB_API_KEY&query=$encodedQuery&language=pt-BR&include_adult=false"
+        
+        val headers = mapOf(
+            "Authorization" to "Bearer $TMDB_ACCESS_TOKEN",
+            "accept" to "application/json"
+        )
+        
+        return try {
+            val response = app.get(searchUrl, headers = headers, timeout = 10_000)
+            if (response.code != 200) return emptyList()
+            
+            val searchResult = response.parsedSafe<TMDBSearchResponse>() ?: return emptyList()
+            
+            // Filtrar e classificar usando sistema de pontuação
+            val scoredResults = mutableListOf<ScoredDorama>()
+            
+            for (result in searchResult.results.take(10)) {
+                val score = calculateDoramaScore(result.id)
+                if (score.totalScore >= 4) { // Threshold para considerar como dorama
+                    val details = getTMDBDetails(result.id, true)
+                    if (details != null) {
+                        val tmdbInfo = createTMDBInfoFromDetails(result, details, false)
+                        tmdbInfo?.let {
+                            scoredResults.add(ScoredDorama(it, score))
+                        }
+                    }
+                }
+            }
+            
+            // Ordenar por pontuação
+            scoredResults
+                .sortedByDescending { it.score.totalScore }
+                .map { it.info }
+                .take(3) // Pegar apenas os melhores
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+    
+    private suspend fun calculateDoramaScore(tvId: Int): DoramaScore {
+        var totalScore = 0
+        val details = getTMDBDetailsWithExtra(tvId)
+        
+        if (details == null) return DoramaScore(0, emptyMap())
+        
+        val scoreDetails = mutableMapOf<String, Int>()
+        
+        // 1. País de origem (MAIS IMPORTANTE) → +3 pontos
+        val hasAsianCountry = details.production_countries?.any { country ->
+            doramaCountries.contains(country.iso_3166_1)
+        } == true
+        
+        if (hasAsianCountry) {
+            totalScore += 3
+            scoreDetails["País Asiático"] = 3
+        }
+        
+        // 2. Idioma original → +2 pontos
+        val isAsianLanguage = details.original_language?.let { lang ->
+            doramaLanguages.contains(lang)
+        } == true
+        
+        if (isAsianLanguage) {
+            totalScore += 2
+            scoreDetails["Idioma Asiático"] = 2
+        }
+        
+        // 3. Gêneros → até +3 pontos
+        val genrePoints = details.genres?.sumBy { genre ->
+            when {
+                doramaGenres.contains(genre.name) -> {
+                    if (genre.name == "Drama" || genre.name == "Romance") 2 else 1
+                }
+                excludeGenres.contains(genre.name) -> -2
+                else -> 0
+            }
+        } ?: 0
+        
+        if (genrePoints > 0) {
+            totalScore += genrePoints
+            scoreDetails["Gêneros Compatíveis"] = genrePoints
+        }
+        
+        // 4. Estrutura de episódios → até +2 pontos
+        val hasDoramaStructure = details.number_of_seasons?.let { seasons ->
+            details.number_of_episodes?.let { episodes ->
+                seasons <= 2 && episodes in 8..32
+            }
+        } == true
+        
+        if (hasDoramaStructure) {
+            totalScore += 2
+            scoreDetails["Estrutura de Dorama"] = 2
+        }
+        
+        // 5. Palavras-chave → +1 ponto (bônus)
+        val hasDoramaKeywords = details.keywords?.keywords?.any { keyword ->
+            keyword.name.contains("drama", ignoreCase = true) ||
+            keyword.name.contains("korean", ignoreCase = true) ||
+            keyword.name.contains("japanese", ignoreCase = true) ||
+            keyword.name.contains("asia", ignoreCase = true)
+        } == true
+        
+        if (hasDoramaKeywords) {
+            totalScore += 1
+            scoreDetails["Palavras-chave Relacionadas"] = 1
+        }
+        
+        return DoramaScore(totalScore, scoreDetails)
+    }
+    
+    private suspend fun getTMDBDetailsWithExtra(tvId: Int): TMDBTVDetailsWithExtra? {
+        return try {
+            val headers = mapOf(
+                "Authorization" to "Bearer $TMDB_ACCESS_TOKEN",
+                "accept" to "application/json"
+            )
+            
+            val url = "https://api.themoviedb.org/3/tv/$tvId?api_key=$TMDB_API_KEY&language=pt-BR&append_to_response=keywords"
+            
+            val response = app.get(url, headers = headers, timeout = 10_000)
+            
+            if (response.code != 200) return null
+            response.parsedSafe<TMDBTVDetailsWithExtra>()
+        } catch (e: Exception) {
+            null
+        }
+    }
+    
+    private fun createTMDBInfoFromDetails(
+        result: TMDBResult,
+        details: TMDBDetailsResponse,
+        isMovie: Boolean
+    ): TMDBInfo? {
+        val allActors = details.credits?.cast?.take(15)?.mapNotNull { actor ->
+            if (actor.name.isNotBlank()) {
+                Actor(
+                    name = actor.name,
+                    image = actor.profile_path?.let { "$tmdbImageUrl/w185$it" }
+                )
+            } else null
+        }
+        
+        val youtubeTrailer = getHighQualityTrailer(details.videos?.results)
+        
+        return TMDBInfo(
+            id = result.id,
+            title = if (isMovie) result.title else result.name,
+            year = if (isMovie) {
+                result.release_date?.substring(0, 4)?.toIntOrNull()
+            } else {
+                result.first_air_date?.substring(0, 4)?.toIntOrNull()
+            },
+            posterUrl = result.poster_path?.let { "$tmdbImageUrl/w500$it" },
+            backdropUrl = details.backdrop_path?.let { "$tmdbImageUrl/original$it" },
+            overview = details.overview,
+            genres = details.genres,
+            actors = allActors,
+            youtubeTrailer = youtubeTrailer,
+            duration = if (isMovie) details.runtime else null
+        )
+    }
+    
+    // Função de busca TMDB original (mantida para compatibilidade)
     private suspend fun searchOnTMDB(query: String, year: Int?, isMovie: Boolean): TMDBInfo? {
         return try {
             val encodedQuery = java.net.URLEncoder.encode(query, "UTF-8")
@@ -741,33 +958,7 @@ class Doramogo : MainAPI() {
             
             val details = getTMDBDetails(result.id, !isMovie) ?: return null
             
-            val allActors = details.credits?.cast?.take(15)?.mapNotNull { actor ->
-                if (actor.name.isNotBlank()) {
-                    Actor(
-                        name = actor.name,
-                        image = actor.profile_path?.let { "$tmdbImageUrl/w185$it" }
-                    )
-                } else null
-            }
-            
-            val youtubeTrailer = getHighQualityTrailer(details.videos?.results)
-            
-            TMDBInfo(
-                id = result.id,
-                title = if (isMovie) result.title else result.name,
-                year = if (isMovie) {
-                    result.release_date?.substring(0, 4)?.toIntOrNull()
-                } else {
-                    result.first_air_date?.substring(0, 4)?.toIntOrNull()
-                },
-                posterUrl = result.poster_path?.let { "$tmdbImageUrl/w500$it" },
-                backdropUrl = details.backdrop_path?.let { "$tmdbImageUrl/original$it" },
-                overview = details.overview,
-                genres = details.genres,
-                actors = allActors,
-                youtubeTrailer = youtubeTrailer,
-                duration = if (isMovie) details.runtime else null
-            )
+            createTMDBInfoFromDetails(result, details, isMovie)
         } catch (e: Exception) {
             null
         }
@@ -853,6 +1044,33 @@ class Doramogo : MainAPI() {
         @JsonProperty("videos") val videos: TMDBVideos?
     )
     
+    // Classe estendida para detalhes de TV com informações extras
+    private data class TMDBTVDetailsWithExtra(
+        @JsonProperty("original_language") val original_language: String?,
+        @JsonProperty("production_countries") val production_countries: List<TMDBProductionCountry>?,
+        @JsonProperty("number_of_seasons") val number_of_seasons: Int?,
+        @JsonProperty("number_of_episodes") val number_of_episodes: Int?,
+        @JsonProperty("genres") val genres: List<TMDBGenre>?,
+        @JsonProperty("keywords") val keywords: TMDBKeywords?,
+        @JsonProperty("overview") val overview: String?,
+        @JsonProperty("backdrop_path") val backdrop_path: String?,
+        @JsonProperty("credits") val credits: TMDBCredits?,
+        @JsonProperty("videos") val videos: TMDBVideos?
+    )
+    
+    private data class TMDBProductionCountry(
+        @JsonProperty("iso_3166_1") val iso_3166_1: String,
+        @JsonProperty("name") val name: String
+    )
+    
+    private data class TMDBKeywords(
+        @JsonProperty("results") val keywords: List<TMDBKeyword>
+    )
+    
+    private data class TMDBKeyword(
+        @JsonProperty("name") val name: String
+    )
+    
     private data class TMDBGenre(
         @JsonProperty("name") val name: String
     )
@@ -876,6 +1094,17 @@ class Doramogo : MainAPI() {
         @JsonProperty("site") val site: String,
         @JsonProperty("type") val type: String,
         @JsonProperty("official") val official: Boolean? = false
+    )
+    
+    // Classes para o sistema de pontuação
+    private data class DoramaScore(
+        val totalScore: Int,
+        val details: Map<String, Int>
+    )
+    
+    private data class ScoredDorama(
+        val info: TMDBInfo,
+        val score: DoramaScore
     )
     
     // === FUNÇÕES AUXILIARES FINAIS ===
