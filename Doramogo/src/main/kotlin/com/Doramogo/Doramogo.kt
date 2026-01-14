@@ -21,7 +21,7 @@ class Doramogo : MainAPI() {
     override val hasMainPage = true
     override var lang = "pt-br"
     override val hasDownloadSupport = false
-    override val supportedTypes = setOf(TvType.Anime, TvType.Movie)
+    override val supportedTypes = setOf(TvType.TvSeries, TvType.Movie)
     override val usesWebView = false
 
     override val mainPage = mainPageOf(
@@ -106,15 +106,8 @@ class Doramogo : MainAPI() {
                     "$doramaName - EP $episodeNumber"
                 }
                 
-                // Usar AnimeSearchResponse para ter acesso a addDubStatus
-                items.add(newAnimeSearchResponse(finalTitle, fixUrl(href)) {
+                items.add(newTvSeriesSearchResponse(finalTitle, fixUrl(href), TvType.TvSeries) {
                     this.posterUrl = posterUrl
-                    this.type = TvType.Anime
-                    
-                    // Adicionar status de dublado/legendado
-                    if (isDub || isLeg) {
-                        addDubStatus(dubExist = isDub, subExist = isLeg)
-                    }
                 })
             }
         } else {
@@ -139,28 +132,15 @@ class Doramogo : MainAPI() {
                 }
                 
                 val isMovie = href.contains("/filmes/") || request.name.contains("Filmes")
-                val type = if (isMovie) TvType.Movie else TvType.Anime
-                
-                // Verificar se é dublado ou legendado
-                val isDub = href.contains("/dub/") || request.data.contains("idiomar=DUB") || 
-                           titleElement?.text()?.contains("Dublado", ignoreCase = true) == true
-                val isLeg = href.contains("/leg/") || request.data.contains("idiomar=LEG") || 
-                           titleElement?.text()?.contains("Legendado", ignoreCase = true) == true
+                val type = if (isMovie) TvType.Movie else TvType.TvSeries
                 
                 if (type == TvType.Movie) {
                     items.add(newMovieSearchResponse(title, fixUrl(href), type) {
                         this.posterUrl = posterUrl
                     })
                 } else {
-                    // Usar AnimeSearchResponse para doramas
-                    items.add(newAnimeSearchResponse(title, fixUrl(href)) {
+                    items.add(newTvSeriesSearchResponse(title, fixUrl(href), type) { 
                         this.posterUrl = posterUrl
-                        this.type = TvType.Anime
-                        
-                        // Adicionar status de dublado/legendado
-                        if (isDub || isLeg) {
-                            addDubStatus(dubExist = isDub, subExist = isLeg)
-                        }
                     })
                 }
             }
@@ -203,26 +183,15 @@ class Doramogo : MainAPI() {
                 else -> null
             }
             
-            val type = if (href.contains("/filmes/")) TvType.Movie else TvType.Anime
-            
-            // Verificar se é dublado ou legendado
-            val isDub = href.contains("/dub/") || title.contains("Dublado", ignoreCase = true)
-            val isLeg = href.contains("/leg/") || title.contains("Legendado", ignoreCase = true)
+            val type = if (href.contains("/filmes/")) TvType.Movie else TvType.TvSeries
             
             if (type == TvType.Movie) {
                 newMovieSearchResponse(title, fixUrl(href), type) { 
                     this.posterUrl = posterUrl 
                 }
             } else {
-                // Usar AnimeSearchResponse para doramas
-                newAnimeSearchResponse(title, fixUrl(href)) { 
-                    this.posterUrl = posterUrl
-                    this.type = TvType.Anime
-                    
-                    // Adicionar status de dublado/legendado
-                    if (isDub || isLeg) {
-                        addDubStatus(dubExist = isDub, subExist = isLeg)
-                    }
+                newTvSeriesSearchResponse(title, fixUrl(href), type) { 
+                    this.posterUrl = posterUrl 
                 }
             }
         }
@@ -271,31 +240,29 @@ class Doramogo : MainAPI() {
             }
         }
         
-        // Status da série - CORRIGIDO: usar showStatus em vez de status
-        val statusText = castsInfo["status"] ?: ""
-        val showStatus = when {
-            statusText.contains("Finalizada", ignoreCase = true) -> ShowStatus.Completed
-            statusText.contains("Em Produção", ignoreCase = true) -> ShowStatus.Ongoing
-            else -> null
-        }
-        
-        // Áudio (Dublado/Legendado)
-        val audioInfo = castsInfo["áudio"] ?: ""
-        val isDub = audioInfo.contains("Dublado", ignoreCase = true)
-        val isSub = audioInfo.contains("Legendado", ignoreCase = true)
-        
-        // Verificar se é filme ou anime (dorama)
+        // Verificar se é filme ou série
         val isMovie = url.contains("/filmes/")
-        val type = if (isMovie) TvType.Movie else TvType.Anime
+        val type = if (isMovie) TvType.Movie else TvType.TvSeries
         
-        if (type == TvType.Anime) {
-            // Extrair episódios
+        if (type == TvType.TvSeries) {
+            // CORREÇÃO: Extrair episódios do HTML correto
+            // No HTML que você mandou, os episódios estão em:
+            // <div class="dorama-one-episode-list ">
+            //   <a href="https://www.doramogo.net/series/cashero-2025/temporada-1/episodio-01" class="dorama-one-episode-item">
+            //     <span class="dorama-one-episode-number">EP 01</span>
+            //     <span class="episode-title"> Episódio 01 </span>
+            //   </a>
+            //   ... mais episódios
+            // </div>
+            
             val episodes = mutableListOf<Episode>()
+            
+            // Tentar primeira estrutura: dorama-one-episode-item
             document.select(".dorama-one-episode-item").forEach { episodeItem ->
                 val episodeUrl = episodeItem.attr("href")?.let { fixUrl(it) } ?: return@forEach
                 val episodeTitle = episodeItem.selectFirst(".episode-title")?.text()?.trim() ?: "Episódio"
                 
-                val episodeNumber = extractEpisodeNumber(episodeTitle)
+                val episodeNumber = extractEpisodeNumberFromEpisodeItem(episodeItem)
                 val seasonNumber = extractSeasonNumberFromUrl(url) ?: 1
                 
                 episodes.add(newEpisode(episodeUrl) {
@@ -305,19 +272,30 @@ class Doramogo : MainAPI() {
                 })
             }
             
-            // Usar AnimeLoadResponse
-            return newAnimeLoadResponse(title, url, type) {
+            // Se não encontrou, tentar outra estrutura possível
+            if (episodes.isEmpty()) {
+                document.select("a[href*='/episodio-']").forEach { episodeLink ->
+                    val episodeUrl = episodeLink.attr("href")?.let { fixUrl(it) } ?: return@forEach
+                    val episodeTitle = episodeLink.text().trim().ifEmpty { "Episódio" }
+                    
+                    // Extrair número da URL (ex: /episodio-01)
+                    val episodeMatch = Regex("""episodio-(\d+)""", RegexOption.IGNORE_CASE).find(episodeUrl)
+                    val episodeNumber = episodeMatch?.groupValues?.get(1)?.toIntOrNull() ?: 1
+                    val seasonNumber = extractSeasonNumberFromUrl(url) ?: 1
+                    
+                    episodes.add(newEpisode(episodeUrl) {
+                        this.name = episodeTitle
+                        this.season = seasonNumber
+                        this.episode = episodeNumber
+                    })
+                }
+            }
+            
+            return newTvSeriesLoadResponse(title, url, type, episodes) {
                 this.posterUrl = poster
                 this.year = year
                 this.plot = description
                 this.tags = tags
-                this.showStatus = showStatus  // CORRIGIDO: usar showStatus
-                
-                // Adicionar episódios com status de áudio
-                if (episodes.isNotEmpty()) {
-                    val dubStatus = if (isDub) DubStatus.Dubbed else DubStatus.Subbed
-                    addEpisodes(dubStatus, episodes)
-                }
             }
         } else {
             // Para filmes
@@ -343,12 +321,23 @@ class Doramogo : MainAPI() {
             .trim()
     }
     
-    private fun extractEpisodeNumber(text: String): Int {
-        val pattern = Regex("""Episódio\s*(\d+)|Episode\s*(\d+)|EP\s*(\d+)""", RegexOption.IGNORE_CASE)
-        val match = pattern.find(text)
+    // Nova função para extrair número do episódio do elemento correto
+    private fun extractEpisodeNumberFromEpisodeItem(episodeItem: Element): Int {
+        // Primeiro tentar do span .dorama-one-episode-number (ex: "EP 01")
+        val episodeNumberSpan = episodeItem.selectFirst(".dorama-one-episode-number")
+        episodeNumberSpan?.text()?.let { spanText ->
+            val match = Regex("""EP\s*(\d+)""", RegexOption.IGNORE_CASE).find(spanText)
+            if (match != null) {
+                return match.groupValues[1].toIntOrNull() ?: 1
+            }
+        }
+        
+        // Depois tentar do span .episode-title
+        val episodeTitle = episodeItem.selectFirst(".episode-title")?.text() ?: ""
+        val pattern = Regex("""Episódio\s*(\d+)|Episode\s*(\d+)""", RegexOption.IGNORE_CASE)
+        val match = pattern.find(episodeTitle)
         return match?.groupValues?.get(1)?.toIntOrNull()
             ?: match?.groupValues?.get(2)?.toIntOrNull()
-            ?: match?.groupValues?.get(3)?.toIntOrNull()
             ?: 1
     }
     
