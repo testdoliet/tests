@@ -818,6 +818,93 @@ class Doramogo : MainAPI() {
                         return@forEach
                     }
                     
-                    val poster = when {
+                                        val poster = when {
                         imgElement?.hasAttr("data-src") == true -> fixUrl(imgElement.attr("data-src"))
-                        imgElement?.hasAttr("src") == true -> fixUrl(imgElement.attr
+                        imgElement?.hasAttr("src") == true -> fixUrl(imgElement.attr("src"))
+                        else -> null
+                    }
+                    
+                    val cleanTitle = cleanTitle(title)
+                    val year = extractYearFromUrl(href)
+                    
+                    // Determinar tipo pelo URL
+                    val type = when {
+                        href.contains("/filmes/") -> TvType.Movie
+                        else -> TvType.TvSeries
+                    }
+                    
+                    if (type == TvType.Movie) {
+                        recommendations.add(newMovieSearchResponse(cleanTitle, fixUrl(href), type) {
+                            this.posterUrl = poster
+                            this.year = year
+                        })
+                    } else {
+                        recommendations.add(newTvSeriesSearchResponse(cleanTitle, fixUrl(href), type) {
+                            this.posterUrl = poster
+                            this.year = year
+                        })
+                    }
+                    
+                    // Limitar a 10 recomendações
+                    if (recommendations.size >= 10) return recommendations
+                } catch (e: Exception) {
+                    // Ignorar erros e continuar
+                }
+            }
+            
+            if (recommendations.isNotEmpty()) break
+        }
+        
+        return recommendations.distinctBy { it.url }.take(10)
+    }
+    
+    // Extrair número do episódio do elemento correto
+    private fun extractEpisodeNumberFromEpisodeItem(episodeItem: Element): Int {
+        // Primeiro tentar do span .dorama-one-episode-number (ex: "EP 01")
+        val episodeNumberSpan = episodeItem.selectFirst(".dorama-one-episode-number")
+        episodeNumberSpan?.text()?.let { spanText ->
+            val match = Regex("""EP\s*(\d+)""", RegexOption.IGNORE_CASE).find(spanText)
+            if (match != null) {
+                return match.groupValues[1].toIntOrNull() ?: 1
+            }
+        }
+        
+        // Depois tentar do span .episode-title
+        val episodeTitle = episodeItem.selectFirst(".episode-title")?.text() ?: ""
+        val pattern = Regex("""Episódio\s*(\d+)|Episode\s*(\d+)""", RegexOption.IGNORE_CASE)
+        val match = pattern.find(episodeTitle)
+        return match?.groupValues?.get(1)?.toIntOrNull()
+            ?: match?.groupValues?.get(2)?.toIntOrNull()
+            ?: 1
+    }
+    
+    // Extrair número da temporada do título
+    private fun extractSeasonNumber(seasonTitle: String): Int {
+        val pattern = Regex("""(\d+)°\s*Temporada|Temporada\s*(\d+)""", RegexOption.IGNORE_CASE)
+        val match = pattern.find(seasonTitle)
+        return match?.groupValues?.get(1)?.toIntOrNull()
+            ?: match?.groupValues?.get(2)?.toIntOrNull()
+            ?: 1
+    }
+    
+    // Extrair número da temporada da URL
+    private fun extractSeasonNumberFromUrl(url: String): Int? {
+        val pattern = Regex("""temporada[_-](\d+)""", RegexOption.IGNORE_CASE)
+        val match = pattern.find(url)
+        return match?.groupValues?.get(1)?.toIntOrNull()
+    }
+    
+    // Função de extensão para encontrar ano em uma string
+    private fun String.findYear(): Int? {
+        val pattern = Regex("""\b(19\d{2}|20\d{2})\b""")
+        return pattern.find(this)?.value?.toIntOrNull()
+    }
+    
+    // Função para parsear duração
+    private fun String?.parseDuration(): Int? {
+        if (this.isNullOrBlank()) return null
+        val pattern = Regex("""(\d+)\s*(min|minutes|minutos)""", RegexOption.IGNORE_CASE)
+        val match = pattern.find(this)
+        return match?.groupValues?.get(1)?.toIntOrNull()
+    }
+}
