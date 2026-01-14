@@ -422,96 +422,163 @@ class CineAgora : MainAPI() {
     }
 
     // =============================================
-    // FUNÇÃO PARA EXTRAIR SERIES SLUG DA PÁGINA (NOVA ESTRATÉGIA)
-    // =============================================
+// FUNÇÃO PARA EXTRAIR SERIES SLUG DA PÁGINA (CORRIGIDA)
+// =============================================
 
-    private suspend fun extractSeriesSlugFromPage(doc: org.jsoup.nodes.Document, baseUrl: String): String? {
-        println("[CineAgora] Procurando seriesSlug na página: $baseUrl")
+private suspend fun extractSeriesSlugFromPage(doc: org.jsoup.nodes.Document, baseUrl: String): String? {
+    println("[CineAgora] Procurando seriesSlug na página: $baseUrl")
+    
+    // ESTRATÉGIA 1: Buscar URL do player/tv em iframes (PRINCIPAL)
+    // Primeiro, procurar por iframes que tenham src contendo /tv/
+    
+    // Procurar iframes com src contendo /tv/
+    val iframes = doc.select("iframe[src*='/tv/']")
+    println("[CineAgora] Encontrados ${iframes.size} iframes com /tv/")
+    
+    for ((index, iframe) in iframes.withIndex()) {
+        val src = iframe.attr("src")
+        println("[CineAgora] Iframe $index src: $src")
         
-        // ESTRATÉGIA 1: Buscar URL do player/tv no HTML
-        // Primeiro, procurar por iframes ou links que apontem para watch.brplayer.cc/tv/
-        
-        // Procurar iframes com src contendo /tv/
-        val iframes = doc.select("iframe[src*='watch.brplayer.cc']")
-        for (iframe in iframes) {
-            val src = iframe.attr("src")
-            println("[CineAgora] Iframe encontrado: $src")
-            
-            // Tentar extrair slug do padrão /tv/{slug}
-            val tvPattern = Regex("""/tv/([^/?]+)""")
-            val tvMatch = tvPattern.find(src)
-            if (tvMatch != null) {
-                val slug = tvMatch.groupValues[1]
-                println("[CineAgora] Slug encontrado no iframe (/tv/): $slug")
-                return slug
-            }
-            
-            // Tentar extrair do padrão /watch/{videoId} e converter via API
-            val watchPattern = Regex("""/watch/([^/?]+)""")
-            val watchMatch = watchPattern.find(src)
-            if (watchMatch != null) {
-                val videoSlug = watchMatch.groupValues[1]
-                println("[CineAgora] Video slug encontrado: $videoSlug")
-                
-                // Converter videoSlug para seriesSlug via API
-                val seriesSlug = getSeriesFromVideoSlug(videoSlug)
-                if (seriesSlug.isNotBlank()) {
-                    println("[CineAgora] Series slug obtido da API: $seriesSlug")
-                    return seriesSlug
-                }
-            }
+        // Padrão: https://watch.brplayer.cc/tv/the-day-of-the-jackal
+        val tvPattern = Regex("""/tv/([^/?]+)""")
+        val tvMatch = tvPattern.find(src)
+        if (tvMatch != null) {
+            val slug = tvMatch.groupValues[1]
+            println("[CineAgora] ✓ Slug encontrado no iframe (/tv/): $slug")
+            return slug
         }
-        
-        // ESTRATÉGIA 2: Procurar em scripts por URL /tv/
-        val scripts = doc.select("script")
-        for (script in scripts) {
-            val scriptText = script.html()
-            
-            // Procurar padrão /tv/{slug} em URLs
-            val tvPattern = Regex("""["'](https?://watch\.brplayer\.cc/tv/[^"']+)["']""")
-            val matches = tvPattern.findAll(scriptText)
-            
-            for (match in matches) {
-                val url = match.groupValues[1]
-                println("[CineAgora] URL /tv/ encontrada em script: $url")
-                
-                val slug = url.substringAfterLast("/tv/").substringBefore("?").substringBefore("#")
-                if (slug.isNotBlank()) {
-                    println("[CineAgora] Slug extraído: $slug")
-                    return slug
-                }
-            }
-            
-            // Procurar padrão watch.brplayer.cc/tv/ diretamente
-            val directPattern = Regex("""watch\.brplayer\.cc/tv/([^/"']+)""")
-            val directMatch = directPattern.find(scriptText)
-            if (directMatch != null) {
-                val slug = directMatch.groupValues[1]
-                println("[CineAgora] Slug encontrado diretamente em script: $slug")
-                return slug
-            }
-        }
-        
-        // ESTRATÉGIA 3: Tentar extrair do próprio URL da página do CineAgora
-        // (fallback para séries onde o player não está visível)
-        try {
-            val urlSlug = baseUrl
-                .substringAfterLast("/")
-                .substringAfter("-")
-                .substringBefore(".html")
-                .trim()
-            
-            if (urlSlug.isNotBlank() && urlSlug.length > 3) {
-                println("[CineAgora] Slug extraído da URL da página: $urlSlug")
-                return urlSlug
-            }
-        } catch (e: Exception) {
-            println("[CineAgora] Erro ao extrair slug da URL: ${e.message}")
-        }
-        
-        println("[CineAgora] Não foi possível encontrar o seriesSlug")
-        return null
     }
+    
+    // ESTRATÉGIA 2: Procurar qualquer iframe com watch.brplayer.cc
+    val allIframes = doc.select("iframe[src*='watch.brplayer.cc']")
+    println("[CineAgora] Encontrados ${allIframes.size} iframes com watch.brplayer.cc")
+    
+    for ((index, iframe) in allIframes.withIndex()) {
+        val src = iframe.attr("src")
+        println("[CineAgora] Iframe $index completo: $src")
+        
+        // Tentar extrair slug do padrão /tv/{slug}
+        val tvPattern = Regex("""/tv/([^/?]+)""")
+        val tvMatch = tvPattern.find(src)
+        if (tvMatch != null) {
+            val slug = tvMatch.groupValues[1]
+            println("[CineAgora] ✓ Slug encontrado em iframe genérico (/tv/): $slug")
+            return slug
+        }
+        
+        // Tentar extrair do padrão /watch/{videoId} e converter via API
+        val watchPattern = Regex("""/watch/([^/?]+)""")
+        val watchMatch = watchPattern.find(src)
+        if (watchMatch != null) {
+            val videoSlug = watchMatch.groupValues[1]
+            println("[CineAgora] Video slug encontrado: $videoSlug")
+            
+            // Converter videoSlug para seriesSlug via API
+            val seriesSlug = getSeriesFromVideoSlug(videoSlug)
+            if (seriesSlug.isNotBlank()) {
+                println("[CineAgoras] ✓ Series slug obtido da API: $seriesSlug")
+                return seriesSlug
+            }
+        }
+    }
+    
+    // ESTRATÉGIA 3: Procurar em outros elementos com src
+    val elementsWithSrc = doc.select("[src*='watch.brplayer.cc/tv/']")
+    println("[CineAgora] Encontrados ${elementsWithSrc.size} elementos com src contendo /tv/")
+    
+    for (element in elementsWithSrc) {
+        val src = element.attr("src")
+        println("[CineAgora] Elemento src: $src")
+        
+        val slug = src.substringAfterLast("/tv/").substringBefore("?").substringBefore("#")
+        if (slug.isNotBlank()) {
+            println("[CineAgora] ✓ Slug encontrado em elemento: $slug")
+            return slug
+        }
+    }
+    
+    // ESTRATÉGIA 4: Procurar em scripts por URL /tv/
+    val scripts = doc.select("script")
+    println("[CineAgora] Analisando ${scripts.size} scripts")
+    
+    for ((index, script) in scripts.withIndex()) {
+        val scriptText = script.html()
+        
+        // Procurar padrão /tv/{slug} em URLs
+        val tvPattern = Regex("""["'](https?://watch\.brplayer\.cc/tv/[^"']+)["']""")
+        val matches = tvPattern.findAll(scriptText)
+        
+        for (match in matches) {
+            val url = match.groupValues[1]
+            println("[CineAgora] URL /tv/ encontrada em script $index: $url")
+            
+            val slug = url.substringAfterLast("/tv/").substringBefore("?").substringBefore("#")
+            if (slug.isNotBlank()) {
+                println("[CineAgora] ✓ Slug extraído de script: $slug")
+                return slug
+            }
+        }
+        
+        // Procurar padrão watch.brplayer.cc/tv/ diretamente
+        val directPattern = Regex("""watch\.brplayer\.cc/tv/([^/"']+)""")
+        val directMatch = directPattern.find(scriptText)
+        if (directMatch != null) {
+            val slug = directMatch.groupValues[1]
+            println("[CineAgora] ✓ Slug encontrado diretamente em script: $slug")
+            return slug
+        }
+        
+        // Procurar por atributo data-src (como no seu exemplo)
+        if (scriptText.contains("data-src")) {
+            val dataSrcPattern = Regex("""data-src=["']([^"']+)["']""")
+            val dataSrcMatches = dataSrcPattern.findAll(scriptText)
+            
+            for (match in dataSrcMatches) {
+                val dataSrc = match.groupValues[1]
+                if (dataSrc.contains("/tv/")) {
+                    println("[CineAgora] data-src encontrado: $dataSrc")
+                    val slug = dataSrc.substringAfterLast("/tv/").substringBefore("?").substringBefore("#")
+                    if (slug.isNotBlank()) {
+                        println("[CineAgora] ✓ Slug extraído de data-src: $slug")
+                        return slug
+                    }
+                }
+            }
+        }
+    }
+    
+    // ESTRATÉGIA 5: Procurar no HTML inteiro por padrão /tv/
+    val html = doc.html()
+    val htmlPattern = Regex("""/tv/([^/"'?&#]+)""")
+    val htmlMatches = htmlPattern.findAll(html)
+    
+    for (match in htmlMatches) {
+        val slug = match.groupValues[1]
+        if (slug.length > 3 && !slug.contains(".") && !slug.contains(" ")) {
+            println("[CineAgora] ✓ Slug encontrado no HTML bruto: $slug")
+            return slug
+        }
+    }
+    
+    // ESTRATÉGIA 6: Tentar extrair do próprio URL da página do CineAgora
+    try {
+        val urlSlug = baseUrl
+            .substringAfterLast("/")
+            .substringAfter("-")
+            .substringBefore(".html")
+            .trim()
+        
+        if (urlSlug.isNotBlank() && urlSlug.length > 3) {
+            println("[CineAgora] Slug extraído da URL da página: $urlSlug")
+            return urlSlug
+        }
+    } catch (e: Exception) {
+        println("[CineAgora] Erro ao extrair slug da URL: ${e.message}")
+    }
+    
+    println("[CineAgora] ❌ Não foi possível encontrar o seriesSlug")
+    return null
+}
 
     // =============================================
     // FUNÇÃO PARA OBTER SERIES SLUG DE VIDEO SLUG (API)
