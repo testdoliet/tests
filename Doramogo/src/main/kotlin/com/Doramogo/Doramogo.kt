@@ -331,104 +331,186 @@ class Doramogo : MainAPI() {
         }
     }
     
-    // --- Load Links ---
-    override suspend fun loadLinks(
-        data: String,
-        isCasting: Boolean,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        var linksFound = false
-        
-        val document = app.get(data).document
-        
-        // Extrair informações da URL para construir o stream
-        val urlParts = data.split("/")
-        val slug = urlParts.getOrNull(urlParts.indexOf("series") + 1) 
-            ?: urlParts.getOrNull(urlParts.indexOf("filmes") + 1)
-            ?: return false
-        
-        // Extrair temporada e episódio da URL
-        val temporada = extractSeasonNumberFromUrl(data) ?: 1
-        val episodio = extractEpisodeNumberFromUrl(data) ?: 1
-        
-        // Verificar se é filme ou dorama
-        val isFilme = data.contains("/filmes/")
-        val tipo = if (isFilme) "filmes" else "doramas"
-        
-        // Construir o path do stream conforme a lógica do JavaScript
-        val streamPath = if (isFilme) {
-            // Para filmes: P/slug/stream/stream.m3u8
-            val pt = slug.first().uppercase()
-            "$pt/$slug/stream/stream.m3u8?nocache=${System.currentTimeMillis()}"
-        } else {
-            // Para doramas: P/slug/XX-temporada/YY/stream.m3u8
-            val pt = slug.first().uppercase()
-            val tempNum = temporada.toString().padStart(2, '0')
-            val epNum = episodio.toString().padStart(2, '0')
-            "$pt/$slug/$tempNum-temporada/$epNum/stream.m3u8?nocache=${System.currentTimeMillis()}"
+// --- Load Links ---
+override suspend fun loadLinks(
+    data: String,
+    isCasting: Boolean,
+    subtitleCallback: (SubtitleFile) -> Unit,
+    callback: (ExtractorLink) -> Unit
+): Boolean {
+    var linksFound = false
+    
+    println("=== DORAMOGO DEBUG: loadLinks iniciado ===")
+    println("URL recebida: $data")
+    
+    val document = app.get(data).document
+    
+    // Extrair informações da URL para construir o stream
+    val urlParts = data.split("/")
+    val slug = urlParts.getOrNull(urlParts.indexOf("series") + 1) 
+        ?: urlParts.getOrNull(urlParts.indexOf("filmes") + 1)
+        ?: run {
+            println("ERRO: Não encontrou 'series' ou 'filmes' na URL")
+            return false
         }
-        
-        // URLs dos proxies (conforme definido no JavaScript)
-        val PRIMARY_URL = "https://proxy-us-east1-outbound-series.xreadycf.site"
-        val FALLBACK_URL = "https://proxy-us-east1-forks-doramas.xreadycf.site"
-        
-        // Construir URLs completas
-        val primaryStreamUrl = "$PRIMARY_URL/$streamPath"
-        val fallbackStreamUrl = "$FALLBACK_URL/$streamPath"
-        
-        // Tentar primeiro com a URL primária
-        try {
-            // Verificar se a URL primária está acessível
-            val testResponse = app.get(primaryStreamUrl, allowRedirects = false)
-            if (testResponse.code in 200..299) {
-                callback(newExtractorLink(name, "Doramogo (Primário)", primaryStreamUrl, ExtractorLinkType.M3U8) {
-                    referer = mainUrl
-                    quality = Qualities.P720.value
-                })
-                linksFound = true
-            }
-        } catch (e: Exception) {
-            // Se a primária falhar, tentar a de fallback
-        }
-        
-        // Tentar com a URL de fallback
-        try {
-            val testResponse = app.get(fallbackStreamUrl, allowRedirects = false)
-            if (testResponse.code in 200..299) {
-                callback(newExtractorLink(name, "Doramogo (Alternativo)", fallbackStreamUrl, ExtractorLinkType.M3U8) {
-                    referer = mainUrl
-                    quality = Qualities.P720.value
-                })
-                linksFound = true
-            }
-        } catch (e: Exception) {
-            // Ambas falharam
-        }
-        
-        // Se não encontrou links com a lógica de construção, tentar extrair do JavaScript
-        if (!linksFound) {
-            val scriptContent = document.select("script").find { 
-                it.html().contains("construirStreamPath") 
-            }?.html()
+    
+    println("DEBUG: Slug extraído: $slug")
+    
+    // Extrair temporada e episódio da URL
+    val temporada = extractSeasonNumberFromUrl(data) ?: 1
+    val episodio = extractEpisodeNumberFromUrl(data) ?: 1
+    
+    println("DEBUG: Temporada: $temporada, Episódio: $episodio")
+    
+    // Verificar se é filme ou dorama
+    val isFilme = data.contains("/filmes/")
+    val tipo = if (isFilme) "filmes" else "doramas"
+    
+    println("DEBUG: Tipo: $tipo, é filme: $isFilme")
+    
+    // Construir o path do stream conforme a lógica do JavaScript
+    val streamPath = if (isFilme) {
+        // Para filmes: P/slug/stream/stream.m3u8
+        val pt = slug.first().uppercase()
+        "$pt/$slug/stream/stream.m3u8?nocache=${System.currentTimeMillis()}"
+    } else {
+        // Para doramas: P/slug/XX-temporada/YY/stream.m3u8
+        val pt = slug.first().uppercase()
+        val tempNum = temporada.toString().padStart(2, '0')
+        val epNum = episodio.toString().padStart(2, '0')
+        "$pt/$slug/$tempNum-temporada/$epNum/stream.m3u8?nocache=${System.currentTimeMillis()}"
+    }
+    
+    println("DEBUG: Stream path gerado: $streamPath")
+    
+    // URLs dos proxies (conforme definido no JavaScript)
+    val PRIMARY_URL = "https://proxy-us-east1-outbound-series.xreadycf.site"
+    val FALLBACK_URL = "https://proxy-us-east1-forks-doramas.xreadycf.site"
+    
+    // Construir URLs completas
+    val primaryStreamUrl = "$PRIMARY_URL/$streamPath"
+    val fallbackStreamUrl = "$FALLBACK_URL/$streamPath"
+    
+    println("DEBUG: URL primária: $primaryStreamUrl")
+    println("DEBUG: URL fallback: $fallbackStreamUrl")
+    
+    // Headers baseados no curl que você forneceu
+    val headers = mapOf(
+        "accept" to "*/*",
+        "accept-language" to "pt-BR",
+        "origin" to "https://www.doramogo.net",
+        "priority" to "u=1, i",
+        "referer" to "https://www.doramogo.net/",
+        "sec-ch-ua" to "\"Chromium\";v=\"127\", \"Not)A;Brand\";v=\"99\", \"Microsoft Edge Simulate\";v=\"127\", \"Lemur\";v=\"127\"",
+        "sec-ch-ua-mobile" to "?1",
+        "sec-ch-ua-platform" to "\"Android\"",
+        "sec-fetch-dest" to "empty",
+        "sec-fetch-mode" to "cors",
+        "sec-fetch-site" to "cross-site",
+        "user-agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36"
+    )
+    
+    // Função para tentar adicionar um link com verificação
+    suspend fun tryAddLink(url: String, name: String): Boolean {
+        return try {
+            println("DEBUG: Tentando verificar URL: $url")
             
-            if (!scriptContent.isNullOrBlank()) {
-                // Tentar extrair URLs do JavaScript
-                val urls = extractUrlsFromJavaScript(scriptContent)
-                urls.forEach { url ->
-                    if (url.contains(".m3u8") && !url.contains("jwplatform.com")) {
-                        callback(newExtractorLink(name, "Doramogo (JS)", url, ExtractorLinkType.M3U8) {
-                            referer = mainUrl
-                            quality = Qualities.P720.value
-                        })
-                        linksFound = true
-                    }
+            // Tentar fazer uma requisição para verificar se a URL está acessível
+            val testResponse = app.get(
+                url,
+                headers = headers,
+                allowRedirects = true,
+                timeout = 15
+            )
+            
+            println("DEBUG: Resposta HTTP - Código: ${testResponse.code}, Tamanho: ${testResponse.text.length}")
+            
+            if (testResponse.code in 200..299) {
+                // URL parece estar acessível
+                callback(newExtractorLink(name, "Doramogo ($name)", url, ExtractorLinkType.M3U8) {
+                    referer = mainUrl
+                    quality = Qualities.P720.value
+                })
+                
+                println("DEBUG: Link adicionado com sucesso: $name")
+                true
+            } else {
+                println("DEBUG: URL não acessível (código ${testResponse.code}): $url")
+                false
+            }
+        } catch (e: Exception) {
+            println("ERRO ao verificar URL $url: ${e.message}")
+            false
+        }
+    }
+    
+    // Tentar primeiro com a URL primária
+    println("=== TENTANDO URL PRIMÁRIA ===")
+    if (tryAddLink(primaryStreamUrl, "Primário")) {
+        linksFound = true
+    }
+    
+    // Se não encontrou, tentar com a URL de fallback
+    if (!linksFound) {
+        println("=== TENTANDO URL FALLBACK ===")
+        if (tryAddLink(fallbackStreamUrl, "Alternativo")) {
+            linksFound = true
+        }
+    }
+    
+    // Se ainda não encontrou links, adicionar sem verificação (deixar o player tentar)
+    if (!linksFound) {
+        println("=== ADICIONANDO LINKS SEM VERIFICAÇÃO ===")
+        
+        // Adicionar URL primária mesmo sem verificar
+        callback(newExtractorLink(name, "Doramogo (Auto)", primaryStreamUrl, ExtractorLinkType.M3U8) {
+            referer = mainUrl
+            quality = Qualities.P720.value
+        })
+        
+        // Adicionar URL fallback também
+        callback(newExtractorLink(name, "Doramogo (Backup)", fallbackStreamUrl, ExtractorLinkType.M3U8) {
+            referer = mainUrl
+            quality = Qualities.P720.value
+        })
+        
+        linksFound = true
+        println("DEBUG: Links adicionados sem verificação")
+    }
+    
+    // Se ainda não encontrou links, tentar extrair do JavaScript
+    if (!linksFound) {
+        println("=== TENTANDO EXTRAIR DO JAVASCRIPT ===")
+        val scriptContent = document.select("script").find { 
+            it.html().contains("construirStreamPath") 
+        }?.html()
+        
+        if (!scriptContent.isNullOrBlank()) {
+            println("DEBUG: Script encontrado, tamanho: ${scriptContent.length}")
+            // Tentar extrair URLs do JavaScript
+            val urls = extractUrlsFromJavaScript(scriptContent)
+            println("DEBUG: URLs extraídas do JS: ${urls.size}")
+            urls.forEachIndexed { index, url ->
+                println("DEBUG: URL $index: $url")
+                if (url.contains(".m3u8") && !url.contains("jwplatform.com")) {
+                    callback(newExtractorLink(name, "Doramogo (JS)", url, ExtractorLinkType.M3U8) {
+                        referer = mainUrl
+                        quality = Qualities.P720.value
+                    })
+                    linksFound = true
+                    println("DEBUG: Link do JS adicionado")
                 }
             }
+        } else {
+            println("DEBUG: Não encontrou script com 'construirStreamPath'")
         }
-        
-        return linksFound
     }
+    
+    println("=== DORAMOGO DEBUG: loadLinks finalizado ===")
+    println("Links encontrados: $linksFound")
+    
+    return linksFound
+}
     
     // --- Funções auxiliares ---
     
