@@ -218,70 +218,80 @@ class Doramogo : MainAPI() {
         val poster = document.selectFirst("meta[property='og:image']")?.attr("content")?.let { fixUrl(it) }
             ?: document.selectFirst("#w-55")?.attr("src")?.let { fixUrl(it) }
         
-        // Ano
-        val infoText = document.selectFirst(".detail p.text-white")?.text() ?: ""
-        val year = Regex("""/(\d{4})/""").find(infoText)?.groupValues?.get(1)?.toIntOrNull()
+        // Extrair informações detalhadas
+        val infoMap = extractInfoMap(document)
+        
+        // Ano - pegar do infoMap ou extrair da URL
+        val year = infoMap["ano"]?.toIntOrNull()
+            ?: extractYearFromUrl(url)
             ?: title.findYear()
         
-        // Gêneros
-        val tags = document.select(".gens a").map { it.text().trim() }
+        // Gêneros principais
+        val mainTags = document.select(".gens a").map { it.text().trim() }
         
-        // Extrair informações adicionais
-        val castsInfo = mutableMapOf<String, String>()
-        document.select(".casts div").forEach { div ->
-            val text = div.text()
-            if (text.contains(":")) {
-                val parts = text.split(":", limit = 2)
-                if (parts.size == 2) {
-                    val key = parts[0].trim().lowercase()
-                    val value = parts[1].trim()
-                    castsInfo[key] = value
-                }
+        // Tags adicionais: áudio e status
+        val additionalTags = mutableListOf<String>()
+        
+        // Adicionar áudio como tag
+        infoMap["áudio"]?.let { audio ->
+            when {
+                audio.contains("Dublado", ignoreCase = true) -> additionalTags.add("Dublado")
+                audio.contains("Legendado", ignoreCase = true) -> additionalTags.add("Legendado")
+                else -> additionalTags.add(audio)
             }
         }
+        
+        // Adicionar status como tag
+        infoMap["status"]?.let { status ->
+            additionalTags.add(status)
+        }
+        
+        // Tags combinadas
+        val allTags = (mainTags + additionalTags).distinct()
+        
+        // Duração (para filmes)
+        val durationText = infoMap["duração"] ?: infoMap["duraçã"]
+        val duration = durationText?.parseDuration()
         
         // Verificar se é filme ou série
         val isMovie = url.contains("/filmes/")
         val type = if (isMovie) TvType.Movie else TvType.TvSeries
         
         if (type == TvType.TvSeries) {
-            // CORREÇÃO: Extrair episódios do HTML correto
-            // No HTML que você mandou, os episódios estão em:
-            // <div class="dorama-one-episode-list ">
-            //   <a href="https://www.doramogo.net/series/cashero-2025/temporada-1/episodio-01" class="dorama-one-episode-item">
-            //     <span class="dorama-one-episode-number">EP 01</span>
-            //     <span class="episode-title"> Episódio 01 </span>
-            //   </a>
-            //   ... mais episódios
-            // </div>
-            
+            // Extrair episódios de múltiplas temporadas
             val episodes = mutableListOf<Episode>()
             
-            // Tentar primeira estrutura: dorama-one-episode-item
-            document.select(".dorama-one-episode-item").forEach { episodeItem ->
-                val episodeUrl = episodeItem.attr("href")?.let { fixUrl(it) } ?: return@forEach
-                val episodeTitle = episodeItem.selectFirst(".episode-title")?.text()?.trim() ?: "Episódio"
+            // Extrair cada temporada
+            document.select(".dorama-one-season-block").forEach { seasonBlock ->
+                // Extrair número da temporada do título
+                val seasonTitle = seasonBlock.selectFirst(".dorama-one-season-title")?.text()?.trim() ?: "1° Temporada"
+                val seasonNumber = extractSeasonNumber(seasonTitle)
                 
-                val episodeNumber = extractEpisodeNumberFromEpisodeItem(episodeItem)
-                val seasonNumber = extractSeasonNumberFromUrl(url) ?: 1
-                
-                episodes.add(newEpisode(episodeUrl) {
-                    this.name = episodeTitle
-                    this.season = seasonNumber
-                    this.episode = episodeNumber
-                })
+                // Extrair episódios desta temporada
+                seasonBlock.select(".dorama-one-episode-item").forEach { episodeItem ->
+                    val episodeUrl = episodeItem.attr("href")?.let { fixUrl(it) } ?: return@forEach
+                    val episodeTitle = episodeItem.selectFirst(".episode-title")?.text()?.trim() ?: "Episódio"
+                    
+                    // Extrair número do episódio
+                    val episodeNumber = extractEpisodeNumberFromEpisodeItem(episodeItem)
+                    
+                    episodes.add(newEpisode(episodeUrl) {
+                        this.name = episodeTitle
+                        this.season = seasonNumber
+                        this.episode = episodeNumber
+                    })
+                }
             }
             
-            // Se não encontrou, tentar outra estrutura possível
+            // Se não encontrou episódios estruturados por temporada, tentar método alternativo
             if (episodes.isEmpty()) {
-                document.select("a[href*='/episodio-']").forEach { episodeLink ->
-                    val episodeUrl = episodeLink.attr("href")?.let { fixUrl(it) } ?: return@forEach
-                    val episodeTitle = episodeLink.text().trim().ifEmpty { "Episódio" }
+                document.select(".dorama-one-episode-item").forEach { episodeItem ->
+                    val episodeUrl = episodeItem.attr("href")?.let { fixUrl(it) } ?: return@forEach
+                    val episodeTitle = episodeItem.selectFirst(".episode-title")?.text()?.trim() ?: "Episódio"
                     
-                    // Extrair número da URL (ex: /episodio-01)
-                    val episodeMatch = Regex("""episodio-(\d+)""", RegexOption.IGNORE_CASE).find(episodeUrl)
-                    val episodeNumber = episodeMatch?.groupValues?.get(1)?.toIntOrNull() ?: 1
-                    val seasonNumber = extractSeasonNumberFromUrl(url) ?: 1
+                    val episodeNumber = extractEpisodeNumberFromEpisodeItem(episodeItem)
+                    // Tentar extrair temporada da URL (ex: /temporada-1/)
+                    val seasonNumber = extractSeasonNumberFromUrl(episodeUrl) ?: 1
                     
                     episodes.add(newEpisode(episodeUrl) {
                         this.name = episodeTitle
@@ -295,21 +305,82 @@ class Doramogo : MainAPI() {
                 this.posterUrl = poster
                 this.year = year
                 this.plot = description
-                this.tags = tags
+                this.tags = allTags
+                
+                // Adicionar informações extras
+                infoMap["estúdio"]?.let { studio ->
+                    this.recommendations = listOf(Recommendation(studio))
+                }
             }
         } else {
             // Para filmes
-            val durationText = castsInfo["duraçã"] ?: castsInfo["duração"]
-            val duration = durationText?.parseDuration()
-            
             return newMovieLoadResponse(title, url, type, url) {
                 this.posterUrl = poster
                 this.year = year
                 this.plot = description
-                this.tags = tags
+                this.tags = allTags
                 this.duration = duration
+                
+                // Adicionar informações extras
+                infoMap["estúdio"]?.let { studio ->
+                    this.recommendations = listOf(Recommendation(studio))
+                }
             }
         }
+    }
+    
+    // --- Funções auxiliares ---
+    
+    // Extrair informações detalhadas do HTML
+    private fun extractInfoMap(document: Element): Map<String, String> {
+        val infoMap = mutableMapOf<String, String>()
+        
+        // Procurar em .detail p.text-white para ano
+        document.selectFirst(".detail p.text-white")?.text()?.trim()?.let { detailText ->
+            // Extrair ano do formato "킹덤 / 2026 / 12 Episodes"
+            val yearMatch = Regex("""\s*/\s*(\d{4})\s*/\s*""").find(detailText)
+            yearMatch?.groupValues?.get(1)?.let { year ->
+                infoMap["ano"] = year
+            }
+            
+            // Extrair número de episódios se existir
+            val epMatch = Regex("""(\d+)\s*Episodes?""").find(detailText)
+            epMatch?.groupValues?.get(1)?.let { eps ->
+                infoMap["episódios"] = eps
+            }
+        }
+        
+        // Extrair das divs .casts div (Status, Estúdio, Áudio, Duração)
+        document.select(".casts div").forEach { div ->
+            val text = div.text()
+            if (text.contains(":")) {
+                val parts = text.split(":", limit = 2)
+                if (parts.size == 2) {
+                    val key = parts[0].trim().lowercase().removePrefix("b").removeSuffix(":")
+                    val value = parts[1].trim()
+                    
+                    // Normalizar as chaves
+                    val normalizedKey = when (key) {
+                        "status" -> "status"
+                        "estúdio", "estudio", "studio" -> "estúdio"
+                        "áudio", "audio" -> "áudio"
+                        "duração", "duracao", "duration" -> "duração"
+                        else -> key
+                    }
+                    
+                    infoMap[normalizedKey] = value
+                }
+            }
+        }
+        
+        return infoMap
+    }
+    
+    // Extrair ano da URL (ex: /kingdom-2019/)
+    private fun extractYearFromUrl(url: String): Int? {
+        val pattern = Regex("""/(?:series|filmes)/[^/]+-(\d{4})/""")
+        val match = pattern.find(url)
+        return match?.groupValues?.get(1)?.toIntOrNull()
     }
     
     // Função auxiliar para limpar títulos
@@ -321,7 +392,7 @@ class Doramogo : MainAPI() {
             .trim()
     }
     
-    // Nova função para extrair número do episódio do elemento correto
+    // Extrair número do episódio do elemento correto
     private fun extractEpisodeNumberFromEpisodeItem(episodeItem: Element): Int {
         // Primeiro tentar do span .dorama-one-episode-number (ex: "EP 01")
         val episodeNumberSpan = episodeItem.selectFirst(".dorama-one-episode-number")
@@ -336,6 +407,15 @@ class Doramogo : MainAPI() {
         val episodeTitle = episodeItem.selectFirst(".episode-title")?.text() ?: ""
         val pattern = Regex("""Episódio\s*(\d+)|Episode\s*(\d+)""", RegexOption.IGNORE_CASE)
         val match = pattern.find(episodeTitle)
+        return match?.groupValues?.get(1)?.toIntOrNull()
+            ?: match?.groupValues?.get(2)?.toIntOrNull()
+            ?: 1
+    }
+    
+    // Extrair número da temporada do título
+    private fun extractSeasonNumber(seasonTitle: String): Int {
+        val pattern = Regex("""(\d+)°\s*Temporada|Temporada\s*(\d+)""", RegexOption.IGNORE_CASE)
+        val match = pattern.find(seasonTitle)
         return match?.groupValues?.get(1)?.toIntOrNull()
             ?: match?.groupValues?.get(2)?.toIntOrNull()
             ?: 1
