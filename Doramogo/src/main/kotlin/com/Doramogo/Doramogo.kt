@@ -166,213 +166,197 @@ class Doramogo : MainAPI() {
     }
 
     // --- Search ---
-override suspend fun search(query: String): List<SearchResponse> {
-    println("=== DORAMOGO DEBUG: Iniciando pesquisa por '$query' ===")
-    
-    val allResults = mutableListOf<SearchResponse>()
-    var currentPage = 1
-    var hasMorePages = true
-    val maxPages = 7 // Limite de páginas para evitar muitas requisições
-    
-    try {
-        while (hasMorePages && currentPage <= maxPages) {
-            println("DEBUG: Buscando página $currentPage de resultados...")
-            
-            val pageResults = searchPage(query, currentPage)
-            
-            if (pageResults.isNotEmpty()) {
-                allResults.addAll(pageResults)
-                println("DEBUG: Encontrados ${pageResults.size} resultados na página $currentPage")
+    override suspend fun search(query: String): List<SearchResponse> {
+        println("=== DORAMOGO DEBUG: Iniciando pesquisa por '$query' ===")
+        
+        val allResults = mutableListOf<SearchResponse>()
+        var currentPage = 1
+        var hasMorePages = true
+        val maxPages = 3 // Limite de páginas para evitar muitas requisições
+        
+        try {
+            while (hasMorePages && currentPage <= maxPages) {
+                println("DEBUG: Buscando página $currentPage de resultados...")
                 
-                // Verificar se há mais páginas disponíveis
-                hasMorePages = checkIfHasNextPage(query, currentPage)
+                val pageResults = searchPage(query, currentPage)
                 
-                // Incrementar para próxima página
-                currentPage++
-            } else {
-                // Se não encontrou resultados nesta página, para a busca
-                println("DEBUG: Nenhum resultado na página $currentPage, parando busca.")
-                hasMorePages = false
+                if (pageResults.isNotEmpty()) {
+                    allResults.addAll(pageResults)
+                    println("DEBUG: Encontrados ${pageResults.size} resultados na página $currentPage")
+                    
+                    // Verificar se há mais páginas disponíveis
+                    hasMorePages = checkIfHasNextPage(query, currentPage)
+                    
+                    // Incrementar para próxima página
+                    currentPage++
+                } else {
+                    // Se não encontrou resultados nesta página, para a busca
+                    println("DEBUG: Nenhum resultado na página $currentPage, parando busca.")
+                    hasMorePages = false
+                }
+            }
+        } catch (e: Exception) {
+            println("ERRO durante pesquisa paginada: ${e.message}")
+        }
+        
+        println("=== DORAMOGO DEBUG: Pesquisa concluída ===")
+        println("Total de resultados encontrados: ${allResults.size}")
+        
+        // Remover duplicados por URL
+        return allResults.distinctBy { it.url }
+    }
+
+    // Função para buscar uma página específica de resultados
+    private suspend fun searchPage(query: String, page: Int): List<SearchResponse> {
+        val searchUrl = buildSearchUrl(query, page)
+        
+        println("DEBUG: URL da página $page: $searchUrl")
+        
+        val document = try {
+            app.get(searchUrl).document
+        } catch (e: Exception) {
+            println("ERRO ao carregar página $page: ${e.message}")
+            return emptyList()
+        }
+        
+        // Extrair o total de resultados (opcional, para debug)
+        val totalText = document.selectFirst(".doramogo-search-page-header p")?.text() ?: ""
+        if (totalText.isNotEmpty()) {
+            println("DEBUG: Info da página: $totalText")
+        }
+        
+        // Os resultados estão em .doramogo-search-result-card
+        val results = document.select(".doramogo-search-result-card").mapNotNull { card ->
+            try {
+                processSearchResultCard(card)
+            } catch (e: Exception) {
+                println("ERRO ao processar card: ${e.message}")
+                null
             }
         }
-    } catch (e: Exception) {
-        println("ERRO durante pesquisa paginada: ${e.message}")
-    }
-    
-    println("=== DORAMOGO DEBUG: Pesquisa concluída ===")
-    println("Total de resultados encontrados: ${allResults.size}")
-    
-    // Remover duplicados por URL
-    return allResults.distinctBy { it.url }
-}
-
-// Função para buscar uma página específica de resultados
-private suspend fun searchPage(query: String, page: Int): List<SearchResponse> {
-    val searchUrl = buildSearchUrl(query, page)
-    
-    println("DEBUG: URL da página $page: $searchUrl")
-    
-    val document = try {
-        app.get(searchUrl).document
-    } catch (e: Exception) {
-        println("ERRO ao carregar página $page: ${e.message}")
-        return emptyList()
-    }
-    
-    // Extrair o total de resultados (opcional, para debug)
-    val totalText = document.selectFirst(".doramogo-search-page-header p")?.text() ?: ""
-    if (totalText.isNotEmpty()) {
-        println("DEBUG: Info da página: $totalText")
-    }
-    
-    // Os resultados estão em .doramogo-search-result-card
-    val results = document.select(".doramogo-search-result-card").mapNotNull { card ->
-        try {
-            processSearchResultCard(card)
-        } catch (e: Exception) {
-            println("ERRO ao processar card: ${e.message}")
-            null
-        }
-    }
-    
-    return results
-}
-
-// Função para construir a URL de busca baseada na página
-private fun buildSearchUrl(query: String, page: Int): String {
-    val encodedQuery = java.net.URLEncoder.encode(query, "UTF-8")
-    
-    return if (page == 1) {
-        // Primeira página: /search/?q=QUERY
-        "$mainUrl/search/?q=$encodedQuery"
-    } else {
-        // Páginas subsequentes: /search/QUERY/pagina/NUMERO
-        // Exemplo: /search/demon/pagina/2
-        "$mainUrl/search/$encodedQuery/pagina/$page"
-    }
-}
-
-// Função para processar um card de resultado individual
-private fun processSearchResultCard(card: Element): SearchResponse? {
-    // Link principal
-    val linkElement = card.selectFirst("a[href^='/series/'], a[href^='/filmes/']") 
-        ?: card.selectFirst(".doramogo-search-result-image-container a")
-        ?: return null
-    
-    val href = linkElement.attr("href")
-    if (href.isBlank() || href == "#") return null
-    
-    // Título do dorama/filme
-    val titleElement = card.selectFirst("#doramogo-search-result-title a") 
-        ?: card.selectFirst("h3 a") 
-        ?: linkElement
-    
-    var title = titleElement.text().trim()
-    if (title.isBlank()) {
-        // Tentar do atributo title da imagem
-        val imgElement = card.selectFirst("img")
-        title = imgElement?.attr("title")?.trim() 
-            ?: imgElement?.attr("alt")?.trim() 
-            ?: return null
-    }
-    
-    // Limpar o título
-    title = cleanTitle(title)
-    
-    // Imagem/poster
-    val imgElement = card.selectFirst("img")
-    val posterUrl = when {
-        imgElement?.hasAttr("data-src") == true -> fixUrl(imgElement.attr("data-src"))
-        imgElement?.hasAttr("src") == true -> fixUrl(imgElement.attr("src"))
-        else -> null
-    }
-    
-    // Determinar o tipo (série ou filme)
-    val type = when {
-        href.contains("/filmes/") -> TvType.Movie
-        else -> TvType.TvSeries
-    }
-    
-    val year = extractYearFromUrl(href)
-    
-    if (type == TvType.Movie) {
-        return newMovieSearchResponse(title, fixUrl(href), type) { 
-            this.posterUrl = posterUrl
-            this.year = year
-        }
-    } else {
-        return newTvSeriesSearchResponse(title, fixUrl(href), type) { 
-            this.posterUrl = posterUrl
-            this.year = year
-        }
-    }
-}
-
-// Função para verificar se há mais páginas disponíveis
-private suspend fun checkIfHasNextPage(query: String, currentPage: Int): Boolean {
-    return try {
-        // Primeiro tentar detectar elementos de paginação na página atual
-        val currentPageUrl = buildSearchUrl(query, currentPage)
-        val document = app.get(currentPageUrl).document
         
-        // Verificar por elementos comuns de paginação
-        val hasPaginationElements = document.select(""".pagination a, 
-            a[href*="/pagina/"], 
-            a:contains(Próxima), 
-            a:contains(Next), 
-            .next-btn, 
-            .next-page""").isNotEmpty()
+        return results
+    }
+
+    // Função para construir a URL de busca baseada na página
+    private fun buildSearchUrl(query: String, page: Int): String {
+        val encodedQuery = java.net.URLEncoder.encode(query, "UTF-8")
         
-        // Verificar se há pelo menos um link para a próxima página
-        val nextPageLink = document.select("""a[href*="/pagina/${currentPage + 1}"]""").first()
-        
-        if (hasPaginationElements || nextPageLink != null) {
-            println("DEBUG: Página $currentPage tem elementos de paginação")
-            true
+        return if (page == 1) {
+            // Primeira página: /search/?q=QUERY
+            "$mainUrl/search/?q=$encodedQuery"
         } else {
-            // Tentar carregar a próxima página para ver se existe
-            val nextPageUrl = buildSearchUrl(query, currentPage + 1)
-            val testResponse = app.get(nextPageUrl, allowRedirects = false)
+            // Páginas subsequentes: /search/QUERY/pagina/NUMERO
+            // Exemplo: /search/demon/pagina/2
+            "$mainUrl/search/$encodedQuery/pagina/$page"
+        }
+    }
+
+    // Função para processar um card de resultado individual
+    private fun processSearchResultCard(card: Element): SearchResponse? {
+        // Link principal
+        val linkElement = card.selectFirst("a[href^='/series/'], a[href^='/filmes/']") 
+            ?: card.selectFirst(".doramogo-search-result-image-container a")
+            ?: return null
+        
+        val href = linkElement.attr("href")
+        if (href.isBlank() || href == "#") return null
+        
+        // Título do dorama/filme
+        val titleElement = card.selectFirst("#doramogo-search-result-title a") 
+            ?: card.selectFirst("h3 a") 
+            ?: linkElement
+        
+        var title = titleElement.text().trim()
+        if (title.isBlank()) {
+            // Tentar do atributo title da imagem
+            val imgElement = card.selectFirst("img")
+            title = imgElement?.attr("title")?.trim() 
+                ?: imgElement?.attr("alt")?.trim() 
+                ?: return null
+        }
+        
+        // Limpar o título
+        title = cleanTitle(title)
+        
+        // Imagem/poster
+        val imgElement = card.selectFirst("img")
+        val posterUrl = when {
+            imgElement?.hasAttr("data-src") == true -> fixUrl(imgElement.attr("data-src"))
+            imgElement?.hasAttr("src") == true -> fixUrl(imgElement.attr("src"))
+            else -> null
+        }
+        
+        // Determinar o tipo (série ou filme)
+        val type = when {
+            href.contains("/filmes/") -> TvType.Movie
+            else -> TvType.TvSeries
+        }
+        
+        val year = extractYearFromUrl(href)
+        
+        if (type == TvType.Movie) {
+            return newMovieSearchResponse(title, fixUrl(href), type) { 
+                this.posterUrl = posterUrl
+                this.year = year
+            }
+        } else {
+            return newTvSeriesSearchResponse(title, fixUrl(href), type) { 
+                this.posterUrl = posterUrl
+                this.year = year
+            }
+        }
+    }
+
+    // Função para verificar se há mais páginas disponíveis
+    private suspend fun checkIfHasNextPage(query: String, currentPage: Int): Boolean {
+        return try {
+            // Primeiro tentar detectar elementos de paginação na página atual
+            val currentPageUrl = buildSearchUrl(query, currentPage)
+            val document = app.get(currentPageUrl).document
             
-            if (testResponse.code == 200) {
-                // Verificar se a próxima página tem resultados
-                val nextDoc = app.get(nextPageUrl).document
-                val nextPageResults = nextDoc.select(".doramogo-search-result-card").size
+            // Verificar por elementos comuns de paginação
+            val hasPaginationElements = document.select(""".pagination a, 
+                a[href*="/pagina/"], 
+                a:contains(Próxima), 
+                a:contains(Next), 
+                .next-btn, 
+                .next-page""").isNotEmpty()
+            
+            // Verificar se há pelo menos um link para a próxima página
+            val nextPageLink = document.select("""a[href*="/pagina/${currentPage + 1}"]""").first()
+            
+            if (hasPaginationElements || nextPageLink != null) {
+                println("DEBUG: Página $currentPage tem elementos de paginação")
+                true
+            } else {
+                // Tentar carregar a próxima página para ver se existe
+                val nextPageUrl = buildSearchUrl(query, currentPage + 1)
+                val testResponse = app.get(nextPageUrl, allowRedirects = false)
                 
-                if (nextPageResults > 0) {
-                    println("DEBUG: Página ${currentPage + 1} existe com $nextPageResults resultados")
-                    true
+                if (testResponse.code == 200) {
+                    // Verificar se a próxima página tem resultados
+                    val nextDoc = app.get(nextPageUrl).document
+                    val nextPageResults = nextDoc.select(".doramogo-search-result-card").size
+                    
+                    if (nextPageResults > 0) {
+                        println("DEBUG: Página ${currentPage + 1} existe com $nextPageResults resultados")
+                        true
+                    } else {
+                        println("DEBUG: Página ${currentPage + 1} existe mas não tem resultados")
+                        false
+                    }
                 } else {
-                    println("DEBUG: Página ${currentPage + 1} existe mas não tem resultados")
+                    println("DEBUG: Página ${currentPage + 1} não encontrada (código ${testResponse.code})")
                     false
                 }
-            } else {
-                println("DEBUG: Página ${currentPage + 1} não encontrada (código ${testResponse.code})")
-                false
             }
+        } catch (e: Exception) {
+            println("DEBUG: Erro ao verificar próxima página: ${e.message}")
+            false
         }
-    } catch (e: Exception) {
-        println("DEBUG: Erro ao verificar próxima página: ${e.message}")
-        false
     }
-}
 
-// Função auxiliar para limpar títulos
-private fun cleanTitle(title: String): String {
-    return title.replace(Regex("\\s*\\(Legendado\\)", RegexOption.IGNORE_CASE), "")
-        .replace(Regex("\\s*\\(Dublado\\)", RegexOption.IGNORE_CASE), "")
-        .replace(Regex("\\s*-\\s*(Dublado|Legendado|Online|e|Dublado e Legendado).*"), "")
-        .replace(Regex("\\s*\\(.*\\)"), "")
-        .replace(Regex("\\(\\d{4}\\)"), "") // Remover (2024)
-        .trim()
-}
-
-// Função auxiliar para extrair ano da URL
-private fun extractYearFromUrl(url: String): Int? {
-    val pattern = Regex("""/(?:series|filmes)/[^/]+-(\d{4})/""")
-    val match = pattern.find(url)
-    return match?.groupValues?.get(1)?.toIntOrNull()
-}
     // --- Load ---
     override suspend fun load(url: String): LoadResponse? {
         val document = app.get(url).document
@@ -502,188 +486,123 @@ private fun extractYearFromUrl(url: String): Int? {
         }
     }
     
-// --- Load Links ---
-override suspend fun loadLinks(
-    data: String,
-    isCasting: Boolean,
-    subtitleCallback: (SubtitleFile) -> Unit,
-    callback: (ExtractorLink) -> Unit
-): Boolean {
-    var linksFound = false
-    
-    println("=== DORAMOGO DEBUG: loadLinks iniciado ===")
-    println("URL recebida: $data")
-    
-    val document = app.get(data).document
-    
-    // Extrair informações da URL para construir o stream
-    val urlParts = data.split("/")
-    val slug = urlParts.getOrNull(urlParts.indexOf("series") + 1) 
-        ?: urlParts.getOrNull(urlParts.indexOf("filmes") + 1)
-        ?: run {
-            println("ERRO: Não encontrou 'series' ou 'filmes' na URL")
-            return false
+    // --- Load Links ---
+    override suspend fun loadLinks(
+        data: String,
+        isCasting: Boolean,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        var linksFound = false
+        
+        val document = app.get(data).document
+        
+        // Extrair informações da URL para construir o stream
+        val urlParts = data.split("/")
+        val slug = urlParts.getOrNull(urlParts.indexOf("series") + 1) 
+            ?: urlParts.getOrNull(urlParts.indexOf("filmes") + 1)
+            ?: return false
+        
+        // Extrair temporada e episódio da URL
+        val temporada = extractSeasonNumberFromUrl(data) ?: 1
+        val episodio = extractEpisodeNumberFromUrl(data) ?: 1
+        
+        // Verificar se é filme ou dorama
+        val isFilme = data.contains("/filmes/")
+        val tipo = if (isFilme) "filmes" else "doramas"
+        
+        // Construir o path do stream conforme a lógica do JavaScript
+        val streamPath = if (isFilme) {
+            // Para filmes: P/slug/stream/stream.m3u8
+            val pt = slug.first().uppercase()
+            "$pt/$slug/stream/stream.m3u8?nocache=${System.currentTimeMillis()}"
+        } else {
+            // Para doramas: P/slug/XX-temporada/YY/stream.m3u8
+            val pt = slug.first().uppercase()
+            val tempNum = temporada.toString().padStart(2, '0')
+            val epNum = episodio.toString().padStart(2, '0')
+            "$pt/$slug/$tempNum-temporada/$epNum/stream.m3u8?nocache=${System.currentTimeMillis()}"
         }
-    
-    println("DEBUG: Slug extraído: $slug")
-    
-    // Extrair temporada e episódio da URL
-    val temporada = extractSeasonNumberFromUrl(data) ?: 1
-    val episodio = extractEpisodeNumberFromUrl(data) ?: 1
-    
-    println("DEBUG: Temporada: $temporada, Episódio: $episodio")
-    
-    // Verificar se é filme ou dorama
-    val isFilme = data.contains("/filmes/")
-    val tipo = if (isFilme) "filmes" else "doramas"
-    
-    println("DEBUG: Tipo: $tipo, é filme: $isFilme")
-    
-    // Construir o path do stream conforme a lógica do JavaScript
-    val streamPath = if (isFilme) {
-        // Para filmes: P/slug/stream/stream.m3u8
-        val pt = slug.first().uppercase()
-        "$pt/$slug/stream/stream.m3u8?nocache=${System.currentTimeMillis()}"
-    } else {
-        // Para doramas: P/slug/XX-temporada/YY/stream.m3u8
-        val pt = slug.first().uppercase()
-        val tempNum = temporada.toString().padStart(2, '0')
-        val epNum = episodio.toString().padStart(2, '0')
-        "$pt/$slug/$tempNum-temporada/$epNum/stream.m3u8?nocache=${System.currentTimeMillis()}"
-    }
-    
-    println("DEBUG: Stream path gerado: $streamPath")
-    
-    // URLs dos proxies (conforme definido no JavaScript)
-    val PRIMARY_URL = "https://proxy-us-east1-outbound-series.xreadycf.site"
-    val FALLBACK_URL = "https://proxy-us-east1-forks-doramas.xreadycf.site"
-    
-    // Construir URLs completas
-    val primaryStreamUrl = "$PRIMARY_URL/$streamPath"
-    val fallbackStreamUrl = "$FALLBACK_URL/$streamPath"
-    
-    println("DEBUG: URL primária: $primaryStreamUrl")
-    println("DEBUG: URL fallback: $fallbackStreamUrl")
-    
-    // Headers baseados no curl que você forneceu
-    val headers = mapOf(
-        "accept" to "*/*",
-        "accept-language" to "pt-BR",
-        "origin" to "https://www.doramogo.net",
-        "priority" to "u=1, i",
-        "referer" to "https://www.doramogo.net/",
-        "sec-ch-ua" to "\"Chromium\";v=\"127\", \"Not)A;Brand\";v=\"99\", \"Microsoft Edge Simulate\";v=\"127\", \"Lemur\";v=\"127\"",
-        "sec-ch-ua-mobile" to "?1",
-        "sec-ch-ua-platform" to "\"Android\"",
-        "sec-fetch-dest" to "empty",
-        "sec-fetch-mode" to "cors",
-        "sec-fetch-site" to "cross-site",
-        "user-agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36"
-    )
-    
-    // Função para tentar adicionar um link com verificação
-    suspend fun tryAddLink(url: String, name: String): Boolean {
-        return try {
-            println("DEBUG: Tentando verificar URL: $url")
-            
-            // Tentar fazer uma requisição para verificar se a URL está acessível
-            val testResponse = app.get(
-                url,
-                headers = headers,
-                allowRedirects = true,
-                timeout = 15
-            )
-            
-            println("DEBUG: Resposta HTTP - Código: ${testResponse.code}, Tamanho: ${testResponse.text.length}")
-            
+        
+        // URLs dos proxies (conforme definido no JavaScript)
+        val PRIMARY_URL = "https://proxy-us-east1-outbound-series.xreadycf.site"
+        val FALLBACK_URL = "https://proxy-us-east1-forks-doramas.xreadycf.site"
+        
+        // Construir URLs completas
+        val primaryStreamUrl = "$PRIMARY_URL/$streamPath"
+        val fallbackStreamUrl = "$FALLBACK_URL/$streamPath"
+        
+        // Tentar primeiro com a URL primária
+        try {
+            // Verificar se a URL primária está acessível
+            val testResponse = app.get(primaryStreamUrl, allowRedirects = false)
             if (testResponse.code in 200..299) {
-                // URL parece estar acessível
-                callback(newExtractorLink(name, "Doramogo ($name)", url, ExtractorLinkType.M3U8) {
+                callback(newExtractorLink(name, "Doramogo", primaryStreamUrl, ExtractorLinkType.M3U8) {
                     referer = mainUrl
                     quality = Qualities.P720.value
                 })
-                
-                println("DEBUG: Link adicionado com sucesso: $name")
-                true
-            } else {
-                println("DEBUG: URL não acessível (código ${testResponse.code}): $url")
-                false
+                linksFound = true
             }
         } catch (e: Exception) {
-            println("ERRO ao verificar URL $url: ${e.message}")
-            false
+            // Se a primária falhar, tentar a de fallback
         }
-    }
-    
-    // Tentar primeiro com a URL primária
-    println("=== TENTANDO URL PRIMÁRIA ===")
-    if (tryAddLink(primaryStreamUrl, "Primário")) {
-        linksFound = true
-    }
-    
-    // Se não encontrou, tentar com a URL de fallback
-    if (!linksFound) {
-        println("=== TENTANDO URL FALLBACK ===")
-        if (tryAddLink(fallbackStreamUrl, "Alternativo")) {
-            linksFound = true
+        
+        // Tentar com a URL de fallback
+        try {
+            val testResponse = app.get(fallbackStreamUrl, allowRedirects = false)
+            if (testResponse.code in 200..299) {
+                callback(newExtractorLink(name, "Doramogo", fallbackStreamUrl, ExtractorLinkType.M3U8) {
+                    referer = mainUrl
+                    quality = Qualities.P720.value
+                })
+                linksFound = true
+            }
+        } catch (e: Exception) {
+            // Ambas falharam
         }
-    }
-    
-    // Se ainda não encontrou links, adicionar sem verificação (deixar o player tentar)
-    if (!linksFound) {
-        println("=== ADICIONANDO LINKS SEM VERIFICAÇÃO ===")
         
-        // Adicionar URL primária mesmo sem verificar
-        callback(newExtractorLink(name, "Doramogo (Auto)", primaryStreamUrl, ExtractorLinkType.M3U8) {
-            referer = mainUrl
-            quality = Qualities.P720.value
-        })
-        
-        // Adicionar URL fallback também
-        callback(newExtractorLink(name, "Doramogo (Backup)", fallbackStreamUrl, ExtractorLinkType.M3U8) {
-            referer = mainUrl
-            quality = Qualities.P720.value
-        })
-        
-        linksFound = true
-        println("DEBUG: Links adicionados sem verificação")
-    }
-    
-    // Se ainda não encontrou links, tentar extrair do JavaScript
-    if (!linksFound) {
-        println("=== TENTANDO EXTRAIR DO JAVASCRIPT ===")
-        val scriptContent = document.select("script").find { 
-            it.html().contains("construirStreamPath") 
-        }?.html()
-        
-        if (!scriptContent.isNullOrBlank()) {
-            println("DEBUG: Script encontrado, tamanho: ${scriptContent.length}")
-            // Tentar extrair URLs do JavaScript
-            val urls = extractUrlsFromJavaScript(scriptContent)
-            println("DEBUG: URLs extraídas do JS: ${urls.size}")
-            urls.forEachIndexed { index, url ->
-                println("DEBUG: URL $index: $url")
-                if (url.contains(".m3u8") && !url.contains("jwplatform.com")) {
-                    callback(newExtractorLink(name, "Doramogo (JS)", url, ExtractorLinkType.M3U8) {
-                        referer = mainUrl
-                        quality = Qualities.P720.value
-                    })
-                    linksFound = true
-                    println("DEBUG: Link do JS adicionado")
+        // Se não encontrou links com a lógica de construção, tentar extrair do JavaScript
+        if (!linksFound) {
+            val scriptContent = document.select("script").find { 
+                it.html().contains("construirStreamPath") 
+            }?.html()
+            
+            if (!scriptContent.isNullOrBlank()) {
+                // Tentar extrair URLs do JavaScript
+                val urls = extractUrlsFromJavaScript(scriptContent)
+                urls.forEach { url ->
+                    if (url.contains(".m3u8") && !url.contains("jwplatform.com")) {
+                        callback(newExtractorLink(name, "Doramogo", url, ExtractorLinkType.M3U8) {
+                            referer = mainUrl
+                            quality = Qualities.P720.value
+                        })
+                        linksFound = true
+                    }
                 }
             }
-        } else {
-            println("DEBUG: Não encontrou script com 'construirStreamPath'")
         }
+        
+        return linksFound
     }
     
-    println("=== DORAMOGO DEBUG: loadLinks finalizado ===")
-    println("Links encontrados: $linksFound")
+    // --- Funções auxiliares (apenas uma cópia de cada) ---
     
-    return linksFound
-}
+    // Função auxiliar para limpar títulos
+    private fun cleanTitle(title: String): String {
+        return title.replace(Regex("\\s*\\(Legendado\\)", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("\\s*\\(Dublado\\)", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("\\s*-\\s*(Dublado|Legendado|Online|e|Dublado e Legendado).*"), "")
+            .replace(Regex("\\s*\\(.*\\)"), "")
+            .replace(Regex("\\(\\d{4}\\)"), "") // Remover (2024)
+            .trim()
+    }
     
-    // --- Funções auxiliares ---
+    // Função auxiliar para extrair ano da URL
+    private fun extractYearFromUrl(url: String): Int? {
+        val pattern = Regex("""/(?:series|filmes)/[^/]+-(\d{4})/""")
+        val match = pattern.find(url)
+        return match?.groupValues?.get(1)?.toIntOrNull()
+    }
     
     // Extrair número do episódio da URL
     private fun extractEpisodeNumberFromUrl(url: String): Int? {
@@ -847,23 +766,6 @@ override suspend fun loadLinks(
         }
         
         return recommendations.distinctBy { it.url }.take(10)
-    }
-    
-    // Extrair ano da URL (ex: /kingdom-2019/)
-    private fun extractYearFromUrl(url: String): Int? {
-        val pattern = Regex("""/(?:series|filmes)/[^/]+-(\d{4})/""")
-        val match = pattern.find(url)
-        return match?.groupValues?.get(1)?.toIntOrNull()
-    }
-    
-    // Função auxiliar para limpar títulos
-    private fun cleanTitle(title: String): String {
-        return title.replace(Regex("\\s*\\(Legendado\\)", RegexOption.IGNORE_CASE), "")
-            .replace(Regex("\\s*\\(Dublado\\)", RegexOption.IGNORE_CASE), "")
-            .replace(Regex("\\s*-\\s*(Dublado|Legendado|Online|e|Dublado e Legendado).*"), "")
-            .replace(Regex("\\s*\\(.*\\)"), "")
-            .replace(Regex("\\(\\d{4}\\)"), "") // Remover (2024)
-            .trim()
     }
     
     // Extrair número do episódio do elemento correto
