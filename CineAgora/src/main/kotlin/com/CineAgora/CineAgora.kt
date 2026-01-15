@@ -8,7 +8,6 @@ import com.lagradost.cloudstream3.app
 import org.jsoup.nodes.Element
 import com.fasterxml.jackson.annotation.JsonProperty
 import org.json.JSONObject
-import java.text.SimpleDateFormat
 
 class CineAgora : MainAPI() {
     override var mainUrl = "https://cineagora.net"
@@ -498,23 +497,16 @@ class CineAgora : MainAPI() {
 
             val details = getTMDBDetails(result.id, isTv) ?: return null
 
-            // Extrair atores com suas vozes/personagens
+            // Extrair atores como List<Pair<Actor, String?>> para addActors
             val allActors = details.credits?.cast?.take(15)?.mapNotNull { actor ->
                 if (actor.name.isNotBlank()) {
-                    // Criar string do personagem com a voz
-                    val roleString = if (!actor.character.isNullOrBlank()) {
-                        "como ${actor.character}"
-                    } else {
-                        null
-                    }
-                    
-                    ActorData(
-                        actor = Actor(
-                            name = actor.name,
-                            image = actor.profile_path?.let { "$tmdbImageUrl/w185$it" }
-                        ),
-                        roleString = roleString
+                    val actorObj = Actor(
+                        name = actor.name,
+                        image = actor.profile_path?.let { "$tmdbImageUrl/w185$it" }
                     )
+                    
+                    // Retornar Pair<Actor, String?> onde String é o papel/personagem
+                    Pair(actorObj, actor.character)
                 } else null
             }
 
@@ -538,7 +530,7 @@ class CineAgora : MainAPI() {
                 backdropUrl = details.backdrop_path?.let { "$tmdbImageUrl/original$it" },
                 overview = details.overview,
                 genres = details.genres?.map { it.name },
-                actors = allActors,
+                actors = allActors, // Agora é List<Pair<Actor, String?>> 
                 youtubeTrailer = youtubeTrailer,
                 duration = if (!isTv) details.runtime else null,
                 seasonsEpisodes = seasonsEpisodes,
@@ -1082,6 +1074,9 @@ class CineAgora : MainAPI() {
         return recommendations
     }
 
+    // =============================================
+    // FUNÇÃO CREATE SERIES LOAD RESPONSE (CORRIGIDA)
+    // =============================================
     private suspend fun createSeriesLoadResponse(
         tmdbInfo: TMDBInfo?,
         url: String,
@@ -1107,8 +1102,9 @@ class CineAgora : MainAPI() {
             this.score = rating
             this.recommendations = siteRecommendations.takeIf { it.isNotEmpty() }
             
-            // Adicionar atores do TMDB com suas vozes
+            // Adicionar atores do TMDB com suas vozes - CORRIGIDO
             tmdbInfo?.actors?.let { actors ->
+                // actors já é List<Pair<Actor, String?>> que é aceito por addActors
                 addActors(actors)
             }
             
@@ -1119,6 +1115,9 @@ class CineAgora : MainAPI() {
         }
     }
 
+    // =============================================
+    // FUNÇÃO CREATE MOVIE LOAD RESPONSE (CORRIGIDA)
+    // =============================================
     private suspend fun createMovieLoadResponse(
         tmdbInfo: TMDBInfo?,
         playerUrl: String,
@@ -1145,8 +1144,9 @@ class CineAgora : MainAPI() {
             this.score = rating
             this.recommendations = siteRecommendations.takeIf { it.isNotEmpty() }
             
-            // Adicionar atores do TMDB com suas vozes
+            // Adicionar atores do TMDB com suas vozes - CORRIGIDO
             tmdbInfo?.actors?.let { actors ->
+                // actors já é List<Pair<Actor, String?>> que é aceito por addActors
                 addActors(actors)
             }
             
@@ -1179,7 +1179,7 @@ class CineAgora : MainAPI() {
     }
 
     // =============================================
-    // CLASSES PARA TMDB
+    // CLASSES PARA TMDB (ATUALIZADA)
     // =============================================
     private data class TMDBInfo(
         val id: Int,
@@ -1189,7 +1189,7 @@ class CineAgora : MainAPI() {
         val backdropUrl: String?,
         val overview: String?,
         val genres: List<String>?,
-        val actors: List<ActorData>?,
+        val actors: List<Pair<Actor, String?>>?, // Alterado para Pair<Actor, String?>
         val youtubeTrailer: String?,
         val duration: Int?,
         val seasonsEpisodes: Map<Int, List<TMDBEpisode>> = emptyMap(),
