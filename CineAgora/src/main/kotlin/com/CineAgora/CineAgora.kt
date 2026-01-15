@@ -363,7 +363,7 @@ class CineAgora : MainAPI() {
     }
 
     // =============================================
-    // FUNÇÃO EXTRACT BANNER URL ATUALIZADA
+    // FUNÇÃO EXTRACT BANNER URL (DO SEU CÓDIGO ORIGINAL)
     // =============================================
     private fun extractBannerUrl(doc: org.jsoup.nodes.Document): String? {
         val bannerSelectors = listOf(
@@ -371,7 +371,7 @@ class CineAgora : MainAPI() {
             "meta[property='og:image']",
             "meta[name='twitter:image']",
             
-            // Procurar a estrutura <picture> específica
+            // Procurar a estrutura <picture> que você mostrou
             "picture img",
             "picture source[media='(max-width: 768px)']",
             
@@ -404,6 +404,8 @@ class CineAgora : MainAPI() {
             "img[title*='online']"
         )
         
+        println("[CineAgora] Procurando banner...")
+        
         for (selector in bannerSelectors) {
             val element = doc.selectFirst(selector)
             if (element != null) {
@@ -415,12 +417,15 @@ class CineAgora : MainAPI() {
                 
                 if (url.isNotBlank()) {
                     val fixedUrl = fixUrl(url)
+                    println("[CineAgora] ✅ Banner encontrado com seletor '$selector': $fixedUrl")
                     
-                    // Se for uma tag <source>, extrair a primeira URL do srcset
+                    // Se for uma tag <source>, podemos precisar extrair a primeira URL do srcset
                     if (selector.contains("source[") && url.contains(",")) {
                         val firstUrl = url.substringBefore(",").trim()
                         if (firstUrl.isNotBlank()) {
-                            return fixUrl(firstUrl)
+                            val fixedFirstUrl = fixUrl(firstUrl)
+                            println("[CineAgora] ✅ Extraindo primeira URL do srcset: $fixedFirstUrl")
+                            return fixedFirstUrl
                         }
                     }
                     
@@ -429,7 +434,10 @@ class CineAgora : MainAPI() {
             }
         }
         
-        // Fallback: procurar estrutura <picture>
+        // Fallback especial para estrutura <picture> específica
+        println("[CineAgora] Fallback: procurando estrutura <picture> específica...")
+        
+        // Procurar por estrutura <picture> com img dentro
         val pictureElements = doc.select("picture")
         for (picture in pictureElements) {
             // Primeiro tentar a tag <img> dentro do picture
@@ -437,7 +445,9 @@ class CineAgora : MainAPI() {
             if (imgElement != null) {
                 val src = imgElement.attr("src")
                 if (src.isNotBlank()) {
-                    return fixUrl(src)
+                    val fixedUrl = fixUrl(src)
+                    println("[CineAgora] ✅ Banner encontrado em <picture> <img>: $fixedUrl")
+                    return fixedUrl
                 }
             }
             
@@ -446,14 +456,90 @@ class CineAgora : MainAPI() {
             if (sourceElement != null) {
                 val srcset = sourceElement.attr("srcset")
                 if (srcset.isNotBlank()) {
+                    // Pegar a primeira URL do srcset
                     val firstUrl = srcset.split(",").firstOrNull()?.trim()?.substringBefore(" ")?.trim()
                     if (!firstUrl.isNullOrBlank()) {
-                        return fixUrl(firstUrl)
+                        val fixedUrl = fixUrl(firstUrl)
+                        println("[CineAgora] ✅ Banner encontrado em <picture> <source>: $fixedUrl")
+                        return fixedUrl
                     }
                 }
             }
         }
         
+        // Fallback 2: Procurar qualquer imagem grande
+        println("[CineAgora] Fallback 2: procurando imagens grandes...")
+        val allImages = doc.select("img[src]")
+        val largeImages = allImages.filter { 
+            val src = it.attr("src")
+            val width = it.attr("width").toIntOrNull()
+            val height = it.attr("height").toIntOrNull()
+            
+            src.contains("/uploads/posts/") || // Imagens específicas do site
+            src.contains(".webp") || // WebP geralmente é de alta qualidade
+            (width != null && height != null && width >= 600 && height >= 300) || // Imagens grandes
+            src.contains("banner") || // Nome contém banner
+            src.contains("cover") || // Nome contém cover
+            src.contains("featured") // Nome contém featured
+        }
+        
+        if (largeImages.isNotEmpty()) {
+            // Ordenar por tamanho (priorizar imagens maiores)
+            val sortedImages = largeImages.sortedByDescending { 
+                val width = it.attr("width").toIntOrNull() ?: 0
+                val height = it.attr("height").toIntOrNull() ?: 0
+                width * height
+            }
+
+            for (img in sortedImages.take(3)) { // Verificar as 3 maiores
+                val src = img.attr("src")
+                if (src.isNotBlank()) {
+                    val fixedUrl = fixUrl(src)
+                    println("[CineAgora] ✅ Banner encontrado (fallback): $fixedUrl")
+                    return fixedUrl
+                }
+            }
+        }
+        
+        // Fallback 3: Primeira imagem do artigo/conteúdo principal
+        println("[CineAgora] Fallback 3: primeira imagem do conteúdo...")
+        val contentAreas = doc.select(".post-content, .entry-content, .article-content, .content, main")
+        for (content in contentAreas) {
+            val firstImg = content.selectFirst("img[src]")
+            if (firstImg != null) {
+                val src = firstImg.attr("src")
+                if (src.isNotBlank()) {
+                    val fixedUrl = fixUrl(src)
+                    println("[CineAgora] ✅ Banner encontrado no conteúdo: $fixedUrl")
+                    return fixedUrl
+                }
+            }
+        }
+        
+        // Fallback final: Qualquer imagem que não seja ícone/logo pequeno
+        println("[CineAgora] Fallback final: qualquer imagem relevante...")
+        val relevantImages = allImages.filterNot { 
+            val src = it.attr("src")
+            src.contains("logo") || 
+            src.contains("icon") || 
+            src.contains("avatar") || 
+            src.contains("favicon") ||
+            src.contains("social") ||
+            src.endsWith(".ico") ||
+            src.length < 20 // URLs muito curtas provavelmente são ícones
+        }
+        
+        if (relevantImages.isNotEmpty()) {
+            val img = relevantImages.first()
+            val src = img.attr("src")
+            if (src.isNotBlank()) {
+                val fixedUrl = fixUrl(src)
+                println("[CineAgora] ⚠️ Banner encontrado (último fallback): $fixedUrl")
+                return fixedUrl
+            }
+        }
+        
+        println("[CineAgora] ❌ Não encontrou banner")
         return null
     }
 
@@ -471,7 +557,7 @@ class CineAgora : MainAPI() {
     }
 
     // =============================================
-    // FUNÇÕES TMDB (COM VOZES DOS ATORES)
+    // FUNÇÕES TMDB (DO SEU CÓDIGO ATUAL - QUE FUNCIONA)
     // =============================================
     private suspend fun searchOnTMDB(query: String, year: Int?, isTv: Boolean): TMDBInfo? {
         return try {
@@ -530,7 +616,7 @@ class CineAgora : MainAPI() {
                 backdropUrl = details.backdrop_path?.let { "$tmdbImageUrl/original$it" },
                 overview = details.overview,
                 genres = details.genres?.map { it.name },
-                actors = allActors, // Agora é List<Pair<Actor, String?>> 
+                actors = allActors,
                 youtubeTrailer = youtubeTrailer,
                 duration = if (!isTv) details.runtime else null,
                 seasonsEpisodes = seasonsEpisodes,
@@ -625,199 +711,164 @@ class CineAgora : MainAPI() {
     }
 
     // =============================================
-// FUNÇÃO PARA EXTRAIR SERIES SLUG DA PÁGINA (CORRIGIDA PARA FUNCIONAR)
-// =============================================
-private suspend fun extractSeriesSlugFromPage(doc: org.jsoup.nodes.Document, baseUrl: String): String? {
-    println("[CineAgora] Procurando seriesSlug na página: $baseUrl")
-    
-    // PRIMEIRO: Procurar por iframes com watch.brplayer.cc (como no log do código original)
-    val iframes = doc.select("iframe[src*='watch.brplayer.cc']")
-    println("[CineAgora] Encontrados ${iframes.size} iframes com watch.brplayer.cc")
-    
-    for ((index, iframe) in iframes.withIndex()) {
-        val src = iframe.attr("src")
-        println("[CineAgora] Iframe $index: $src")
+    // FUNÇÕES DE EXTRAÇÃO DE EPISÓDIOS (DO SEU CÓDIGO ORIGINAL)
+    // =============================================
+
+    // FUNÇÃO PARA EXTRAIR SERIES SLUG DA PÁGINA (DO SEU CÓDIGO ORIGINAL)
+    private suspend fun extractSeriesSlugFromPage(doc: org.jsoup.nodes.Document, baseUrl: String): String? {
+        println("[CineAgora] Procurando seriesSlug na página: $baseUrl")
         
-        // Padrão 1: /tv/{slug}
-        val tvPattern = Regex("""/tv/([^/?]+)""")
-        val tvMatch = tvPattern.find(src)
-        if (tvMatch != null) {
-            val slug = tvMatch.groupValues[1]
-            println("[CineAgora] ✓ Slug encontrado no iframe (/tv/): $slug")
-            return slug
-        }
+        // ESTRATÉGIA 1: Buscar URL do player/tv em iframes (PRINCIPAL)
+        // Primeiro, procurar por iframes que tenham src contendo /tv/
         
-        // Padrão 2: /watch/{videoSlug} - converter para seriesSlug via API
-        val watchPattern = Regex("""/watch/([^/?]+)""")
-        val watchMatch = watchPattern.find(src)
-        if (watchMatch != null) {
-            val videoSlug = watchMatch.groupValues[1]
-            println("[CineAgora] Video slug encontrado: $videoSlug")
+        // Procurar iframes com src contendo /tv/
+        val iframes = doc.select("iframe[src*='/tv/']")
+        println("[CineAgora] Encontrados ${iframes.size} iframes com /tv/")
+        
+        for ((index, iframe) in iframes.withIndex()) {
+            val src = iframe.attr("src")
+            println("[CineAgora] Iframe $index src: $src")
             
-            // Converter videoSlug para seriesSlug via API
-            val seriesSlug = getSeriesFromVideoSlug(videoSlug)
-            if (seriesSlug.isNotBlank()) {
-                println("[CineAgora] ✓ Series slug obtido da API: $seriesSlug")
-                return seriesSlug
+            // Padrão: https://watch.brplayer.cc/tv/the-day-of-the-jackal
+            val tvPattern = Regex("""/tv/([^/?]+)""")
+            val tvMatch = tvPattern.find(src)
+            if (tvMatch != null) {
+                val slug = tvMatch.groupValues[1]
+                println("[CineAgora] ✓ Slug encontrado no iframe (/tv/): $slug")
+                return slug
             }
         }
-    }
-    
-    // SEGUNDO: Procurar por scripts que contenham a URL do player
-    val scripts = doc.select("script")
-    println("[CineAgora] Analisando ${scripts.size} scripts")
-    
-    for ((index, script) in scripts.withIndex()) {
-        val scriptText = script.html()
         
-        // Padrão 1: URL completa do player
-        val urlPatterns = listOf(
-            Regex("""["'](https?://watch\.brplayer\.cc/tv/[^"']+)["']"""),
-            Regex("""["'](https?://watch\.brplayer\.cc/watch/[^"']+)["']"""),
-            Regex("""src=["'](https?://watch\.brplayer\.cc/[^"']+)["']"""),
-            Regex("""data-src=["'](https?://watch\.brplayer\.cc/[^"']+)["']""")
-        )
+        // ESTRATÉGIA 2: Procurar qualquer iframe com watch.brplayer.cc
+        val allIframes = doc.select("iframe[src*='watch.brplayer.cc']")
+        println("[CineAgora] Encontrados ${allIframes.size} iframes com watch.brplayer.cc")
         
-        for (pattern in urlPatterns) {
-            val matches = pattern.findAll(scriptText)
+        for ((index, iframe) in allIframes.withIndex()) {
+            val src = iframe.attr("src")
+            println("[CineAgora] Iframe $index completo: $src")
+            
+            // Tentar extrair slug do padrão /tv/{slug}
+            val tvPattern = Regex("""/tv/([^/?]+)""")
+            val tvMatch = tvPattern.find(src)
+            if (tvMatch != null) {
+                val slug = tvMatch.groupValues[1]
+                println("[CineAgora] ✓ Slug encontrado em iframe genérico (/tv/): $slug")
+                return slug
+            }
+            
+            // Tentar extrair do padrão /watch/{videoId} e converter via API
+            val watchPattern = Regex("""/watch/([^/?]+)""")
+            val watchMatch = watchPattern.find(src)
+            if (watchMatch != null) {
+                val videoSlug = watchMatch.groupValues[1]
+                println("[CineAgora] Video slug encontrado: $videoSlug")
+                
+                // Converter videoSlug para seriesSlug via API
+                val seriesSlug = getSeriesFromVideoSlug(videoSlug)
+                if (seriesSlug.isNotBlank()) {
+                    println("[CineAgora] ✓ Series slug obtido da API: $seriesSlug")
+                    return seriesSlug
+                }
+            }
+        }
+        
+        // ESTRATÉGIA 3: Procurar em outros elementos com src
+        val elementsWithSrc = doc.select("[src*='watch.brplayer.cc/tv/']")
+        println("[CineAgora] Encontrados ${elementsWithSrc.size} elementos com src contendo /tv/")
+        
+        for (element in elementsWithSrc) {
+            val src = element.attr("src")
+            println("[CineAgora] Elemento src: $src")
+            
+            val slug = src.substringAfterLast("/tv/").substringBefore("?").substringBefore("#")
+            if (slug.isNotBlank()) {
+                println("[CineAgora] ✓ Slug encontrado em elemento: $slug")
+                return slug
+            }
+        }
+        
+        // ESTRATÉGIA 4: Procurar em scripts por URL /tv/
+        val scripts = doc.select("script")
+        println("[CineAgora] Analisando ${scripts.size} scripts")
+        
+        for ((index, script) in scripts.withIndex()) {
+            val scriptText = script.html()
+            
+            // Procurar padrão /tv/{slug} em URLs
+            val tvPattern = Regex("""["'](https?://watch\.brplayer\.cc/tv/[^"']+)["']""")
+            val matches = tvPattern.findAll(scriptText)
+            
             for (match in matches) {
                 val url = match.groupValues[1]
-                println("[CineAgora] URL encontrada em script $index: $url")
+                println("[CineAgora] URL /tv/ encontrada em script $index: $url")
                 
-                // Extrair slug da URL
-                if (url.contains("/tv/")) {
-                    val slug = url.substringAfterLast("/tv/").substringBefore("?").substringBefore("#")
-                    if (slug.isNotBlank()) {
-                        println("[CineAgora] ✓ Slug extraído de script (/tv/): $slug")
-                        return slug
-                    }
-                } else if (url.contains("/watch/")) {
-                    val videoSlug = url.substringAfterLast("/watch/").substringBefore("?").substringBefore("#")
-                    if (videoSlug.isNotBlank()) {
-                        val seriesSlug = getSeriesFromVideoSlug(videoSlug)
-                        if (seriesSlug.isNotBlank()) {
-                            println("[CineAgora] ✓ Series slug obtido de script (/watch/): $seriesSlug")
-                            return seriesSlug
+                val slug = url.substringAfterLast("/tv/").substringBefore("?").substringBefore("#")
+                if (slug.isNotBlank()) {
+                    println("[CineAgora] ✓ Slug extraído de script: $slug")
+                    return slug
+                }
+            }
+            
+            // Procurar padrão watch.brplayer.cc/tv/ diretamente
+            val directPattern = Regex("""watch\.brplayer\.cc/tv/([^/"']+)""")
+            val directMatch = directPattern.find(scriptText)
+            if (directMatch != null) {
+                val slug = directMatch.groupValues[1]
+                println("[CineAgora] ✓ Slug encontrado diretamente em script: $slug")
+                return slug
+            }
+            
+            // Procurar por atributo data-src (como no seu exemplo)
+            if (scriptText.contains("data-src")) {
+                val dataSrcPattern = Regex("""data-src=["']([^"']+)["']""")
+                val dataSrcMatches = dataSrcPattern.findAll(scriptText)
+                
+                for (match in dataSrcMatches) {
+                    val dataSrc = match.groupValues[1]
+                    if (dataSrc.contains("/tv/")) {
+                        println("[CineAgora] data-src encontrado: $dataSrc")
+                        val slug = dataSrc.substringAfterLast("/tv/").substringBefore("?").substringBefore("#")
+                        if (slug.isNotBlank()) {
+                            println("[CineAgora] ✓ Slug extraído de data-src: $slug")
+                            return slug
                         }
                     }
                 }
             }
         }
         
-        // Padrão 2: slug diretamente no script
-        val directPatterns = listOf(
-            Regex("""["']tv/([^"']+)["']"""),
-            Regex("""seriesSlug\s*[:=]\s*["']([^"']+)["']"""),
-            Regex("""slug\s*[:=]\s*["']([^"']+)["']"""),
-            Regex("""data-id\s*[:=]\s*["']([^"']+)["']""")
-        )
+        // ESTRATÉGIA 5: Procurar no HTML inteiro por padrão /tv/
+        val html = doc.html()
+        val htmlPattern = Regex("""/tv/([^/"'?&#]+)""")
+        val htmlMatches = htmlPattern.findAll(html)
         
-        for (pattern in directPatterns) {
-            val match = pattern.find(scriptText)
-            if (match != null) {
-                val slug = match.groupValues[1]
-                if (slug.isNotBlank() && !slug.contains(".") && slug.length > 3) {
-                    println("[CineAgora] ✓ Slug encontrado diretamente em script: $slug")
-                    return slug
-                }
+        for (match in htmlMatches) {
+            val slug = match.groupValues[1]
+            if (slug.length > 3 && !slug.contains(".") && !slug.contains(" ")) {
+                println("[CineAgora] ✓ Slug encontrado no HTML bruto: $slug")
+                return slug
             }
         }
-    }
-    
-    // TERCEIRO: Procurar por elementos com data-attributes
-    val dataElements = doc.select("[data-id], [data-src], [data-url]")
-    println("[CineAgora] Encontrados ${dataElements.size} elementos com data-attributes")
-    
-    for (element in dataElements) {
-        val dataId = element.attr("data-id")
-        val dataSrc = element.attr("data-src")
-        val dataUrl = element.attr("data-url")
         
-        listOf(dataId, dataSrc, dataUrl).forEach { value ->
-            if (value.isNotBlank() && value.contains("watch.brplayer.cc")) {
-                println("[CineAgora] Data attribute encontrado: $value")
-                
-                if (value.contains("/tv/")) {
-                    val slug = value.substringAfterLast("/tv/").substringBefore("?").substringBefore("#")
-                    if (slug.isNotBlank()) {
-                        println("[CineAgora] ✓ Slug extraído de data attribute: $slug")
-                        return slug
-                    }
-                } else if (value.contains("/watch/")) {
-                    val videoSlug = value.substringAfterLast("/watch/").substringBefore("?").substringBefore("#")
-                    if (videoSlug.isNotBlank()) {
-                        val seriesSlug = getSeriesFromVideoSlug(videoSlug)
-                        if (seriesSlug.isNotBlank()) {
-                            println("[CineAgora] ✓ Series slug obtido de data attribute: $seriesSlug")
-                            return seriesSlug
-                        }
-                    }
-                }
-            }
-        }
-    }
-    
-    // QUARTO: Procurar por botões ou links que contenham o slug
-    val buttons = doc.select("button, a, [class*='episode'], [class*='play']")
-    println("[CineAgora] Analisando ${buttons.size} botões/links")
-    
-    for (button in buttons) {
-        val onclick = button.attr("onclick")
-        val href = button.attr("href")
-        
-        if (onclick.contains("watch.brplayer.cc")) {
-            println("[CineAgora] Onclick encontrado: $onclick")
+        // ESTRATÉGIA 6: Tentar extrair do próprio URL da página do CineAgora
+        try {
+            val urlSlug = baseUrl
+                .substringAfterLast("/")
+                .substringAfter("-")
+                .substringBefore(".html")
+                .trim()
             
-            if (onclick.contains("/tv/")) {
-                val slug = onclick.substringAfterLast("/tv/").substringBefore("'").substringBefore("\"")
-                if (slug.isNotBlank()) {
-                    println("[CineAgora] ✓ Slug extraído de onclick: $slug")
-                    return slug
-                }
+            if (urlSlug.isNotBlank() && urlSlug.length > 3) {
+                println("[CineAgora] Slug extraído da URL da página: $urlSlug")
+                return urlSlug
             }
+        } catch (e: Exception) {
+            println("[CineAgora] Erro ao extrair slug da URL: ${e.message}")
         }
         
-        if (href.contains("watch.brplayer.cc")) {
-            println("[CineAgora] Href encontrado: $href")
-            
-            if (href.contains("/tv/")) {
-                val slug = href.substringAfterLast("/tv/").substringBefore("?").substringBefore("#")
-                if (slug.isNotBlank()) {
-                    println("[CineAgora] ✓ Slug extraído de href: $slug")
-                    return slug
-                }
-            }
-        }
+        println("[CineAgora] ❌ Não foi possível encontrar o seriesSlug")
+        return null
     }
-    
-    // QUINTO: Fallback - tentar extrair da URL da página
-    try {
-        // Tentar padrões comuns de URL do CineAgora
-        val urlPatterns = listOf(
-            Regex("""/(\d+)-([^/.]+)\.html"""),
-            Regex("""/([^/.]+)\.html"""),
-            Regex("""/([^/.]+)$""")
-        )
-        
-        for (pattern in urlPatterns) {
-            val match = pattern.find(baseUrl)
-            if (match != null) {
-                var slug = match.groupValues.last()
-                if (slug.isNotBlank()) {
-                    // Limpar o slug
-                    slug = slug.replace("-", " ").trim()
-                    println("[CineAgora] ✓ Slug extraído da URL: $slug")
-                    return slug
-                }
-            }
-        }
-    } catch (e: Exception) {
-        println("[CineAgora] Erro ao extrair slug da URL: ${e.message}")
-    }
-    
-    println("[CineAgora] ❌ Não foi possível encontrar o seriesSlug")
-    return null
-}
 
     private suspend fun getSeriesFromVideoSlug(videoSlug: String): String {
         try {
@@ -838,9 +889,7 @@ private suspend fun extractSeriesSlugFromPage(doc: org.jsoup.nodes.Document, bas
         return ""
     }
 
-    // =============================================
-    // FUNÇÃO PARA BUSCAR EPISÓDIOS DA API (COM HEADERS CORRETOS)
-    // =============================================
+    // FUNÇÃO PARA BUSCAR EPISÓDIOS DA API (DO SEU CÓDIGO ORIGINAL)
     private suspend fun fetchEpisodesFromApi(seriesSlug: String): List<Episode> {
         val episodes = mutableListOf<Episode>()
         
@@ -953,12 +1002,13 @@ private suspend fun extractSeriesSlugFromPage(doc: org.jsoup.nodes.Document, bas
         println("[CineAgora] Adicionado: Temporada $seasonNum, Episódio $epNumber - $episodeTitle")
     }
     
+    // FUNÇÃO PARA LIMPAR TÍTULO DO EPISÓDIO (DO SEU CÓDIGO ORIGINAL)
     private fun cleanEpisodeTitle(rawTitle: String?, seasonNum: Int, episodeNum: Int): String {
         // Sempre retornar "Episódio X" ignorando completamente o título original
         return "Episódio $episodeNum"
     }
 
-    // FUNÇÃO PRINCIPAL PARA EXTRAIR EPISÓDIOS
+    // FUNÇÃO PRINCIPAL PARA EXTRAIR EPISÓDIOS (DO SEU CÓDIGO ORIGINAL)
     private suspend fun extractEpisodes(doc: org.jsoup.nodes.Document, baseUrl: String): List<Episode> {
         val episodes = mutableListOf<Episode>()
         
@@ -1071,7 +1121,7 @@ private suspend fun extractSeriesSlugFromPage(doc: org.jsoup.nodes.Document, bas
     }
 
     // =============================================
-    // FUNÇÃO LOAD PRINCIPAL COM TMDB E EXTRATOR
+    // FUNÇÃO LOAD PRINCIPAL (MANTENDO SUA LÓGICA ORIGINAL MAS COM TMDB)
     // =============================================
     override suspend fun load(url: String): LoadResponse? {
         println("[CineAgora] Carregando URL: $url")
@@ -1088,29 +1138,33 @@ private suspend fun extractSeriesSlugFromPage(doc: org.jsoup.nodes.Document, bas
         println("[CineAgora] Poster URL: $posterUrl")
         
         val title = doc.selectFirst("h1.title, h1, .title, h2")?.text()?.trim() ?: "Título não encontrado"
-        val year = extractYear(doc)
         val cleanTitle = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
         
-        // 2. Determinar se é série ou filme
+        // 2. Extrair episódios (DO SEU CÓDIGO ORIGINAL)
+        val episodes = extractEpisodes(doc, url)
+        
+        println("[CineAgora] Total de episódios extraídos: ${episodes.size}")
+        
+        if (episodes.isEmpty()) {
+            println("[CineAgora] Nenhum episódio encontrado")
+            return null
+        }
+        
+        // 3. DETERMINAR SE É SÉRIE OU FILME (DO SEU CÓDIGO ORIGINAL)
         val isSerie = url.contains("/series-") || url.contains("/serie-") || url.contains("/tv-") || 
                      url.contains("/series-online") ||
-                     doc.select(".player-controls, #episodeDropdown, .seasons").isNotEmpty()
-        
-        // 3. Buscar informações do TMDB
-        val tmdbInfo = searchOnTMDB(cleanTitle, year, isSerie)
-        
-        // 4. Extrair episódios (apenas para séries)
-        val episodes = if (isSerie) {
-            extractEpisodes(doc, url)
-        } else {
-            emptyList()
-        }
+                     doc.select(".player-controls, #episodeDropdown, .seasons").isNotEmpty() ||
+                     episodes.size > 1
         
         println("[CineAgora] É série? $isSerie (${episodes.size} episódios)")
         
-        // 5. Informações do site
-        val plot = doc.selectFirst(".info-description, .description, .sinopse, .plot")?.text()?.trim()
-        val genres = extractGenres(doc)
+        // 4. INFORMAÇÕES ADICIONAIS DO SITE
+        val yearFromSite = extractYear(doc)
+        val plotFromSite = doc.selectFirst(".info-description, .description, .sinopse, .plot")?.text()?.trim()
+        val genresFromSite = extractGenres(doc)
+        
+        // 5. Buscar informações do TMDB
+        val tmdbInfo = searchOnTMDB(cleanTitle, yearFromSite, isSerie)
         
         // 6. Recomendações do site
         val recommendations = extractRecommendationsFromSite(doc)
@@ -1124,56 +1178,27 @@ private suspend fun extractSeriesSlugFromPage(doc: org.jsoup.nodes.Document, bas
         
         // 8. Criar resposta com base nas informações
         return if (isSerie) {
-            createSeriesLoadResponse(tmdbInfo, url, doc, episodes, recommendations)
+            createSeriesLoadResponse(tmdbInfo, url, doc, episodes, recommendations, plotFromSite, genresFromSite, bannerUrl, posterUrl, yearFromSite)
         } else {
-            createMovieLoadResponse(tmdbInfo, playerUrl, doc, recommendations)
+            createMovieLoadResponse(tmdbInfo, playerUrl, doc, recommendations, plotFromSite, genresFromSite, bannerUrl, posterUrl, yearFromSite)
         }
     }
 
     private fun findPlayerUrl(document: org.jsoup.nodes.Document): String? {
-        println("[CineAgora] Procurando URL do player...")
-        
-        // 1. Procurar por iframes do brplayer
+        // Procura por iframes do brplayer
         val iframe = document.selectFirst("iframe[src*='watch.brplayer.cc']")
         if (iframe != null) {
             val src = iframe.attr("src")
-            println("[CineAgora] Iframe encontrado: $src")
             
             // Extrair videoSlug do iframe
             val watchPattern = Regex("""/watch/([^/?]+)""")
             val watchMatch = watchPattern.find(src)
             if (watchMatch != null) {
                 val videoSlug = watchMatch.groupValues[1]
-                val playerUrl = "https://watch.brplayer.cc/watch/$videoSlug"
-                println("[CineAgora] URL do player extraída: $playerUrl")
-                return playerUrl
+                return "https://watch.brplayer.cc/watch/$videoSlug"
             }
         }
         
-        // 2. Procurar por botões com data-url
-        val playButton = document.selectFirst("button[data-url], a[data-url]")
-        if (playButton != null) {
-            val dataUrl = playButton.attr("data-url")
-            if (dataUrl.isNotBlank()) {
-                println("[CineAgora] Data-url encontrado: $dataUrl")
-                return dataUrl
-            }
-        }
-        
-        // 3. Procurar por scripts com URL do player
-        val scripts = document.select("script")
-        for (script in scripts) {
-            val scriptText = script.html()
-            val pattern = Regex("""["'](https?://watch\.brplayer\.cc/watch/[^"']+)["']""")
-            val match = pattern.find(scriptText)
-            if (match != null) {
-                val playerUrl = match.groupValues[1]
-                println("[CineAgora] URL do player encontrada em script: $playerUrl")
-                return playerUrl
-            }
-        }
-        
-        println("[CineAgora] Não encontrou URL do player")
         return null
     }
 
@@ -1186,22 +1211,27 @@ private suspend fun extractSeriesSlugFromPage(doc: org.jsoup.nodes.Document, bas
     }
 
     // =============================================
-    // FUNÇÃO CREATE SERIES LOAD RESPONSE (CORRIGIDA)
+    // FUNÇÕES PARA CRIAR LOAD RESPONSE COM TMDB
     // =============================================
     private suspend fun createSeriesLoadResponse(
         tmdbInfo: TMDBInfo?,
         url: String,
         doc: org.jsoup.nodes.Document,
         episodes: List<Episode>,
-        siteRecommendations: List<SearchResponse>
+        siteRecommendations: List<SearchResponse>,
+        plotFromSite: String?,
+        genresFromSite: List<String>?,
+        bannerUrlFromSite: String?,
+        posterUrlFromSite: String?,
+        yearFromSite: Int?
     ): LoadResponse {
         // Informações do TMDB ou do site
         val title = tmdbInfo?.title ?: doc.selectFirst("h1.title, h1, .title, h2")?.text()?.trim() ?: "Título não encontrado"
-        val year = tmdbInfo?.year ?: extractYear(doc)
-        val plot = tmdbInfo?.overview ?: doc.selectFirst(".info-description, .description, .sinopse, .plot")?.text()?.trim()
-        val posterUrl = tmdbInfo?.posterUrl ?: doc.selectFirst("meta[property='og:image']")?.attr("content")?.let { fixUrl(it) }
-        val backdropUrl = tmdbInfo?.backdropUrl ?: extractBannerUrl(doc)
-        val genres = tmdbInfo?.genres ?: extractGenres(doc)
+        val year = tmdbInfo?.year ?: yearFromSite
+        val plot = tmdbInfo?.overview ?: plotFromSite
+        val posterUrl = tmdbInfo?.posterUrl ?: posterUrlFromSite
+        val backdropUrl = tmdbInfo?.backdropUrl ?: bannerUrlFromSite
+        val genres = tmdbInfo?.genres ?: genresFromSite
         val rating = tmdbInfo?.rating?.let { Score.from10(it) }
         
         return newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes) {
@@ -1213,9 +1243,8 @@ private suspend fun extractSeriesSlugFromPage(doc: org.jsoup.nodes.Document, bas
             this.score = rating
             this.recommendations = siteRecommendations.takeIf { it.isNotEmpty() }
             
-            // Adicionar atores do TMDB com suas vozes - CORRIGIDO
+            // Adicionar atores do TMDB com suas vozes
             tmdbInfo?.actors?.let { actors ->
-                // actors já é List<Pair<Actor, String?>> que é aceito por addActors
                 addActors(actors)
             }
             
@@ -1226,22 +1255,24 @@ private suspend fun extractSeriesSlugFromPage(doc: org.jsoup.nodes.Document, bas
         }
     }
 
-    // =============================================
-    // FUNÇÃO CREATE MOVIE LOAD RESPONSE (CORRIGIDA)
-    // =============================================
     private suspend fun createMovieLoadResponse(
         tmdbInfo: TMDBInfo?,
         playerUrl: String,
         doc: org.jsoup.nodes.Document,
-        siteRecommendations: List<SearchResponse>
+        siteRecommendations: List<SearchResponse>,
+        plotFromSite: String?,
+        genresFromSite: List<String>?,
+        bannerUrlFromSite: String?,
+        posterUrlFromSite: String?,
+        yearFromSite: Int?
     ): LoadResponse {
         // Informações do TMDB ou do site
         val title = tmdbInfo?.title ?: doc.selectFirst("h1.title, h1, .title, h2")?.text()?.trim() ?: "Título não encontrado"
-        val year = tmdbInfo?.year ?: extractYear(doc)
-        val plot = tmdbInfo?.overview ?: doc.selectFirst(".info-description, .description, .sinopse, .plot")?.text()?.trim()
-        val posterUrl = tmdbInfo?.posterUrl ?: doc.selectFirst("meta[property='og:image']")?.attr("content")?.let { fixUrl(it) }
-        val backdropUrl = tmdbInfo?.backdropUrl ?: extractBannerUrl(doc)
-        val genres = tmdbInfo?.genres ?: extractGenres(doc)
+        val year = tmdbInfo?.year ?: yearFromSite
+        val plot = tmdbInfo?.overview ?: plotFromSite
+        val posterUrl = tmdbInfo?.posterUrl ?: posterUrlFromSite
+        val backdropUrl = tmdbInfo?.backdropUrl ?: bannerUrlFromSite
+        val genres = tmdbInfo?.genres ?: genresFromSite
         val duration = tmdbInfo?.duration
         val rating = tmdbInfo?.rating?.let { Score.from10(it) }
         
@@ -1255,9 +1286,8 @@ private suspend fun extractSeriesSlugFromPage(doc: org.jsoup.nodes.Document, bas
             this.score = rating
             this.recommendations = siteRecommendations.takeIf { it.isNotEmpty() }
             
-            // Adicionar atores do TMDB com suas vozes - CORRIGIDO
+            // Adicionar atores do TMDB com suas vozes
             tmdbInfo?.actors?.let { actors ->
-                // actors já é List<Pair<Actor, String?>> que é aceito por addActors
                 addActors(actors)
             }
             
@@ -1290,7 +1320,7 @@ private suspend fun extractSeriesSlugFromPage(doc: org.jsoup.nodes.Document, bas
     }
 
     // =============================================
-    // CLASSES PARA TMDB (ATUALIZADA)
+    // CLASSES PARA TMDB
     // =============================================
     private data class TMDBInfo(
         val id: Int,
@@ -1300,7 +1330,7 @@ private suspend fun extractSeriesSlugFromPage(doc: org.jsoup.nodes.Document, bas
         val backdropUrl: String?,
         val overview: String?,
         val genres: List<String>?,
-        val actors: List<Pair<Actor, String?>>?, // Alterado para Pair<Actor, String?>
+        val actors: List<Pair<Actor, String?>>?,
         val youtubeTrailer: String?,
         val duration: Int?,
         val seasonsEpisodes: Map<Int, List<TMDBEpisode>> = emptyMap(),
