@@ -67,7 +67,7 @@ class Doramogo : MainAPI() {
     override val mainPage = mainPageOf(
         "$mainUrl/episodios" to "Episódios Recentes",
         "$mainUrl/dorama?slug=&status=&ano=&classificacao_idade=&idiomar=DUB" to "Doramas Dublados",
-        "$mainUrl/dorama?slug=&status=&ano=&classificacao_idade=&idiomar=LEG" to "Doramas Legendados",
+        "$mainUrl/dorama?slug=&status=&ano=&classificacao_idage=&idiomar=LEG" to "Doramas Legendados",
         "$mainUrl/genero/dorama-acao" to "Ação",
         "$mainUrl/genero/dorama-aventura" to "Aventura",
         "$mainUrl/genero/dorama-comedia" to "Comédia",
@@ -108,8 +108,8 @@ class Doramogo : MainAPI() {
                 val titleElement = card.selectFirst("h3")
                 val episodeTitle = titleElement?.text()?.trim() ?: return@forEach
                 
-                val cleanTitle = episodeTitle.replace(Regex("\\s*\\(.*\\)"), "").trim()
-                val doramaName = cleanTitle.replace(Regex("\\s*-\\s*Episódio\\s*\\d+.*$"), "").trim()
+                // Extrair nome do dorama
+                val doramaName = episodeTitle.replace(Regex("\\s*-\\s*Epis[oó]dio\\s*\\d+.*$"), "").trim()
                 val href = aTag.attr("href")
                 
                 val imgElement = card.selectFirst("img")
@@ -119,8 +119,8 @@ class Doramogo : MainAPI() {
                     else -> null
                 }
                 
-                val episodeMatch = Regex("Episódio\\s*(\\d+)", RegexOption.IGNORE_CASE).find(cleanTitle)
-                val episodeNumber = episodeMatch?.groupValues?.get(1)?.toIntOrNull() ?: 1
+                // Extrair número do episódio corretamente
+                val episodeNumber = extractEpisodeNumberFromTitle(episodeTitle) ?: 1
                 
                 val isDub = href.contains("/dub/") || request.data.contains("idiomar=DUB") || 
                            episodeTitle.contains("Dublado", ignoreCase = true)
@@ -132,6 +132,8 @@ class Doramogo : MainAPI() {
                     isLeg -> "LEG"
                     else -> ""
                 }
+                
+                // Formatar título: Dorama - EP X DUB/LEG
                 val finalTitle = if (audioType.isNotEmpty()) {
                     "$doramaName - EP $episodeNumber $audioType"
                 } else {
@@ -334,6 +336,21 @@ class Doramogo : MainAPI() {
         
         var title = cleanTitle(fullTitle)
         
+        // Extrair número do episódio do título da página (se existir)
+        val episodeNumberFromTitle = extractEpisodeNumberFromTitle(fullTitle)
+        
+        // Se for uma página de episódio específico, criar título base
+        val isEpisodePage = episodeNumberFromTitle != null && (
+            url.contains("/episodio-") || 
+            url.contains("/ep-") || 
+            url.contains("/temporada-")
+        )
+        
+        if (isEpisodePage) {
+            // Remover "Episódio X" do título para pegar o nome do dorama
+            title = title.replace(Regex("\\s*-\\s*Epis[oó]dio\\s*\\d+.*$"), "").trim()
+        }
+        
         val description = document.selectFirst("#sinopse-text")?.text()?.trim()
             ?: document.selectFirst("#synopsis p")?.text()?.trim()
             ?: document.selectFirst(".synopsis-text")?.text()?.trim()
@@ -386,6 +403,7 @@ class Doramogo : MainAPI() {
         if (type == TvType.TvSeries) {
             val episodes = mutableListOf<Episode>()
             
+            // TENTAR EXTRAIR EPISÓDIOS DA PÁGINA
             document.select(".dorama-one-season-block").forEach { seasonBlock ->
                 val seasonTitle = seasonBlock.selectFirst(".dorama-one-season-title")?.text()?.trim() ?: "1° Temporada"
                 val seasonNumber = extractSeasonNumber(seasonTitle)
@@ -404,22 +422,45 @@ class Doramogo : MainAPI() {
                 }
             }
             
+            // SE NÃO ENCONTROU EPISÓDIOS ESTRUTURADOS
             if (episodes.isEmpty()) {
-    document.select(".dorama-one-episode-item").forEach { episodeItem ->
-        // CORREÇÃO AQUI: remova o ?: return@forEach dentro do let
-        val episodeUrl = episodeItem.attr("href")?.let { fixUrl(it) } ?: return@forEach
-        val episodeTitle = episodeItem.selectFirst(".episode-title")?.text()?.trim() ?: "Episódio"
-        
-        val episodeNumber = extractEpisodeNumberFromEpisodeItem(episodeItem)
-        val seasonNumber = extractSeasonNumberFromUrl(episodeUrl) ?: 1
-        
-        episodes.add(newEpisode(episodeUrl) {
-            this.name = episodeTitle
-            this.season = seasonNumber
-            this.episode = episodeNumber
-        })
-    }
-}
+                document.select(".dorama-one-episode-item").forEach { episodeItem ->
+                    val episodeUrl = episodeItem.attr("href")?.let { fixUrl(it) } ?: return@forEach
+                    val episodeTitle = episodeItem.selectFirst(".episode-title")?.text()?.trim() ?: "Episódio"
+                    
+                    val episodeNumber = extractEpisodeNumberFromEpisodeItem(episodeItem)
+                    val seasonNumber = extractSeasonNumberFromUrl(episodeUrl) ?: 1
+                    
+                    episodes.add(newEpisode(episodeUrl) {
+                        this.name = episodeTitle
+                        this.season = seasonNumber
+                        this.episode = episodeNumber
+                    })
+                }
+            }
+            
+            // SE AINDA NÃO TEM EPISÓDIOS, CRIAR UM COM BASE NA URL E TÍTULO
+            if (episodes.isEmpty()) {
+                // Extrair número do episódio da URL ou título
+                val episodeNum = episodeNumberFromTitle 
+                    ?: extractEpisodeNumberFromUrl(url) 
+                    ?: 1
+                
+                // Extrair temporada da URL
+                val seasonNum = extractSeasonNumberFromUrl(url) ?: 1
+                
+                // Criar um episódio com a própria URL
+                episodes.add(newEpisode(url) {
+                    this.name = "Episódio $episodeNum"
+                    this.season = seasonNum
+                    this.episode = episodeNum
+                    
+                    // Se tiver descrição, adicionar
+                    if (description.isNotBlank()) {
+                        this.description = description
+                    }
+                })
+            }
             
             return newTvSeriesLoadResponse(title, url, type, episodes) {
                 this.posterUrl = poster
@@ -438,6 +479,7 @@ class Doramogo : MainAPI() {
                 }
             }
         } else {
+            // Para filmes
             return newMovieLoadResponse(title, url, type, url) {
                 this.posterUrl = poster
                 this.backgroundPosterUrl = backdropUrl
@@ -592,6 +634,27 @@ class Doramogo : MainAPI() {
             .replace(Regex("\\s*\\(.*\\)"), "")
             .replace(Regex("\\(\\d{4}\\)"), "")
             .trim()
+    }
+    
+    // Função para extrair número do episódio do título (EP X)
+    private fun extractEpisodeNumberFromTitle(title: String): Int? {
+        val patterns = listOf(
+            Regex("""EP\s*(\d+)""", RegexOption.IGNORE_CASE),
+            Regex("""Epis[oó]dio\s*(\d+)""", RegexOption.IGNORE_CASE),
+            Regex("""Episode\s*(\d+)""", RegexOption.IGNORE_CASE),
+            Regex("""Ep\.\s*(\d+)""", RegexOption.IGNORE_CASE),
+            Regex("""- (\d+)(?:\s*DUB|\s*LEG)?$""", RegexOption.IGNORE_CASE), // Para "Dorama - 03 DUB"
+            Regex("""\((\d+)\)""") // Para "Dorama (03)"
+        )
+        
+        for (pattern in patterns) {
+            val match = pattern.find(title)
+            if (match != null) {
+                return match.groupValues[1].toIntOrNull()
+            }
+        }
+        
+        return null
     }
     
     private fun extractYearFromUrl(url: String): Int? {
