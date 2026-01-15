@@ -83,112 +83,137 @@ class Doramogo : MainAPI() {
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val url = if (page > 1) {
-            when {
-                request.data.contains("/dorama?") || request.data.contains("/filmes") -> 
-                    "${request.data}&pagina=$page"
-                request.data.contains("/genero/") -> 
-                    "${request.data}/pagina/$page"
-                request.data.contains("/episodios") -> 
-                    "${request.data}?pagina=$page"
-                else -> "${request.data}?page=$page"
-            }
-        } else {
-            request.data
+    val url = if (page > 1) {
+        when {
+            request.data.contains("/dorama?") || request.data.contains("/filmes") -> 
+                "${request.data}&pagina=$page"
+            request.data.contains("/genero/") -> 
+                "${request.data}/pagina/$page"
+            request.data.contains("/episodios") -> 
+                "${request.data}?pagina=$page"
+            else -> "${request.data}?page=$page"
         }
+    } else {
+        request.data
+    }
 
-        val document = app.get(url).document
-        val items = ArrayList<SearchResponse>()
+    val document = app.get(url).document
+    val items = ArrayList<SearchResponse>()
 
-        val isEpisodesPage = request.data.contains("/episodios") || request.name.contains("Episódios")
+    val isEpisodesPage = request.data.contains("/episodios") || request.name.contains("Episódios")
 
-        if (isEpisodesPage) {
-            document.select(".episode-card").forEach { card ->
-                val aTag = card.selectFirst("a") ?: return@forEach
-                val titleElement = card.selectFirst("h3")
-                val episodeTitle = titleElement?.text()?.trim() ?: return@forEach
-                
-                // Extrair nome do dorama
-                val doramaName = episodeTitle.replace(Regex("\\s*-\\s*Epis[oó]dio\\s*\\d+.*$"), "").trim()
-                val href = aTag.attr("href")
-                
-                val imgElement = card.selectFirst("img")
-                val posterUrl = when {
-                    imgElement?.hasAttr("src") == true -> fixUrl(imgElement.attr("src"))
-                    imgElement?.hasAttr("data-src") == true -> fixUrl(imgElement.attr("data-src"))
-                    else -> null
-                }
-                
-                // Extrair número do episódio corretamente
-                val episodeNumber = extractEpisodeNumberFromTitle(episodeTitle) ?: 1
-                
-                val isDub = href.contains("/dub/") || request.data.contains("idiomar=DUB") || 
-                           episodeTitle.contains("Dublado", ignoreCase = true)
-                val isLeg = href.contains("/leg/") || request.data.contains("idiomar=LEG") || 
-                           episodeTitle.contains("Legendado", ignoreCase = true)
-                
-                val audioType = when {
-                    isDub -> "DUB"
-                    isLeg -> "LEG"
-                    else -> ""
-                }
-                
-                // Formatar título: Dorama - EP X DUB/LEG
-                val finalTitle = if (audioType.isNotEmpty()) {
-                    "$doramaName - EP $episodeNumber $audioType"
-                } else {
-                    "$doramaName - EP $episodeNumber"
-                }
-                
-                items.add(newTvSeriesSearchResponse(finalTitle, fixUrl(href), TvType.TvSeries) {
+    if (isEpisodesPage) {
+        document.select(".episode-card").forEach { card ->
+            val aTag = card.selectFirst("a") ?: return@forEach
+            val titleElement = card.selectFirst("h3")
+            val doramaName = titleElement?.text()?.trim() ?: return@forEach
+            
+            // O NÚMERO DO EPISÓDIO ESTÁ AQUI ↓↓↓
+            val episodeTextElement = card.selectFirst("p.text-xs.text-gray-600")
+            val episodeText = episodeTextElement?.text()?.trim() ?: "Episódio 01"
+            
+            val href = aTag.attr("href")
+            
+            val imgElement = card.selectFirst("img")
+            val posterUrl = when {
+                imgElement?.hasAttr("src") == true -> fixUrl(imgElement.attr("src"))
+                imgElement?.hasAttr("data-src") == true -> fixUrl(imgElement.attr("data-src"))
+                else -> null
+            }
+            
+            // Extrair número do episódio do elemento <p>
+            val episodeNumber = extractEpisodeNumberFromEpisodeText(episodeText) ?: 1
+            
+            // Extrair também da URL como fallback
+            val episodeFromUrl = extractEpisodeNumberFromUrl(href) ?: episodeNumber
+            
+            val isDub = href.contains("/dub/") || request.data.contains("idiomar=DUB") || 
+                       episodeText.contains("Dublado", ignoreCase = true)
+            val isLeg = href.contains("/leg/") || request.data.contains("idiomar=LEG") || 
+                       episodeText.contains("Legendado", ignoreCase = true)
+            
+            val audioType = when {
+                isDub -> "DUB"
+                isLeg -> "LEG"
+                else -> ""
+            }
+            
+            // Formatar título: Dorama - EP X DUB/LEG
+            val finalTitle = if (audioType.isNotEmpty()) {
+                "$doramaName - EP $episodeFromUrl $audioType"
+            } else {
+                "$doramaName - EP $episodeFromUrl"
+            }
+            
+            items.add(newTvSeriesSearchResponse(finalTitle, fixUrl(href), TvType.TvSeries) {
+                this.posterUrl = posterUrl
+            })
+        }
+    } else {
+        document.select(".episode-card").forEach { card ->
+            val aTag = card.selectFirst("a") ?: return@forEach
+            val titleElement = card.selectFirst("h3")
+            var title = titleElement?.text()?.trim() 
+                ?: aTag.attr("title")?.trim()
+                ?: return@forEach
+            
+            title = cleanTitle(title)
+            
+            val href = aTag.attr("href")
+            
+            val imgElement = card.selectFirst("img")
+            val posterUrl = when {
+                imgElement?.hasAttr("data-src") == true -> fixUrl(imgElement.attr("data-src"))
+                imgElement?.hasAttr("src") == true -> fixUrl(imgElement.attr("src"))
+                else -> null
+            }
+            
+            val isMovie = href.contains("/filmes/") || request.name.contains("Filmes")
+            val type = if (isMovie) TvType.Movie else TvType.TvSeries
+            
+            if (type == TvType.Movie) {
+                items.add(newMovieSearchResponse(title, fixUrl(href), type) {
+                    this.posterUrl = posterUrl
+                })
+            } else {
+                items.add(newTvSeriesSearchResponse(title, fixUrl(href), type) { 
                     this.posterUrl = posterUrl
                 })
             }
-        } else {
-            document.select(".episode-card").forEach { card ->
-                val aTag = card.selectFirst("a") ?: return@forEach
-                val titleElement = card.selectFirst("h3")
-                var title = titleElement?.text()?.trim() 
-                    ?: aTag.attr("title")?.trim()
-                    ?: return@forEach
-                
-                title = cleanTitle(title)
-                
-                val href = aTag.attr("href")
-                
-                val imgElement = card.selectFirst("img")
-                val posterUrl = when {
-                    imgElement?.hasAttr("data-src") == true -> fixUrl(imgElement.attr("data-src"))
-                    imgElement?.hasAttr("src") == true -> fixUrl(imgElement.attr("src"))
-                    else -> null
-                }
-                
-                val isMovie = href.contains("/filmes/") || request.name.contains("Filmes")
-                val type = if (isMovie) TvType.Movie else TvType.TvSeries
-                
-                if (type == TvType.Movie) {
-                    items.add(newMovieSearchResponse(title, fixUrl(href), type) {
-                        this.posterUrl = posterUrl
-                    })
-                } else {
-                    items.add(newTvSeriesSearchResponse(title, fixUrl(href), type) { 
-                        this.posterUrl = posterUrl
-                    })
-                }
-            }
         }
-
-        val hasNextPage = document.select("""a[href*="pagina/"], a[href*="?page="], 
-            .pagination a, .next-btn, a:contains(PRÓXIMA)""").isNotEmpty()
-        
-        val homePageList = HomePageList(
-            request.name,
-            items.distinctBy { it.url },
-            isHorizontalImages = isEpisodesPage
-        )
-        
-        return newHomePageResponse(listOf(homePageList), hasNextPage)
     }
+
+    val hasNextPage = document.select("""a[href*="pagina/"], a[href*="?page="], 
+        .pagination a, .next-btn, a:contains(PRÓXIMA)""").isNotEmpty()
+    
+    val homePageList = HomePageList(
+        request.name,
+        items.distinctBy { it.url },
+        isHorizontalImages = isEpisodesPage
+    )
+    
+    return newHomePageResponse(listOf(homePageList), hasNextPage)
+}
+
+// === FUNÇÃO PARA EXTRAIR NÚMERO DO EPISÓDIO DO TEXTO <p> ===
+private fun extractEpisodeNumberFromEpisodeText(text: String): Int? {
+    val patterns = listOf(
+        Regex("""Epis[oó]dio\s*(\d+)""", RegexOption.IGNORE_CASE),
+        Regex("""Episode\s*(\d+)""", RegexOption.IGNORE_CASE),
+        Regex("""EP\s*(\d+)""", RegexOption.IGNORE_CASE),
+        Regex("""Ep\.\s*(\d+)""", RegexOption.IGNORE_CASE),
+        Regex("""\b(\d+)\b""") // Apenas números
+    )
+    
+    for (pattern in patterns) {
+        val match = pattern.find(text)
+        if (match != null) {
+            return match.groupValues[1].toIntOrNull()
+        }
+    }
+    
+    return null
+}
 
     override suspend fun search(query: String): List<SearchResponse> {
         val allResults = mutableListOf<SearchResponse>()
