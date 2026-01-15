@@ -361,32 +361,182 @@ class CineAgora : MainAPI() {
     // =============================================
 
     private fun extractBannerUrl(doc: org.jsoup.nodes.Document): String? {
-        val bannerSelectors = listOf(
-            "meta[property='og:image']",
-            ".cover-img",
-            "img.banner",
-            ".hero img",
-            "[class*='banner'] img",
-            "picture img",
-            ".poster.large"
-        )
+    val bannerSelectors = listOf(
+        // Primeiro tentar meta tags do Open Graph
+        "meta[property='og:image']",
+        "meta[name='twitter:image']",
         
-        for (selector in bannerSelectors) {
-            val element = doc.selectFirst(selector)
-            if (element != null) {
-                val url = when (selector) {
-                    "meta[property='og:image']" -> element.attr("content")
-                    else -> element.attr("src")
+        // Procurar a estrutura <picture> que você mostrou
+        "picture img",
+        "picture source[media='(max-width: 768px)']",
+        
+        // Procurar especificamente pela estrutura que você mostrou
+        "picture img[alt*='assistir'][title*='Assistir']",
+        "picture img[loading='lazy']",
+        
+        // Outros seletores comuns
+        ".cover-img",
+        ".banner-img",
+        "img.banner",
+        ".hero img",
+        ".featured-image img",
+        ".post-thumbnail img",
+        ".single-featured-image img",
+        "[class*='banner'] img",
+        "[class*='cover'] img",
+        ".movie-banner",
+        ".series-banner",
+        
+        // Imagem principal do artigo/post
+        ".post-content img",
+        ".entry-content img",
+        ".article-content img",
+        
+        // Imagens com alt ou title contendo o título
+        "img[title*='Assistir']",
+        "img[alt*='assistir']",
+        "img[alt*='online']",
+        "img[title*='online']"
+    )
+    
+    println("[CineAgora] Procurando banner...")
+    
+    for (selector in bannerSelectors) {
+        val element = doc.selectFirst(selector)
+        if (element != null) {
+            val url = when {
+                selector.startsWith("meta[") -> element.attr("content")
+                selector.contains("source[") -> element.attr("srcset")
+                else -> element.attr("src")
+            }
+            
+            if (url.isNotBlank()) {
+                val fixedUrl = fixUrl(url)
+                println("[CineAgora] ✅ Banner encontrado com seletor '$selector': $fixedUrl")
+                
+                // Se for uma tag <source>, podemos precisar extrair a primeira URL do srcset
+                if (selector.contains("source[") && url.contains(",")) {
+                    val firstUrl = url.substringBefore(",").trim()
+                    if (firstUrl.isNotBlank()) {
+                        val fixedFirstUrl = fixUrl(firstUrl)
+                        println("[CineAgora] ✅ Extraindo primeira URL do srcset: $fixedFirstUrl")
+                        return fixedFirstUrl
+                    }
                 }
                 
-                if (url.isNotBlank()) {
-                    return fixUrl(url)
-                }
+                return fixedUrl
+            }
+        }
+    }
+    
+    // Fallback especial para estrutura <picture> específica
+    println("[CineAgora] Fallback: procurando estrutura <picture> específica...")
+    
+    // Procurar por estrutura <picture> com img dentro
+    val pictureElements = doc.select("picture")
+    for (picture in pictureElements) {
+        // Primeiro tentar a tag <img> dentro do picture
+        val imgElement = picture.selectFirst("img")
+        if (imgElement != null) {
+            val src = imgElement.attr("src")
+            if (src.isNotBlank()) {
+                val fixedUrl = fixUrl(src)
+                println("[CineAgora] ✅ Banner encontrado em <picture> <img>: $fixedUrl")
+                return fixedUrl
             }
         }
         
-        return null
+        // Se não encontrar img, tentar source com srcset
+        val sourceElement = picture.selectFirst("source")
+        if (sourceElement != null) {
+            val srcset = sourceElement.attr("srcset")
+            if (srcset.isNotBlank()) {
+                // Pegar a primeira URL do srcset
+                val firstUrl = srcset.split(",").firstOrNull()?.trim()?.substringBefore(" ")?.trim()
+                if (!firstUrl.isNullOrBlank()) {
+                    val fixedUrl = fixUrl(firstUrl)
+                    println("[CineAgora] ✅ Banner encontrado em <picture> <source>: $fixedUrl")
+                    return fixedUrl
+                }
+            }
+        }
     }
+    
+    // Fallback 2: Procurar qualquer imagem grande
+    println("[CineAgora] Fallback 2: procurando imagens grandes...")
+    val allImages = doc.select("img[src]")
+    val largeImages = allImages.filter { 
+        val src = it.attr("src")
+        val width = it.attr("width").toIntOrNull()
+        val height = it.attr("height").toIntOrNull()
+        
+        src.contains("/uploads/posts/") || // Imagens específicas do site
+        src.contains(".webp") || // WebP geralmente é de alta qualidade
+        (width != null && height != null && width >= 600 && height >= 300) || // Imagens grandes
+        src.contains("banner") || // Nome contém banner
+        src.contains("cover") || // Nome contém cover
+        src.contains("featured") // Nome contém featured
+    }
+    
+    if (largeImages.isNotEmpty()) {
+        // Ordenar por tamanho (priorizar imagens maiores)
+        val sortedImages = largeImages.sortedByDescending { 
+            val width = it.attr("width").toIntOrNull() ?: 0
+            val height = it.attr("height").toIntOrNull() ?: 0
+            width * height
+        }
+        
+        for (img in sortedImages.take(3)) { // Verificar as 3 maiores
+            val src = img.attr("src")
+            if (src.isNotBlank()) {
+                val fixedUrl = fixUrl(src)
+                println("[CineAgora] ✅ Banner encontrado (fallback): $fixedUrl")
+                return fixedUrl
+            }
+        }
+    }
+    
+    // Fallback 3: Primeira imagem do artigo/conteúdo principal
+    println("[CineAgora] Fallback 3: primeira imagem do conteúdo...")
+    val contentAreas = doc.select(".post-content, .entry-content, .article-content, .content, main")
+    for (content in contentAreas) {
+        val firstImg = content.selectFirst("img[src]")
+        if (firstImg != null) {
+            val src = firstImg.attr("src")
+            if (src.isNotBlank()) {
+                val fixedUrl = fixUrl(src)
+                println("[CineAgora] ✅ Banner encontrado no conteúdo: $fixedUrl")
+                return fixedUrl
+            }
+        }
+    }
+    
+    // Fallback final: Qualquer imagem que não seja ícone/logo pequeno
+    println("[CineAgora] Fallback final: qualquer imagem relevante...")
+    val relevantImages = allImages.filterNot { 
+        val src = it.attr("src")
+        src.contains("logo") || 
+        src.contains("icon") || 
+        src.contains("avatar") || 
+        src.contains("favicon") ||
+        src.contains("social") ||
+        src.endsWith(".ico") ||
+        src.length < 20 // URLs muito curtas provavelmente são ícones
+    }
+    
+    if (relevantImages.isNotEmpty()) {
+        val img = relevantImages.first()
+        val src = img.attr("src")
+        if (src.isNotBlank()) {
+            val fixedUrl = fixUrl(src)
+            println("[CineAgora] ⚠️ Banner encontrado (último fallback): $fixedUrl")
+            return fixedUrl
+        }
+    }
+    
+    println("[CineAgora] ❌ Não encontrou banner")
+    return null
+}
 
     private fun extractYear(doc: org.jsoup.nodes.Document): Int? {
         return doc.selectFirst(".year, .date, time")?.text()?.toIntOrNull()
