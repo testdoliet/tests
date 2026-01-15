@@ -405,20 +405,21 @@ class Doramogo : MainAPI() {
             }
             
             if (episodes.isEmpty()) {
-                document.select(".dorama-one-episode-item").forEach { episodeItem ->
-                    val episodeUrl = episodeItem.attr("href")?.let { fixUrl(it) ?: return@forEach }
-                    val episodeTitle = episodeItem.selectFirst(".episode-title")?.text()?.trim() ?: "Episódio"
-                    
-                    val episodeNumber = extractEpisodeNumberFromEpisodeItem(episodeItem)
-                    val seasonNumber = extractSeasonNumberFromUrl(episodeUrl) ?: 1
-                    
-                    episodes.add(newEpisode(episodeUrl) {
-                        this.name = episodeTitle
-                        this.season = seasonNumber
-                        this.episode = episodeNumber
-                    })
-                }
-            }
+    document.select(".dorama-one-episode-item").forEach { episodeItem ->
+        // CORREÇÃO AQUI: remova o ?: return@forEach dentro do let
+        val episodeUrl = episodeItem.attr("href")?.let { fixUrl(it) } ?: return@forEach
+        val episodeTitle = episodeItem.selectFirst(".episode-title")?.text()?.trim() ?: "Episódio"
+        
+        val episodeNumber = extractEpisodeNumberFromEpisodeItem(episodeItem)
+        val seasonNumber = extractSeasonNumberFromUrl(episodeUrl) ?: 1
+        
+        episodes.add(newEpisode(episodeUrl) {
+            this.name = episodeTitle
+            this.season = seasonNumber
+            this.episode = episodeNumber
+        })
+    }
+}
             
             return newTvSeriesLoadResponse(title, url, type, episodes) {
                 this.posterUrl = poster
