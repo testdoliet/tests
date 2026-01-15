@@ -366,7 +366,7 @@ class Doramogo : MainAPI() {
                 .next-btn, 
                 .next-page""").isNotEmpty()
             
-            val nextPageLink = document.select("""a[href*="/pagina/${currentPage + 1}"]""").first()
+            val nextPageLink = document.select("a[href*='/pagina/${currentPage + 1}']").first()
             
             if (hasPaginationElements || nextPageLink != null) {
                 true
@@ -376,7 +376,7 @@ class Doramogo : MainAPI() {
                 
                 if (testResponse.code == 200) {
                     val nextDoc = app.get(nextPageUrl).document
-                    val nextPageResults = nextDoc.select(".doramogo-search-result-card).size
+                    val nextPageResults = nextDoc.select(".doramogo-search-result-card").size
                     
                     nextPageResults > 0
                 } else {
