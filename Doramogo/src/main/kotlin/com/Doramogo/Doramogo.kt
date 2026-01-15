@@ -67,7 +67,7 @@ class Doramogo : MainAPI() {
     override val mainPage = mainPageOf(
         "$mainUrl/episodios" to "Episódios Recentes",
         "$mainUrl/dorama?slug=&status=&ano=&classificacao_idade=&idiomar=DUB" to "Doramas Dublados",
-        "$mainUrl/dorama?slug=&status=&ano=&classificacao_idage=&idiomar=LEG" to "Doramas Legendados",
+        "$mainUrl/dorama?slug=&status=&ano=&classificacao_idade=&idiomar=LEG" to "Doramas Legendados",
         "$mainUrl/genero/dorama-acao" to "Ação",
         "$mainUrl/genero/dorama-aventura" to "Aventura",
         "$mainUrl/genero/dorama-comedia" to "Comédia",
@@ -83,137 +83,173 @@ class Doramogo : MainAPI() {
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-    val url = if (page > 1) {
-        when {
-            request.data.contains("/dorama?") || request.data.contains("/filmes") -> 
-                "${request.data}&pagina=$page"
-            request.data.contains("/genero/") -> 
-                "${request.data}/pagina/$page"
-            request.data.contains("/episodios") -> 
-                "${request.data}?pagina=$page"
-            else -> "${request.data}?page=$page"
+        val url = if (page > 1) {
+            when {
+                request.data.contains("/dorama?") || request.data.contains("/filmes") -> 
+                    "${request.data}&pagina=$page"
+                request.data.contains("/genero/") -> 
+                    "${request.data}/pagina/$page"
+                request.data.contains("/episodios") -> 
+                    "${request.data}?pagina=$page"
+                else -> "${request.data}?page=$page"
+            }
+        } else {
+            request.data
         }
-    } else {
-        request.data
+
+        val document = app.get(url).document
+        val items = ArrayList<SearchResponse>()
+
+        val isEpisodesPage = request.data.contains("/episodios") || request.name.contains("Episódios")
+
+        if (isEpisodesPage) {
+            document.select(".episode-card").forEach { card ->
+                try {
+                    // Extrair o link principal
+                    val aTag = card.selectFirst("a") ?: return@forEach
+                    val href = aTag.attr("href")
+                    
+                    // Extrair nome do dorama (pode estar dentro do h3 > a ou direto no a)
+                    val titleElement = card.selectFirst("h3 a") ?: aTag
+                    val doramaName = titleElement.text().trim()
+                    if (doramaName.isBlank()) return@forEach
+                    
+                    // EXTRAIR NÚMERO DO EPISÓDIO DO ELEMENTO <p> CORRETAMENTE
+                    // Baseado no HTML que você mostrou:
+                    // <p class="text-xs text-gray-600 mb-3 line-clamp-2" id="font-size-episodios-mobile">Episódio 03</p>
+                    val episodeTextElement = card.selectFirst("p#font-size-episodios-mobile")
+                        ?: card.selectFirst("p.text-xs.text-gray-600")
+                        ?: card.selectFirst("p:contains(Episódio)")
+                        ?: card.selectFirst("p:contains(EP)")
+                    
+                    val episodeText = episodeTextElement?.text()?.trim() ?: "Episódio 01"
+                    
+                    // DEBUG
+                    println("DORAMOGO DEBUG - Card encontrado:")
+                    println("  Dorama: $doramaName")
+                    println("  Episódio Texto: $episodeText")
+                    println("  URL: $href")
+                    
+                    // Extrair número do episódio
+                    val episodeNumber = extractEpisodeNumberFromText(episodeText)
+                        ?: extractEpisodeNumberFromUrl(href)
+                        ?: 1
+                    
+                    println("  Número extraído: $episodeNumber")
+                    
+                    // Extrair imagem/poster
+                    val imgElement = card.selectFirst("img")
+                    val posterUrl = when {
+                        imgElement?.hasAttr("src") == true -> fixUrl(imgElement.attr("src"))
+                        imgElement?.hasAttr("data-src") == true -> fixUrl(imgElement.attr("data-src"))
+                        else -> null
+                    }
+                    
+                    // Verificar se é DUB ou LEG
+                    val isDub = href.contains("/dub/") || request.data.contains("idiomar=DUB") || 
+                               doramaName.contains("Dublado", ignoreCase = true)
+                    val isLeg = href.contains("/leg/") || request.data.contains("idiomar=LEG") || 
+                               doramaName.contains("Legendado", ignoreCase = true)
+                    
+                    val audioType = when {
+                        isDub -> "DUB"
+                        isLeg -> "LEG"
+                        else -> ""
+                    }
+                    
+                    // Formatar título final: "Dorama - EP X DUB/LEG"
+                    val finalTitle = if (audioType.isNotEmpty()) {
+                        "$doramaName - EP $episodeNumber $audioType"
+                    } else {
+                        "$doramaName - EP $episodeNumber"
+                    }
+                    
+                    println("  Título final: $finalTitle")
+                    println("  ---")
+                    
+                    items.add(newTvSeriesSearchResponse(finalTitle, fixUrl(href), TvType.TvSeries) {
+                        this.posterUrl = posterUrl
+                    })
+                } catch (e: Exception) {
+                    println("DORAMOGO ERROR - Erro ao processar card: ${e.message}")
+                }
+            }
+        } else {
+            // Para outras páginas (doramas, filmes, gêneros)
+            document.select(".episode-card").forEach { card ->
+                try {
+                    val aTag = card.selectFirst("a") ?: return@forEach
+                    val titleElement = card.selectFirst("h3")
+                    var title = titleElement?.text()?.trim() 
+                        ?: aTag.attr("title")?.trim()
+                        ?: return@forEach
+                    
+                    title = cleanTitle(title)
+                    
+                    val href = aTag.attr("href")
+                    
+                    val imgElement = card.selectFirst("img")
+                    val posterUrl = when {
+                        imgElement?.hasAttr("data-src") == true -> fixUrl(imgElement.attr("data-src"))
+                        imgElement?.hasAttr("src") == true -> fixUrl(imgElement.attr("src"))
+                        else -> null
+                    }
+                    
+                    val isMovie = href.contains("/filmes/") || request.name.contains("Filmes")
+                    val type = if (isMovie) TvType.Movie else TvType.TvSeries
+                    
+                    if (type == TvType.Movie) {
+                        items.add(newMovieSearchResponse(title, fixUrl(href), type) {
+                            this.posterUrl = posterUrl
+                        })
+                    } else {
+                        items.add(newTvSeriesSearchResponse(title, fixUrl(href), type) { 
+                            this.posterUrl = posterUrl
+                        })
+                    }
+                } catch (e: Exception) {
+                    // Ignorar erros
+                }
+            }
+        }
+
+        val hasNextPage = document.select("""a[href*="pagina/"], a[href*="?page="], 
+            .pagination a, .next-btn, a:contains(PRÓXIMA)""").isNotEmpty()
+        
+        val homePageList = HomePageList(
+            request.name,
+            items.distinctBy { it.url },
+            isHorizontalImages = isEpisodesPage
+        )
+        
+        return newHomePageResponse(listOf(homePageList), hasNextPage)
     }
 
-    val document = app.get(url).document
-    val items = ArrayList<SearchResponse>()
-
-    val isEpisodesPage = request.data.contains("/episodios") || request.name.contains("Episódios")
-
-    if (isEpisodesPage) {
-        document.select(".episode-card").forEach { card ->
-            val aTag = card.selectFirst("a") ?: return@forEach
-            val titleElement = card.selectFirst("h3")
-            val doramaName = titleElement?.text()?.trim() ?: return@forEach
-            
-            // O NÚMERO DO EPISÓDIO ESTÁ AQUI ↓↓↓
-            val episodeTextElement = card.selectFirst("p.text-xs.text-gray-600")
-            val episodeText = episodeTextElement?.text()?.trim() ?: "Episódio 01"
-            
-            val href = aTag.attr("href")
-            
-            val imgElement = card.selectFirst("img")
-            val posterUrl = when {
-                imgElement?.hasAttr("src") == true -> fixUrl(imgElement.attr("src"))
-                imgElement?.hasAttr("data-src") == true -> fixUrl(imgElement.attr("data-src"))
-                else -> null
-            }
-            
-            // Extrair número do episódio do elemento <p>
-            val episodeNumber = extractEpisodeNumberFromEpisodeText(episodeText) ?: 1
-            
-            // Extrair também da URL como fallback
-            val episodeFromUrl = extractEpisodeNumberFromUrl(href) ?: episodeNumber
-            
-            val isDub = href.contains("/dub/") || request.data.contains("idiomar=DUB") || 
-                       episodeText.contains("Dublado", ignoreCase = true)
-            val isLeg = href.contains("/leg/") || request.data.contains("idiomar=LEG") || 
-                       episodeText.contains("Legendado", ignoreCase = true)
-            
-            val audioType = when {
-                isDub -> "DUB"
-                isLeg -> "LEG"
-                else -> ""
-            }
-            
-            // Formatar título: Dorama - EP X DUB/LEG
-            val finalTitle = if (audioType.isNotEmpty()) {
-                "$doramaName - EP $episodeFromUrl $audioType"
-            } else {
-                "$doramaName - EP $episodeFromUrl"
-            }
-            
-            items.add(newTvSeriesSearchResponse(finalTitle, fixUrl(href), TvType.TvSeries) {
-                this.posterUrl = posterUrl
-            })
-        }
-    } else {
-        document.select(".episode-card").forEach { card ->
-            val aTag = card.selectFirst("a") ?: return@forEach
-            val titleElement = card.selectFirst("h3")
-            var title = titleElement?.text()?.trim() 
-                ?: aTag.attr("title")?.trim()
-                ?: return@forEach
-            
-            title = cleanTitle(title)
-            
-            val href = aTag.attr("href")
-            
-            val imgElement = card.selectFirst("img")
-            val posterUrl = when {
-                imgElement?.hasAttr("data-src") == true -> fixUrl(imgElement.attr("data-src"))
-                imgElement?.hasAttr("src") == true -> fixUrl(imgElement.attr("src"))
-                else -> null
-            }
-            
-            val isMovie = href.contains("/filmes/") || request.name.contains("Filmes")
-            val type = if (isMovie) TvType.Movie else TvType.TvSeries
-            
-            if (type == TvType.Movie) {
-                items.add(newMovieSearchResponse(title, fixUrl(href), type) {
-                    this.posterUrl = posterUrl
-                })
-            } else {
-                items.add(newTvSeriesSearchResponse(title, fixUrl(href), type) { 
-                    this.posterUrl = posterUrl
-                })
+    // Função para extrair número do episódio do texto
+    private fun extractEpisodeNumberFromText(text: String): Int? {
+        println("DEBUG - Extraindo número de: '$text'")
+        
+        val patterns = listOf(
+            Regex("""Epis[oó]dio\s*(\d+)""", RegexOption.IGNORE_CASE),
+            Regex("""Episode\s*(\d+)""", RegexOption.IGNORE_CASE),
+            Regex("""EP\s*(\d+)""", RegexOption.IGNORE_CASE),
+            Regex("""Ep\.\s*(\d+)""", RegexOption.IGNORE_CASE),
+            Regex("""E(\d+)""", RegexOption.IGNORE_CASE),
+            Regex("""\b0*(\d+)\b""") // Apenas números (remove zeros à esquerda)
+        )
+        
+        for (pattern in patterns) {
+            val match = pattern.find(text)
+            if (match != null) {
+                val number = match.groupValues[1].toIntOrNull()
+                println("DEBUG - Padrão encontrado: $pattern, Número: $number")
+                return number
             }
         }
+        
+        println("DEBUG - Nenhum padrão encontrado")
+        return null
     }
-
-    val hasNextPage = document.select("""a[href*="pagina/"], a[href*="?page="], 
-        .pagination a, .next-btn, a:contains(PRÓXIMA)""").isNotEmpty()
-    
-    val homePageList = HomePageList(
-        request.name,
-        items.distinctBy { it.url },
-        isHorizontalImages = isEpisodesPage
-    )
-    
-    return newHomePageResponse(listOf(homePageList), hasNextPage)
-}
-
-// === FUNÇÃO PARA EXTRAIR NÚMERO DO EPISÓDIO DO TEXTO <p> ===
-private fun extractEpisodeNumberFromEpisodeText(text: String): Int? {
-    val patterns = listOf(
-        Regex("""Epis[oó]dio\s*(\d+)""", RegexOption.IGNORE_CASE),
-        Regex("""Episode\s*(\d+)""", RegexOption.IGNORE_CASE),
-        Regex("""EP\s*(\d+)""", RegexOption.IGNORE_CASE),
-        Regex("""Ep\.\s*(\d+)""", RegexOption.IGNORE_CASE),
-        Regex("""\b(\d+)\b""") // Apenas números
-    )
-    
-    for (pattern in patterns) {
-        val match = pattern.find(text)
-        if (match != null) {
-            return match.groupValues[1].toIntOrNull()
-        }
-    }
-    
-    return null
-}
 
     override suspend fun search(query: String): List<SearchResponse> {
         val allResults = mutableListOf<SearchResponse>()
@@ -340,7 +376,7 @@ private fun extractEpisodeNumberFromEpisodeText(text: String): Int? {
                 
                 if (testResponse.code == 200) {
                     val nextDoc = app.get(nextPageUrl).document
-                    val nextPageResults = nextDoc.select(".doramogo-search-result-card").size
+                    val nextPageResults = nextDoc.select(".doramogo-search-result-card).size
                     
                     nextPageResults > 0
                 } else {
