@@ -6,8 +6,7 @@ import android.content.Context
 
 @CloudstreamPlugin
 class CineAgoraPlugin: Plugin() {
-    override fun load(context: Context) {
-        // All providers should be added in this manner. Please don't edit the providers list directly.
+    override fun load(context: Context) 
         registerMainAPI(CineAgora())
     }
 }
