@@ -73,12 +73,17 @@ class AniTube : MainAPI() {
         }
         
         logDebug("📊 Lookup table size: ${lookup.size}")
-        logDebug("📊 Primeiras 10 entradas: ${lookup.entries.take(10).joinToString { "${it.key}->${it.value}" }}")
+        if (lookup.size <= 10) {
+            logDebug("📊 Todas as entradas: ${lookup.entries.joinToString { "${it.key}->${it.value}" }}")
+        } else {
+            logDebug("📊 Primeiras 10 entradas: ${lookup.entries.take(10).joinToString { "${it.key}->${it.value}" }}")
+        }
         
         // Regex para encontrar tokens exatamente como JavaScript /\b\w+\b/
-        // \b significa word boundary, \w+ significa uma ou mais letras/números/underscore
         val tokenPattern = Regex("""\b[a-zA-Z_$][a-zA-Z0-9_$]*\b""")
         val matches = tokenPattern.findAll(p).toList()
+        
+        logDebug("🔍 Total de tokens encontrados: ${matches.size}")
         
         var result = p
         var replacements = 0
@@ -166,8 +171,19 @@ class AniTube : MainAPI() {
         val links = mutableListOf<ExtractorLink>()
         
         try {
-            logDebug("🚀 Iniciando extração JW Player")
-            logDebug("📌 Iframe SRC: $iframeSrc")
+            println("\n" + "=".repeat(80))
+            println("[AniTube-DEBUG] ======== INÍCIO JW PLAYER ========")
+            println("[AniTube-DEBUG] 📌 Iframe SRC: $iframeSrc")
+            
+            // DEBUG EXTRA: Salvar HTML para análise
+            try {
+                val testResponse = app.get(iframeSrc, timeout = 30000)
+                println("[AniTube-DEBUG] 📄 HTML bruto (primeiros 2000 chars):")
+                println(testResponse.text.take(2000))
+            } catch (e: Exception) {
+                println("[AniTube-DEBUG] ❌ Erro ao buscar iframe: ${e.message}")
+            }
+            // FIM DEBUG
             
             // Primeira requisição para seguir redirecionamentos
             val response1 = app.get(
@@ -180,16 +196,17 @@ class AniTube : MainAPI() {
                 allowRedirects = false
             )
             
-            logDebug("📊 Status primeira requisição: ${response1.code}")
+            println("[AniTube-DEBUG] 📊 Status primeira requisição: ${response1.code}")
             
             var playerUrl = iframeSrc
             val location = response1.headers["location"]
             if (location != null && (response1.code == 301 || response1.code == 302)) {
                 playerUrl = location
-                logDebug("📍 Redirecionado para: $playerUrl")
+                println("[AniTube-DEBUG] 📍 Redirecionado para: $playerUrl")
             }
             
             // Segunda requisição para obter HTML do player
+            println("[AniTube-DEBUG] 🔗 Buscando player URL: $playerUrl")
             val response2 = app.get(
                 playerUrl,
                 headers = mapOf(
@@ -197,24 +214,30 @@ class AniTube : MainAPI() {
                     "Referer" to mainUrl,
                     "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                     "Accept-Language" to "pt-BR,pt;q=0.9,en;q=0.8"
-                )
+                ),
+                timeout = 30000
             )
             
             val playerHtml = response2.text
-            logDebug("📄 HTML obtido: ${playerHtml.length} caracteres")
+            println("[AniTube-DEBUG] 📄 HTML obtido: ${playerHtml.length} caracteres")
             
             // Procurar packer code - REGEX MELHORADO
             val packerRegex = Regex(PACKER_REGEX, RegexOption.DOT_MATCHES_ALL)
             val match = packerRegex.find(playerHtml)
             
             if (match != null && match.groupValues.size >= 5) {
-                logDebug("✅ Packer code encontrado!")
+                println("[AniTube-DEBUG] ✅ Packer code encontrado!")
                 val p = match.groupValues[1].replace("\\'", "'")
                 val a = match.groupValues[2].toIntOrNull() ?: 62
                 val c = match.groupValues[3].toIntOrNull() ?: 361
                 val k = match.groupValues[4]
                 
-                logDebug("📦 Parâmetros: p length=${p.length}, a=$a, c=$c, k length=${k.length}")
+                println("[AniTube-DEBUG] 📦 Parâmetros:")
+                println("[AniTube-DEBUG]   - p length=${p.length}")
+                println("[AniTube-DEBUG]   - a=$a")
+                println("[AniTube-DEBUG]   - c=$c")
+                println("[AniTube-DEBUG]   - k length=${k.length}")
+                println("[AniTube-DEBUG]   - k preview: ${k.take(100)}...")
                 
                 // Decodificar com nossa função CORRIGIDA
                 val decoded = unpack(p, a, c, k)
@@ -224,7 +247,7 @@ class AniTube : MainAPI() {
                 
                 videoLinks.forEachIndexed { index, url ->
                     try {
-                        logDebug("\n🔗 Processando URL ${index + 1}/${videoLinks.size}")
+                        println("[AniTube-DEBUG] 🔗 Processando URL ${index + 1}/${videoLinks.size}")
                         
                         // Determinar qualidade baseado no itag
                         val quality = when {
@@ -267,32 +290,34 @@ class AniTube : MainAPI() {
                             }
                         )
                         
-                        logDebug("✅ Link adicionado: $qualityLabel")
+                        println("[AniTube-DEBUG] ✅ Link adicionado: $qualityLabel")
                         
                     } catch (e: Exception) {
-                        logDebug("⚠️  Erro ao processar URL ${index + 1}: ${e.message}")
+                        println("[AniTube-DEBUG] ⚠️  Erro ao processar URL ${index + 1}: ${e.message}")
                     }
                 }
                 
-                logDebug("\n📊 Total links JW Player encontrados: ${links.size}")
+                println("[AniTube-DEBUG] 📊 Total links JW Player encontrados: ${links.size}")
                 
             } else {
-                logDebug("❌ Packer code não encontrado no HTML")
+                println("[AniTube-DEBUG] ❌ Packer code não encontrado no HTML")
                 // Tentar encontrar links diretos sem unpack
                 val directUrls = Regex("""https?://[^"'\s]*\.googlevideo\.com/[^"'\s]*""").findAll(playerHtml)
                 directUrls.forEach { urlMatch ->
                     val url = urlMatch.value
                     if (url.contains("itag=")) {
-                        logDebug("🔗 Link direto encontrado: ${url.take(80)}...")
+                        println("[AniTube-DEBUG] 🔗 Link direto encontrado: ${url.take(80)}...")
                     }
                 }
             }
             
         } catch (e: Exception) {
-            logDebug("💥 Erro no JW Player: ${e.message}")
+            println("[AniTube-DEBUG] 💥 Erro no JW Player: ${e.message}")
             e.printStackTrace()
         }
         
+        println("[AniTube-DEBUG] ======== FIM JW PLAYER ========")
+        println("=".repeat(80))
         return links
     }
 
@@ -301,13 +326,13 @@ class AniTube : MainAPI() {
         val links = mutableListOf<ExtractorLink>()
         
         try {
-            logDebug("🔍 Buscando links M3U8 na página...")
+            println("[AniTube-DEBUG] 🔍 Buscando links M3U8 na página...")
             
             // 1. Verificar player FHD (#blog2 iframe)
             document.selectFirst(PLAYER_FHD)?.let { iframe ->
                 val src = iframe.attr("src")
                 if (src.isNotBlank() && src.contains("m3u8", true)) {
-                    logDebug("✅ Player FHD encontrado: $src")
+                    println("[AniTube-DEBUG] ✅ Player FHD encontrado: $src")
                     links.add(
                         newExtractorLink(
                             name,
@@ -332,7 +357,7 @@ class AniTube : MainAPI() {
                     matches.forEach { match ->
                         val m3u8Url = match.value
                         if (!m3u8Url.contains("anivideo.net", true)) { // Ignorar links da API
-                            logDebug("🎬 M3U8 em script: $m3u8Url")
+                            println("[AniTube-DEBUG] 🎬 M3U8 em script: $m3u8Url")
                             links.add(
                                 newExtractorLink(
                                     name,
@@ -349,10 +374,10 @@ class AniTube : MainAPI() {
                 }
             }
             
-            logDebug("📊 Total links M3U8 encontrados: ${links.size}")
+            println("[AniTube-DEBUG] 📊 Total links M3U8 encontrados: ${links.size}")
             
         } catch (e: Exception) {
-            logDebug("💥 Erro ao extrair M3U8: ${e.message}")
+            println("[AniTube-DEBUG] 💥 Erro ao extrair M3U8: ${e.message}")
         }
         
         return links
@@ -413,7 +438,7 @@ class AniTube : MainAPI() {
             try {
                 URLDecoder.decode(url.substringAfter("d=").substringBefore("&"), "UTF-8")
             } catch (e: Exception) { 
-                logDebug("❌ Erro ao decodificar m3u8: ${e.message}")
+                println("[AniTube-DEBUG] ❌ Erro ao decodificar m3u8: ${e.message}")
                 null 
             }
         } else { url }
@@ -427,56 +452,56 @@ class AniTube : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val actualUrl = data.split("|poster=")[0]
-        logDebug("\n" + "=".repeat(80))
-        logDebug("🚀 ============== INICIANDO EXTRACTION ==============")
-        logDebug("📌 URL: $actualUrl")
-        logDebug("📌 Data completa: $data")
-        logDebug("=".repeat(80) + "\n")
+        println("\n" + "=".repeat(80))
+        println("[AniTube-DEBUG] 🚀 ============== INICIANDO EXTRACTION ==============")
+        println("[AniTube-DEBUG] 📌 URL: $actualUrl")
+        println("[AniTube-DEBUG] 📌 Data completa: $data")
+        println("=".repeat(80) + "\n")
 
         val document = app.get(actualUrl).document
         var linksFound = false
 
         // ============== LOG DE TODOS OS IFRAMES ==============
         val allIframes = document.select("iframe")
-        logDebug("📊 Total iframes encontrados: ${allIframes.size}")
+        println("[AniTube-DEBUG] 📊 Total iframes encontrados: ${allIframes.size}")
         allIframes.forEachIndexed { index, iframe ->
             val src = iframe.attr("src")
             val id = iframe.attr("id")
             val cls = iframe.attr("class")
-            logDebug("📋 Iframe $index: src='$src', id='$id', class='$cls'")
+            println("[AniTube-DEBUG] 📋 Iframe $index: src='$src', id='$id', class='$cls'")
         }
 
         // ============== PRIMEIRA TENTATIVA: JW PLAYER ==============
-        logDebug("\n" + "🎯".repeat(40))
-        logDebug("🎯 PRIMEIRA TENTATIVA: JW Player")
-        logDebug("🎯".repeat(40))
+        println("\n" + "🎯".repeat(40))
+        println("[AniTube-DEBUG] 🎯 PRIMEIRA TENTATIVA: JW Player")
+        println("[AniTube-DEBUG] 🎯".repeat(40))
         
         document.selectFirst(PLAYER_IFRAME)?.let { iframe ->
             val src = iframe.attr("src").takeIf { it.isNotBlank() } ?: return@let
-            logDebug("✅ Iframe JW Player encontrado: ${src.take(100)}...")
+            println("[AniTube-DEBUG] ✅ Iframe JW Player encontrado: ${src.take(100)}...")
             
             val jwLinks = extractJWPlayerLinks(src, actualUrl)
             if (jwLinks.isNotEmpty()) {
-                logDebug("\n🎉🎉🎉 JW Player retornou ${jwLinks.size} links! 🎉🎉🎉")
+                println("\n[AniTube-DEBUG] 🎉🎉🎉 JW Player retornou ${jwLinks.size} links! 🎉🎉🎉")
                 jwLinks.forEach { 
                     callback(it)
                     linksFound = true
                 }
                 return@loadLinks linksFound
             } else {
-                logDebug("❌ JW Player não retornou links")
+                println("[AniTube-DEBUG] ❌ JW Player não retornou links")
             }
         }
 
         // ============== SEGUNDA TENTATIVA: M3U8 ==============
         if (!linksFound) {
-            logDebug("\n" + "🎯".repeat(40))
-            logDebug("🎯 SEGUNDA TENTATIVA: M3U8")
-            logDebug("🎯".repeat(40))
+            println("\n" + "🎯".repeat(40))
+            println("[AniTube-DEBUG] 🎯 SEGUNDA TENTATIVA: M3U8")
+            println("[AniTube-DEBUG] 🎯".repeat(40))
             
             val m3u8Links = extractM3u8LinksFromPage(document)
             if (m3u8Links.isNotEmpty()) {
-                logDebug("\n🎉🎉🎉 M3U8 retornou ${m3u8Links.size} links! 🎉🎉🎉")
+                println("\n[AniTube-DEBUG] 🎉🎉🎉 M3U8 retornou ${m3u8Links.size} links! 🎉🎉🎉")
                 m3u8Links.forEach {
                     callback(it)
                     linksFound = true
@@ -487,13 +512,13 @@ class AniTube : MainAPI() {
 
         // ============== TERCEIRA TENTATIVA: PLAYER BACKUP ==============
         if (!linksFound) {
-            logDebug("\n" + "🎯".repeat(40))
-            logDebug("🎯 TERCEIRA TENTATIVA: Player Backup")
-            logDebug("🎯".repeat(40))
+            println("\n" + "🎯".repeat(40))
+            println("[AniTube-DEBUG] 🎯 TERCEIRA TENTATIVA: Player Backup")
+            println("[AniTube-DEBUG] 🎯".repeat(40))
             
             document.selectFirst(PLAYER_BACKUP)?.let { iframe ->
                 val src = iframe.attr("src").takeIf { it.isNotBlank() } ?: return@let
-                logDebug("✅ Player Backup encontrado: $src")
+                println("[AniTube-DEBUG] ✅ Player Backup encontrado: $src")
                 
                 callback(
                     newExtractorLink(
@@ -511,16 +536,16 @@ class AniTube : MainAPI() {
         }
 
         // ============== VERIFICAÇÃO FINAL ==============
-        logDebug("\n" + "=".repeat(80))
-        logDebug("📊 ============== RESULTADO FINAL ==============")
-        logDebug("✅ Links encontrados: $linksFound")
+        println("\n" + "=".repeat(80))
+        println("[AniTube-DEBUG] 📊 ============== RESULTADO FINAL ==============")
+        println("[AniTube-DEBUG] ✅ Links encontrados: $linksFound")
         if (linksFound) {
-            logDebug("🎉 SUCESSO! Pelo menos 1 link foi encontrado.")
+            println("[AniTube-DEBUG] 🎉 SUCESSO! Pelo menos 1 link foi encontrado.")
         } else {
-            logDebug("❌ FALHA! Nenhum link válido encontrado.")
+            println("[AniTube-DEBUG] ❌ FALHA! Nenhum link válido encontrado.")
         }
-        logDebug("🎬 Processo finalizado")
-        logDebug("=".repeat(80))
+        println("[AniTube-DEBUG] 🎬 Processo finalizado")
+        println("=".repeat(80))
 
         return linksFound
     }
