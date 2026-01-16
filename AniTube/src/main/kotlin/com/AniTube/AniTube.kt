@@ -243,7 +243,7 @@ class AniTube : MainAPI() {
     }
 
     // ============== FUNÇÃO ALTERNATIVA: USAR M3U8 SE JW PLAYER FALHAR ==============
-    private fun extractM3u8LinksFromPage(document: org.jsoup.nodes.Document): List<ExtractorLink> {
+    private suspend fun extractM3u8LinksFromPage(document: org.jsoup.nodes.Document): List<ExtractorLink> {
         val links = mutableListOf<ExtractorLink>()
         
         try {
@@ -430,10 +430,17 @@ class AniTube : MainAPI() {
                 val src = iframe.attr("src").takeIf { it.isNotBlank() } ?: return@let
                 logDebug("✅ Player Backup encontrado: $src")
                 
-                callback(newExtractorLink(name, "Player Backup", src, ExtractorLinkType.VIDEO) {
-                    referer = "$mainUrl/"
-                    quality = 720
-                })
+                callback(
+                    newExtractorLink(
+                        name,
+                        "Player Backup", 
+                        src,
+                        ExtractorLinkType.VIDEO
+                    ) {
+                        referer = "$mainUrl/"
+                        quality = 720
+                    }
+                )
                 linksFound = true
             }
         }
