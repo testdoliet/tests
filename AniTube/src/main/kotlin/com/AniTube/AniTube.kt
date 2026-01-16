@@ -2,15 +2,9 @@ package com.AniTube
 
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
-import com.lagradost.cloudstream3.network.WebViewResolver
-import com.lagradost.cloudstream3.network.get
-import com.lagradost.cloudstream3.network.post
+import com.lagradost.cloudstream3.network.*
 import org.jsoup.nodes.Element
 import java.net.URLDecoder
-import java.net.URLEncoder
-import javax.crypto.Cipher
-import javax.crypto.spec.SecretKeySpec
-import java.util.Base64
 
 class AniTube : MainAPI() {
     override var mainUrl = "https://www.anitube.news"
@@ -103,8 +97,6 @@ class AniTube : MainAPI() {
         val links = mutableListOf<ExtractorLink>()
         
         try {
-            println("[AniTube] 🎬 Buscando JW Player em: $iframeSrc")
-            
             // Primeira requisição para seguir redirecionamentos
             val response1 = app.get(
                 iframeSrc,
@@ -118,9 +110,8 @@ class AniTube : MainAPI() {
             
             var playerUrl = iframeSrc
             val location = response1.headers["location"]
-            if (location != null && (response1.statusCode == 301 || response1.statusCode == 302)) {
+            if (location != null && (response1.code == 301 || response1.code == 302)) {
                 playerUrl = location
-                println("[AniTube] 📍 Redirecionado para: $playerUrl")
             }
             
             // Segunda requisição para obter HTML do player
@@ -134,14 +125,12 @@ class AniTube : MainAPI() {
             )
             
             val playerHtml = response2.text
-            println("[AniTube] 📄 HTML obtido: ${playerHtml.length} caracteres")
             
             // Procurar packer code
             val packerRegex = Regex(PACKER_REGEX, RegexOption.DOT_MATCHES_ALL)
             val match = packerRegex.find(playerHtml)
             
             if (match != null) {
-                println("[AniTube] ✅ Packer code encontrado!")
                 val p = match.groupValues[1]
                 val a = match.groupValues[2].toInt()
                 val c = match.groupValues[3].toInt()
@@ -149,7 +138,6 @@ class AniTube : MainAPI() {
                 
                 // Decodificar
                 val decoded = unpack(p, a, c, k)
-                println("[AniTube] 🔍 Procurando links videoplayback...")
                 
                 // Extrair links videoplayback
                 val videoRegex = Regex(VIDEOPLAYBACK_REGEX)
@@ -158,8 +146,6 @@ class AniTube : MainAPI() {
                 videoMatches.forEach { videoMatch ->
                     val link = videoMatch.value
                     if (link.contains("googlevideo.com")) {
-                        println("[AniTube] 🔗 Link encontrado: ${link.substring(0, minOf(80, link.length))}...")
-                        
                         // Determinar qualidade baseado no itag
                         val quality = when {
                             link.contains("itag=22") -> 720
@@ -187,14 +173,9 @@ class AniTube : MainAPI() {
                         )
                     }
                 }
-                
-                println("[AniTube] 📊 Total links JW Player encontrados: ${links.size}")
-            } else {
-                println("[AniTube] ❌ Packer code não encontrado no JW Player")
             }
             
         } catch (e: Exception) {
-            println("[AniTube] 💥 Erro no JW Player: ${e.message}")
         }
         
         return links
@@ -205,8 +186,6 @@ class AniTube : MainAPI() {
         val links = mutableListOf<ExtractorLink>()
         
         try {
-            println("[AniTube] 🎯 Tentando método Player 1...")
-            
             // Primeira requisição sem seguir redirecionamentos
             val response1 = app.get(
                 iframeSrc,
@@ -221,7 +200,6 @@ class AniTube : MainAPI() {
             val location = response1.headers["location"]
             if (location != null) {
                 apiUrl = location
-                println("[AniTube] 📍 Redirecionado para: $apiUrl")
             }
             
             // Segunda requisição com referer da HOME
@@ -240,7 +218,6 @@ class AniTube : MainAPI() {
             val match = packerRegex.find(playerHtml)
             
             if (match != null) {
-                println("[AniTube] ✅ Packer code encontrado no Player 1!")
                 val p = match.groupValues[1]
                 val a = match.groupValues[2].toInt()
                 val c = match.groupValues[3].toInt()
@@ -255,8 +232,6 @@ class AniTube : MainAPI() {
                 
                 allLinks.forEach { link ->
                     if (link.contains("videoplayback")) {
-                        println("[AniTube] 🔗 Player 1 link: ${link.substring(0, minOf(60, link.length))}...")
-                        
                         val quality = when {
                             link.contains("itag=22") -> 720
                             link.contains("itag=37") -> 1080
@@ -281,12 +256,9 @@ class AniTube : MainAPI() {
                         )
                     }
                 }
-                
-                println("[AniTube] 📊 Total links Player 1: ${links.size}")
             }
             
         } catch (e: Exception) {
-            println("[AniTube] ❌ Erro no Player 1: ${e.message}")
         }
         
         return links
@@ -481,7 +453,7 @@ class AniTube : MainAPI() {
 
                     recentItems = slides
                         .mapNotNull { slide ->
-                            slide.selectFirst(".aniItem)?.toAnimeSearchResponse()
+                            slide.selectFirst(".aniItem")?.toAnimeSearchResponse()
                         }
                         .distinctBy { it.url }
                         .take(10)
@@ -526,11 +498,9 @@ class AniTube : MainAPI() {
 
         val poster = thumbPoster ?: document.selectFirst(ANIME_POSTER)?.attr("src")?.let { fixUrl(it) }
 
-
         val siteSynopsis = document.selectFirst(ANIME_SYNOPSIS)?.text()?.trim()
 
         val synopsis = if (actualUrl.contains("/video/")) {
-
             siteSynopsis ?: "Episódio $episodeNumber de $title"
         } else {
             siteSynopsis ?: "Sinopse não disponível."
@@ -599,28 +569,22 @@ class AniTube : MainAPI() {
         val document = app.get(actualUrl).document
 
         var linksFound = false
-        
-        println("[AniTube] 🔍 Iniciando extração de links para: $actualUrl")
 
         // ============== PRIMEIRO: JOGAR PARA O JW PLAYER (MÉTODO PRINCIPAL) ==============
         document.selectFirst(PLAYER_IFRAME)?.let { iframe ->
             val src = iframe.attr("src").takeIf { it.isNotBlank() } ?: return@let
-            
-            println("[AniTube] 🎬 Iframe JW Player encontrado: ${src.substring(0, minOf(80, src.length))}...")
             
             // Tentar Player 1 primeiro (método alternativo)
             val player1Links = extractPlayer1Links(src, actualUrl)
             if (player1Links.isNotEmpty()) {
                 player1Links.forEach { callback(it) }
                 linksFound = true
-                println("[AniTube] ✅ Player 1 retornou ${player1Links.size} links")
             } else {
                 // Fallback para JW Player normal
                 val jwLinks = extractJWPlayerLinks(src, actualUrl)
                 if (jwLinks.isNotEmpty()) {
                     jwLinks.forEach { callback(it) }
                     linksFound = true
-                    println("[AniTube] ✅ JW Player retornou ${jwLinks.size} links")
                 }
             }
         }
@@ -636,7 +600,6 @@ class AniTube : MainAPI() {
                     quality = 1080
                 })
                 linksFound = true
-                println("[AniTube] ✅ Player FHD encontrado")
             }
         }
 
@@ -652,7 +615,6 @@ class AniTube : MainAPI() {
                     quality = 720
                 })
                 linksFound = true
-                println("[AniTube] ✅ Player Backup encontrado")
             }
         }
 
@@ -680,13 +642,11 @@ class AniTube : MainAPI() {
                             }
                         }
                         linksFound = true
-                        println("[AniTube] ✅ Player Auto $index encontrado")
                     }
                 }
             }
         }
 
-        println("[AniTube] 📊 Extração concluída: ${if (linksFound) "SUCESSO" else "SEM LINKS"}")
         return linksFound
     }
 }
