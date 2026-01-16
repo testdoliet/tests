@@ -42,13 +42,9 @@ class AniTube : MainAPI() {
         private const val PACKER_REGEX = """eval\s*\(\s*function\s*\(\s*p\s*,\s*a\s*,\s*c\s*,\s*k\s*,\s*e\s*,\s*d\s*\).*?\}\(\s*'([^']+)'\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*'([^']+)'"""
     }
 
-    private fun logDebug(message: String) {
-        println("[AniTube-DEBUG] $message")
-    }
-
     // ============== FUNÇÃO DE UNPACK CORRIGIDA ==============
     private fun unpack(p: String, a: Int, c: Int, k: String): String {
-        logDebug("🚀 Iniciando unpack EXATO (JS style): a=$a, c=$c, k length=${k.length}")
+        println("[AniTube-DEBUG] 🚀 Iniciando unpack EXATO (JS style): a=$a, c=$c, k length=${k.length}")
         
         val dict = k.split("|")
         
@@ -72,18 +68,18 @@ class AniTube : MainAPI() {
             lookup[key] = dict.getOrElse(i - 1) { key }
         }
         
-        logDebug("📊 Lookup table size: ${lookup.size}")
+        println("[AniTube-DEBUG] 📊 Lookup table size: ${lookup.size}")
         if (lookup.size <= 10) {
-            logDebug("📊 Todas as entradas: ${lookup.entries.joinToString { "${it.key}->${it.value}" }}")
+            println("[AniTube-DEBUG] 📊 Todas as entradas: ${lookup.entries.joinToString { "${it.key}->${it.value}" }}")
         } else {
-            logDebug("📊 Primeiras 10 entradas: ${lookup.entries.take(10).joinToString { "${it.key}->${it.value}" }}")
+            println("[AniTube-DEBUG] 📊 Primeiras 10 entradas: ${lookup.entries.take(10).joinToString { "${it.key}->${it.value}" }}")
         }
         
         // Regex para encontrar tokens exatamente como JavaScript /\b\w+\b/
         val tokenPattern = Regex("""\b[a-zA-Z_$][a-zA-Z0-9_$]*\b""")
         val matches = tokenPattern.findAll(p).toList()
         
-        logDebug("🔍 Total de tokens encontrados: ${matches.size}")
+        println("[AniTube-DEBUG] 🔍 Total de tokens encontrados: ${matches.size}")
         
         var result = p
         var replacements = 0
@@ -101,12 +97,12 @@ class AniTube : MainAPI() {
             }
         }
         
-        logDebug("✅ Unpack completo: $replacements tokens substituídos")
-        logDebug("📝 Resultado length: ${result.length}")
+        println("[AniTube-DEBUG] ✅ Unpack completo: $replacements tokens substituídos")
+        println("[AniTube-DEBUG] 📝 Resultado length: ${result.length}")
         
         // Log dos primeiros 500 caracteres para debug
         val preview = if (result.length > 500) result.substring(0, 500) + "..." else result
-        logDebug("📄 Decoded preview (primeiros 500 chars):\n$preview")
+        println("[AniTube-DEBUG] 📄 Decoded preview (primeiros 500 chars):\n$preview")
         
         return result
     }
@@ -116,7 +112,7 @@ class AniTube : MainAPI() {
         val links = mutableListOf<String>()
         
         try {
-            logDebug("🔍 Analisando decoded para links de vídeo...")
+            println("[AniTube-DEBUG] 🔍 Analisando decoded para links de vídeo...")
             
             // Padrão 1: URLs googlevideo.com (mais comuns)
             val pattern1 = Regex("""https?://[^"'\s]*\.googlevideo\.com/[^"'\s]*""", RegexOption.IGNORE_CASE)
@@ -139,29 +135,29 @@ class AniTube : MainAPI() {
                     !url.contains("&type=") && // Filtrar URLs de thumbnail
                     !url.contains("&dur=")) {   // Filtrar URLs de duração
                     
-                    logDebug("🎬 URL ${index + 1}: ${url.take(80)}...")
+                    println("[AniTube-DEBUG] 🎬 URL ${index + 1}: ${url.take(80)}...")
                     
                     // Extrair itag para debug
                     val itagMatch = Regex("""[?&]itag=(\d+)""").find(url)
                     val itag = itagMatch?.groupValues?.get(1) ?: "unknown"
-                    logDebug("   - Itag: $itag")
+                    println("[AniTube-DEBUG]    - Itag: $itag")
                     
                     links.add(url)
                 }
             }
             
-            logDebug("📊 Total de links válidos encontrados: ${links.size}")
+            println("[AniTube-DEBUG] 📊 Total de links válidos encontrados: ${links.size}")
             
             // Remover duplicados
             val uniqueLinks = links.distinct()
             if (uniqueLinks.size != links.size) {
-                logDebug("🔄 Removidos ${links.size - uniqueLinks.size} links duplicados")
+                println("[AniTube-DEBUG] 🔄 Removidos ${links.size - uniqueLinks.size} links duplicados")
             }
             
             return uniqueLinks
             
         } catch (e: Exception) {
-            logDebug("💥 Erro ao extrair links: ${e.message}")
+            println("[AniTube-DEBUG] 💥 Erro ao extrair links: ${e.message}")
             return emptyList()
         }
     }
