@@ -16,6 +16,10 @@ class AniTube : MainAPI() {
     override val supportedTypes = setOf(TvType.Anime)
     override val usesWebView = false
 
+    println("[AniTube-INIT] 🔥 PROVIDER ANITUBE INICIALIZANDO!")
+        println("[AniTube-INIT] mainUrl: $mainUrl")
+        println("[AniTube-INIT] name: $name")
+}
     companion object {
         private const val SEARCH_PATH = "/?s="
 
