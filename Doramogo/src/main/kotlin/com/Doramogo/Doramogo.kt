@@ -29,7 +29,7 @@ class Doramogo : MainAPI() {
     override var name = "Doramogo"
     override val hasMainPage = true
     override var lang = "pt-br"
-    override val hasDownloadSupport = false
+    override val hasDownloadSupport = true
     override val supportedTypes = setOf(TvType.TvSeries, TvType.Movie)
     override val usesWebView = false
 
