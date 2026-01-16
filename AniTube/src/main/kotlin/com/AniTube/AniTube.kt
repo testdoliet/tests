@@ -5,6 +5,7 @@ import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.network.*
 import org.jsoup.nodes.Element
 import java.net.URLDecoder
+import kotlin.math.min
 
 class AniTube : MainAPI() {
     override var mainUrl = "https://www.anitube.news"
@@ -42,33 +43,16 @@ class AniTube : MainAPI() {
         private const val VIDEOPLAYBACK_REGEX = """https://[^"'\s]*videoplayback[^"'\s]*"""
     }
 
-    private val genresMap = mapOf(
-        "Ação" to "acao", "Artes Marciais" to "artes%20marciais", "Aventura" to "aventura",
-        "Comédia" to "comedia", "Comédia Romântica" to "comedia%20romantica", "Drama" to "drama",
-        "Ecchi" to "ecchi", "Esporte" to "esporte", "Fantasia" to "fantasia",
-        "Ficção Científica" to "ficcao%20cientifica", "Jogos" to "jogos", "Magia" to "magia",
-        "Mecha" to "mecha", "Mistério" to "misterio", "Musical" to "musical",
-        "Romance" to "romance", "Seinen" to "seinen", "Shoujo-ai" to "shoujo%20ai",
-        "Shounen" to "shounen", "Slice Of Life" to "slice%20of%20life", "Sobrenatural" to "sobrenatural",
-        "Superpoder" to "superpoder", "Terror" to "terror", "Vida Escolar" to "vida%20escolar",
-        "Shoujo" to "shoujo", "Shounen-ai" to "shounen%20ai", "Yaoi" to "yaoi",
-        "Yuri" to "yuri", "Harem" to "harem", "Isekai" to "isekai", "Militar" to "militar",
-        "Policial" to "policial", "Psicológico" to "psicologico", "Samurai" to "samurai",
-        "Vampiros" to "vampiros", "Zumbi" to "zumbi", "Histórico" to "historico",
-        "Mágica" to "magica", "Cyberpunk" to "cyberpunk", "Espaço" to "espaco",
-        "Demônios" to "demônios", "Vida Cotidiana" to "vida%20cotidiana"
-    )
-
-    override val mainPage = mainPageOf(
-        "$mainUrl" to "Últimos Episódios",
-        "$mainUrl" to "Animes Mais Vistos",
-        "$mainUrl" to "Animes Recentes",
-        *genresMap.map { (genre, slug) -> "$mainUrl/?s=$slug" to genre }.toTypedArray()
-    )
+    private fun logDebug(message: String) {
+        println("[AniTube-DEBUG] $message")
+    }
 
     // ============== FUNÇÃO DE UNPACK (BASE62 DECODER) ==============
     private fun unpack(p: String, a: Int, c: Int, k: String): String {
+        logDebug("Iniciando unpack: a=$a, c=$c, k length=${k.length}")
         val dict = k.split("|")
+        logDebug("Dict split em ${dict.size} partes")
+        
         val lookup = mutableMapOf<String, String>()
         
         fun e(c: Int): String {
@@ -87,9 +71,12 @@ class AniTube : MainAPI() {
             lookup[key] = dict.getOrElse(currentC) { key }
         }
         
-        return Regex("""\b\w+\b""").replace(p) { match ->
+        val result = Regex("""\b\w+\b""").replace(p) { match ->
             lookup[match.value] ?: match.value
         }
+        
+        logDebug("Unpack result length: ${result.length}")
+        return result
     }
 
     // ============== EXTRACTOR JW PLAYER ==============
@@ -97,7 +84,12 @@ class AniTube : MainAPI() {
         val links = mutableListOf<ExtractorLink>()
         
         try {
+            logDebug("🚀 Iniciando extração JW Player")
+            logDebug("📌 Iframe SRC: $iframeSrc")
+            logDebug("📌 Video URL: $videoUrl")
+
             // Primeira requisição para seguir redirecionamentos
+            logDebug("🔗 Primeira requisição (sem redirect)...")
             val response1 = app.get(
                 iframeSrc,
                 headers = mapOf(
@@ -108,13 +100,18 @@ class AniTube : MainAPI() {
                 allowRedirects = false
             )
             
+            logDebug("📊 Status primeira requisição: ${response1.code}")
+            logDebug("📋 Headers: ${response1.headers}")
+
             var playerUrl = iframeSrc
             val location = response1.headers["location"]
             if (location != null && (response1.code == 301 || response1.code == 302)) {
                 playerUrl = location
+                logDebug("📍 Redirecionado para: $playerUrl")
             }
-            
+
             // Segunda requisição para obter HTML do player
+            logDebug("🔗 Segunda requisição (com redirect)...")
             val response2 = app.get(
                 playerUrl,
                 headers = mapOf(
@@ -125,27 +122,53 @@ class AniTube : MainAPI() {
             )
             
             val playerHtml = response2.text
+            logDebug("📄 HTML obtido: ${playerHtml.length} caracteres")
             
+            // Salvar HTML para debug (apenas os primeiros 2000 caracteres)
+            if (playerHtml.length > 2000) {
+                logDebug("📝 HTML Preview: ${playerHtml.substring(0, 2000)}...")
+            } else {
+                logDebug("📝 HTML Preview: $playerHtml")
+            }
+
             // Procurar packer code
+            logDebug("🔍 Buscando packer code...")
             val packerRegex = Regex(PACKER_REGEX, RegexOption.DOT_MATCHES_ALL)
             val match = packerRegex.find(playerHtml)
             
             if (match != null) {
+                logDebug("✅ Packer code encontrado!")
                 val p = match.groupValues[1]
                 val a = match.groupValues[2].toInt()
                 val c = match.groupValues[3].toInt()
                 val k = match.groupValues[4]
                 
+                logDebug("📦 p length: ${p.length}")
+                logDebug("📦 a: $a")
+                logDebug("📦 c: $c")
+                logDebug("📦 k length: ${k.length}")
+                
                 // Decodificar
                 val decoded = unpack(p, a, c, k)
+                logDebug("🔍 Decoded length: ${decoded.length}")
                 
+                // Salvar decoded para debug
+                if (decoded.length > 1000) {
+                    logDebug("📝 Decoded Preview: ${decoded.substring(0, 1000)}...")
+                } else {
+                    logDebug("📝 Decoded: $decoded")
+                }
+
                 // Extrair links videoplayback
+                logDebug("🔍 Procurando links videoplayback...")
                 val videoRegex = Regex(VIDEOPLAYBACK_REGEX)
                 val videoMatches = videoRegex.findAll(decoded)
                 
                 videoMatches.forEach { videoMatch ->
                     val link = videoMatch.value
                     if (link.contains("googlevideo.com")) {
+                        logDebug("🔗 Link encontrado: ${link.substring(0, min(80, link.length))}...")
+                        
                         // Determinar qualidade baseado no itag
                         val quality = when {
                             link.contains("itag=22") -> 720
@@ -173,9 +196,25 @@ class AniTube : MainAPI() {
                         )
                     }
                 }
+                
+                logDebug("📊 Total links JW Player encontrados: ${links.size}")
+            } else {
+                logDebug("❌ Packer code não encontrado no JW Player")
+                // Verificar se há outros patterns
+                if (playerHtml.contains("videoplayback")) {
+                    logDebug("⚠️  Encontrou 'videoplayback' no HTML mas não packer code")
+                    // Tentar extrair diretamente do HTML
+                    val directMatches = VIDEOPLAYBACK_REGEX.toRegex().findAll(playerHtml)
+                    directMatches.forEach { match ->
+                        val link = match.value
+                        logDebug("🔗 Link direto: ${link.substring(0, min(80, link.length))}...")
+                    }
+                }
             }
             
         } catch (e: Exception) {
+            logDebug("💥 Erro no JW Player: ${e.message}")
+            logDebug("💥 Stacktrace: ${e.stackTraceToString()}")
         }
         
         return links
@@ -186,6 +225,9 @@ class AniTube : MainAPI() {
         val links = mutableListOf<ExtractorLink>()
         
         try {
+            logDebug("🎯 Iniciando Player 1 método...")
+            logDebug("📌 Iframe SRC: $iframeSrc")
+
             // Primeira requisição sem seguir redirecionamentos
             val response1 = app.get(
                 iframeSrc,
@@ -196,13 +238,17 @@ class AniTube : MainAPI() {
                 allowRedirects = false
             )
             
+            logDebug("📊 Status primeira requisição: ${response1.code}")
+            
             var apiUrl = iframeSrc
             val location = response1.headers["location"]
             if (location != null) {
                 apiUrl = location
+                logDebug("📍 Redirecionado para: $apiUrl")
             }
             
             // Segunda requisição com referer da HOME
+            logDebug("🔗 Segunda requisição com referer HOME...")
             val response2 = app.get(
                 apiUrl,
                 headers = mapOf(
@@ -211,13 +257,21 @@ class AniTube : MainAPI() {
                 )
             )
             
+            logDebug("📊 Status segunda requisição: ${response2.code}")
             val playerHtml = response2.text
+            logDebug("📄 HTML obtido: ${playerHtml.length} caracteres")
             
+            // Salvar parte do HTML para debug
+            if (playerHtml.length > 2000) {
+                logDebug("📝 HTML Preview: ${playerHtml.substring(0, 2000)}...")
+            }
+
             // Procurar packer code
             val packerRegex = Regex(PACKER_REGEX, RegexOption.DOT_MATCHES_ALL)
             val match = packerRegex.find(playerHtml)
             
             if (match != null) {
+                logDebug("✅ Packer code encontrado no Player 1!")
                 val p = match.groupValues[1]
                 val a = match.groupValues[2].toInt()
                 val c = match.groupValues[3].toInt()
@@ -225,13 +279,17 @@ class AniTube : MainAPI() {
                 
                 // Decodificar
                 val decoded = unpack(p, a, c, k)
+                logDebug("🔍 Decoded length: ${decoded.length}")
                 
                 // Extrair todos os links
                 val linkRegex = Regex("""https?://[^"'\s]+""")
                 val allLinks = linkRegex.findAll(decoded).map { it.value }.toList()
+                logDebug("🔗 Total de links encontrados no decoded: ${allLinks.size}")
                 
                 allLinks.forEach { link ->
                     if (link.contains("videoplayback")) {
+                        logDebug("🎬 Videoplayback encontrado: ${link.substring(0, min(60, link.length))}...")
+                        
                         val quality = when {
                             link.contains("itag=22") -> 720
                             link.contains("itag=37") -> 1080
@@ -256,14 +314,29 @@ class AniTube : MainAPI() {
                         )
                     }
                 }
+                
+                logDebug("📊 Total links Player 1: ${links.size}")
+            } else {
+                logDebug("❌ Packer code não encontrado no Player 1")
+                // Verificar se há links diretos no HTML
+                if (playerHtml.contains("videoplayback")) {
+                    logDebug("⚠️  Encontrou 'videoplayback' no HTML Player 1")
+                    val directMatches = VIDEOPLAYBACK_REGEX.toRegex().findAll(playerHtml)
+                    directMatches.forEach { match ->
+                        logDebug("🔗 Videoplayback direto: ${match.value.substring(0, min(60, match.value.length))}...")
+                    }
+                }
             }
             
         } catch (e: Exception) {
+            logDebug("💥 Erro no Player 1: ${e.message}")
+            logDebug("💥 Stacktrace: ${e.stackTraceToString()}")
         }
         
         return links
     }
 
+    // ============== FUNÇÕES AUXILIARES ==============
     private fun cleanTitle(dirtyTitle: String): String {
         return dirtyTitle
             .replace("(?i)\\s*–\\s*todos os epis[oó]dios".toRegex(), "")
@@ -317,9 +390,191 @@ class AniTube : MainAPI() {
         return if (url.contains("d=")) {
             try {
                 URLDecoder.decode(url.substringAfter("d=").substringBefore("&"), "UTF-8")
-            } catch (e: Exception) { null }
+            } catch (e: Exception) { 
+                logDebug("❌ Erro ao decodificar m3u8: ${e.message}")
+                null 
+            }
         } else { url }
     }
+
+    // ============== LOAD LINKS (PRINCIPAL) ==============
+    override suspend fun loadLinks(
+        data: String,
+        isCasting: Boolean,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        val actualUrl = data.split("|poster=")[0]
+        logDebug("🚀 ============== INICIANDO EXTRACTION ==============")
+        logDebug("📌 URL: $actualUrl")
+        logDebug("📌 Data completa: $data")
+
+        val document = app.get(actualUrl).document
+        var linksFound = false
+
+        // ============== LOG DE TODOS OS IFRAMES ==============
+        val allIframes = document.select("iframe")
+        logDebug("📊 Total iframes encontrados: ${allIframes.size}")
+        allIframes.forEachIndexed { index, iframe ->
+            val src = iframe.attr("src")
+            val id = iframe.attr("id")
+            val cls = iframe.attr("class")
+            logDebug("📋 Iframe $index: src='$src', id='$id', class='$cls'")
+        }
+
+        // ============== PRIMEIRO: JOGAR PARA O JW PLAYER ==============
+        logDebug("\n🔍 Buscando iframes JW Player...")
+        document.selectFirst(PLAYER_IFRAME)?.let { iframe ->
+            val src = iframe.attr("src").takeIf { it.isNotBlank() } ?: return@let
+            logDebug("✅ Iframe JW Player encontrado: ${src.substring(0, min(100, src.length))}...")
+            
+            // Tentar Player 1 primeiro (método alternativo)
+            logDebug("🎯 Tentando Player 1...")
+            val player1Links = extractPlayer1Links(src, actualUrl)
+            if (player1Links.isNotEmpty()) {
+                logDebug("✅ Player 1 retornou ${player1Links.size} links")
+                player1Links.forEach { 
+                    callback(it)
+                    linksFound = true
+                }
+            } else {
+                // Fallback para JW Player normal
+                logDebug("🔄 Fallback para JW Player normal...")
+                val jwLinks = extractJWPlayerLinks(src, actualUrl)
+                if (jwLinks.isNotEmpty()) {
+                    logDebug("✅ JW Player retornou ${jwLinks.size} links")
+                    jwLinks.forEach { 
+                        callback(it)
+                        linksFound = true
+                    }
+                }
+            }
+        }
+
+        // ============== SEGUNDO: PLAYER FHD ==============
+        if (!linksFound) {
+            logDebug("\n🔍 Buscando Player FHD...")
+            document.selectFirst(PLAYER_FHD)?.let { iframe ->
+                val src = iframe.attr("src").takeIf { it.isNotBlank() } ?: return@let
+                logDebug("✅ Player FHD encontrado: $src")
+                val m3u8Url = extractM3u8FromUrl(src) ?: src
+                logDebug("🎬 M3U8 URL: $m3u8Url")
+
+                callback(newExtractorLink(name, "Player FHD", m3u8Url, ExtractorLinkType.M3U8) {
+                    referer = "$mainUrl/"
+                    quality = 1080
+                })
+                linksFound = true
+            }
+        }
+
+        // ============== TERCEIRO: PLAYER BACKUP ==============
+        if (!linksFound) {
+            logDebug("\n🔍 Buscando Player Backup...")
+            document.selectFirst(PLAYER_BACKUP)?.let { iframe ->
+                val src = iframe.attr("src").takeIf { it.isNotBlank() } ?: return@let
+                logDebug("✅ Player Backup encontrado: $src")
+                val isM3u8 = src.contains("m3u8", true)
+                val linkType = if (isM3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                logDebug("🎬 Tipo: $linkType")
+
+                callback(newExtractorLink(name, "Player Backup", src, linkType) {
+                    referer = "$mainUrl/"
+                    quality = 720
+                })
+                linksFound = true
+            }
+        }
+
+        // ============== QUARTO: BUSCA EM TODOS OS IFRAMES ==============
+        if (!linksFound) {
+            logDebug("\n🔍 Buscando em todos os iframes restantes...")
+            document.select("iframe").forEachIndexed { index, iframe ->
+                val src = iframe.attr("src")
+                if (src.isNotBlank() && (src.contains("m3u8", true) || src.contains("bg.mp4", true))) {
+                    logDebug("📋 Iframe $index com m3u8/bg.mp4: $src")
+                    
+                    val alreadyChecked = document.selectFirst(PLAYER_FHD)?.attr("src") == src || 
+                                      document.selectFirst(PLAYER_BACKUP)?.attr("src") == src ||
+                                      document.selectFirst(PLAYER_IFRAME)?.attr("src") == src
+
+                    if (!alreadyChecked) {
+                        if (src.contains("m3u8", true)) {
+                            val m3u8Url = extractM3u8FromUrl(src) ?: src
+                            logDebug("🎬 Player Auto $index (M3U8): $m3u8Url")
+                            
+                            callback(newExtractorLink(name, "Player Auto $index", m3u8Url, ExtractorLinkType.M3U8) {
+                                referer = "$mainUrl/"
+                                quality = 720
+                            })
+                            linksFound = true
+                        } else if (src.contains("bg.mp4", true)) {
+                            logDebug("🎯 Iframe $index é bg.mp4, tentando extrair...")
+                            // Tentar extrair links JW deste iframe também
+                            val fallbackLinks = extractPlayer1Links(src, actualUrl)
+                            if (fallbackLinks.isNotEmpty()) {
+                                logDebug("✅ Player Auto $index retornou ${fallbackLinks.size} links")
+                                fallbackLinks.forEach { callback(it) }
+                                linksFound = true
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // ============== QUINTO: VERIFICAR SCRIPTS DIRETOS ==============
+        if (!linksFound) {
+            logDebug("\n🔍 Verificando scripts diretos...")
+            val scripts = document.select("script")
+            logDebug("📊 Total scripts: ${scripts.size}")
+            
+            scripts.forEachIndexed { index, script ->
+                val scriptContent = script.html()
+                if (scriptContent.contains("videoplayback") || scriptContent.contains(".m3u8")) {
+                    logDebug("📋 Script $index contém videoplayback/m3u8")
+                    if (scriptContent.contains("videoplayback")) {
+                        val matches = VIDEOPLAYBACK_REGEX.toRegex().findAll(scriptContent)
+                        matches.forEach { match ->
+                            logDebug("🔗 Videoplayback no script: ${match.value.substring(0, min(60, match.value.length))}...")
+                        }
+                    }
+                }
+            }
+        }
+
+        logDebug("\n📊 ============== RESULTADO ==============")
+        logDebug("✅ Links encontrados: $linksFound")
+        logDebug("🎬 Processo finalizado")
+
+        return linksFound
+    }
+
+    // ============== RESTANTE DO CÓDIGO (SEM ALTERAÇÕES) ==============
+
+    private val genresMap = mapOf(
+        "Ação" to "acao", "Artes Marciais" to "artes%20marciais", "Aventura" to "aventura",
+        "Comédia" to "comedia", "Comédia Romântica" to "comedia%20romantica", "Drama" to "drama",
+        "Ecchi" to "ecchi", "Esporte" to "esporte", "Fantasia" to "fantasia",
+        "Ficção Científica" to "ficcao%20cientifica", "Jogos" to "jogos", "Magia" to "magia",
+        "Mecha" to "mecha", "Mistério" to "misterio", "Musical" to "musical",
+        "Romance" to "romance", "Seinen" to "seinen", "Shoujo-ai" to "shoujo%20ai",
+        "Shounen" to "shounen", "Slice Of Life" to "slice%20of%20life", "Sobrenatural" to "sobrenatural",
+        "Superpoder" to "superpoder", "Terror" to "terror", "Vida Escolar" to "vida%20escolar",
+        "Shoujo" to "shoujo", "Shounen-ai" to "shounen%20ai", "Yaoi" to "yaoi",
+        "Yuri" to "yuri", "Harem" to "harem", "Isekai" to "isekai", "Militar" to "militar",
+        "Policial" to "policial", "Psicológico" to "psicologico", "Samurai" to "samurai",
+        "Vampiros" to "vampiros", "Zumbi" to "zumbi", "Histórico" to "historico",
+        "Mágica" to "magica", "Cyberpunk" to "cyberpunk", "Espaço" to "espaco",
+        "Demônios" to "demônios", "Vida Cotidiana" to "vida%20cotidiana"
+    )
+
+    override val mainPage = mainPageOf(
+        "$mainUrl" to "Últimos Episódios",
+        "$mainUrl" to "Animes Mais Vistos",
+        "$mainUrl" to "Animes Recentes",
+        *genresMap.map { (genre, slug) -> "$mainUrl/?s=$slug" to genre }.toTypedArray()
+    )
 
     private fun Element.toEpisodeSearchResponse(): AnimeSearchResponse? {
         val href = selectFirst("a")?.attr("href") ?: return null
@@ -557,96 +812,5 @@ class AniTube : MainAPI() {
 
             if (sortedEpisodes.isNotEmpty()) addEpisodes(if (isDubbed) DubStatus.Dubbed else DubStatus.Subbed, sortedEpisodes)
         }
-    }
-
-    override suspend fun loadLinks(
-        data: String,
-        isCasting: Boolean,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        val actualUrl = data.split("|poster=")[0]
-        val document = app.get(actualUrl).document
-
-        var linksFound = false
-
-        // ============== PRIMEIRO: JOGAR PARA O JW PLAYER (MÉTODO PRINCIPAL) ==============
-        document.selectFirst(PLAYER_IFRAME)?.let { iframe ->
-            val src = iframe.attr("src").takeIf { it.isNotBlank() } ?: return@let
-            
-            // Tentar Player 1 primeiro (método alternativo)
-            val player1Links = extractPlayer1Links(src, actualUrl)
-            if (player1Links.isNotEmpty()) {
-                player1Links.forEach { callback(it) }
-                linksFound = true
-            } else {
-                // Fallback para JW Player normal
-                val jwLinks = extractJWPlayerLinks(src, actualUrl)
-                if (jwLinks.isNotEmpty()) {
-                    jwLinks.forEach { callback(it) }
-                    linksFound = true
-                }
-            }
-        }
-
-        // ============== SEGUNDO: PLAYER FHD (se ainda não encontrou links) ==============
-        if (!linksFound) {
-            document.selectFirst(PLAYER_FHD)?.let { iframe ->
-                val src = iframe.attr("src").takeIf { it.isNotBlank() } ?: return@let
-                val m3u8Url = extractM3u8FromUrl(src) ?: src
-
-                callback(newExtractorLink(name, "Player FHD", m3u8Url, ExtractorLinkType.M3U8) {
-                    referer = "$mainUrl/"
-                    quality = 1080
-                })
-                linksFound = true
-            }
-        }
-
-        // ============== TERCEIRO: PLAYER BACKUP ==============
-        if (!linksFound) {
-            document.selectFirst(PLAYER_BACKUP)?.let { iframe ->
-                val src = iframe.attr("src").takeIf { it.isNotBlank() } ?: return@let
-                val isM3u8 = src.contains("m3u8", true)
-                val linkType = if (isM3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-
-                callback(newExtractorLink(name, "Player Backup", src, linkType) {
-                    referer = "$mainUrl/"
-                    quality = 720
-                })
-                linksFound = true
-            }
-        }
-
-        // ============== QUARTO: BUSCA EM TODOS OS IFRAMES (fallback) ==============
-        if (!linksFound) {
-            document.select("iframe").forEachIndexed { index, iframe ->
-                val src = iframe.attr("src")
-                if (src.contains("m3u8", true) || src.contains("bg.mp4", true)) {
-                    val alreadyChecked = document.selectFirst(PLAYER_FHD)?.attr("src") == src || 
-                                      document.selectFirst(PLAYER_BACKUP)?.attr("src") == src ||
-                                      document.selectFirst(PLAYER_IFRAME)?.attr("src") == src
-
-                    if (!alreadyChecked) {
-                        if (src.contains("m3u8", true)) {
-                            val m3u8Url = extractM3u8FromUrl(src) ?: src
-                            callback(newExtractorLink(name, "Player Auto $index", m3u8Url, ExtractorLinkType.M3U8) {
-                                referer = "$mainUrl/"
-                                quality = 720
-                            })
-                        } else if (src.contains("bg.mp4", true)) {
-                            // Tentar extrair links JW deste iframe também
-                            val fallbackLinks = extractPlayer1Links(src, actualUrl)
-                            if (fallbackLinks.isNotEmpty()) {
-                                fallbackLinks.forEach { callback(it) }
-                            }
-                        }
-                        linksFound = true
-                    }
-                }
-            }
-        }
-
-        return linksFound
     }
 }
