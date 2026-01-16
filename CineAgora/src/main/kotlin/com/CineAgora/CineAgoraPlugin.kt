@@ -6,7 +6,7 @@ import android.content.Context
 
 @CloudstreamPlugin
 class CineAgoraPlugin: Plugin() {
-    override fun load(context: Context) 
+    override fun load(context: Context) {
         registerMainAPI(CineAgora())
     }
 }
