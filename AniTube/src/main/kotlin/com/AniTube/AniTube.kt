@@ -34,6 +34,19 @@ class AniTube : MainAPI() {
 
         private const val PLAYER_FHD = "#blog2 iframe"
         private const val PLAYER_BACKUP = "#blog1 iframe"
+
+        // HEADERS MÁGICOS (Copiados do seu CURL que funcionou)
+        // O ExoPlayer precisa usar estes exatos headers para tocar o vídeo
+        private val PLAYER_HEADERS = mapOf(
+            "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
+            "Referer" to "https://api.anivideo.net/",
+            "Accept" to "*/*",
+            "Accept-Language" to "pt-BR",
+            "Sec-Fetch-Dest" to "video",
+            "Sec-Fetch-Mode" to "no-cors",
+            "Sec-Fetch-Site" to "cross-site",
+            "Origin" to "https://api.anivideo.net"
+        )
     }
 
     // ======================================================================
@@ -41,7 +54,6 @@ class AniTube : MainAPI() {
     // ======================================================================
     private fun decodePacked(packed: String): String? {
         try {
-            // Procura pelo padrão: eval(function(p,a,c,k,e,d)...
             val regex = "eval\\s*\\(\\s*function\\s*\\(p,a,c,k,e,d\\).*?\\}\\('(.*?)',(\\d+),(\\d+),'(.*?)'\\.split\\('\\|'\\)".toRegex()
             val match = regex.find(packed) ?: return null
             
@@ -53,7 +65,11 @@ class AniTube : MainAPI() {
 
             fun encodeBase(num: Int): String {
                 val charset = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-                return if (num < radix) charset[num].toString() else encodeBase(num / radix) + charset[num % radix]
+                return if (num < radix) {
+                    charset[num].toString()
+                } else {
+                    encodeBase(num / radix) + charset[num % radix]
+                }
             }
 
             val dict = HashMap<String, String>()
@@ -70,7 +86,7 @@ class AniTube : MainAPI() {
     }
 
     // ======================================================================
-    // 2. CONFIGURAÇÕES E MAPAS (COMPLETO)
+    // 2. CONFIGURAÇÕES E MAPAS
     // ======================================================================
     private val genresMap = mapOf(
         "Ação" to "acao", "Artes Marciais" to "artes%20marciais", "Aventura" to "aventura",
@@ -97,7 +113,7 @@ class AniTube : MainAPI() {
     )
 
     // ======================================================================
-    // 3. HELPERS E EXTENSIONS (COMPLETO)
+    // 3. HELPERS E EXTENSIONS
     // ======================================================================
     private fun cleanTitle(dirtyTitle: String): String {
         return dirtyTitle
@@ -191,7 +207,7 @@ class AniTube : MainAPI() {
     }
 
     // ======================================================================
-    // 4. MÉTODOS DE PÁGINA (GET, SEARCH, LOAD) - COMPLETO
+    // 4. MÉTODOS DE PÁGINA (GET, SEARCH, LOAD)
     // ======================================================================
     override suspend fun getMainPage(
         page: Int,
@@ -366,7 +382,7 @@ class AniTube : MainAPI() {
     }
 
     // ======================================================================
-    // 5. EXTRAÇÃO DE LINKS (LÓGICA MANUAL + LOGS)
+    // 5. EXTRAÇÃO DE LINKS (LÓGICA MANUAL + HEADERS DO PLAYER)
     // ======================================================================
     override suspend fun loadLinks(
         data: String,
@@ -375,131 +391,97 @@ class AniTube : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val actualUrl = data.split("|poster=")[0]
-        println("\n🛑 [AniTube] =========================================")
-        println("📍 [AniTube] URL Episódio: $actualUrl")
+        println("\n🛑 [AniTube] LOAD LINKS: $actualUrl")
 
         val document = app.get(actualUrl).document
         var linksFound = false
 
         // -----------------------------------------------------------
-        // 1. Extração JWPlayer (bg.mp4) - REDIRECIONAMENTO MANUAL
+        // 1. Extração JWPlayer (bg.mp4) - MANUAL
         // -----------------------------------------------------------
         document.select("iframe[src*='bg.mp4']").firstOrNull()?.let { iframe ->
             val initialSrc = iframe.attr("src")
-            println("🔎 [AniTube] Iframe bg.mp4 encontrado: $initialSrc")
+            println("🔎 [AniTube] Iframe encontrado: $initialSrc")
             
             try {
-                // HEADERS REQUISIÇÃO 1 (Simulando o navegador no AniTube)
+                // Step 1: Request inicial com referer do episódio
                 val headersStep1 = mapOf(
-                    "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
-                    "Referer" to actualUrl, // Ex: https://www.anitube.news/video/xxx
-                    "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-                    "Accept-Language" to "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
-                    "Upgrade-Insecure-Requests" to "1",
-                    "Sec-Fetch-Dest" to "iframe",
-                    "Sec-Fetch-Mode" to "navigate",
-                    "Sec-Fetch-Site" to "same-origin"
+                    "User-Agent" to PLAYER_HEADERS["User-Agent"]!!,
+                    "Referer" to actualUrl
                 )
 
-                println("🚀 [AniTube] Request 1: GET $initialSrc (No Auto Redirect)")
-                
-                // IMPORTANTE: allowRedirects = false para capturar o 302 manualmente
                 val response1 = app.get(initialSrc, headers = headersStep1, allowRedirects = false)
-                
-                println("⬅️ [AniTube] Response 1 Code: ${response1.code}")
-                
                 var contentHtml = ""
 
-                // Lógica de Redirecionamento (301, 302, 307)
-                if (response1.code == 301 || response1.code == 302 || response1.code == 307) {
+                // Lógica de Redirecionamento Manual
+                if (response1.code in 300..399) {
                     val location = response1.headers["location"] ?: response1.headers["Location"]
                     
                     if (location != null) {
-                        println("🔄 [AniTube] Redirect Location: $location")
+                        println("🔄 [AniTube] Redirecionando para: $location")
                         
-                        // HEADERS REQUISIÇÃO 2 (Simulando o request ao anivideo.net)
-                        // AQUI É A MÁGICA: O Referer muda para a HOME
+                        // Step 2: Request final com referer da HOME
+                        // ISSO É CRUCIAL PARA OBTER O HTML CORRETO
                         val headersStep2 = mapOf(
-                            "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
-                            "Referer" to "https://www.anitube.news/", // <--- CRUCIAL
-                            "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-                            "Accept-Language" to "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
-                            "Upgrade-Insecure-Requests" to "1",
-                            "Sec-Fetch-Dest" to "iframe",
-                            "Sec-Fetch-Mode" to "navigate",
-                            "Sec-Fetch-Site" to "cross-site"
+                            "User-Agent" to PLAYER_HEADERS["User-Agent"]!!,
+                            "Referer" to "https://www.anitube.news/" 
                         )
 
-                        println("🚀 [AniTube] Request 2: GET $location")
                         val response2 = app.get(location, headers = headersStep2)
-                        
-                        println("⬅️ [AniTube] Response 2 Code: ${response2.code}")
                         contentHtml = response2.text
-                        
-                        // Debug do HTML
-                        if (response2.code == 404) {
-                            println("⚠️ [AniTube] ERRO 404 na segunda requisição!")
-                        } else {
-                            println("📄 [AniTube] HTML 2 (${contentHtml.length} chars)")
-                        }
-                    } else {
-                        println("❌ [AniTube] Header 'Location' não encontrado no redirect.")
                     }
                 } else if (response1.code == 200) {
-                    println("⚠️ [AniTube] Sem redirect, usando corpo da resposta 1.")
                     contentHtml = response1.text
-                } else {
-                    println("❌ [AniTube] Falha na requisição 1: Code ${response1.code}")
                 }
 
-                // Processar o HTML final se houver
+                // Processar HTML
                 if (contentHtml.isNotBlank()) {
-                    // Debug se o packer está presente
-                    if (contentHtml.contains("eval(function(p,a,c,k,e,d)")) {
-                        println("✅ [AniTube] Packer encontrado! Decodificando...")
-                        val decoded = decodePacked(contentHtml)
-                        
-                        if (decoded != null) {
-                            // Extrai MP4 (Google Video)
-                            val mp4Regex = Regex("https?://[^\\s'\"]+videoplayback[^\\s'\"]*")
-                            mp4Regex.findAll(decoded).forEach { match ->
-                                println("🎬 [AniTube] Link MP4: ${match.value}")
-                                callback(newExtractorLink(name, "JWPlayer MP4", match.value, ExtractorLinkType.VIDEO) {
-                                    referer = "https://api.anivideo.net/"
-                                })
-                                linksFound = true
-                            }
+                    val decoded = decodePacked(contentHtml)
+                    if (decoded != null) {
+                        // Extrai MP4 (Google Video)
+                        val mp4Regex = Regex("https?://[^\\s'\"]+videoplayback[^\\s'\"]*")
+                        mp4Regex.findAll(decoded).forEach { match ->
+                            val link = match.value
+                            println("🎬 [AniTube] MP4 Encontrado: $link")
                             
-                            // Extrai M3U8
-                            val m3u8Regex = Regex("https?://[^\\s'\"]+\\.m3u8[^\\s'\"]*")
-                            m3u8Regex.findAll(decoded).forEach { match ->
-                                println("📡 [AniTube] Link HLS: ${match.value}")
-                                callback(newExtractorLink(name, "AniTube HLS", match.value, ExtractorLinkType.M3U8) {
-                                    referer = "https://api.anivideo.net/"
-                                })
-                                linksFound = true
+                            val quality = when {
+                                link.contains("itag=37") -> 1080
+                                link.contains("itag=22") -> 720
+                                link.contains("itag=59") -> 480
+                                link.contains("itag=18") -> 360
+                                else -> 360
                             }
-                        } else {
-                            println("❌ [AniTube] Falha ao decodificar packer.")
+
+                            // AQUI APLICAMOS OS HEADERS QUE O CURL USOU
+                            callback(newExtractorLink(name, "JWPlayer MP4", link, ExtractorLinkType.VIDEO) {
+                                this.headers = PLAYER_HEADERS // Headers mágicos para o ExoPlayer
+                                this.quality = quality
+                            })
+                            linksFound = true
                         }
-                    } else {
-                        println("❌ [AniTube] 'eval(function' não encontrado no HTML final.")
+                        
+                        // Extrai M3U8
+                        val m3u8Regex = Regex("https?://[^\\s'\"]+\\.m3u8[^\\s'\"]*")
+                        m3u8Regex.findAll(decoded).forEach { match ->
+                            println("📡 [AniTube] HLS Encontrado: ${match.value}")
+                            callback(newExtractorLink(name, "AniTube HLS", match.value, ExtractorLinkType.M3U8) {
+                                this.headers = PLAYER_HEADERS
+                            })
+                            linksFound = true
+                        }
                     }
                 }
-
             } catch (e: Exception) {
-                println("💥 [AniTube] Exception: ${e.message}")
-                e.printStackTrace()
+                println("💥 [AniTube] Erro JWPlayer: ${e.message}")
             }
-        } ?: println("⚠️ [AniTube] Iframe 'bg.mp4' não encontrado.")
+        }
 
         // -----------------------------------------------------------
-        // 2. Extração Player FHD (Fallback)
+        // 2. Fallbacks (FHD/Backup)
         // -----------------------------------------------------------
         document.selectFirst(PLAYER_FHD)?.let { iframe ->
             val src = iframe.attr("src")
             if (src.isNotBlank() && !src.contains("bg.mp4")) {
-                println("📺 [AniTube] Player FHD encontrado: $src")
                 val m3u8Url = extractM3u8FromUrl(src) ?: src
                 callback(newExtractorLink(name, "Player FHD", m3u8Url, ExtractorLinkType.M3U8) {
                     referer = "$mainUrl/"
@@ -509,13 +491,9 @@ class AniTube : MainAPI() {
             }
         }
 
-        // -----------------------------------------------------------
-        // 3. Extração Player Backup (Fallback)
-        // -----------------------------------------------------------
         document.selectFirst(PLAYER_BACKUP)?.let { iframe ->
             val src = iframe.attr("src")
             if (src.isNotBlank() && !src.contains("bg.mp4")) {
-                println("📺 [AniTube] Player Backup encontrado: $src")
                 callback(newExtractorLink(name, "Player Backup", src, ExtractorLinkType.VIDEO) {
                     referer = "$mainUrl/"
                     quality = 720
@@ -525,14 +503,13 @@ class AniTube : MainAPI() {
         }
 
         // -----------------------------------------------------------
-        // 4. Varredura final (Fallback)
+        // 3. Fallback Varredura
         // -----------------------------------------------------------
         if (!linksFound) {
             document.select("iframe").forEach { iframe ->
                 val src = iframe.attr("src")
                 if (src.contains("m3u8") && !src.contains("bg.mp4")) {
                     val url = extractM3u8FromUrl(src) ?: src
-                    println("📺 [AniTube] Player Auto encontrado: $url")
                     callback(newExtractorLink(name, "Player Auto", url, ExtractorLinkType.M3U8) {
                         referer = "$mainUrl/"
                         quality = 720
@@ -542,7 +519,6 @@ class AniTube : MainAPI() {
             }
         }
 
-        println("🛑 [AniTube] Fim loadLinks. Encontrou? $linksFound")
         return linksFound
     }
 }
