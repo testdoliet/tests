@@ -32,23 +32,23 @@ class AniTube : MainAPI() {
         private const val PLAYER_BACKUP = "#blog1 iframe"
 
         // =================================================================
-        // HEADERS EXATOS (BASEADO NO SEU EXEMPLO JS/CURL)
+        // HEADERS EXATOS DO SEU EXEMPLO JS
         // =================================================================
         private const val USER_AGENT = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36"
 
         private val VIDEO_HEADERS = mapOf(
-            "User-Agent" to USER_AGENT,
-            "Accept" to "*/*",
-            "Accept-Language" to "pt-BR",
-            "Priority" to "i",
-            "Sec-Ch-Ua" to "\"Chromium\";v=\"127\", \"Not)A;Brand\";v=\"99\"",
-            "Sec-Ch-Ua-Mobile" to "?1",
-            "Sec-Ch-Ua-Platform" to "\"Android\"",
-            "Sec-Fetch-Dest" to "video",
-            "Sec-Fetch-Mode" to "no-cors",
-            "Sec-Fetch-Site" to "cross-site",
-            "Referer" to "https://api.anivideo.net/",
-            "X-Client-Data" to "COD2ygE="
+            "accept" to "*/*",
+            "accept-language" to "pt-BR",
+            "priority" to "i",
+            "sec-ch-ua" to "\"Chromium\";v=\"127\", \"Not)A;Brand\";v=\"99\"",
+            "sec-ch-ua-mobile" to "?1",
+            "sec-ch-ua-platform" to "\"Android\"",
+            "sec-fetch-dest" to "video",
+            "sec-fetch-mode" to "no-cors",
+            // AQUI ESTAVA A DIFERENÇA CRUCIAL (anivideo.api.net vs api.anivideo.net)
+            "referer" to "https://anivideo.api.net/", 
+            "user-agent" to USER_AGENT,
+            "x-client-data" to "COD2ygE="
         )
 
         // Headers para navegação interna (Extração do HTML)
@@ -217,12 +217,8 @@ class AniTube : MainAPI() {
                         // Regex MP4 (Google Video)
                         val mp4Regex = Regex("https?://[^\\s'\"]+videoplayback[^\\s'\"]*")
                         mp4Regex.findAll(decoded).forEach { match ->
-                            var link = match.value
-                            
-                            // 🚀 FORÇAR RR3 (Opcional, mas estava no seu teste anterior)
-                            link = link.replace(Regex("https://rr\\d+"), "https://rr3")
-                            
-                            println("🎬 [AniTube] MP4 (rr3): $link")
+                            val link = match.value
+                            println("🎬 [AniTube] MP4: $link")
                             
                             val quality = when {
                                 link.contains("itag=37") -> 1080
@@ -231,8 +227,8 @@ class AniTube : MainAPI() {
                                 else -> 360
                             }
 
-                            // 🚨 USANDO HEADERS EXATOS (X-Client-Data, Sec-Ch-Ua, etc)
-                            callback(newExtractorLink(name, "JWPlayer MP4 (rr3)", link, ExtractorLinkType.VIDEO) {
+                            // 🚨 USANDO HEADERS EXATOS DO JS (anivideo.api.net)
+                            callback(newExtractorLink(name, "JWPlayer MP4", link, ExtractorLinkType.VIDEO) {
                                 this.headers = VIDEO_HEADERS
                                 this.quality = quality
                             })
@@ -242,10 +238,9 @@ class AniTube : MainAPI() {
                         // Regex HLS
                         val m3u8Regex = Regex("https?://[^\\s'\"]+\\.m3u8[^\\s'\"]*")
                         m3u8Regex.findAll(decoded).forEach { match ->
-                            val link = match.value.replace(Regex("https://rr\\d+"), "https://rr3")
-                            println("📡 [AniTube] HLS (rr3): $link")
+                            println("📡 [AniTube] HLS: ${match.value}")
                             
-                            callback(newExtractorLink(name, "AniTube HLS (rr3)", link, ExtractorLinkType.M3U8) {
+                            callback(newExtractorLink(name, "AniTube HLS", match.value, ExtractorLinkType.M3U8) {
                                 this.headers = VIDEO_HEADERS
                             })
                             linksFound = true
