@@ -16,27 +16,23 @@ class AniTube : MainAPI() {
 
     companion object {
         private const val SEARCH_PATH = "/?s="
-
         private const val ANIME_CARD = ".aniItem"
         private const val EPISODE_CARD = ".epiItem"
         private const val TITLE_SELECTOR = ".aniItemNome, .epiItemNome"
         private const val POSTER_SELECTOR = ".aniItemImg img, .epiItemImg img"
         private const val AUDIO_BADGE_SELECTOR = ".aniCC, .epiCC"
         private const val EPISODE_NUMBER_SELECTOR = ".epiItemInfos .epiItemNome"
-
         private const val LATEST_EPISODES_SECTION = ".epiContainer"
-
         private const val ANIME_TITLE = "h1"
         private const val ANIME_POSTER = "#capaAnime img"
         private const val ANIME_SYNOPSIS = "#sinopse2"
         private const val ANIME_METADATA = ".boxAnimeSobre .boxAnimeSobreLinha"
         private const val EPISODE_LIST = ".pagAniListaContainer > a"
-
         private const val PLAYER_FHD = "#blog2 iframe"
         private const val PLAYER_BACKUP = "#blog1 iframe"
 
         // =================================================================
-        // HEADERS PARA O EXOPLAYER (SEM O RANGE)
+        // HEADERS PARA O EXOPLAYER (SEM RANGE, USER-AGENT FIXO)
         // =================================================================
         private const val USER_AGENT = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36"
 
@@ -51,7 +47,7 @@ class AniTube : MainAPI() {
             "Priority" to "i"
         )
 
-        // Headers para a navegação interna
+        // Headers para a navegação interna (Extração do HTML)
         private val EXTRACTION_HEADERS = mapOf(
             "User-Agent" to USER_AGENT,
             "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
@@ -76,11 +72,7 @@ class AniTube : MainAPI() {
 
             fun encodeBase(num: Int): String {
                 val charset = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-                return if (num < radix) {
-                    charset[num].toString()
-                } else {
-                    encodeBase(num / radix) + charset[num % radix]
-                }
+                return if (num < radix) charset[num].toString() else encodeBase(num / radix) + charset[num % radix]
             }
 
             val dict = HashMap<String, String>()
@@ -165,7 +157,7 @@ class AniTube : MainAPI() {
     }
 
     // ======================================================================
-    // 4. EXTRAÇÃO DE LINKS
+    // 4. EXTRAÇÃO DE LINKS (COM SUBSTITUIÇÃO RR3)
     // ======================================================================
     override suspend fun loadLinks(
         data: String,
@@ -219,10 +211,10 @@ class AniTube : MainAPI() {
                         mp4Regex.findAll(decoded).forEach { match ->
                             var link = match.value
                             
-                            // 🚀 FORÇAR RR6 (Substitui qualquer rr1, rr2, rr5... por rr6)
-                            link = link.replace(Regex("https://rr\\d+"), "https://rr6")
+                            // 🚀 FORÇAR RR3 (Substitui qualquer rr1, rr2, rr5... por rr3)
+                            link = link.replace(Regex("https://rr\\d+"), "https://rr3")
                             
-                            println("🎬 [AniTube] MP4 (rr6): $link")
+                            println("🎬 [AniTube] MP4 (rr3): $link")
                             
                             val quality = when {
                                 link.contains("itag=37") -> 1080
@@ -231,7 +223,7 @@ class AniTube : MainAPI() {
                                 else -> 360
                             }
 
-                            callback(newExtractorLink(name, "JWPlayer MP4 (rr6)", link, ExtractorLinkType.VIDEO) {
+                            callback(newExtractorLink(name, "JWPlayer MP4 (rr3)", link, ExtractorLinkType.VIDEO) {
                                 this.headers = VIDEO_HEADERS
                                 this.quality = quality
                             })
@@ -241,11 +233,11 @@ class AniTube : MainAPI() {
                         // Regex HLS
                         val m3u8Regex = Regex("https?://[^\\s'\"]+\\.m3u8[^\\s'\"]*")
                         m3u8Regex.findAll(decoded).forEach { match ->
-                            // Também tenta forçar rr6 no M3U8 se possível
-                            val link = match.value.replace(Regex("https://rr\\d+"), "https://rr6")
-                            println("📡 [AniTube] HLS (rr6): $link")
+                            // Também tenta forçar rr3 no M3U8 se possível
+                            val link = match.value.replace(Regex("https://rr\\d+"), "https://rr3")
+                            println("📡 [AniTube] HLS (rr3): $link")
                             
-                            callback(newExtractorLink(name, "AniTube HLS (rr6)", link, ExtractorLinkType.M3U8) {
+                            callback(newExtractorLink(name, "AniTube HLS (rr3)", link, ExtractorLinkType.M3U8) {
                                 this.headers = VIDEO_HEADERS
                             })
                             linksFound = true
