@@ -5,6 +5,7 @@ import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.network.*
 import org.jsoup.nodes.Element
 import java.net.URLDecoder
+import kotlin.math.max
 import kotlin.math.min
 
 class AniTube : MainAPI() {
@@ -47,9 +48,6 @@ class AniTube : MainAPI() {
         private const val PLAYER_FHD = "#blog2 iframe"
         private const val PLAYER_BACKUP = "#blog1 iframe"
         private const val PLAYER_IFRAME = "iframe.metaframe, iframe[src*='bg.mp4']"
-        
-        // JW Player patterns
-        private const val PACKER_REGEX = """eval\s*\(\s*function\s*\(\s*p\s*,\s*a\s*,\s*c\s*,\s*k\s*,\s*e\s*,\s*d\s*\).*?\}\(\s*'([^']+)'\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*'([^']+)'"""
     }
 
     // ============== FUNÇÃO DE UNPACK COM LOGS ==============
@@ -156,7 +154,7 @@ class AniTube : MainAPI() {
         return links.distinct()
     }
 
-    // ============== JW PLAYER EXTRACTION COM LOGS DETALHADOS ==============
+    // ============== JW PLAYER EXTRACTION COM DEBUG COMPLETO ==============
     private suspend fun extractJWPlayerLinks(iframeSrc: String, videoUrl: String): List<ExtractorLink> {
         println("\n" + "🎬".repeat(50))
         println("🎬 [AniTube-JW] INICIANDO EXTRACTION JW PLAYER")
@@ -203,18 +201,94 @@ class AniTube : MainAPI() {
             val playerHtml = response2.text
             println("🎬 [AniTube-JW] 📄 HTML obtido: ${playerHtml.length} caracteres")
             
-            // 3. Buscar packer code
-            println("🎬 [AniTube-JW] 🔍 Buscando packer code...")
-            val packerRegex = Regex(PACKER_REGEX, RegexOption.DOT_MATCHES_ALL)
-            val match = packerRegex.find(playerHtml)
+            // ============== DEBUG EXTREMO DO HTML ==============
+            println("\n🔍 [AniTube-JW] 🔥 DEBUG DO HTML 🔥")
+            println("🔍 [AniTube-JW] Primeiros 500 chars do HTML:")
+            println(playerHtml.take(500))
+            println("\n🔍 [AniTube-JW] Últimos 500 chars do HTML:")
+            println(playerHtml.takeLast(500))
             
-            if (match != null && match.groupValues.size >= 5) {
-                println("🎬 [AniTube-JW] ✅ Packer code encontrado!")
+            // Verificar se contém "eval(function(p,a,c,k,e,d)"
+            val containsEval = playerHtml.contains("eval(function(p,a,c,k,e,d)")
+            println("🔍 [AniTube-JW] Contém 'eval(function(p,a,c,k,e,d)': $containsEval")
+            
+            // Verificar se contém "eval(function"
+            val containsEval3 = playerHtml.contains("eval(function")
+            println("🔍 [AniTube-JW] Contém 'eval(function': $containsEval3")
+            
+            // Buscar TODOS os matches de eval
+            val evalPattern = """eval\s*\(function""".toRegex(RegexOption.IGNORE_CASE)
+            val evalMatches = evalPattern.findAll(playerHtml).toList()
+            println("🔍 [AniTube-JW] Total 'eval(function' encontrados: ${evalMatches.size}")
+            
+            // Mostrar contexto ao redor de cada eval
+            evalMatches.forEachIndexed { index, match ->
+                val start = max(0, match.range.first - 100)
+                val end = min(playerHtml.length, match.range.last + 300)
+                val context = playerHtml.substring(start, end)
+                println("\n🔍 [AniTube-JW] Eval $index contexto (${start}-${end}):")
+                println("...${context}...")
+            }
+            // ============== FIM DEBUG ==============
+            
+            // 3. Buscar packer code - REGEX MELHORADO
+            println("\n🎬 [AniTube-JW] 🔍 Buscando packer code com regex...")
+            
+            // TENTAR VÁRIOS REGEX DIFERENTES
+            val regexPatterns = listOf(
+                // Padrão 1: JavaScript padrão
+                """eval\s*\(\s*function\s*\(\s*p\s*,\s*a\s*,\s*c\s*,\s*k\s*,\s*e\s*,\s*d\s*\).*?\}\(\s*'([^']+)'\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*'([^']+)'""",
                 
-                val p = match.groupValues[1].replace("\\'", "'")
-                val a = match.groupValues[2].toIntOrNull() ?: 62
-                val c = match.groupValues[3].toIntOrNull() ?: 361
-                val k = match.groupValues[4]
+                // Padrão 2: Versão mais simples
+                """eval\(function\(p,a,c,k,e,d\).*?\('([^']+)',(\d+),(\d+),'([^']+)'""",
+                
+                // Padrão 3: Com qualquer whitespace
+                """eval\s*\(\s*function\s*\(\s*p\s*,\s*a\s*,\s*c\s*,\s*k\s*,\s*e\s*,\s*d\s*\).*?}\s*\(\s*'([^']+)'\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*'([^']+)'""",
+                
+                // Padrão 4: Buscar qualquer coisa que pareça packer
+                """function\(p,a,c,k,e,d\).*?}\s*\(\s*'([^']+)'\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*'([^']+)'""",
+                
+                // Padrão 5: Muito genérico
+                """}\s*\(\s*'([^']{100,})'\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*'([^']{100,})'"""
+            )
+            
+            var foundMatch: MatchResult? = null
+            var usedPatternIndex = -1
+            
+            regexPatterns.forEachIndexed { index, pattern ->
+                if (foundMatch == null) {
+                    println("🎬 [AniTube-JW] Tentando padrão ${index + 1}...")
+                    val regex = Regex(pattern, RegexOption.DOT_MATCHES_ALL)
+                    val match = regex.find(playerHtml)
+                    if (match != null) {
+                        foundMatch = match
+                        usedPatternIndex = index
+                        println("🎬 [AniTube-JW] ✅ Padrão ${index + 1} encontrou match!")
+                    }
+                }
+            }
+            
+            if (foundMatch != null && foundMatch!!.groupValues.size >= 5) {
+                println("🎬 [AniTube-JW] ✅ Packer code encontrado! (Padrão ${usedPatternIndex + 1})")
+                
+                val p = foundMatch!!.groupValues[1].replace("\\'", "'")
+                val a = foundMatch!!.groupValues[2].toIntOrNull() ?: 62
+                val c = foundMatch!!.groupValues[3].toIntOrNull() ?: 361
+                val k = foundMatch!!.groupValues[4]
+                
+                println("🎬 [AniTube-JW] 📦 Parâmetros unpack:")
+                println("🎬 [AniTube-JW]   - p length: ${p.length}")
+                println("🎬 [AniTube-JW]   - a: $a")
+                println("🎬 [AniTube-JW]   - c: $c")
+                println("🎬 [AniTube-JW]   - k length: ${k.length}")
+                println("🎬 [AniTube-JW]   - k preview: ${k.take(100)}...")
+                
+                // Verificar se k tem pipes
+                val hasPipes = k.contains("|")
+                println("🎬 [AniTube-JW]   - k tem pipes (|): $hasPipes")
+                if (!hasPipes) {
+                    println("🎬 [AniTube-JW] ⚠️  AVISO: k não tem pipes - pode não ser um packer válido!")
+                }
                 
                 println("🎬 [AniTube-JW] 📦 Executando unpack...")
                 val decoded = unpack(p, a, c, k)
@@ -272,14 +346,74 @@ class AniTube : MainAPI() {
                 }
                 
             } else {
-                println("🎬 [AniTube-JW] ❌ Packer code NÃO encontrado!")
+                println("🎬 [AniTube-JW] ❌ NENHUM packer code encontrado com nenhum padrão!")
+                
+                // MOSTRAR PARTES DO HTML QUE PODEM TER O PACKER
+                println("\n🔍 [AniTube-JW] 🕵️‍♂️ ANALISANDO HTML PARA PACKER...")
+                
+                // Procurar por 'p,a,c,k' no HTML
+                val packerIndicators = listOf("p,a,c,k", "'|'", "split('|')", ".split('|')")
+                packerIndicators.forEach { indicator ->
+                    if (playerHtml.contains(indicator)) {
+                        println("🔍 [AniTube-JW] ✅ HTML contém '$indicator'")
+                    }
+                }
+                
+                // Procurar por texto que parece packer (muito código)
+                val lines = playerHtml.split("\n")
+                lines.forEachIndexed { index, line ->
+                    if (line.length > 200 && line.contains("eval")) {
+                        println("\n🔍 [AniTube-JW] 📄 Linha $index (${line.length} chars):")
+                        println(line.take(200))
+                    }
+                }
+                
                 println("🎬 [AniTube-JW] 🔍 Buscando links diretos...")
                 
                 val directUrls = Regex("""https?://[^"'\s]*\.googlevideo\.com/[^"'\s]*""").findAll(playerHtml)
-                directUrls.forEach { urlMatch ->
+                val directUrlList = directUrls.toList()
+                println("🎬 [AniTube-JW] Links googlevideo encontrados: ${directUrlList.size}")
+                
+                directUrlList.forEachIndexed { index, urlMatch ->
                     val url = urlMatch.value
                     if (url.contains("itag=")) {
-                        println("🎬 [AniTube-JW] 🔗 Link direto: ${url.take(80)}...")
+                        println("🎬 [AniTube-JW] 🔗 Link direto $index: ${url.take(80)}...")
+                        
+                        // Adicionar link direto também
+                        val quality = when {
+                            url.contains("itag=37") || url.contains("itag=46") -> 1080
+                            url.contains("itag=22") || url.contains("itag=45") -> 720
+                            url.contains("itag=59") || url.contains("itag=44") -> 480
+                            url.contains("itag=18") || url.contains("itag=43") -> 360
+                            else -> 360
+                        }
+                        
+                        val qualityLabel = when (quality) {
+                            1080 -> "1080p"
+                            720 -> "720p"
+                            480 -> "480p"
+                            360 -> "360p"
+                            else -> "SD"
+                        }
+                        
+                        links.add(
+                            newExtractorLink(
+                                name,
+                                "Direto ($qualityLabel)",
+                                url,
+                                ExtractorLinkType.VIDEO
+                            ) {
+                                this.referer = "https://api.anivideo.net/"
+                                this.quality = quality
+                                this.headers = mapOf(
+                                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                                    "Origin" to "https://api.anivideo.net",
+                                    "Referer" to "https://api.anivideo.net/",
+                                    "Accept" to "*/*",
+                                    "Accept-Language" to "pt-BR,pt;q=0.9,en;q=0.8"
+                                )
+                            }
+                        )
                     }
                 }
             }
@@ -289,7 +423,7 @@ class AniTube : MainAPI() {
             e.printStackTrace()
         }
         
-        println("🎬 [AniTube-JW] 📊 Total links JW Player: ${links.size}")
+        println("🎬 [AniTube-JW] 📊 Total links retornados: ${links.size}")
         println("🎬".repeat(50))
         return links
     }
@@ -566,266 +700,3 @@ class AniTube : MainAPI() {
         "Shounen" to "shounen", "Slice Of Life" to "slice%20of%20life", "Sobrenatural" to "sobrenatural",
         "Superpoder" to "superpoder", "Terror" to "terror", "Vida Escolar" to "vida%20escolar",
         "Shoujo" to "shoujo", "Shounen-ai" to "shounen%20ai", "Yaoi" to "yaoi",
-        "Yuri" to "yuri", "Harem" to "harem", "Isekai" to "isekai", "Militar" to "militar",
-        "Policial" to "policial", "Psicológico" to "psicologico", "Samurai" to "samurai",
-        "Vampiros" to "vampiros", "Zumbi" to "zumbi", "Histórico" to "historico",
-        "Mágica" to "magica", "Cyberpunk" to "cyberpunk", "Espaço" to "espaco",
-        "Demônios" to "demônios", "Vida Cotidiana" to "vida%20cotidiana"
-    )
-
-    override val mainPage = mainPageOf(
-        "$mainUrl" to "Últimos Episódios",
-        "$mainUrl" to "Animes Mais Vistos",
-        "$mainUrl" to "Animes Recentes",
-        *genresMap.map { (genre, slug) -> "$mainUrl/?s=$slug" to genre }.toTypedArray()
-    )
-
-    private fun Element.toEpisodeSearchResponse(): AnimeSearchResponse? {
-        val href = selectFirst("a")?.attr("href") ?: return null
-        if (!href.contains("/video/")) return null
-
-        val episodeTitle = selectFirst(EPISODE_NUMBER_SELECTOR)?.text()?.trim() ?: return null
-        val episodeNumber = extractEpisodeNumber(episodeTitle) ?: 1
-        val animeTitle = extractAnimeTitleFromEpisode(episodeTitle)
-        val posterUrl = selectFirst(POSTER_SELECTOR)?.attr("src")?.let { fixUrl(it) }
-        val isDubbed = isDubbed(this)
-
-        val displayName = cleanTitle(animeTitle)
-
-        val urlWithPoster = if (posterUrl != null) {
-            "$href|poster=$posterUrl"
-        } else {
-            href
-        }
-
-        return newAnimeSearchResponse(displayName, fixUrl(urlWithPoster)) {
-            this.posterUrl = posterUrl
-            this.type = TvType.Anime
-
-            val dubStatus = if (isDubbed) DubStatus.Dubbed else DubStatus.Subbed
-            addDubStatus(dubStatus, episodeNumber)
-        }
-    }
-
-    private fun Element.toAnimeSearchResponse(): AnimeSearchResponse? {
-        val href = selectFirst("a")?.attr("href") ?: return null
-
-        val rawTitle = selectFirst(TITLE_SELECTOR)?.text()?.trim() ?: return null
-        val cleanedTitle = cleanTitle(rawTitle).ifBlank { return null }
-
-        val posterUrl = selectFirst(POSTER_SELECTOR)?.attr("src")?.let { fixUrl(it) }
-        val isDubbed = isDubbed(this)
-
-        return newAnimeSearchResponse(cleanedTitle, fixUrl(href)) {
-            this.posterUrl = posterUrl
-            this.type = TvType.Anime
-            addDubStatus(isDubbed, null)
-        }
-    }
-
-    override suspend fun getMainPage(
-        page: Int,
-        request: MainPageRequest
-    ): HomePageResponse {
-        println("\n🏠 [AniTube] getMainPage chamado")
-        println("🏠 [AniTube] Página: $page, Request: ${request.name}")
-        
-        val baseUrl = request.data
-
-        if (baseUrl.contains("/?s=")) {
-            val url = if (page > 1) baseUrl.replace("/?s=", "/page/$page/?s=") else baseUrl
-            val document = app.get(url).document
-
-            val allItems = document.select("$ANIME_CARD, $EPISODE_CARD")
-                .mapNotNull { 
-                    val isEpisode = it.selectFirst(EPISODE_NUMBER_SELECTOR) != null
-                    if (isEpisode) {
-                        it.toEpisodeSearchResponse()
-                    } else {
-                        it.toAnimeSearchResponse()
-                    }
-                }
-                .distinctBy { it.url }
-
-            return newHomePageResponse(request.name, allItems, hasNext = true)
-        }
-
-        val document = app.get(baseUrl).document
-
-        return when (request.name) {
-            "Últimos Episódios" -> {
-                val episodeElements = document.select("$LATEST_EPISODES_SECTION $EPISODE_CARD")
-                val items = episodeElements
-                    .mapNotNull { it.toEpisodeSearchResponse() }
-                    .distinctBy { it.url }
-
-                newHomePageResponse(
-                    list = HomePageList(request.name, items, isHorizontalImages = true),
-                    hasNext = false
-                )
-            }
-            "Animes Mais Vistos" -> {
-                var popularItems = listOf<AnimeSearchResponse>()
-
-                for (container in document.select(".aniContainer")) {
-                    val titleElement = container.selectFirst(".aniContainerTitulo")
-                    if (titleElement != null && titleElement.text().contains("Animes Mais Vistos", true)) {
-                        popularItems = container.select(".aniItem")
-                            .mapNotNull { it.toAnimeSearchResponse() }
-                            .distinctBy { it.url }
-                            .take(10)
-                        break
-                    }
-                }
-
-                if (popularItems.isEmpty()) {
-                    val slides = document.select("#splide01 .splide__slide")
-                        .filterNot { it.hasClass("splide__slide--clone") }
-
-                    popularItems = slides
-                        .mapNotNull { slide ->
-                            slide.selectFirst(".aniItem")?.toAnimeSearchResponse()
-                        }
-                        .distinctBy { it.url }
-                        .take(10)
-                }
-
-                newHomePageResponse(
-                    list = HomePageList(request.name, popularItems, isHorizontalImages = false),
-                    hasNext = false
-                )
-            }
-            "Animes Recentes" -> {
-                var recentItems = listOf<AnimeSearchResponse>()
-
-                for (container in document.select(".aniContainer")) {
-                    val titleElement = container.selectFirst(".aniContainerTitulo")
-                    if (titleElement != null && titleElement.text().contains("ANIMES RECENTES", true)) {
-                        recentItems = container.select(".aniItem")
-                            .mapNotNull { it.toAnimeSearchResponse() }
-                            .distinctBy { it.url }
-                            .take(10)
-                        break
-                    }
-                }
-
-                if (recentItems.isEmpty()) {
-                    val slides = document.select("#splide02 .splide__slide")
-                        .filterNot { it.hasClass("splide__slide--clone") }
-
-                    recentItems = slides
-                        .mapNotNull { slide ->
-                            slide.selectFirst(".aniItem")?.toAnimeSearchResponse()
-                        }
-                        .distinctBy { it.url }
-                        .take(10)
-                }
-
-                newHomePageResponse(
-                    list = HomePageList(request.name, recentItems, isHorizontalImages = false),
-                    hasNext = false
-                )
-            }
-            else -> newHomePageResponse(request.name, emptyList(), hasNext = false)
-        }
-    }
-
-    override suspend fun search(query: String): List<SearchResponse> {
-        println("\n🔍 [AniTube] search chamado")
-        println("🔍 [AniTube] Query: $query")
-        
-        if (query.length < 2) return emptyList()
-
-        val document = app.get("$mainUrl$SEARCH_PATH${query.replace(" ", "+")}").document
-
-        return document.select("$ANIME_CARD, $EPISODE_CARD")
-            .mapNotNull { 
-                val isEpisode = it.selectFirst(EPISODE_NUMBER_SELECTOR) != null
-                if (isEpisode) {
-                    it.toEpisodeSearchResponse()
-                } else {
-                    it.toAnimeSearchResponse()
-                }
-            }
-            .distinctBy { it.url }
-    }
-
-    override suspend fun load(url: String): LoadResponse {
-        println("\n📥 [AniTube] load chamado")
-        println("📥 [AniTube] URL: $url")
-        
-        val parts = url.split("|poster=")
-        val actualUrl = parts[0]
-        val thumbPoster = parts.getOrNull(1)?.let { if (it.isNotBlank()) fixUrl(it) else null }
-
-        val document = app.get(actualUrl).document
-
-        val rawTitle = document.selectFirst(ANIME_TITLE)?.text()?.trim() ?: "Sem Título"
-        val episodeNumber = extractEpisodeNumber(rawTitle) ?: 1
-        val title = cleanTitle(rawTitle)
-
-        val poster = thumbPoster ?: document.selectFirst(ANIME_POSTER)?.attr("src")?.let { fixUrl(it) }
-
-        val siteSynopsis = document.selectFirst(ANIME_SYNOPSIS)?.text()?.trim()
-
-        val synopsis = if (actualUrl.contains("/video/")) {
-            siteSynopsis ?: "Episódio $episodeNumber de $title"
-        } else {
-            siteSynopsis ?: "Sinopse não disponível."
-        }
-
-        var year: Int? = null
-        var episodes: Int? = null
-        var genres = emptyList<String>()
-        var audioType = ""
-
-        document.select(ANIME_METADATA).forEach { element ->
-            val text = element.text()
-            when {
-                text.contains("Gênero:", true) -> genres = text.substringAfter("Gênero:").split(",").map { it.trim() }
-                text.contains("Ano:", true) -> year = text.substringAfter("Ano:").trim().toIntOrNull()
-                text.contains("Episódios:", true) -> episodes = text.substringAfter("Episódios:").trim().toIntOrNull()
-                text.contains("Tipo de Episódio:", true) -> audioType = text.substringAfter("Tipo de Episódio:").trim()
-            }
-        }
-
-        val isDubbed = rawTitle.contains("dublado", true) || audioType.contains("dublado", true)
-
-        val episodesList = document.select(EPISODE_LIST).mapNotNull { element ->
-            val episodeTitle = element.text().trim()
-            val episodeUrl = element.attr("href")
-            val epNumber = extractEpisodeNumber(episodeTitle) ?: 1
-
-            newEpisode(episodeUrl) {
-                this.name = "Episódio $epNumber"
-                this.episode = epNumber
-                this.posterUrl = poster
-            }
-        }
-
-        val allEpisodes = if (episodesList.isEmpty() && actualUrl.contains("/video/")) {
-            listOf(newEpisode(actualUrl) {
-                this.name = "Episódio $episodeNumber"
-                this.episode = episodeNumber
-                this.posterUrl = poster
-            })
-        } else {
-            episodesList
-        }
-
-        val sortedEpisodes = allEpisodes.sortedBy { it.episode }
-        val showStatus = if (episodes != null && sortedEpisodes.size >= episodes) ShowStatus.Completed else ShowStatus.Ongoing
-
-        println("📥 [AniTube] ✅ Load concluído: $title (Ep: $episodeNumber)")
-        
-        return newAnimeLoadResponse(title, actualUrl, TvType.Anime) {
-            this.posterUrl = poster
-            this.year = year
-            this.plot = synopsis
-            this.tags = genres
-            this.showStatus = showStatus
-
-            if (sortedEpisodes.isNotEmpty()) addEpisodes(if (isDubbed) DubStatus.Dubbed else DubStatus.Subbed, sortedEpisodes)
-        }
-    }
-}
