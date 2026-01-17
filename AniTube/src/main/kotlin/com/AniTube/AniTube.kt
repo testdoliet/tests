@@ -5,7 +5,6 @@ import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.network.*
 import org.jsoup.nodes.Element
 import java.net.URLDecoder
-import kotlin.math.max
 import kotlin.math.min
 
 class AniTube : MainAPI() {
@@ -154,7 +153,7 @@ class AniTube : MainAPI() {
         return links.distinct()
     }
 
-    // ============== JW PLAYER EXTRACTION COM DEBUG COMPLETO ==============
+    // ============== JW PLAYER EXTRACTION COM LOGS DETALHADOS ==============
     private suspend fun extractJWPlayerLinks(iframeSrc: String, videoUrl: String): List<ExtractorLink> {
         println("\n" + "🎬".repeat(50))
         println("🎬 [AniTube-JW] INICIANDO EXTRACTION JW PLAYER")
@@ -201,40 +200,10 @@ class AniTube : MainAPI() {
             val playerHtml = response2.text
             println("🎬 [AniTube-JW] 📄 HTML obtido: ${playerHtml.length} caracteres")
             
-            // ============== DEBUG EXTREMO DO HTML ==============
-            println("\n🔍 [AniTube-JW] 🔥 DEBUG DO HTML 🔥")
-            println("🔍 [AniTube-JW] Primeiros 500 chars do HTML:")
-            println(playerHtml.take(500))
-            println("\n🔍 [AniTube-JW] Últimos 500 chars do HTML:")
-            println(playerHtml.takeLast(500))
-            
-            // Verificar se contém "eval(function(p,a,c,k,e,d)"
-            val containsEval = playerHtml.contains("eval(function(p,a,c,k,e,d)")
-            println("🔍 [AniTube-JW] Contém 'eval(function(p,a,c,k,e,d)': $containsEval")
-            
-            // Verificar se contém "eval(function"
-            val containsEval3 = playerHtml.contains("eval(function")
-            println("🔍 [AniTube-JW] Contém 'eval(function': $containsEval3")
-            
-            // Buscar TODOS os matches de eval
-            val evalPattern = """eval\s*\(function""".toRegex(RegexOption.IGNORE_CASE)
-            val evalMatches = evalPattern.findAll(playerHtml).toList()
-            println("🔍 [AniTube-JW] Total 'eval(function' encontrados: ${evalMatches.size}")
-            
-            // Mostrar contexto ao redor de cada eval
-            evalMatches.forEachIndexed { index, match ->
-                val start = max(0, match.range.first - 100)
-                val end = min(playerHtml.length, match.range.last + 300)
-                val context = playerHtml.substring(start, end)
-                println("\n🔍 [AniTube-JW] Eval $index contexto (${start}-${end}):")
-                println("...${context}...")
-            }
-            // ============== FIM DEBUG ==============
-            
-            // 3. Buscar packer code - REGEX MELHORADO
+            // 3. Buscar packer code - REGEX CORRIGIDO
             println("\n🎬 [AniTube-JW] 🔍 Buscando packer code com regex...")
             
-            // TENTAR VÁRIOS REGEX DIFERENTES
+            // TENTAR VÁRIOS REGEX DIFERENTES - CORRIGIDOS
             val regexPatterns = listOf(
                 // Padrão 1: JavaScript padrão
                 """eval\s*\(\s*function\s*\(\s*p\s*,\s*a\s*,\s*c\s*,\s*k\s*,\s*e\s*,\s*d\s*\).*?\}\(\s*'([^']+)'\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*'([^']+)'""",
@@ -242,14 +211,14 @@ class AniTube : MainAPI() {
                 // Padrão 2: Versão mais simples
                 """eval\(function\(p,a,c,k,e,d\).*?\('([^']+)',(\d+),(\d+),'([^']+)'""",
                 
-                // Padrão 3: Com qualquer whitespace
-                """eval\s*\(\s*function\s*\(\s*p\s*,\s*a\s*,\s*c\s*,\s*k\s*,\s*e\s*,\s*d\s*\).*?}\s*\(\s*'([^']+)'\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*'([^']+)'""",
+                // Padrão 3: Corrigido - removido o } extra
+                """eval\s*\(\s*function\s*\(\s*p\s*,\s*a\s*,\s*c\s*,\s*k\s*,\s*e\s*,\s*d\s*\).*?\('([^']+)'\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*'([^']+)'""",
                 
                 // Padrão 4: Buscar qualquer coisa que pareça packer
-                """function\(p,a,c,k,e,d\).*?}\s*\(\s*'([^']+)'\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*'([^']+)'""",
+                """function\(p,a,c,k,e,d\).*?\('([^']+)'\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*'([^']+)'""",
                 
                 // Padrão 5: Muito genérico
-                """}\s*\(\s*'([^']{100,})'\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*'([^']{100,})'"""
+                """}\('([^']{100,})'\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*'([^']{100,})'"""
             )
             
             var foundMatch: MatchResult? = null
@@ -258,12 +227,16 @@ class AniTube : MainAPI() {
             regexPatterns.forEachIndexed { index, pattern ->
                 if (foundMatch == null) {
                     println("🎬 [AniTube-JW] Tentando padrão ${index + 1}...")
-                    val regex = Regex(pattern, RegexOption.DOT_MATCHES_ALL)
-                    val match = regex.find(playerHtml)
-                    if (match != null) {
-                        foundMatch = match
-                        usedPatternIndex = index
-                        println("🎬 [AniTube-JW] ✅ Padrão ${index + 1} encontrou match!")
+                    try {
+                        val regex = Regex(pattern, RegexOption.DOT_MATCHES_ALL)
+                        val match = regex.find(playerHtml)
+                        if (match != null) {
+                            foundMatch = match
+                            usedPatternIndex = index
+                            println("🎬 [AniTube-JW] ✅ Padrão ${index + 1} encontrou match!")
+                        }
+                    } catch (e: Exception) {
+                        println("🎬 [AniTube-JW] ❌ Erro no padrão ${index + 1}: ${e.message}")
                     }
                 }
             }
@@ -348,27 +321,8 @@ class AniTube : MainAPI() {
             } else {
                 println("🎬 [AniTube-JW] ❌ NENHUM packer code encontrado com nenhum padrão!")
                 
-                // MOSTRAR PARTES DO HTML QUE PODEM TER O PACKER
-                println("\n🔍 [AniTube-JW] 🕵️‍♂️ ANALISANDO HTML PARA PACKER...")
-                
-                // Procurar por 'p,a,c,k' no HTML
-                val packerIndicators = listOf("p,a,c,k", "'|'", "split('|')", ".split('|')")
-                packerIndicators.forEach { indicator ->
-                    if (playerHtml.contains(indicator)) {
-                        println("🔍 [AniTube-JW] ✅ HTML contém '$indicator'")
-                    }
-                }
-                
-                // Procurar por texto que parece packer (muito código)
-                val lines = playerHtml.split("\n")
-                lines.forEachIndexed { index, line ->
-                    if (line.length > 200 && line.contains("eval")) {
-                        println("\n🔍 [AniTube-JW] 📄 Linha $index (${line.length} chars):")
-                        println(line.take(200))
-                    }
-                }
-                
-                println("🎬 [AniTube-JW] 🔍 Buscando links diretos...")
+                // Buscar diretamente no HTML por googlevideo.com
+                println("🎬 [AniTube-JW] 🔍 Buscando links googlevideo.com diretamente no HTML...")
                 
                 val directUrls = Regex("""https?://[^"'\s]*\.googlevideo\.com/[^"'\s]*""").findAll(playerHtml)
                 val directUrlList = directUrls.toList()
@@ -699,7 +653,7 @@ class AniTube : MainAPI() {
         "Romance" to "romance", "Seinen" to "seinen", "Shoujo-ai" to "shoujo%20ai",
         "Shounen" to "shounen", "Slice Of Life" to "slice%20of%20life", "Sobrenatural" to "sobrenatural",
         "Superpoder" to "superpoder", "Terror" to "terror", "Vida Escolar" to "vida%20escolar",
-           "Shoujo" to "shoujo", "Shounen-ai" to "shounen%20ai", "Yaoi" to "yaoi",
+        "Shoujo" to "shoujo", "Shounen-ai" to "shounen%20ai", "Yaoi" to "yaoi",
         "Yuri" to "yuri", "Harem" to "harem", "Isekai" to "isekai", "Militar" to "militar",
         "Policial" to "policial", "Psicológico" to "psicologico", "Samurai" to "samurai",
         "Vampiros" to "vampiros", "Zumbi" to "zumbi", "Histórico" to "historico",
