@@ -1190,7 +1190,7 @@ class AniTube : MainAPI() {
         "Demônios" to "demônios", "Vida Cotidiana" to "vida%20cotidiana"
     )
 
-    override val mainPage = mainPageof(
+    override val mainPage = mainPageOf(
         "$mainUrl" to "Últimos Episódios",
         "$mainUrl" to "Animes Mais Vistos",
         "$mainUrl" to "Animes Recentes",
