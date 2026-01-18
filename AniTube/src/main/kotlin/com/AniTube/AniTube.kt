@@ -179,12 +179,10 @@ class AniTube : MainAPI() {
                     if (redirectUrl != null) {
                         println("🔄 [AniTube] Redirect para: $redirectUrl")
                         val finalResponse = app.get(redirectUrl, headers = EXTRACTION_HEADERS)
-                        processResponse(finalResponse.text, callback)
-                        linksFound = true
+                        linksFound = processResponse(finalResponse.text, callback)
                     }
                 } else if (iframeResponse.code == 200) {
-                    processResponse(iframeResponse.text, callback)
-                    linksFound = true
+                    linksFound = processResponse(iframeResponse.text, callback)
                 }
                 
             } catch (e: Exception) {
@@ -198,9 +196,10 @@ class AniTube : MainAPI() {
     // ======================================================================
     // FUNÇÕES AUXILIARES (usadas apenas no loadLinks)
     // ======================================================================
-    private fun processResponse(html: String, callback: (ExtractorLink) -> Unit) {
-        if (html.isBlank()) return
+    private suspend fun processResponse(html: String, callback: (ExtractorLink) -> Unit): Boolean {
+        if (html.isBlank()) return false
         
+        var linksFound = false
         val decoded = decodePacked(html)
         if (decoded != null) {
             println("✅ [AniTube] Conteúdo decodificado com sucesso")
@@ -208,10 +207,10 @@ class AniTube : MainAPI() {
             // Extrair todos os links de vídeo
             val videoLinks = extractVideoLinks(decoded)
             
-            videoLinks.forEach { videoUrl ->
+            for (videoUrl in videoLinks) {
                 println("🎬 [AniTube] Link encontrado: $videoUrl")
                 
-                // ✅ SEMPRE adicionar headers com User-Agent Android
+                // ✅ CORRIGIDO: Chamada suspend dentro de função suspend
                 callback(newExtractorLink(
                     name, 
                     "AniTube Player", 
@@ -222,10 +221,13 @@ class AniTube : MainAPI() {
                     this.headers = STREAM_HEADERS
                     this.quality = extractQuality(videoUrl)
                 })
+                linksFound = true
             }
         } else {
             println("⚠️ [AniTube] Não foi possível decodificar o conteúdo")
         }
+        
+        return linksFound
     }
 
     private fun extractVideoLinks(html: String): List<String> {
