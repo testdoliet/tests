@@ -14,7 +14,7 @@ class AniTube : MainAPI() {
     override val usesWebView = false
 
     companion object {
-        // HEADERS EXATOS DO SEU JSON (exatamente como estão no seu JSON)
+        // HEADERS EXATOS DO SEU JSON
         private val EXACT_VIDEO_HEADERS = mapOf(
             "accept" to "*/*",
             "accept-language" to "pt-br",
@@ -27,18 +27,10 @@ class AniTube : MainAPI() {
             "sec-fetch-mode" to "no-cors",
             "user-agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
             "x-client-data" to "COD2ygE=",
-            // Headers adicionais que são necessários
+            // Headers adicionais
             "referer" to "https://www.blogger.com/",
             "origin" to "https://www.anitube.news",
             "connection" to "keep-alive"
-        )
-        
-        // Headers para navegação no site (mais simples)
-        private val NAV_HEADERS = mapOf(
-            "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
-            "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-            "Accept-Language" to "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
-            "Referer" to "$mainUrl/"
         )
 
         private const val SEARCH_PATH = "/?s="
@@ -60,12 +52,12 @@ class AniTube : MainAPI() {
     // FUNÇÕES DE NAVEGAÇÃO
     // ======================================================================
     override val mainPage = mainPageOf(
-        "$mainUrl" to "Últimos Episódios",
-        "$mainUrl" to "Animes Mais Vistos"
+        "https://www.anitube.news" to "Últimos Episódios",
+        "https://www.anitube.news" to "Animes Mais Vistos"
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val document = app.get(request.data, headers = NAV_HEADERS).document
+        val document = app.get(request.data).document
         val items = document.select("$ANIME_CARD, $EPISODE_CARD").mapNotNull { 
             it.toSearchResponse()
         }.distinctBy { it.url }
@@ -73,7 +65,7 @@ class AniTube : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        return app.get("$mainUrl$SEARCH_PATH${query.replace(" ", "+")}", headers = NAV_HEADERS).document
+        return app.get("https://www.anitube.news$SEARCH_PATH${query.replace(" ", "+")}").document
             .select("$ANIME_CARD, $EPISODE_CARD")
             .mapNotNull { it.toSearchResponse() }
     }
@@ -86,7 +78,7 @@ class AniTube : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse {
-        val doc = app.get(url, headers = NAV_HEADERS).document
+        val doc = app.get(url).document
         val title = doc.selectFirst(ANIME_TITLE)?.text() ?: "Anime"
         return newAnimeLoadResponse(title, url, TvType.Anime) {
             this.posterUrl = doc.selectFirst(ANIME_POSTER)?.attr("src")
@@ -106,7 +98,7 @@ class AniTube : MainAPI() {
         Regex("\\d+").find(title)?.value?.toIntOrNull()
 
     // ======================================================================
-    // LOADLINKS - USANDO newExtractorLink CORRETAMENTE
+    // LOADLINKS - CORRIGIDO
     // ======================================================================
     override suspend fun loadLinks(
         data: String,
@@ -118,7 +110,7 @@ class AniTube : MainAPI() {
         println("\n🎯 [AniTube] Carregando links de: $actualUrl")
 
         // 1. Carregar página do episódio
-        val document = app.get(actualUrl, headers = NAV_HEADERS).document
+        val document = app.get(actualUrl).document
         var linksFound = false
 
         // 2. Primeiro tentar os players principais
@@ -127,12 +119,14 @@ class AniTube : MainAPI() {
             if (src.isNotBlank()) {
                 println("🔗 [AniTube] Player FHD encontrado: $src")
                 
-                callback(newExtractorLink(name, "Player FHD", src, ExtractorLinkType.M3U8) {
-                    // USANDO OS HEADERS EXATOS AQUI
-                    this.headers = EXACT_VIDEO_HEADERS
-                    this.referer = "$mainUrl/"
-                    this.quality = Qualities.Unknown.value
-                })
+                // Usando runBlocking para chamar a suspend function
+                runBlocking {
+                    callback(newExtractorLink(name, "Player FHD", src, ExtractorLinkType.M3U8) {
+                        this.headers = EXACT_VIDEO_HEADERS
+                        this.referer = "https://www.anitube.news/"
+                        this.quality = Qualities.Unknown.value
+                    })
+                }
                 linksFound = true
             }
         }
@@ -144,11 +138,13 @@ class AniTube : MainAPI() {
                 if (src.isNotBlank()) {
                     println("🔗 [AniTube] Player Backup encontrado: $src")
                     
-                    callback(newExtractorLink(name, "Player Backup", src, ExtractorLinkType.M3U8) {
-                        this.headers = EXACT_VIDEO_HEADERS
-                        this.referer = "$mainUrl/"
-                        this.quality = 720
-                    })
+                    runBlocking {
+                        callback(newExtractorLink(name, "Player Backup", src, ExtractorLinkType.M3U8) {
+                            this.headers = EXACT_VIDEO_HEADERS
+                            this.referer = "https://www.anitube.news/"
+                            this.quality = 720
+                        })
+                    }
                     linksFound = true
                 }
             }
@@ -164,14 +160,15 @@ class AniTube : MainAPI() {
                     // Acessar o iframe para extrair links
                     try {
                         println("📡 [AniTube] Acessando iframe...")
-                        val iframeResponse = app.get(src, headers = NAV_HEADERS)
+                        val iframeResponse = app.get(src)
                         
                         if (iframeResponse.code == 200) {
                             val html = iframeResponse.text
                             val decoded = decodePacked(html) ?: html
                             
                             // Extrair links do Google Video
-                            extractGoogleVideoLinks(decoded, callback)?.let { found ->
+                            runBlocking {
+                                val found = extractGoogleVideoLinks(decoded, callback)
                                 linksFound = found
                             }
                         }
@@ -193,11 +190,13 @@ class AniTube : MainAPI() {
                     if (!alreadyAdded) {
                         println("🔗 [AniTube] Iframe $index encontrado: $src")
                         
-                        callback(newExtractorLink(name, "Player Auto", src, ExtractorLinkType.M3U8) {
-                            this.headers = EXACT_VIDEO_HEADERS
-                            this.referer = "$mainUrl/"
-                            this.quality = 720
-                        })
+                        runBlocking {
+                            callback(newExtractorLink(name, "Player Auto", src, ExtractorLinkType.M3U8) {
+                                this.headers = EXACT_VIDEO_HEADERS
+                                this.referer = "https://www.anitube.news/"
+                                this.quality = 720
+                            })
+                        }
                         linksFound = true
                     }
                 }
@@ -211,7 +210,7 @@ class AniTube : MainAPI() {
         return linksFound
     }
 
-    private fun extractGoogleVideoLinks(html: String, callback: (ExtractorLink) -> Unit): Boolean {
+    private suspend fun extractGoogleVideoLinks(html: String, callback: (ExtractorLink) -> Unit): Boolean {
         var found = false
         
         // Regex para links do Google Video
@@ -234,7 +233,6 @@ class AniTube : MainAPI() {
                 }
                 
                 callback(newExtractorLink(name, "AniTube Player", videoUrl, ExtractorLinkType.VIDEO) {
-                    // HEADERS EXATOS DO JSON!
                     this.headers = EXACT_VIDEO_HEADERS
                     this.referer = "https://www.blogger.com/"
                     this.quality = quality
