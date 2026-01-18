@@ -43,15 +43,26 @@ class AniTube : MainAPI() {
             val radix = aStr.toInt()
             val count = cStr.toInt()
             val keywords = kStr.split("|")
-            fun encodeBase(num: Int): String = if (num < radix) charset[num].toString() else encodeBase(num / radix) + charset[num % radix]
+            
+            // CORREÇÃO: Usar string para o charset
             val charset = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+            
+            fun encodeBase(num: Int): String = if (num < radix) {
+                charset[num].toString() // CORREÇÃO: acessar char por índice
+            } else {
+                encodeBase(num / radix) + charset[num % radix]
+            }
+            
             val dict = HashMap<String, String>()
             for (i in 0 until count) {
                 val key = encodeBase(i)
                 val value = keywords.getOrNull(i)?.takeIf { it.isNotEmpty() } ?: key
                 dict[key] = value
             }
-            return payload.replace(Regex("\\b\\w+\\b")) { r -> dict[r.value] ?: r.value }
+            
+            return payload.replace(Regex("\\b\\w+\\b")) { r -> 
+                dict[r.value] ?: r.value 
+            }
         } catch (e: Exception) { 
             e.printStackTrace()
             return null 
@@ -214,7 +225,7 @@ class AniTube : MainAPI() {
                     "Referer" to initialSrc, // Referer do iframe inicial
                     "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
                     "Accept-Language" to "pt-BR,pt;q=0.9,en;q=0.8",
-                    "Origin" to URLUtils.getBaseUrl(initialSrc),
+                    "Origin" to getBaseUrl(initialSrc), // CORREÇÃO: função personalizada
                     "Connection" to "keep-alive"
                 )
 
@@ -235,7 +246,7 @@ class AniTube : MainAPI() {
                     "Referer" to playerUrl, // Referer do player
                     "Accept" to "*/*",
                     "Accept-Language" to "pt-BR,pt;q=0.9,en;q=0.8",
-                    "Origin" to URLUtils.getBaseUrl(playerUrl),
+                    "Origin" to getBaseUrl(playerUrl), // CORREÇÃO: função personalizada
                     "Connection" to "keep-alive"
                 )
 
@@ -328,5 +339,15 @@ class AniTube : MainAPI() {
 
         println("${if (linksFound) "✅" else "❌"} [AniTube] LoadLinks finalizado: ${if (linksFound) "Links encontrados" else "Nenhum link encontrado"}")
         return linksFound
+    }
+
+    // Função auxiliar para obter a URL base
+    private fun getBaseUrl(url: String): String {
+        return try {
+            val uri = java.net.URI(url)
+            "${uri.scheme}://${uri.host}"
+        } catch (e: Exception) {
+            "https://www.anitube.news"
+        }
     }
 }
