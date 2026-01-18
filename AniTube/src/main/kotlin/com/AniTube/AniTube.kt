@@ -30,25 +30,24 @@ class AniTube : MainAPI() {
         private const val PLAYER_FHD = "#blog2 iframe"
         private const val PLAYER_BACKUP = "#blog1 iframe"
 
-        // ✅ USER-AGENT CRÍTICO - EXATAMENTE ESTE
+        // ✅ USER-AGENT CRÍTICO - USADO APENAS NO LOADLINKS
         private const val ANDROID_USER_AGENT = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36"
         
-        // Headers COMPLETOS para navegação
-        private val NAV_HEADERS = mapOf(
+        // Headers para EXTRACTION (iframe/player) - COM User-Agent Android
+        private val EXTRACTION_HEADERS = mapOf(
             "User-Agent" to ANDROID_USER_AGENT,
             "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
             "Accept-Language" to "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
-            "Accept-Encoding" to "gzip, deflate, br",
-            "Connection" to "keep-alive",
-            "Upgrade-Insecure-Requests" to "1"
+            "Referer" to "https://www.anitube.news/"
         )
 
-        // ✅ Headers CRÍTICOS para STREAMING - MÍNIMOS mas ESSENCIAIS
+        // ✅ Headers CRÍTICOS para STREAMING (links de vídeo) - MÍNIMOS mas ESSENCIAIS
         private val STREAM_HEADERS = mapOf(
-            "User-Agent" to ANDROID_USER_AGENT,  // ✅ ESSENCIAL
+            "User-Agent" to ANDROID_USER_AGENT,  // ✅ ESSENCIAL - SEM ISSO DÁ 403
             "Accept" to "*/*",
             "Accept-Language" to "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
-            "Accept-Encoding" to "identity"  // ✅ Importante para streaming
+            "Accept-Encoding" to "identity",
+            "Referer" to "https://www.blogger.com/"  // ✅ Referer correto para Google Video
         )
     }
 
@@ -119,11 +118,11 @@ class AniTube : MainAPI() {
     }
 
     // ======================================================================
-    // MÉTODOS PRINCIPAIS
+    // MÉTODOS PRINCIPAIS (SEM User-Agent Android aqui)
     // ======================================================================
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val url = if (page > 1 && request.data.contains("/?s=")) request.data.replace("/?s=", "/page/$page/?s=") else request.data
-        val document = app.get(url, headers = NAV_HEADERS).document
+        val document = app.get(url).document
         val items = document.select("$ANIME_CARD, $EPISODE_CARD").mapNotNull { 
             if (it.selectFirst(EPISODE_NUMBER_SELECTOR) != null) it.toEpisodeSearchResponse() else it.toAnimeSearchResponse()
         }.distinctBy { it.url }
@@ -131,13 +130,13 @@ class AniTube : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        return app.get("$mainUrl$SEARCH_PATH${query.replace(" ", "+")}", headers = NAV_HEADERS).document
+        return app.get("$mainUrl$SEARCH_PATH${query.replace(" ", "+")}").document
             .select("$ANIME_CARD, $EPISODE_CARD")
             .mapNotNull { if (it.selectFirst(EPISODE_NUMBER_SELECTOR) != null) it.toEpisodeSearchResponse() else it.toAnimeSearchResponse() }
     }
 
     override suspend fun load(url: String): LoadResponse {
-        val doc = app.get(url, headers = NAV_HEADERS).document
+        val doc = app.get(url).document
         val title = doc.selectFirst(ANIME_TITLE)?.text() ?: "Anime"
         return newAnimeLoadResponse(title, url, TvType.Anime) {
             this.posterUrl = doc.selectFirst(ANIME_POSTER)?.attr("src")
@@ -151,7 +150,7 @@ class AniTube : MainAPI() {
     }
 
     // ======================================================================
-    // EXTRAÇÃO DE LINKS - COM USER-AGENT OBRIGATÓRIO
+    // LOADLINKS - APENAS AQUI USAMOS USER-AGENT ANDROID
     // ======================================================================
     override suspend fun loadLinks(
         data: String,
@@ -162,7 +161,7 @@ class AniTube : MainAPI() {
         val actualUrl = data.split("|poster=")[0]
         println("\n🛑 [AniTube] LOAD LINKS: $actualUrl")
 
-        val document = app.get(actualUrl, headers = NAV_HEADERS).document
+        val document = app.get(actualUrl).document
         var linksFound = false
 
         document.select("iframe[src*='bg.mp4']").firstOrNull()?.let { iframe ->
@@ -170,49 +169,24 @@ class AniTube : MainAPI() {
             println("🔎 [AniTube] Iframe encontrado: $initialSrc")
             
             try {
-                // Extrair conteúdo do iframe
-                val iframeContent = app.get(initialSrc, headers = NAV_HEADERS).text
+                // ✅ ETAPA 1: Extrair conteúdo do iframe (COM User-Agent Android)
+                println("📥 [AniTube] Acessando iframe com User-Agent Android...")
+                val iframeResponse = app.get(initialSrc, headers = EXTRACTION_HEADERS)
                 
-                if (iframeContent.isNotBlank()) {
-                    val decoded = decodePacked(iframeContent)
-                    if (decoded != null) {
-                        println("📄 [AniTube] Conteúdo decodificado com sucesso")
-                        
-                        // Extrair links de vídeo
-                        val videoLinks = extractVideoLinks(decoded)
-                        
-                        videoLinks.forEach { videoUrl ->
-                            println("🎬 [AniTube] Link extraído: $videoUrl")
-                            
-                            // ✅ HEADERS CRÍTICOS - SEM ISSO NÃO FUNCIONA
-                            val headersForThisLink = if (videoUrl.contains("googlevideo.com")) {
-                                // Para Google Video: User-Agent + Aceitar qualquer coisa
-                                mapOf(
-                                    "User-Agent" to ANDROID_USER_AGENT,
-                                    "Accept" to "*/*",
-                                    "Accept-Language" to "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7"
-                                )
-                            } else {
-                                // Para outros servidores
-                                STREAM_HEADERS
-                            }
-                            
-                            callback(newExtractorLink(
-                                name, 
-                                "AniTube Player", 
-                                videoUrl, 
-                                ExtractorLinkType.VIDEO
-                            ) {
-                                // ✅ AQUI ESTÁ O SEGREDO: Forçar headers
-                                this.headers = headersForThisLink
-                                this.quality = extractQuality(videoUrl)
-                                this.referer = "https://www.blogger.com/"
-                            })
-                            
-                            linksFound = true
-                        }
+                if (iframeResponse.code in 300..399) {
+                    // Lidar com redirect
+                    val redirectUrl = iframeResponse.headers["location"] ?: iframeResponse.headers["Location"]
+                    if (redirectUrl != null) {
+                        println("🔄 [AniTube] Redirect para: $redirectUrl")
+                        val finalResponse = app.get(redirectUrl, headers = EXTRACTION_HEADERS)
+                        processResponse(finalResponse.text, callback)
+                        linksFound = true
                     }
+                } else if (iframeResponse.code == 200) {
+                    processResponse(iframeResponse.text, callback)
+                    linksFound = true
                 }
+                
             } catch (e: Exception) {
                 println("💥 [AniTube] Erro na extração: ${e.message}")
             }
@@ -221,25 +195,53 @@ class AniTube : MainAPI() {
         return linksFound
     }
 
+    // ======================================================================
+    // FUNÇÕES AUXILIARES (usadas apenas no loadLinks)
+    // ======================================================================
+    private fun processResponse(html: String, callback: (ExtractorLink) -> Unit) {
+        if (html.isBlank()) return
+        
+        val decoded = decodePacked(html)
+        if (decoded != null) {
+            println("✅ [AniTube] Conteúdo decodificado com sucesso")
+            
+            // Extrair todos os links de vídeo
+            val videoLinks = extractVideoLinks(decoded)
+            
+            videoLinks.forEach { videoUrl ->
+                println("🎬 [AniTube] Link encontrado: $videoUrl")
+                
+                // ✅ SEMPRE adicionar headers com User-Agent Android
+                callback(newExtractorLink(
+                    name, 
+                    "AniTube Player", 
+                    videoUrl, 
+                    ExtractorLinkType.VIDEO
+                ) {
+                    // ✅ AQUI ESTÁ O SEGREDO: Headers com User-Agent Android
+                    this.headers = STREAM_HEADERS
+                    this.quality = extractQuality(videoUrl)
+                })
+            }
+        } else {
+            println("⚠️ [AniTube] Não foi possível decodificar o conteúdo")
+        }
+    }
+
     private fun extractVideoLinks(html: String): List<String> {
         val links = mutableListOf<String>()
         
         // 1. Extrair links do Google Video (prioridade)
-        val googleRegex = Regex("""https?://[^"'\s]+?googlevideo\.com[^"'\s]*""")
+        val googleRegex = Regex("""https?://[^"'\s]+?googlevideo\.com/videoplayback[^"'\s]*""")
         googleRegex.findAll(html).forEach { match ->
-            links.add(match.value)
-        }
-        
-        // 2. Extrair links MP4 genéricos
-        val mp4Regex = Regex("""https?://[^"'\s]+?\.mp4[^"'\s]*""")
-        mp4Regex.findAll(html).forEach { match ->
             val link = match.value
-            if (!link.contains("googlevideo.com")) {
+            // Filtrar apenas links válidos (com parâmetros)
+            if (link.contains("expire=") && link.contains("itag=")) {
                 links.add(link)
             }
         }
         
-        // 3. Extrair M3U8
+        // 2. Extrair M3U8
         val m3u8Regex = Regex("""https?://[^"'\s]+?\.m3u8[^"'\s]*""")
         m3u8Regex.findAll(html).forEach { match ->
             links.add(match.value)
@@ -250,10 +252,10 @@ class AniTube : MainAPI() {
 
     private fun extractQuality(url: String): Int {
         return when {
-            url.contains("itag=37") || url.contains("1080p") -> 1080
-            url.contains("itag=22") || url.contains("720p") -> 720
-            url.contains("itag=18") || url.contains("360p") -> 360
-            url.contains("itag=59") -> 480
+            url.contains("itag=37") || url.contains("itag=137") -> 1080
+            url.contains("itag=22") || url.contains("itag=136") -> 720
+            url.contains("itag=59") || url.contains("itag=135") -> 480
+            url.contains("itag=18") -> 360
             url.contains("itag=43") -> 360
             else -> 360
         }
