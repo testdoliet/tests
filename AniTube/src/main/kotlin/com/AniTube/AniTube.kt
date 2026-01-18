@@ -31,43 +31,22 @@ class AniTube : MainAPI() {
         private const val PLAYER_FHD = "#blog2 iframe"
         private const val PLAYER_BACKUP = "#blog1 iframe"
 
-        // ✅ USER-AGENT ÚNICO PARA TODO O CÓDIGO
-        private const val USER_AGENT = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36"
+        // ✅ USER-AGENT DO ANDROID
+        private const val USER_AGENT_ANDROID = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36"
         
-        // Headers de navegação (site)
-        val NAVIGATION_HEADERS = mapOf(
-            "User-Agent" to USER_AGENT,
+        // Headers de navegação (Android)
+        private val NAVIGATION_HEADERS = mapOf(
+            "User-Agent" to USER_AGENT_ANDROID,
             "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
             "Accept-Language" to "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
-            "Accept-Encoding" to "gzip, deflate, br",
-            "Connection" to "keep-alive",
-            "Upgrade-Insecure-Requests" to "1"
+            "Referer" to "https://www.anitube.news/"
         )
 
-        // Headers de extração (player intermediário)
-        val EXTRACTION_HEADERS = mapOf(
-            "User-Agent" to USER_AGENT,
-            "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-            "Accept-Language" to "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
-            "Accept-Encoding" to "gzip, deflate, br",
-            "Connection" to "keep-alive",
-            "Upgrade-Insecure-Requests" to "1",
-            "Sec-Fetch-Dest" to "iframe",
-            "Sec-Fetch-Mode" to "navigate",
-            "Sec-Fetch-Site" to "cross-site"
-        )
-
-        // Headers do Player (para stream final)
-        val PLAYER_HEADERS = mapOf(
-            "User-Agent" to USER_AGENT,
+        // Headers do Player (Android + Blogger)
+        private val PLAYER_HEADERS = mapOf(
+            "User-Agent" to USER_AGENT_ANDROID,
             "Referer" to "https://www.blogger.com/",
-            "Accept" to "*/*",
-            "Accept-Language" to "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
-            "Accept-Encoding" to "identity;q=1, *;q=0",
-            "Range" to "bytes=0-",
-            "Sec-Fetch-Dest" to "video",
-            "Sec-Fetch-Mode" to "no-cors",
-            "Sec-Fetch-Site" to "cross-site"
+            "Accept" to "*/*"
         )
     }
 
@@ -145,11 +124,10 @@ class AniTube : MainAPI() {
     }
 
     // ======================================================================
-    // 3. MÉTODOS PRINCIPAIS (com headers consistentes)
+    // 3. MÉTODOS PRINCIPAIS (agora com headers Android)
     // ======================================================================
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val url = if (page > 1 && request.data.contains("/?s=")) request.data.replace("/?s=", "/page/$page/?s=") else request.data
-        // ✅ Usa NAVIGATION_HEADERS para navegação no site
         val document = app.get(url, headers = NAVIGATION_HEADERS).document
         val items = document.select("$ANIME_CARD, $EPISODE_CARD").mapNotNull { 
             if (it.selectFirst(EPISODE_NUMBER_SELECTOR) != null) it.toEpisodeSearchResponse() else it.toAnimeSearchResponse()
@@ -158,14 +136,12 @@ class AniTube : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        // ✅ Usa NAVIGATION_HEADERS para busca
         return app.get("$mainUrl$SEARCH_PATH${query.replace(" ", "+")}", headers = NAVIGATION_HEADERS).document
             .select("$ANIME_CARD, $EPISODE_CARD")
             .mapNotNull { if (it.selectFirst(EPISODE_NUMBER_SELECTOR) != null) it.toEpisodeSearchResponse() else it.toAnimeSearchResponse() }
     }
 
     override suspend fun load(url: String): LoadResponse {
-        // ✅ Usa NAVIGATION_HEADERS para carregar página do anime
         val doc = app.get(url, headers = NAVIGATION_HEADERS).document
         val title = doc.selectFirst(ANIME_TITLE)?.text() ?: "Anime"
         return newAnimeLoadResponse(title, url, TvType.Anime) {
@@ -180,7 +156,7 @@ class AniTube : MainAPI() {
     }
 
     // ======================================================================
-    // 4. EXTRAÇÃO DE LINKS (com headers em todas as etapas)
+    // 4. EXTRAÇÃO DE LINKS (mantendo a lógica original mas com headers Android)
     // ======================================================================
     override suspend fun loadLinks(
         data: String,
@@ -191,7 +167,6 @@ class AniTube : MainAPI() {
         val actualUrl = data.split("|poster=")[0]
         println("\n🛑 [AniTube] LOAD LINKS: $actualUrl")
 
-        // ✅ Usa NAVIGATION_HEADERS para acessar página do episódio
         val document = app.get(actualUrl, headers = NAVIGATION_HEADERS).document
         var linksFound = false
 
@@ -200,8 +175,11 @@ class AniTube : MainAPI() {
             println("🔎 [AniTube] Iframe encontrado: $initialSrc")
             
             try {
-                // Passo 1: Extração (usando EXTRACTION_HEADERS)
-                val response1 = app.get(initialSrc, headers = EXTRACTION_HEADERS, allowRedirects = false)
+                // Passo 1: Extração (Android)
+                val extractionHeaders = NAVIGATION_HEADERS.toMutableMap()
+                extractionHeaders["Referer"] = actualUrl
+
+                val response1 = app.get(initialSrc, headers = extractionHeaders, allowRedirects = false)
                 var contentHtml = ""
 
                 if (response1.code in 300..399) {
@@ -209,8 +187,7 @@ class AniTube : MainAPI() {
                     if (location != null) {
                         println("🔄 [AniTube] Redirect: $location")
                         
-                        // Passo 2: Seguir redirect (usando EXTRACTION_HEADERS)
-                        val response2 = app.get(location, headers = EXTRACTION_HEADERS)
+                        val response2 = app.get(location, headers = NAVIGATION_HEADERS)
                         contentHtml = response2.text
                     }
                 } else if (response1.code == 200) {
@@ -232,7 +209,7 @@ class AniTube : MainAPI() {
                                 else -> 360
                             }
 
-                            // ✅ PLAYER HEADERS: COM User-Agent Android
+                            // ✅ Usando PLAYER_HEADERS com User-Agent Android
                             callback(newExtractorLink(name, "JWPlayer MP4", link, ExtractorLinkType.VIDEO) {
                                 this.headers = PLAYER_HEADERS
                                 this.quality = quality
@@ -257,14 +234,13 @@ class AniTube : MainAPI() {
         }
 
         // -----------------------------------------------------------
-        // 2. Fallbacks (FHD/Backup)
+        // 2. Fallbacks (FHD/Backup) - também com headers
         // -----------------------------------------------------------
         document.selectFirst(PLAYER_FHD)?.let { iframe ->
             val src = iframe.attr("src")
             if (src.isNotBlank() && !src.contains("bg.mp4")) {
                 val m3u8Url = extractM3u8FromUrl(src) ?: src
                 callback(newExtractorLink(name, "Player FHD", m3u8Url, ExtractorLinkType.M3U8) {
-                    // ✅ HEADERS para fallbacks também
                     this.headers = PLAYER_HEADERS
                     this.quality = 1080
                 })
@@ -276,7 +252,6 @@ class AniTube : MainAPI() {
             val src = iframe.attr("src")
             if (src.isNotBlank() && !src.contains("bg.mp4")) {
                 callback(newExtractorLink(name, "Player Backup", src, ExtractorLinkType.VIDEO) {
-                    // ✅ HEADERS para fallbacks também
                     this.headers = PLAYER_HEADERS
                     this.quality = 720
                 })
