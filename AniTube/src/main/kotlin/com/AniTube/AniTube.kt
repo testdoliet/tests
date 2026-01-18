@@ -3,7 +3,6 @@ package com.AniTube
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import org.jsoup.nodes.Element
-import java.net.URLDecoder
 
 class AniTube : MainAPI() {
     override var mainUrl = "https://www.anitube.news"
@@ -15,7 +14,7 @@ class AniTube : MainAPI() {
     override val usesWebView = false
 
     companion object {
-        // HEADERS EXATOS DO SEU JSON
+        // HEADERS EXATOS DO SEU JSON (exatamente como estão no seu JSON)
         private val EXACT_VIDEO_HEADERS = mapOf(
             "accept" to "*/*",
             "accept-language" to "pt-br",
@@ -28,18 +27,18 @@ class AniTube : MainAPI() {
             "sec-fetch-mode" to "no-cors",
             "user-agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
             "x-client-data" to "COD2ygE=",
-            // Headers adicionais ESSENCIAIS que faltam no seu JSON:
-            "referer" to "https://www.blogger.com/",  // CRÍTICO para Google Video!
-            "origin" to "https://www.anitube.news",    // Importante
-            "connection" to "keep-alive"               // Importante
+            // Headers adicionais que são necessários
+            "referer" to "https://www.blogger.com/",
+            "origin" to "https://www.anitube.news",
+            "connection" to "keep-alive"
         )
         
-        // Headers para navegação no site
+        // Headers para navegação no site (mais simples)
         private val NAV_HEADERS = mapOf(
             "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
             "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
             "Accept-Language" to "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
-            "Referer" to "https://www.anitube.news/"
+            "Referer" to "$mainUrl/"
         )
 
         private const val SEARCH_PATH = "/?s="
@@ -47,18 +46,18 @@ class AniTube : MainAPI() {
         private const val EPISODE_CARD = ".epiItem"
         private const val TITLE_SELECTOR = ".aniItemNome, .epiItemNome"
         private const val POSTER_SELECTOR = ".aniItemImg img, .epiItemImg img"
-        private const val AUDIO_BADGE_SELECTOR = ".aniCC, .epiCC"
         private const val EPISODE_NUMBER_SELECTOR = ".epiItemInfos .epiItemNome"
         private const val ANIME_TITLE = "h1"
         private const val ANIME_POSTER = "#capaAnime img"
         private const val ANIME_SYNOPSIS = "#sinopse2"
-        private const val ANIME_METADATA = ".boxAnimeSobre .boxAnimeSobreLinha"
         private const val EPISODE_LIST = ".pagAniListaContainer > a"
+        private const val PLAYER_FHD = "#blog2 iframe"
+        private const val PLAYER_BACKUP = "#blog1 iframe"
         private const val PLAYER_IFRAME = "iframe[src*='bg.mp4']"
     }
 
     // ======================================================================
-    // FUNÇÕES DE NAVEGAÇÃO (usando NAV_HEADERS)
+    // FUNÇÕES DE NAVEGAÇÃO
     // ======================================================================
     override val mainPage = mainPageOf(
         "$mainUrl" to "Últimos Episódios",
@@ -107,7 +106,7 @@ class AniTube : MainAPI() {
         Regex("\\d+").find(title)?.value?.toIntOrNull()
 
     // ======================================================================
-    // LOADLINKS - COM HEADERS EXATOS DO SEU JSON
+    // LOADLINKS - USANDO newExtractorLink CORRETAMENTE
     // ======================================================================
     override suspend fun loadLinks(
         data: String,
@@ -122,30 +121,86 @@ class AniTube : MainAPI() {
         val document = app.get(actualUrl, headers = NAV_HEADERS).document
         var linksFound = false
 
-        // 2. Encontrar iframe do player
-        document.select(PLAYER_IFRAME).firstOrNull()?.let { iframe ->
-            val iframeSrc = iframe.attr("src")
-            println("🔗 [AniTube] Iframe encontrado: $iframeSrc")
-            
-            try {
-                // 3. Acessar iframe para extrair links
-                println("📡 [AniTube] Acessando iframe...")
-                val iframeResponse = app.get(iframeSrc, headers = NAV_HEADERS)
+        // 2. Primeiro tentar os players principais
+        document.selectFirst(PLAYER_FHD)?.let { iframe ->
+            val src = iframe.attr("src")
+            if (src.isNotBlank()) {
+                println("🔗 [AniTube] Player FHD encontrado: $src")
                 
-                if (iframeResponse.code == 200) {
-                    val html = iframeResponse.text
-                    linksFound = extractLinksFromHtml(html, callback)
-                } else if (iframeResponse.code in 300..399) {
-                    // Seguir redirect
-                    val redirectUrl = iframeResponse.headers["location"] ?: iframeResponse.headers["Location"]
-                    if (redirectUrl != null) {
-                        println("🔄 [AniTube] Redirect para: $redirectUrl")
-                        val finalResponse = app.get(redirectUrl, headers = NAV_HEADERS)
-                        linksFound = extractLinksFromHtml(finalResponse.text, callback)
+                callback(newExtractorLink(name, "Player FHD", src, ExtractorLinkType.M3U8) {
+                    // USANDO OS HEADERS EXATOS AQUI
+                    this.headers = EXACT_VIDEO_HEADERS
+                    this.referer = "$mainUrl/"
+                    this.quality = Qualities.Unknown.value
+                })
+                linksFound = true
+            }
+        }
+
+        // 3. Tentar player backup
+        if (!linksFound) {
+            document.selectFirst(PLAYER_BACKUP)?.let { iframe ->
+                val src = iframe.attr("src")
+                if (src.isNotBlank()) {
+                    println("🔗 [AniTube] Player Backup encontrado: $src")
+                    
+                    callback(newExtractorLink(name, "Player Backup", src, ExtractorLinkType.M3U8) {
+                        this.headers = EXACT_VIDEO_HEADERS
+                        this.referer = "$mainUrl/"
+                        this.quality = 720
+                    })
+                    linksFound = true
+                }
+            }
+        }
+
+        // 4. Tentar iframe com bg.mp4
+        if (!linksFound) {
+            document.select(PLAYER_IFRAME).firstOrNull()?.let { iframe ->
+                val src = iframe.attr("src")
+                if (src.isNotBlank()) {
+                    println("🔗 [AniTube] Iframe bg.mp4 encontrado: $src")
+                    
+                    // Acessar o iframe para extrair links
+                    try {
+                        println("📡 [AniTube] Acessando iframe...")
+                        val iframeResponse = app.get(src, headers = NAV_HEADERS)
+                        
+                        if (iframeResponse.code == 200) {
+                            val html = iframeResponse.text
+                            val decoded = decodePacked(html) ?: html
+                            
+                            // Extrair links do Google Video
+                            extractGoogleVideoLinks(decoded, callback)?.let { found ->
+                                linksFound = found
+                            }
+                        }
+                    } catch (e: Exception) {
+                        println("💥 [AniTube] Erro ao acessar iframe: ${e.message}")
                     }
                 }
-            } catch (e: Exception) {
-                println("💥 [AniTube] Erro: ${e.message}")
+            }
+        }
+
+        // 5. Último recurso: verificar todos os iframes
+        if (!linksFound) {
+            document.select("iframe").forEachIndexed { index, iframe ->
+                val src = iframe.attr("src")
+                if (src.contains("m3u8", true) || src.contains("googlevideo", true)) {
+                    val alreadyAdded = document.selectFirst(PLAYER_FHD)?.attr("src") == src || 
+                                      document.selectFirst(PLAYER_BACKUP)?.attr("src") == src
+
+                    if (!alreadyAdded) {
+                        println("🔗 [AniTube] Iframe $index encontrado: $src")
+                        
+                        callback(newExtractorLink(name, "Player Auto", src, ExtractorLinkType.M3U8) {
+                            this.headers = EXACT_VIDEO_HEADERS
+                            this.referer = "$mainUrl/"
+                            this.quality = 720
+                        })
+                        linksFound = true
+                    }
+                }
             }
         }
 
@@ -156,59 +211,36 @@ class AniTube : MainAPI() {
         return linksFound
     }
 
-    private fun extractLinksFromHtml(html: String, callback: (ExtractorLink) -> Unit): Boolean {
+    private fun extractGoogleVideoLinks(html: String, callback: (ExtractorLink) -> Unit): Boolean {
         var found = false
         
-        // Decodificar conteúdo (se necessário)
-        val content = decodePacked(html) ?: html
-        
-        // Extrair links do Google Video
+        // Regex para links do Google Video
         val googleVideoRegex = Regex("""https?://[^"'\s]+?googlevideo\.com/videoplayback[^"'\s]*""")
         
-        googleVideoRegex.findAll(content).forEach { match ->
+        googleVideoRegex.findAll(html).forEach { match ->
             val videoUrl = match.value.trim()
             
-            // Filtrar apenas links válidos
+            // Filtrar links válidos
             if (videoUrl.contains("expire=") && videoUrl.contains("itag=")) {
-                println("✅ [AniTube] Link do Google Video: $videoUrl")
+                println("✅ [AniTube] Link do Google Video encontrado: $videoUrl")
                 
-                // Usar EXACT_VIDEO_HEADERS do seu JSON
-                callback(
-                    ExtractorLink(
-                        name,
-                        "AniTube Player",
-                        videoUrl,
-                        "$mainUrl/",
-                        Qualities.Unknown.value,
-                        false,
-                        EXACT_VIDEO_HEADERS.toMutableMap().apply {
-                            // Adicionar referer específico se necessário
-                            putIfAbsent("referer", "https://www.blogger.com/")
-                        }
-                    )
-                )
+                // Detectar qualidade baseada no itag
+                val quality = when {
+                    videoUrl.contains("itag=37") || videoUrl.contains("itag=137") -> 1080
+                    videoUrl.contains("itag=22") || videoUrl.contains("itag=136") -> 720
+                    videoUrl.contains("itag=59") || videoUrl.contains("itag=135") -> 480
+                    videoUrl.contains("itag=18") -> 360
+                    else -> 360
+                }
+                
+                callback(newExtractorLink(name, "AniTube Player", videoUrl, ExtractorLinkType.VIDEO) {
+                    // HEADERS EXATOS DO JSON!
+                    this.headers = EXACT_VIDEO_HEADERS
+                    this.referer = "https://www.blogger.com/"
+                    this.quality = quality
+                })
                 found = true
             }
-        }
-        
-        // Também procurar links M3U8
-        val m3u8Regex = Regex("""https?://[^"'\s]+?\.m3u8[^"'\s]*""")
-        m3u8Regex.findAll(content).forEach { match ->
-            val m3u8Url = match.value.trim()
-            println("✅ [AniTube] Link M3U8: $m3u8Url")
-            
-            callback(
-                ExtractorLink(
-                    name,
-                    "AniTube Player",
-                    m3u8Url,
-                    "$mainUrl/",
-                    Qualities.Unknown.value,
-                    true, // isM3u8 = true
-                    EXACT_VIDEO_HEADERS
-                )
-            )
-            found = true
         }
         
         return found
