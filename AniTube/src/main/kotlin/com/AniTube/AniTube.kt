@@ -31,16 +31,27 @@ class AniTube : MainAPI() {
         private const val PLAYER_FHD = "#blog2 iframe"
         private const val PLAYER_BACKUP = "#blog1 iframe"
 
-        // =================================================================
-        // ESTRATÉGIA: IDENTIDADE ÚNICA
-        // =================================================================
-        // Usamos este UA tanto para baixar a página quanto para tocar o vídeo.
-        // Isso garante que a assinatura do Google Video (sig) seja válida para o Player.
-        private const val COMMON_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        private const val USER_AGENT = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36"
+
+        // Headers para NAVEGAÇÃO (Extração) - Simula o navegador
+        private val EXTRACTION_HEADERS = mapOf(
+            "User-Agent" to USER_AGENT,
+            "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+            "Accept-Language" to "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+            "Referer" to "https://www.anitube.news/"
+        )
+
+        // Headers para o PLAYER (ExoPlayer) - Minimalista para evitar detecção
+        // O Google Video muitas vezes bloqueia se você enviar headers Sec-* via app nativo
+        private val PLAYER_HEADERS = mapOf(
+            "User-Agent" to USER_AGENT,
+            "Referer" to "https://www.blogger.com/", // Truque: source=blogger aceita este referer
+            "Accept" to "*/*"
+        )
     }
 
     // ======================================================================
-    // 1. DECODIFICADOR PACKER
+    // 1. DECODIFICADOR
     // ======================================================================
     private fun decodePacked(packed: String): String? {
         try {
@@ -140,7 +151,7 @@ class AniTube : MainAPI() {
     }
 
     // ======================================================================
-    // 4. EXTRAÇÃO DE LINKS (SIMPLIFICADA E SINCRONIZADA)
+    // 4. EXTRAÇÃO DE LINKS
     // ======================================================================
     override suspend fun loadLinks(
         data: String,
@@ -162,15 +173,11 @@ class AniTube : MainAPI() {
             println("🔎 [AniTube] Iframe encontrado: $initialSrc")
             
             try {
-                // Headers para a navegação (Extração)
-                // Usamos o MESMO User-Agent que será usado no player
-                val extractionHeaders = mapOf(
-                    "User-Agent" to COMMON_USER_AGENT,
-                    "Referer" to actualUrl // Referer necessário apenas para extrair do site anitube
-                )
-
-                // 1. Pega o Redirect (sem seguir automaticamente para pegar cookies se necessário, mas aqui vamos simples)
-                val response1 = app.get(initialSrc, headers = extractionHeaders, allowRedirects = false)
+                // Passo 1: Obter Redirect
+                val headersStep1 = EXTRACTION_HEADERS.toMutableMap()
+                headersStep1["Referer"] = actualUrl 
+                
+                val response1 = app.get(initialSrc, headers = headersStep1, allowRedirects = false)
                 var contentHtml = ""
 
                 if (response1.code in 300..399) {
@@ -178,14 +185,11 @@ class AniTube : MainAPI() {
                     if (location != null) {
                         println("🔄 [AniTube] Redirect: $location")
                         
-                        // 2. Pega o HTML final no anivideo.net
-                        // Importante: Referer aqui muda para a home do site, ou removemos.
-                        val finalHeaders = mapOf(
-                            "User-Agent" to COMMON_USER_AGENT,
-                            "Referer" to "https://www.anitube.news/"
-                        )
+                        // Passo 2: Obter HTML final (Referer: anitube.news)
+                        val headersStep2 = EXTRACTION_HEADERS.toMutableMap()
+                        headersStep2["Referer"] = "https://www.anitube.news/"
 
-                        val response2 = app.get(location, headers = finalHeaders)
+                        val response2 = app.get(location, headers = headersStep2)
                         contentHtml = response2.text
                     }
                 } else if (response1.code == 200) {
@@ -195,19 +199,9 @@ class AniTube : MainAPI() {
                 if (contentHtml.isNotBlank()) {
                     val decoded = decodePacked(contentHtml)
                     if (decoded != null) {
-                        
-                        // HEADERS PARA O PLAYER (EXOPLAYER)
-                        // AQUI ESTÁ O TRUQUE:
-                        // 1. O User-Agent DEVE ser idêntico ao usado acima.
-                        // 2. Não enviamos Referer para o Google Video (geralmente funciona melhor).
-                        val playerHeaders = mapOf(
-                            "User-Agent" to COMMON_USER_AGENT
-                        )
-
                         // Regex MP4
-                        val mp4Regex = Regex("https?://[^\\s'\"]+videoplayback[^\\s'\"]*")
-                        mp4Regex.findAll(decoded).forEach { match ->
-                            val link = match.value
+                        Regex("https?://[^\\s'\"]+videoplayback[^\\s'\"]*").findAll(decoded).forEach { match ->
+                            val link = match.value.replace(Regex("https://rr\\d+"), "https://rr3")
                             println("🎬 [AniTube] MP4: $link")
                             
                             val quality = when {
@@ -217,20 +211,21 @@ class AniTube : MainAPI() {
                                 else -> 360
                             }
 
+                            // PLAYER: Usamos referer do Blogger e headers limpos
                             callback(newExtractorLink(name, "JWPlayer MP4", link, ExtractorLinkType.VIDEO) {
-                                this.headers = playerHeaders
+                                this.headers = PLAYER_HEADERS
                                 this.quality = quality
                             })
                             linksFound = true
                         }
                         
                         // Regex HLS
-                        val m3u8Regex = Regex("https?://[^\\s'\"]+\\.m3u8[^\\s'\"]*")
-                        m3u8Regex.findAll(decoded).forEach { match ->
-                            println("📡 [AniTube] HLS: ${match.value}")
+                        Regex("https?://[^\\s'\"]+\\.m3u8[^\\s'\"]*").findAll(decoded).forEach { match ->
+                            val link = match.value.replace(Regex("https://rr\\d+"), "https://rr3")
+                            println("📡 [AniTube] HLS: $link")
                             
-                            callback(newExtractorLink(name, "AniTube HLS", match.value, ExtractorLinkType.M3U8) {
-                                this.headers = playerHeaders
+                            callback(newExtractorLink(name, "AniTube HLS", link, ExtractorLinkType.M3U8) {
+                                this.headers = PLAYER_HEADERS
                             })
                             linksFound = true
                         }
