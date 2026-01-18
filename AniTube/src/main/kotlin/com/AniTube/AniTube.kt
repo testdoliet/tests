@@ -22,50 +22,89 @@ class AniTube : MainAPI() {
         private const val POSTER_SELECTOR = ".aniItemImg img, .epiItemImg img"
         private const val AUDIO_BADGE_SELECTOR = ".aniCC, .epiCC"
         private const val EPISODE_NUMBER_SELECTOR = ".epiItemInfos .epiItemNome"
+        private const val LATEST_EPISODES_SECTION = ".epiContainer"
         private const val ANIME_TITLE = "h1"
         private const val ANIME_POSTER = "#capaAnime img"
         private const val ANIME_SYNOPSIS = "#sinopse2"
+        private const val ANIME_METADATA = ".boxAnimeSobre .boxAnimeSobreLinha"
         private const val EPISODE_LIST = ".pagAniListaContainer > a"
         private const val PLAYER_FHD = "#blog2 iframe"
         private const val PLAYER_BACKUP = "#blog1 iframe"
 
-        // =================================================================
-        // O ÚNICO HEADER QUE SERÁ USADO EM TUDO
-        // =================================================================
-        private const val MY_USER_AGENT = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36"
+        // Headers de extração (Navegação no site)
+        private const val USER_AGENT_PC = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         
-        // Mapa contendo APENAS o User-Agent
-        private val ONLY_UA_HEADER = mapOf(
-            "User-Agent" to MY_USER_AGENT
+        private val EXTRACTION_HEADERS = mapOf(
+            "User-Agent" to USER_AGENT_PC,
+            "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+            "Accept-Language" to "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+            "Referer" to "https://www.anitube.news/"
+        )
+
+        // Headers do Player: ESTRATÉGIA BLOGGER SPOOF
+        private val PLAYER_HEADERS = mapOf(
+            "Referer" to "https://www.blogger.com/",
+            "Accept" to "*/*"
         )
     }
 
+    // ======================================================================
+    // 1. DECODIFICADOR CORRIGIDO (Nome da variável alterado)
+    // ======================================================================
     private fun decodePacked(packed: String): String? {
         try {
             val regex = "eval\\s*\\(\\s*function\\s*\\(p,a,c,k,e,d\\).*?\\}\\('(.*?)',(\\d+),(\\d+),'(.*?)'\\.split\\('\\|'\\)".toRegex()
             val match = regex.find(packed) ?: return null
+            
             val (p, aStr, cStr, kStr) = match.destructured
             val payload = p
             val radix = aStr.toInt()
             val count = cStr.toInt()
             val keywords = kStr.split("|")
-            fun encodeBase(num: Int): String = if (num < radix) charset[num].toString() else encodeBase(num / radix) + charset[num % radix]
-            val charset = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+            fun encodeBase(num: Int): String {
+                // Renomeado de 'charset' para 'dict' para evitar conflito de compilação
+                val dict = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+                return if (num < radix) {
+                    dict[num].toString()
+                } else {
+                    encodeBase(num / radix) + dict[num % radix]
+                }
+            }
+
             val dict = HashMap<String, String>()
             for (i in 0 until count) {
                 val key = encodeBase(i)
                 val value = keywords.getOrNull(i)?.takeIf { it.isNotEmpty() } ?: key
                 dict[key] = value
             }
+
             return payload.replace(Regex("\\b\\w+\\b")) { r -> dict[r.value] ?: r.value }
-        } catch (e: Exception) { return null }
+        } catch (e: Exception) {
+            return null
+        }
     }
 
-    private val genresMap = mapOf("Ação" to "acao", "Aventura" to "aventura", "Comédia" to "comedia", "Drama" to "drama", "Ecchi" to "ecchi", "Fantasia" to "fantasia", "Romance" to "romance", "Seinen" to "seinen", "Shounen" to "shounen", "Slice Of Life" to "slice%20of%20life", "Sobrenatural" to "sobrenatural", "Terror" to "terror", "Isekai" to "isekai")
+    // ======================================================================
+    // 2. CONFIGURAÇÕES E MAPAS
+    // ======================================================================
+    private val genresMap = mapOf(
+        "Ação" to "acao", "Artes Marciais" to "artes%20marciais", "Aventura" to "aventura",
+        "Comédia" to "comedia", "Drama" to "drama", "Ecchi" to "ecchi", "Fantasia" to "fantasia",
+        "Romance" to "romance", "Seinen" to "seinen", "Shounen" to "shounen", 
+        "Slice Of Life" to "slice%20of%20life", "Sobrenatural" to "sobrenatural",
+        "Terror" to "terror", "Vida Escolar" to "vida%20escolar", "Isekai" to "isekai"
+    )
 
-    override val mainPage = mainPageOf("$mainUrl" to "Últimos Episódios", "$mainUrl" to "Animes Mais Vistos", *genresMap.map { (genre, slug) -> "$mainUrl/?s=$slug" to genre }.toTypedArray())
+    override val mainPage = mainPageOf(
+        "$mainUrl" to "Últimos Episódios",
+        "$mainUrl" to "Animes Mais Vistos",
+        *genresMap.map { (genre, slug) -> "$mainUrl/?s=$slug" to genre }.toTypedArray()
+    )
 
+    private fun cleanTitle(dirtyTitle: String): String = dirtyTitle.trim()
     private fun extractEpisodeNumber(title: String): Int? = Regex("\\d+").find(title)?.value?.toIntOrNull()
+    private fun isDubbed(element: Element): Boolean = element.selectFirst(AUDIO_BADGE_SELECTOR)?.text()?.contains("Dublado", true) ?: false
     private fun extractM3u8FromUrl(url: String): String? = if (url.contains("d=")) try { URLDecoder.decode(url.substringAfter("d=").substringBefore("&"), "UTF-8") } catch (e: Exception) { null } else url
 
     private fun Element.toEpisodeSearchResponse(): AnimeSearchResponse? {
@@ -82,22 +121,26 @@ class AniTube : MainAPI() {
         return newAnimeSearchResponse(title, fixUrl(href)) { this.posterUrl = poster }
     }
 
-    // APLICANDO USER-AGENT NA HOME
+    // ======================================================================
+    // 3. MÉTODOS PRINCIPAIS
+    // ======================================================================
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val url = if (page > 1 && request.data.contains("/?s=")) request.data.replace("/?s=", "/page/$page/?s=") else request.data
-        val document = app.get(url, headers = ONLY_UA_HEADER).document
-        val items = document.select("$ANIME_CARD, $EPISODE_CARD").mapNotNull { if (it.selectFirst(EPISODE_NUMBER_SELECTOR) != null) it.toEpisodeSearchResponse() else it.toAnimeSearchResponse() }.distinctBy { it.url }
+        val document = app.get(url).document
+        val items = document.select("$ANIME_CARD, $EPISODE_CARD").mapNotNull { 
+            if (it.selectFirst(EPISODE_NUMBER_SELECTOR) != null) it.toEpisodeSearchResponse() else it.toAnimeSearchResponse()
+        }.distinctBy { it.url }
         return newHomePageResponse(request.name, items, true)
     }
 
-    // APLICANDO USER-AGENT NA BUSCA
     override suspend fun search(query: String): List<SearchResponse> {
-        return app.get("$mainUrl$SEARCH_PATH${query.replace(" ", "+")}", headers = ONLY_UA_HEADER).document.select("$ANIME_CARD, $EPISODE_CARD").mapNotNull { if (it.selectFirst(EPISODE_NUMBER_SELECTOR) != null) it.toEpisodeSearchResponse() else it.toAnimeSearchResponse() }
+        return app.get("$mainUrl$SEARCH_PATH${query.replace(" ", "+")}").document
+            .select("$ANIME_CARD, $EPISODE_CARD")
+            .mapNotNull { if (it.selectFirst(EPISODE_NUMBER_SELECTOR) != null) it.toEpisodeSearchResponse() else it.toAnimeSearchResponse() }
     }
 
-    // APLICANDO USER-AGENT NO LOAD DO ANIME
     override suspend fun load(url: String): LoadResponse {
-        val doc = app.get(url, headers = ONLY_UA_HEADER).document
+        val doc = app.get(url).document
         val title = doc.selectFirst(ANIME_TITLE)?.text() ?: "Anime"
         return newAnimeLoadResponse(title, url, TvType.Anime) {
             this.posterUrl = doc.selectFirst(ANIME_POSTER)?.attr("src")
@@ -111,7 +154,7 @@ class AniTube : MainAPI() {
     }
 
     // ======================================================================
-    // EXTRAÇÃO E PLAYER (TUDO COM O MESMO USER AGENT)
+    // 4. EXTRAÇÃO DE LINKS
     // ======================================================================
     override suspend fun loadLinks(
         data: String,
@@ -120,9 +163,9 @@ class AniTube : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val actualUrl = data.split("|poster=")[0]
-        
-        // 1. Carrega a página do episódio com o UA
-        val document = app.get(actualUrl, headers = ONLY_UA_HEADER).document
+        println("\n🛑 [AniTube] LOAD LINKS: $actualUrl")
+
+        val document = app.get(actualUrl).document
         var linksFound = false
 
         document.select("iframe[src*='bg.mp4']").firstOrNull()?.let { iframe ->
@@ -130,18 +173,22 @@ class AniTube : MainAPI() {
             println("🔎 [AniTube] Iframe encontrado: $initialSrc")
             
             try {
-                // 2. Acessa o Iframe com o MESMO UA
-                // Importante: allowRedirects=false para garantir controle, 
-                // mas se o app.get seguir, ele precisa usar os mesmos headers.
-                val response1 = app.get(initialSrc, headers = ONLY_UA_HEADER, allowRedirects = false)
+                // Passo 1: Extração (Simula PC)
+                val headersStep1 = EXTRACTION_HEADERS.toMutableMap()
+                headersStep1["Referer"] = actualUrl 
+
+                val response1 = app.get(initialSrc, headers = headersStep1, allowRedirects = false)
                 var contentHtml = ""
 
                 if (response1.code in 300..399) {
                     val location = response1.headers["location"] ?: response1.headers["Location"]
                     if (location != null) {
                         println("🔄 [AniTube] Redirect: $location")
-                        // 3. Acessa o Redirect (API) com o MESMO UA
-                        val response2 = app.get(location, headers = ONLY_UA_HEADER)
+                        
+                        val headersStep2 = EXTRACTION_HEADERS.toMutableMap()
+                        headersStep2["Referer"] = "https://www.anitube.news/"
+
+                        val response2 = app.get(location, headers = headersStep2)
                         contentHtml = response2.text
                     }
                 } else if (response1.code == 200) {
@@ -156,11 +203,16 @@ class AniTube : MainAPI() {
                             val link = match.value
                             println("🎬 [AniTube] MP4: $link")
                             
-                            val quality = if (link.contains("itag=37")) 1080 else 720
+                            val quality = when {
+                                link.contains("itag=37") -> 1080
+                                link.contains("itag=22") -> 720
+                                link.contains("itag=18") -> 360
+                                else -> 360
+                            }
 
-                            // 4. Entrega para o Player com o MESMO UA (e nada mais)
+                            // 🚨 PLAYER HEADERS: Apenas Referer do Blogger, sem UA forçado
                             callback(newExtractorLink(name, "JWPlayer MP4", link, ExtractorLinkType.VIDEO) {
-                                this.headers = ONLY_UA_HEADER
+                                this.headers = PLAYER_HEADERS
                                 this.quality = quality
                             })
                             linksFound = true
@@ -168,37 +220,44 @@ class AniTube : MainAPI() {
                         
                         // Regex HLS
                         Regex("https?://[^\\s'\"]+\\.m3u8[^\\s'\"]*").findAll(decoded).forEach { match ->
-                             val link = match.value
-                             println("📡 [AniTube] HLS: $link")
-                             
-                             // 4. Entrega para o Player com o MESMO UA
-                             callback(newExtractorLink(name, "AniTube HLS", link, ExtractorLinkType.M3U8) {
-                                 this.headers = ONLY_UA_HEADER
-                             })
-                             linksFound = true
+                            println("📡 [AniTube] HLS: ${match.value}")
+                            
+                            callback(newExtractorLink(name, "AniTube HLS", match.value, ExtractorLinkType.M3U8) {
+                                this.headers = PLAYER_HEADERS
+                            })
+                            linksFound = true
                         }
                     }
                 }
             } catch (e: Exception) {
-                e.printStackTrace()
+                println("💥 [AniTube] Erro: ${e.message}")
             }
         }
 
-        // Fallbacks (Também usando o UA se possível, embora o extractorLink do Cloudstream gerencie isso internamente na maioria dos casos)
-        document.selectFirst(PLAYER_FHD)?.let { 
-             val src = it.attr("src")
-             if(src.isNotBlank() && !src.contains("bg.mp4")) {
-                 callback(newExtractorLink(name, "Player FHD", extractM3u8FromUrl(src) ?: src, ExtractorLinkType.M3U8))
-                 linksFound = true
-             }
+        // -----------------------------------------------------------
+        // 2. Fallbacks (FHD/Backup)
+        // -----------------------------------------------------------
+        document.selectFirst(PLAYER_FHD)?.let { iframe ->
+            val src = iframe.attr("src")
+            if (src.isNotBlank() && !src.contains("bg.mp4")) {
+                val m3u8Url = extractM3u8FromUrl(src) ?: src
+                callback(newExtractorLink(name, "Player FHD", m3u8Url, ExtractorLinkType.M3U8) {
+                    referer = "$mainUrl/"
+                    quality = 1080
+                })
+                linksFound = true
+            }
         }
-        
-        document.selectFirst(PLAYER_BACKUP)?.let { 
-             val src = it.attr("src")
-             if(src.isNotBlank() && !src.contains("bg.mp4")) {
-                 callback(newExtractorLink(name, "Player Backup", src, ExtractorLinkType.VIDEO))
-                 linksFound = true
-             }
+
+        document.selectFirst(PLAYER_BACKUP)?.let { iframe ->
+            val src = iframe.attr("src")
+            if (src.isNotBlank() && !src.contains("bg.mp4")) {
+                callback(newExtractorLink(name, "Player Backup", src, ExtractorLinkType.VIDEO) {
+                    referer = "$mainUrl/"
+                    quality = 720
+                })
+                linksFound = true
+            }
         }
 
         return linksFound
