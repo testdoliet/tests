@@ -16,14 +16,12 @@ class AniTube : MainAPI() {
 
     companion object {
         private const val SEARCH_PATH = "/?s="
-
         private const val ANIME_CARD = ".aniItem"
         private const val EPISODE_CARD = ".epiItem"
         private const val TITLE_SELECTOR = ".aniItemNome, .epiItemNome"
         private const val POSTER_SELECTOR = ".aniItemImg img, .epiItemImg img"
         private const val AUDIO_BADGE_SELECTOR = ".aniCC, .epiCC"
         private const val EPISODE_NUMBER_SELECTOR = ".epiItemInfos .epiItemNome"
-        
         private const val LATEST_EPISODES_SECTION = ".epiContainer"
         private const val ANIME_TITLE = "h1"
         private const val ANIME_POSTER = "#capaAnime img"
@@ -33,10 +31,9 @@ class AniTube : MainAPI() {
         private const val PLAYER_FHD = "#blog2 iframe"
         private const val PLAYER_BACKUP = "#blog1 iframe"
 
-        // Headers essenciais para o Player (Baseados no seu sucesso no navegador)
         private const val USER_AGENT = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36"
-        
-        // Headers de extração (Navegação)
+
+        // Headers base para extração
         private val EXTRACTION_HEADERS = mapOf(
             "User-Agent" to USER_AGENT,
             "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
@@ -146,7 +143,7 @@ class AniTube : MainAPI() {
     }
 
     // ======================================================================
-    // 4. EXTRAÇÃO DE LINKS
+    // 4. EXTRAÇÃO DE LINKS (COM GESTÃO DE COOKIES MELHORADA)
     // ======================================================================
     override suspend fun loadLinks(
         data: String,
@@ -160,32 +157,37 @@ class AniTube : MainAPI() {
         val document = app.get(actualUrl).document
         var linksFound = false
 
-        // -----------------------------------------------------------
-        // 1. Extração JWPlayer (bg.mp4) - MANUAL
-        // -----------------------------------------------------------
         document.select("iframe[src*='bg.mp4']").firstOrNull()?.let { iframe ->
             val initialSrc = iframe.attr("src")
             println("🔎 [AniTube] Iframe encontrado: $initialSrc")
             
             try {
-                // Passo 1: Request inicial (Extração)
+                // Headers iniciais
                 val headersStep1 = EXTRACTION_HEADERS.toMutableMap()
                 headersStep1["Referer"] = actualUrl 
 
+                // Request 1: Pega o redirect e COOKIES
                 val response1 = app.get(initialSrc, headers = headersStep1, allowRedirects = false)
                 var contentHtml = ""
+                
+                // Coletor de cookies
+                val cookies = mutableMapOf<String, String>()
+                cookies.putAll(response1.cookies)
 
                 if (response1.code in 300..399) {
                     val location = response1.headers["location"] ?: response1.headers["Location"]
                     if (location != null) {
                         println("🔄 [AniTube] Redirect: $location")
                         
-                        // Passo 2: Request final (Referer = Home do Site)
+                        // Request 2: Pega o conteúdo final com cookies anteriores
                         val headersStep2 = EXTRACTION_HEADERS.toMutableMap()
                         headersStep2["Referer"] = "https://www.anitube.news/"
 
-                        val response2 = app.get(location, headers = headersStep2)
+                        val response2 = app.get(location, headers = headersStep2, cookies = cookies)
                         contentHtml = response2.text
+                        
+                        // Atualiza cookies com a segunda resposta
+                        cookies.putAll(response2.cookies)
                     }
                 } else if (response1.code == 200) {
                     contentHtml = response1.text
@@ -195,17 +197,23 @@ class AniTube : MainAPI() {
                     val decoded = decodePacked(contentHtml)
                     if (decoded != null) {
                         
-                        // HEADERS FINAIS PARA O PLAYER (Minimalista para evitar 403)
-                        val videoHeaders = mapOf(
+                        // PREPARA HEADERS DO PLAYER
+                        val playerHeaders = mutableMapOf(
                             "User-Agent" to USER_AGENT,
                             "Referer" to "https://api.anivideo.net/",
                             "Accept" to "*/*"
                         )
+                        
+                        // Adiciona cookies ao header se existirem
+                        if (cookies.isNotEmpty()) {
+                            val cookieString = cookies.entries.joinToString("; ") { "${it.key}=${it.value}" }
+                            playerHeaders["Cookie"] = cookieString
+                        }
 
                         // Regex MP4
                         val mp4Regex = Regex("https?://[^\\s'\"]+videoplayback[^\\s'\"]*")
                         mp4Regex.findAll(decoded).forEach { match ->
-                            val link = match.value // Tentar link ORIGINAL primeiro
+                            val link = match.value // Usa o link original
                             println("🎬 [AniTube] MP4: $link")
                             
                             val quality = when {
@@ -216,7 +224,7 @@ class AniTube : MainAPI() {
                             }
 
                             callback(newExtractorLink(name, "JWPlayer MP4", link, ExtractorLinkType.VIDEO) {
-                                this.headers = videoHeaders
+                                this.headers = playerHeaders
                                 this.quality = quality
                             })
                             linksFound = true
@@ -225,9 +233,11 @@ class AniTube : MainAPI() {
                         // Regex HLS
                         val m3u8Regex = Regex("https?://[^\\s'\"]+\\.m3u8[^\\s'\"]*")
                         m3u8Regex.findAll(decoded).forEach { match ->
-                            println("📡 [AniTube] HLS: ${match.value}")
-                            callback(newExtractorLink(name, "AniTube HLS", match.value, ExtractorLinkType.M3U8) {
-                                this.headers = videoHeaders
+                            val link = match.value
+                            println("📡 [AniTube] HLS: $link")
+                            
+                            callback(newExtractorLink(name, "AniTube HLS", link, ExtractorLinkType.M3U8) {
+                                this.headers = playerHeaders
                             })
                             linksFound = true
                         }
