@@ -283,55 +283,48 @@ class AniTube : MainAPI() {
             
             // Ordenar por timestamp (mais fresco primeiro)
             validLinks.sortByDescending { it.second }
-            
             // ============================================================
-            // PASSO 6: Usar os links válidos
-            // ============================================================
-            if (validLinks.isEmpty()) {
-                println("❌ [AniTube] Nenhum link FRESCO encontrado (todos expirados)")
-                return tryFallbackPlayers(document, callback)
-            }
-            
-            println("🎯 [AniTube] Usando ${validLinks.size} link(s) fresco(s)")
-            
-            validLinks.forEach { (link, expireTime) ->
-                println("🎬 [AniTube] Link fresco selecionado (expire: $expireTime)")
-                println("   URL: ${link.take(100)}...")
-                
-                // Verificar parâmetros importantes
-                val hasIpbypass = link.contains("ipbypass=yes")
-                val hasRedirectCounter = link.contains("redirect_counter=")
-                
-                if (!hasIpbypass) {
-                    println("⚠️ [AniTube] Link não tem ipbypass=yes - pode precisar de redirect")
-                }
-                
-                // Determinar qualidade
-                val quality = when {
-                    link.contains("itag=37") -> 1080
-                    link.contains("itag=22") -> 720
-                    link.contains("itag=18") -> 360
-                    else -> 360
-                }
-                
-                // 🔥 CRIAR EXTRACTOR LINK COM HEADERS CORRETOS
-                callback(newExtractorLink(name, "AniTube Google Video", link, ExtractorLinkType.VIDEO) {
-                    this.headers = GOOGLE_VIDEO_HEADERS
-                    this.quality = quality
-                    // 🔥 IMPORTANTE: Não deixar CloudStream adicionar Referer automático
-                    this.referer = null
-                })
-                
-                linksFound = true
-            }
-            
-        } catch (e: Exception) {
-            println("💥 [AniTube] Erro na extração: ${e.message}")
-            e.printStackTrace()
-        }
-        
-        return linksFound
+// PASSO 6: Usar os links válidos
+// ============================================================
+if (validLinks.isEmpty()) {
+    println("❌ [AniTube] Nenhum link FRESCO encontrado (todos expirados)")
+    return tryFallbackPlayers(document, callback)
+}
+
+println("🎯 [AniTube] Usando ${validLinks.size} link(s) fresco(s)")
+
+validLinks.forEach { (link, expireTime) ->
+    println("🎬 [AniTube] Link fresco selecionado (expire: $expireTime)")
+    println("   URL: ${link.take(100)}...")
+    
+    // Verificar parâmetros importantes
+    val hasIpbypass = link.contains("ipbypass=yes")
+    val hasRedirectCounter = link.contains("redirect_counter=")
+    
+    if (!hasIpbypass) {
+        println("⚠️ [AniTube] Link não tem ipbypass=yes - pode precisar de redirect")
     }
+    
+    // Determinar qualidade
+    val quality = when {
+        link.contains("itag=37") -> 1080
+        link.contains("itag=22") -> 720
+        link.contains("itag=18") -> 360
+        else -> 360
+    }
+    
+    // 🔥 CRIAR EXTRACTOR LINK COM HEADERS CORRETOS
+    callback(newExtractorLink(name, "AniTube Google Video", link, ExtractorLinkType.VIDEO) {
+        this.headers = GOOGLE_VIDEO_HEADERS
+        this.quality = quality
+        // 🔥 CORREÇÃO: String vazia em vez de null
+        this.referer = ""
+    })
+    
+    linksFound = true
+}
+            
+                
     
     // ======================================================================
     // 5. FALLBACK PARA OUTROS PLAYERS
