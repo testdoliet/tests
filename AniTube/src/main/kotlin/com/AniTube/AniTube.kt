@@ -31,7 +31,7 @@ class AniTube : MainAPI() {
         private const val PLAYER_FHD = "#blog2 iframe"
         private const val PLAYER_BACKUP = "#blog1 iframe"
 
-        // Headers do JSON
+        // Headers do JSON - APENAS ESTES
         private val JSON_HEADERS = mapOf(
             "accept" to "*/*",
             "accept-language" to "pt-br",
@@ -46,7 +46,7 @@ class AniTube : MainAPI() {
             "x-client-data" to "COD2ygE="
         )
 
-        // Headers de extração (Navegação no site)
+        // Headers de extração (Navegação no site) - com headers básicos
         private const val USER_AGENT_PC = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         
         private val EXTRACTION_HEADERS = mapOf(
@@ -54,17 +54,14 @@ class AniTube : MainAPI() {
             "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
             "Accept-Language" to "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
             "Referer" to "https://www.anitube.news/"
-        ) + JSON_HEADERS // Adiciona todos os headers do JSON
+        )
 
-        // Headers do Player: ESTRATÉGIA BLOGGER SPOOF
-        private val PLAYER_HEADERS = mapOf(
-            "Referer" to "https://www.blogger.com/",
-            "Accept" to "*/*"
-        ) + JSON_HEADERS // Adiciona todos os headers do JSON
+        // Headers do Player: APENAS OS HEADERS DO JSON, SEM REFERER
+        private val PLAYER_HEADERS = JSON_HEADERS
     }
 
     // ======================================================================
-    // 1. DECODIFICADOR CORRIGIDO (Nome da variável alterado)
+    // 1. DECODIFICADOR CORRIGIDO
     // ======================================================================
     private fun decodePacked(packed: String): String? {
         try {
@@ -78,7 +75,6 @@ class AniTube : MainAPI() {
             val keywords = kStr.split("|")
 
             fun encodeBase(num: Int): String {
-                // Renomeado de 'charset' para 'dict' para evitar conflito de compilação
                 val dict = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
                 return if (num < radix) {
                     dict[num].toString()
@@ -188,7 +184,7 @@ class AniTube : MainAPI() {
             println("🔎 [AniTube] Iframe encontrado: $initialSrc")
             
             try {
-                // Passo 1: Extração (Simula PC)
+                // Passo 1: Extração (com Referer do site)
                 val headersStep1 = EXTRACTION_HEADERS.toMutableMap()
                 headersStep1["Referer"] = actualUrl 
 
@@ -201,7 +197,7 @@ class AniTube : MainAPI() {
                         println("🔄 [AniTube] Redirect: $location")
                         
                         val headersStep2 = EXTRACTION_HEADERS.toMutableMap()
-                        headersStep2["Referer"] = "https://www.anitube.news/"
+                        headersStep2["Referer"] = "$mainUrl/"
 
                         val response2 = app.get(location, headers = headersStep2)
                         contentHtml = response2.text
@@ -225,7 +221,7 @@ class AniTube : MainAPI() {
                                 else -> 360
                             }
 
-                            // 🚨 PLAYER HEADERS: Apenas Referer do Blogger, sem UA forçado
+                            // 🚨 PLAYER HEADERS: APENAS OS HEADERS DO JSON, SEM REFERER
                             callback(newExtractorLink(name, "JWPlayer MP4", link, ExtractorLinkType.VIDEO) {
                                 this.headers = PLAYER_HEADERS
                                 this.quality = quality
