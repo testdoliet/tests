@@ -365,11 +365,10 @@ override suspend fun loadLinks(
     val actualUrl = data.split("|poster=")[0]
     
     // Usar o extractor especializado
-    return AniTubeExtractor.extractVideoLinks(
+    return AniTubeVideoExtractor.extractVideoLinks(
         url = actualUrl,
         mainUrl = mainUrl,
         name = name,
-        subtitleCallback = subtitleCallback,
         callback = callback
     )
 }
