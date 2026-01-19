@@ -31,7 +31,7 @@ class AniTube : MainAPI() {
         private const val PLAYER_FHD = "#blog2 iframe"
         private const val PLAYER_BACKUP = "#blog1 iframe"
 
-        // Headers do JSON - APENAS ESTES
+        // Headers do JSON - VERSÃO CORRIGIDA
         private val JSON_HEADERS = mapOf(
             "accept" to "*/*",
             "accept-language" to "pt-br",
@@ -46,7 +46,7 @@ class AniTube : MainAPI() {
             "x-client-data" to "COD2ygE="
         )
 
-        // Headers de extração (Navegação no site) - com headers básicos
+        // Headers de extração (Navegação no site)
         private const val USER_AGENT_PC = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         
         private val EXTRACTION_HEADERS = mapOf(
@@ -56,8 +56,12 @@ class AniTube : MainAPI() {
             "Referer" to "https://www.anitube.news/"
         )
 
-        // Headers do Player: APENAS OS HEADERS DO JSON, SEM REFERER
-        private val PLAYER_HEADERS = JSON_HEADERS
+        // Headers do Player: VERSÃO QUE IMPEDE O AUTOMATIC REFERER
+        private val PLAYER_HEADERS = buildMap {
+            putAll(JSON_HEADERS)
+            // Adicionamos um Referer vazio para evitar que o CloudStream adicione o do Blogger
+            put("Referer", "")
+        }
     }
 
     // ======================================================================
@@ -165,7 +169,7 @@ class AniTube : MainAPI() {
     }
 
     // ======================================================================
-    // 4. EXTRAÇÃO DE LINKS
+    // 4. EXTRAÇÃO DE LINKS - VERSÃO CORRIGIDA
     // ======================================================================
     override suspend fun loadLinks(
         data: String,
@@ -221,9 +225,22 @@ class AniTube : MainAPI() {
                                 else -> 360
                             }
 
-                            // 🚨 PLAYER HEADERS: APENAS OS HEADERS DO JSON, SEM REFERER
-                            callback(newExtractorLink(name, "JWPlayer MP4", link, ExtractorLinkType.VIDEO) {
-                                this.headers = PLAYER_HEADERS
+                            // 🔥 CORREÇÃO: Usar headers que não adicionam Referer automático
+                            callback(newExtractorLink(name, "AniTube MP4", link, ExtractorLinkType.VIDEO) {
+                                this.headers = mapOf(
+                                    "accept" to "*/*",
+                                    "accept-language" to "pt-br",
+                                    "priority" to "i",
+                                    "range" to "",
+                                    "sec-ch-ua" to "\"Chromium\";v=\"127\", \"Not)A;Brand\";v=\"99\", \"Microsoft Edge Simulate\";v=\"127\", \"Lemur\";v=\"127\"",
+                                    "sec-ch-ua-mobile" to "?1",
+                                    "sec-ch-ua-platform" to "\"Android\"",
+                                    "sec-fetch-dest" to "video",
+                                    "sec-fetch-mode" to "no-cors",
+                                    "user-agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
+                                    "x-client-data" to "COD2ygE="
+                                    // NOTA: Não incluímos Referer aqui!
+                                )
                                 this.quality = quality
                             })
                             linksFound = true
@@ -234,7 +251,20 @@ class AniTube : MainAPI() {
                             println("📡 [AniTube] HLS: ${match.value}")
                             
                             callback(newExtractorLink(name, "AniTube HLS", match.value, ExtractorLinkType.M3U8) {
-                                this.headers = PLAYER_HEADERS
+                                this.headers = mapOf(
+                                    "accept" to "*/*",
+                                    "accept-language" to "pt-br",
+                                    "priority" to "i",
+                                    "range" to "",
+                                    "sec-ch-ua" to "\"Chromium\";v=\"127\", \"Not)A;Brand\";v=\"99\", \"Microsoft Edge Simulate\";v=\"127\", \"Lemur\";v=\"127\"",
+                                    "sec-ch-ua-mobile" to "?1",
+                                    "sec-ch-ua-platform" to "\"Android\"",
+                                    "sec-fetch-dest" to "video",
+                                    "sec-fetch-mode" to "no-cors",
+                                    "user-agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
+                                    "x-client-data" to "COD2ygE="
+                                    // NOTA: Não incluímos Referer aqui!
+                                )
                             })
                             linksFound = true
                         }
@@ -253,6 +283,7 @@ class AniTube : MainAPI() {
             if (src.isNotBlank() && !src.contains("bg.mp4")) {
                 val m3u8Url = extractM3u8FromUrl(src) ?: src
                 callback(newExtractorLink(name, "Player FHD", m3u8Url, ExtractorLinkType.M3U8) {
+                    // Aqui pode manter o Referer se for necessário para esses players
                     referer = "$mainUrl/"
                     quality = 1080
                 })
@@ -264,6 +295,7 @@ class AniTube : MainAPI() {
             val src = iframe.attr("src")
             if (src.isNotBlank() && !src.contains("bg.mp4")) {
                 callback(newExtractorLink(name, "Player Backup", src, ExtractorLinkType.VIDEO) {
+                    // Aqui pode manter o Referer se for necessário para esses players
                     referer = "$mainUrl/"
                     quality = 720
                 })
