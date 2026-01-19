@@ -657,10 +657,11 @@ class CineAgora : MainAPI() {
                 return null
             }
 
-            val searchResult = response.parsedSafe<TMDBSearchResponse>() ?: {
+            val searchResult = response.parsedSafe<TMDBSearchResponse>()
+            if (searchResult == null) {
                 println("[CineAgora] 🎬 TMDB - ❌ Erro ao fazer parse da resposta")
                 return null
-            }()
+            }
 
             println("[CineAgora] 🎬 TMDB - Resultados encontrados: ${searchResult.results.size}")
             
@@ -1441,17 +1442,15 @@ class CineAgora : MainAPI() {
                     }
                     
                     println("[CineAgora] 🌟 ✅ Episódio enriquecido com sucesso")
-                    return@map enrichedEpisode
+                    enrichedEpisode
                 } else {
                     println("[CineAgora] 🌟 ⚠️ Não encontrou episódio $episodeNum da temporada $season no TMDB")
+                    originalEpisode
                 }
             } catch (e: Exception) {
                 println("[CineAgora] 🌟 ❌ Erro ao enriquecer episódio: ${e.message}")
+                originalEpisode
             }
-            
-            // Se não encontrou no TMDB, retorna o episódio original
-            println("[CineAgora] 🌟 ⚠️ Mantendo episódio original")
-            originalEpisode
         }
         
         println("[CineAgora] 🌟 ✅ Enriquecimento concluído: ${enrichedEpisodes.size} episódios processados")
@@ -1470,7 +1469,7 @@ class CineAgora : MainAPI() {
         if (episodes == null) {
             println("[CineAgora] 🌟 ❌ Não encontrou temporada $season no TMDB")
             
-            // Tentar encontrar em qualquer temporada se a temporada específica não for encontrada
+                        // Tentar encontrar em qualquer temporada se a temporada específica não for encontrada
             println("[CineAgora] 🌟 Tentando encontrar em qualquer temporada...")
             for ((tempSeason, seasonEpisodes) in tmdbInfo.seasonsEpisodes) {
                 val found = seasonEpisodes.find { it.episode_number == episode }
