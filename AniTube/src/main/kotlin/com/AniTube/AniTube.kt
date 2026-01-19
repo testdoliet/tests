@@ -371,3 +371,5 @@ override suspend fun loadLinks(
     // 🔥 CORREÇÃO: Retorno final obrigatório
     return linksFound
 }
+
+}
