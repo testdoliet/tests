@@ -173,179 +173,35 @@ class AniTube : MainAPI() {
     }
 
     // ======================================================================
-    // 4. EXTRAÇÃO DE LINKS - VERSÃO CORRIGIDA COMPLETA
-    // ======================================================================
-    override suspend fun loadLinks(
-        data: String,
-        isCasting: Boolean,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        val actualUrl = data.split("|poster=")[0]
-        println("\n🔄 [AniTube] INICIANDO EXTRAÇÃO FRESCA para: $actualUrl")
-        
-        var linksFound = false
-        val currentTime = System.currentTimeMillis() / 1000 // timestamp atual em segundos
-        
-        try {
-            // ============================================================
-            // PASSO 1: Acessar página do episódio SEM CACHE
-            // ============================================================
-            println("📄 [AniTube] Acessando página do episódio...")
-            val allHeaders = EXTRACTION_HEADERS + NO_CACHE_HEADERS
-            val document = app.get(actualUrl, headers = allHeaders).document
-            
-            // ============================================================
-            // PASSO 2: Encontrar iframe do player
-            // ============================================================
-            val iframe = document.select("iframe[src*='bg.mp4']").firstOrNull()
-            if (iframe == null) {
-                println("❌ [AniTube] Iframe bg.mp4 não encontrado")
-                // Fallback para outros players
-                return tryFallbackPlayers(document, callback)
-            }
-            
-            val iframeSrc = iframe.attr("src")
-            println("🔗 [AniTube] Iframe encontrado: $iframeSrc")
-            
-            // ============================================================
-            // PASSO 3: Acessar iframe e seguir TODOS os redirects
-            // ============================================================
-            println("🔄 [AniTube] Acessando iframe (seguindo redirects)...")
-            val iframeResponse = app.get(
-                iframeSrc,
-                headers = mapOf(
-                    "Referer" to actualUrl,
-                    "User-Agent" to USER_AGENT_PC,
-                    "Accept" to "*/*"
-                ) + NO_CACHE_HEADERS,
-                allowRedirects = true,  // 🔥 CRÍTICO: Seguir todos redirects!
-                timeout = 30
-            )
-            
-            println("📊 [AniTube] Response code: ${iframeResponse.code}")
-            println("📊 [AniTube] Final URL: ${iframeResponse.url}")
-            
-            val iframeContent = iframeResponse.text
-            if (iframeContent.isBlank()) {
-                println("❌ [AniTube] Conteúdo do iframe vazio")
-                return tryFallbackPlayers(document, callback)
-            }
-            
-            // ============================================================
-            // PASSO 4: Decodificar código packed
-            // ============================================================
-            println("🔓 [AniTube] Decodificando código packed...")
-            val decoded = decodePacked(iframeContent)
-            if (decoded == null) {
-                println("❌ [AniTube] Não conseguiu decodificar packed code")
-                return tryFallbackPlayers(document, callback)
-            }
-            
-            // ============================================================
-            // PASSO 5: Extrair links e filtrar os mais FRESCOS
-            // ============================================================
-            println("🔍 [AniTube] Procurando links videoplayback...")
-            val links = Regex("https?://[^\\s'\"]+videoplayback[^\\s'\"]*").findAll(decoded).toList()
-            
-            if (links.isEmpty()) {
-                println("❌ [AniTube] Nenhum link videoplayback encontrado")
-                return tryFallbackPlayers(document, callback)
-            }
-            
-            println("✅ [AniTube] Encontrados ${links.size} links")
-            
-            // Filtrar links válidos e FRESCOS
-            val validLinks = mutableListOf<Pair<String, Long>>() // (link, expireTimestamp)
-            
-            links.forEach { match ->
-                val link = match.value
-                val expireMatch = Regex("expire=(\\d+)").find(link)
-                val expireTime = expireMatch?.groupValues?.get(1)?.toLongOrNull()
-                
-                if (expireTime != null) {
-                    // Verificar se o link ainda é válido (tem pelo menos 5 minutos de vida)
-                    val timeRemaining = expireTime - currentTime
-                    val isValid = timeRemaining > 300 // 5 minutos
-                    
-                    println("🔗 [AniTube] Link analisado:")
-                    println("   Expire: $expireTime (atual: $currentTime)")
-                    println("   Restante: ${timeRemaining}s (${timeRemaining/60}min)")
-                    println("   Válido: $isValid")
-                    
-                    if (isValid) {
-                        validLinks.add(link to expireTime)
-                    }
-                } else {
-                    println("⚠️ [AniTube] Link sem timestamp expire=")
-                }
-            }
-            
-            // Ordenar por timestamp (mais fresco primeiro)
-            validLinks.sortByDescending { it.second }
-            // ============================================================
-// PASSO 6: Usar os links válidos
-// ============================================================
-if (validLinks.isEmpty()) {
-    println("❌ [AniTube] Nenhum link FRESCO encontrado (todos expirados)")
-    return tryFallbackPlayers(document, callback)
-}
-
-println("🎯 [AniTube] Usando ${validLinks.size} link(s) fresco(s)")
-
-validLinks.forEach { (link, expireTime) ->
-    println("🎬 [AniTube] Link fresco selecionado (expire: $expireTime)")
-    println("   URL: ${link.take(100)}...")
+// 4. EXTRAÇÃO DE LINKS - VERSÃO CORRIGIDA COMPLETA
+// ======================================================================
+override suspend fun loadLinks(
+    data: String,
+    isCasting: Boolean,
+    subtitleCallback: (SubtitleFile) -> Unit,
+    callback: (ExtractorLink) -> Unit
+): Boolean {
+    val actualUrl = data.split("|poster=")[0]
+    println("\n🔄 [AniTube] INICIANDO EXTRAÇÃO FRESCA para: $actualUrl")
     
-    // Verificar parâmetros importantes
-    val hasIpbypass = link.contains("ipbypass=yes")
-    val hasRedirectCounter = link.contains("redirect_counter=")
+    var linksFound = false
+    val currentTime = System.currentTimeMillis() / 1000 // timestamp atual em segundos
     
-    if (!hasIpbypass) {
-        println("⚠️ [AniTube] Link não tem ipbypass=yes - pode precisar de redirect")
-    }
-    
-    // Determinar qualidade
-    val quality = when {
-        link.contains("itag=37") -> 1080
-        link.contains("itag=22") -> 720
-        link.contains("itag=18") -> 360
-        else -> 360
-    }
-    
-    // 🔥 CRIAR EXTRACTOR LINK COM HEADERS CORRETOS
-    callback(newExtractorLink(name, "AniTube Google Video", link, ExtractorLinkType.VIDEO) {
-        this.headers = GOOGLE_VIDEO_HEADERS
-        this.quality = quality
-        // 🔥 CORREÇÃO: String vazia em vez de null
-        this.referer = ""
-    })
-    
-    linksFound = true
-}
-            
-                
-    
-    // ======================================================================
-    // 5. FALLBACK PARA OUTROS PLAYERS
-    // ======================================================================
-    private suspend fun tryFallbackPlayers(
-        document: org.jsoup.nodes.Document,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
+    // 🔥 CORREÇÃO: Declarar função AUXILIAR no início
+    suspend fun tryFallbackPlayers(doc: org.jsoup.nodes.Document): Boolean {
         println("🔄 [AniTube] Tentando fallback players...")
         var found = false
         
         // Player FHD
-        document.selectFirst(PLAYER_FHD)?.let { iframe ->
+        doc.selectFirst(PLAYER_FHD)?.let { iframe ->
             val src = iframe.attr("src")
             if (src.isNotBlank() && !src.contains("bg.mp4")) {
                 val m3u8Url = extractM3u8FromUrl(src) ?: src
                 println("🎬 [AniTube] Fallback FHD: $m3u8Url")
                 
                 callback(newExtractorLink(name, "Player FHD", m3u8Url, ExtractorLinkType.M3U8) {
-                    referer = "$mainUrl/"
-                    quality = 1080
+                    this.referer = "$mainUrl/"
+                    this.quality = 1080
                 })
                 found = true
             }
@@ -353,14 +209,14 @@ validLinks.forEach { (link, expireTime) ->
         
         // Player Backup
         if (!found) {
-            document.selectFirst(PLAYER_BACKUP)?.let { iframe ->
+            doc.selectFirst(PLAYER_BACKUP)?.let { iframe ->
                 val src = iframe.attr("src")
                 if (src.isNotBlank() && !src.contains("bg.mp4")) {
                     println("🎬 [AniTube] Fallback Backup: $src")
                     
                     callback(newExtractorLink(name, "Player Backup", src, ExtractorLinkType.VIDEO) {
-                        referer = "$mainUrl/"
-                        quality = 720
+                        this.referer = "$mainUrl/"
+                        this.quality = 720
                     })
                     found = true
                 }
@@ -369,4 +225,149 @@ validLinks.forEach { (link, expireTime) ->
         
         return found
     }
+    
+    try {
+        // ============================================================
+        // PASSO 1: Acessar página do episódio SEM CACHE
+        // ============================================================
+        println("📄 [AniTube] Acessando página do episódio...")
+        val allHeaders = EXTRACTION_HEADERS + NO_CACHE_HEADERS
+        val document = app.get(actualUrl, headers = allHeaders).document
+        
+        // ============================================================
+        // PASSO 2: Encontrar iframe do player
+        // ============================================================
+        val iframe = document.select("iframe[src*='bg.mp4']").firstOrNull()
+        if (iframe == null) {
+            println("❌ [AniTube] Iframe bg.mp4 não encontrado")
+            // Fallback para outros players
+            return tryFallbackPlayers(document)
+        }
+        
+        val iframeSrc = iframe.attr("src")
+        println("🔗 [AniTube] Iframe encontrado: $iframeSrc")
+        
+        // ============================================================
+        // PASSO 3: Acessar iframe e seguir TODOS os redirects
+        // ============================================================
+        println("🔄 [AniTube] Acessando iframe (seguindo redirects)...")
+        val iframeResponse = app.get(
+            iframeSrc,
+            headers = mapOf(
+                "Referer" to actualUrl,
+                "User-Agent" to USER_AGENT_PC,
+                "Accept" to "*/*"
+            ) + NO_CACHE_HEADERS,
+            allowRedirects = true,  // 🔥 CRÍTICO: Seguir todos redirects!
+            timeout = 30
+        )
+        
+        println("📊 [AniTube] Response code: ${iframeResponse.code}")
+        println("📊 [AniTube] Final URL: ${iframeResponse.url}")
+        
+        val iframeContent = iframeResponse.text
+        if (iframeContent.isBlank()) {
+            println("❌ [AniTube] Conteúdo do iframe vazio")
+            return tryFallbackPlayers(document)
+        }
+        
+        // ============================================================
+        // PASSO 4: Decodificar código packed
+        // ============================================================
+        println("🔓 [AniTube] Decodificando código packed...")
+        val decoded = decodePacked(iframeContent)
+        if (decoded == null) {
+            println("❌ [AniTube] Não conseguiu decodificar packed code")
+            return tryFallbackPlayers(document)
+        }
+        
+        // ============================================================
+        // PASSO 5: Extrair links e filtrar os mais FRESCOS
+        // ============================================================
+        println("🔍 [AniTube] Procurando links videoplayback...")
+        val links = Regex("https?://[^\\s'\"]+videoplayback[^\\s'\"]*").findAll(decoded).toList()
+        
+        if (links.isEmpty()) {
+            println("❌ [AniTube] Nenhum link videoplayback encontrado")
+            return tryFallbackPlayers(document)
+        }
+        
+        println("✅ [AniTube] Encontrados ${links.size} links")
+        
+        // Filtrar links válidos e FRESCOS
+        val validLinks = mutableListOf<Pair<String, Long>>() // (link, expireTimestamp)
+        
+        links.forEach { match ->
+            val link = match.value
+            val expireMatch = Regex("expire=(\\d+)").find(link)
+            val expireTime = expireMatch?.groupValues?.get(1)?.toLongOrNull()
+            
+            if (expireTime != null) {
+                // Verificar se o link ainda é válido (tem pelo menos 5 minutos de vida)
+                val timeRemaining = expireTime - currentTime
+                val isValid = timeRemaining > 300 // 5 minutos
+                
+                println("🔗 [AniTube] Link analisado:")
+                println("   Expire: $expireTime (atual: $currentTime)")
+                println("   Restante: ${timeRemaining}s (${timeRemaining/60}min)")
+                println("   Válido: $isValid")
+                
+                if (isValid) {
+                    validLinks.add(link to expireTime)
+                }
+            } else {
+                println("⚠️ [AniTube] Link sem timestamp expire=")
+            }
+        }
+        
+        // Ordenar por timestamp (mais fresco primeiro)
+        validLinks.sortByDescending { it.second }
+        
+        // ============================================================
+        // PASSO 6: Usar os links válidos
+        // ============================================================
+        if (validLinks.isEmpty()) {
+            println("❌ [AniTube] Nenhum link FRESCO encontrado (todos expirados)")
+            return tryFallbackPlayers(document)
+        }
+        
+        println("🎯 [AniTube] Usando ${validLinks.size} link(s) fresco(s)")
+        
+        validLinks.forEach { (link, expireTime) ->
+            println("🎬 [AniTube] Link fresco selecionado (expire: $expireTime)")
+            println("   URL: ${link.take(100)}...")
+            
+            // Verificar parâmetros importantes
+            val hasIpbypass = link.contains("ipbypass=yes")
+            val hasRedirectCounter = link.contains("redirect_counter=")
+            
+            if (!hasIpbypass) {
+                println("⚠️ [AniTube] Link não tem ipbypass=yes - pode precisar de redirect")
+            }
+            
+            // Determinar qualidade
+            val quality = when {
+                link.contains("itag=37") -> 1080
+                link.contains("itag=22") -> 720
+                link.contains("itag=18") -> 360
+                else -> 360
+            }
+            
+            // 🔥 CRIAR EXTRACTOR LINK COM HEADERS CORRETOS
+            callback(newExtractorLink(name, "AniTube Google Video", link, ExtractorLinkType.VIDEO) {
+                this.headers = GOOGLE_VIDEO_HEADERS
+                this.quality = quality
+                this.referer = ""
+            })
+            
+            linksFound = true
+        }
+        
+    } catch (e: Exception) {
+        println("💥 [AniTube] Erro na extração: ${e.message}")
+        e.printStackTrace()
+    }
+    
+    // 🔥 CORREÇÃO: Retorno final obrigatório
+    return linksFound
 }
