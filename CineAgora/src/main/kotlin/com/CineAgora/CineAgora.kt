@@ -1302,30 +1302,31 @@ class CineAgora : MainAPI() {
         
         // ESTRATÉGIA 3: Verificar se há iframes diretamente
         val iframes = doc.select("iframe[src*='watch.brplayer.cc']")
-        println("[CineAgora] 📺 Iframes encontrados: ${iframes.size}")
+println("[CineAgora] 📺 Iframes encontrados: ${iframes.size}")
+
+if (iframes.isNotEmpty() && episodes.isEmpty()) {
+    // Se tiver iframe mas não encontrou episódios, criar um episódio com o iframe
+    val iframe = iframes.first()
+    val iframeSrc = iframe.attr("src")
+    println("[CineAgora] 📺 Primeiro iframe src: $iframeSrc")
+    
+    val watchPattern = Regex("""/watch/([^/?]+)""")
+    val watchMatch = watchPattern.find(iframeSrc)
+    
+    if (watchMatch != null) {
+        val videoSlug = watchMatch.groupValues[1]
+        val episodeUrl = "https://watch.brplayer.cc/watch/$videoSlug"
         
-        if (iframes.isNotEmpty() && episodes.isEmpty()) {
-            // Se tiver iframe mas não encontrou episódios, criar um episódio com o iframe
-            val iframeSrc = iframes.first().attr("src")
-            println("[CineAgora] 📺 Primeiro iframe src: $iframeSrc")
-            
-            val watchPattern = Regex("""/watch/([^/?]+)""")
-            val watchMatch = watchPattern.find(iframeSrc)
-            
-            if (watchMatch != null) {
-                val videoSlug = watchMatch.groupValues[1]
-                val episodeUrl = "https://watch.brplayer.cc/watch/$videoSlug"
-                
-                episodes.add(
-                    newEpisode(episodeUrl) {
-                        name = "Episódio 1"
-                        season = 1
-                        episode = 1
-                    }
-                )
-                println("[CineAgora] 📺 ✅ Criado episódio do iframe")
+        episodes.add(
+            newEpisode(episodeUrl) {
+                name = "Episódio 1"
+                season = 1
+                episode = 1
             }
-        }
+        )
+        println("[CineAgora] 📺 ✅ Criado episódio do iframe")
+    }
+}
         
         // Se não encontrou nada, criar pelo menos um episódio
         if (episodes.isEmpty()) {
