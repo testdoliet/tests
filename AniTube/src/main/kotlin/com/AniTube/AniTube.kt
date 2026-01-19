@@ -35,7 +35,6 @@ class AniTube : MainAPI() {
             "accept" to "*/*",
             "accept-language" to "pt-br",
             "priority" to "i",
-            // "range" geralmente é gerenciado automaticamente pelo player/client, deixei vazio ou omitido para evitar erros de protocolo
             "sec-ch-ua" to "\"Chromium\";v=\"127\", \"Not)A;Brand\";v=\"99\", \"Microsoft Edge Simulate\";v=\"127\", \"Lemur\";v=\"127\"",
             "sec-ch-ua-mobile" to "?1",
             "sec-ch-ua-platform" to "\"Android\"",
@@ -55,8 +54,12 @@ class AniTube : MainAPI() {
             val radix = aStr.toInt()
             val count = cStr.toInt()
             val keywords = kStr.split("|")
-            fun encodeBase(num: Int): String = if (num < radix) charset[num].toString() else encodeBase(num / radix) + charset[num % radix]
+            
+            // CORREÇÃO: charset definido ANTES de ser usado em encodeBase
             val charset = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+            
+            fun encodeBase(num: Int): String = if (num < radix) charset[num].toString() else encodeBase(num / radix) + charset[num % radix]
+            
             val dict = HashMap<String, String>()
             for (i in 0 until count) {
                 val key = encodeBase(i)
@@ -127,7 +130,6 @@ class AniTube : MainAPI() {
     ): Boolean {
         val actualUrl = data.split("|poster=")[0]
         
-        // 1. Carrega a página do episódio com os Headers Customizados
         val document = app.get(actualUrl, headers = CUSTOM_HEADERS).document
         var linksFound = false
 
@@ -136,7 +138,6 @@ class AniTube : MainAPI() {
             println("🔎 [AniTube] Iframe encontrado: $initialSrc")
             
             try {
-                // 2. Acessa o Iframe com os mesmos Headers
                 // Importante: allowRedirects=false para garantir controle e persistência dos headers no redirect
                 val response1 = app.get(initialSrc, headers = CUSTOM_HEADERS, allowRedirects = false)
                 var contentHtml = ""
@@ -145,7 +146,6 @@ class AniTube : MainAPI() {
                     val location = response1.headers["location"] ?: response1.headers["Location"]
                     if (location != null) {
                         println("🔄 [AniTube] Redirect: $location")
-                        // 3. Acessa o Redirect (API) com os mesmos Headers
                         val response2 = app.get(location, headers = CUSTOM_HEADERS)
                         contentHtml = response2.text
                     }
@@ -163,7 +163,6 @@ class AniTube : MainAPI() {
                             
                             val quality = if (link.contains("itag=37")) 1080 else 720
 
-                            // 4. Entrega para o Player com os headers exatos para o streaming
                             callback(newExtractorLink(name, "JWPlayer MP4", link, ExtractorLinkType.VIDEO) {
                                 this.headers = CUSTOM_HEADERS
                                 this.quality = quality
@@ -176,7 +175,6 @@ class AniTube : MainAPI() {
                              val link = match.value
                              println("📡 [AniTube] HLS: $link")
                              
-                             // 4. Entrega para o Player com os headers exatos para o streaming
                              callback(newExtractorLink(name, "AniTube HLS", link, ExtractorLinkType.M3U8) {
                                  this.headers = CUSTOM_HEADERS
                              })
@@ -189,7 +187,7 @@ class AniTube : MainAPI() {
             }
         }
 
-        // Fallbacks (Também usando os headers customizados no player, se aplicável)
+        // Fallbacks
         document.selectFirst(PLAYER_FHD)?.let { 
              val src = it.attr("src")
              if(src.isNotBlank() && !src.contains("bg.mp4")) {
