@@ -156,13 +156,16 @@ object CineAgoraExtractor {
                     
                     // Se não gerou links via M3u8Helper, criar um link direto
                     if (primaryLinks.isEmpty() && secondaryLinks.isEmpty()) {
-                        val fallbackLink = createExtractorLink(
+                        val fallbackLink = newExtractorLink(
                             source = PRIMARY_SOURCE,
                             name = name,
                             url = masterUrl,
-                            watchUrl = watchUrl,
-                            headers = headers
-                        )
+                            type = ExtractorLinkType.M3U8
+                        ) {
+                            this.referer = watchUrl
+                            this.quality = Qualities.Unknown.value
+                            this.headers = headers
+                        }
                         callback(fallbackLink)
                     }
                     
@@ -171,13 +174,16 @@ object CineAgoraExtractor {
                 } catch (e: Exception) {
                     println("[CineAgoraExtractor] 🔗 ❌ Erro ao gerar M3U8: ${e.message}")
                     // Fallback: criar link direto da fonte principal
-                    val fallbackLink = createExtractorLink(
+                    val fallbackLink = newExtractorLink(
                         source = PRIMARY_SOURCE,
                         name = name,
                         url = masterUrl,
-                        watchUrl = watchUrl,
-                        headers = headers
-                    )
+                        type = ExtractorLinkType.M3U8
+                    ) {
+                        this.referer = watchUrl
+                        this.quality = Qualities.Unknown.value
+                        this.headers = headers
+                    }
                     callback(fallbackLink)
                     
                     // Também criar links alternativos como fallback
@@ -187,20 +193,25 @@ object CineAgoraExtractor {
                         "$BASE_PLAYER/m3u8/$uid/$md5/720p.txt?s=1&id=$videoId&cache=$status"
                     )
                     
+                    val altSources = listOf("CineAgora240p", "CineAgora480p", "CineAgora720p")
+                    
                     altUrls.forEachIndexed { index, altUrl ->
-                        val quality = when (index) {
-                            0 -> "CineAgora240p"
-                            1 -> "CineAgora480p"
-                            2 -> "CineAgora720p"
-                            else -> "CineAgora"
-                        }
-                        val altLink = createExtractorLink(
+                        val quality = altSources.getOrNull(index) ?: "CineAgora"
+                        val altLink = newExtractorLink(
                             source = quality,
                             name = "$name ($quality)",
                             url = altUrl,
-                            watchUrl = watchUrl,
-                            headers = headers
-                        )
+                            type = ExtractorLinkType.M3U8
+                        ) {
+                            this.referer = watchUrl
+                            this.quality = when (index) {
+                                0 -> Qualities.P240.value
+                                1 -> Qualities.P480.value
+                                2 -> Qualities.P720.value
+                                else -> Qualities.Unknown.value
+                            }
+                            this.headers = headers
+                        }
                         callback(altLink)
                     }
                     
@@ -218,13 +229,16 @@ object CineAgoraExtractor {
                     "Origin" to BASE_PLAYER
                 )
 
-                val directLink = createExtractorLink(
+                val directLink = newExtractorLink(
                     source = PRIMARY_SOURCE,
                     name = name,
                     url = masterUrlDirect,
-                    watchUrl = watchUrl,
-                    headers = headers
-                )
+                    type = ExtractorLinkType.M3U8
+                ) {
+                    this.referer = watchUrl
+                    this.quality = Qualities.Unknown.value
+                    this.headers = headers
+                }
                 callback(directLink)
                 return true
             }
@@ -236,13 +250,16 @@ object CineAgoraExtractor {
                 // Criar links para todas as URLs encontradas
                 m3u8Urls.forEachIndexed { index, m3u8Url ->
                     val sourceName = if (index == 0) PRIMARY_SOURCE else "CineAgoraAlt${index}"
-                    val link = createExtractorLink(
+                    val link = newExtractorLink(
                         source = sourceName,
                         name = if (index == 0) name else "$name (Alt ${index})",
                         url = m3u8Url,
-                        watchUrl = watchUrl,
-                        headers = mapOf("Referer" to watchUrl)
-                    )
+                        type = ExtractorLinkType.M3U8
+                    ) {
+                        this.referer = watchUrl
+                        this.quality = Qualities.Unknown.value
+                        this.headers = mapOf("Referer" to watchUrl)
+                    }
                     callback(link)
                 }
                 return true
@@ -254,31 +271,6 @@ object CineAgoraExtractor {
         } catch (e: Exception) {
             println("[CineAgoraExtractor] 🔗 ❌ Erro ao extrair do watch page: ${e.message}")
             return false
-        }
-    }
-
-    private fun createExtractorLink(
-        source: String,
-        name: String,
-        url: String,
-        watchUrl: String,
-        headers: Map<String, String>
-    ): ExtractorLink {
-        return newExtractorLink(
-            source = source,
-            name = name,
-            url = url,
-            type = ExtractorLinkType.M3U8
-        ) {
-            this.referer = watchUrl
-            this.quality = when {
-                source.contains("240", ignoreCase = true) -> Qualities.P240.value
-                source.contains("480", ignoreCase = true) -> Qualities.P480.value
-                source.contains("720", ignoreCase = true) -> Qualities.P720.value
-                source.contains("1080", ignoreCase = true) -> Qualities.P1080.value
-                else -> Qualities.Unknown.value
-            }
-            this.headers = headers
         }
     }
 
