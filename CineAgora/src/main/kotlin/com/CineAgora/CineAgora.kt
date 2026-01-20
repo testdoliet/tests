@@ -886,101 +886,73 @@ class CineAgora : MainAPI() {
     // =============================================
     // FUNÇÕES DE EXTRAÇÃO DE EPISÓDIOS
     // =============================================
-private suspend fun extractSeriesSlugFromPage(doc: org.jsoup.nodes.Document, baseUrl: String): String? {
-    println("[CineAgora] 🔗 Extraindo seriesSlug da página: $baseUrl")
-    
-    // ESTRATÉGIA PRINCIPAL: Buscar elementos com data-link contendo /tv/
-    val dataLinkElements = doc.select("[data-link*='/tv/']")
-    println("[CineAgora] 🔗 Elementos com data-link contendo /tv/: ${dataLinkElements.size}")
-    
-    for ((index, element) in dataLinkElements.withIndex()) {
-        val dataLink = element.attr("data-link")
-        println("[CineAgora] 🔗 Elemento $index data-link: $dataLink")
+
+    private suspend fun extractSeriesSlugFromPage(doc: org.jsoup.nodes.Document, baseUrl: String): String? {
+        println("[CineAgora] 🔗 Extraindo seriesSlug da página: $baseUrl")
         
-        // Extrair slug do padrão /tv/{slug}
-        val tvPattern = Regex("""/tv/([^/?]+)""")
-        val tvMatch = tvPattern.find(dataLink)
-        if (tvMatch != null) {
-            val slug = tvMatch.groupValues[1]
-            println("[CineAgora] 🔗 ✅ Slug encontrado em data-link: $slug")
-            return slug
-        }
-    }
-    
-    // ESTRATÉGIA 2: Buscar botões ou spans com links que contenham /tv/
-    val tvButtons = doc.select("""
-        button[data-link*='/tv/'], 
-        span[data-link*='/tv/'], 
-        a[data-link*='/tv/'],
-        div[data-link*='/tv/']
-    """.trimIndent())
-    println("[CineAgora] 🔗 Botões/spans com data-link /tv/: ${tvButtons.size}")
-    
-    for ((index, element) in tvButtons.withIndex()) {
-        val dataLink = element.attr("data-link")
-        println("[CineAgora] 🔗 Botão $index data-link: $dataLink")
+        // ESTRATÉGIA PRINCIPAL: Buscar elementos com data-link contendo /tv/
+        val dataLinkElements = doc.select("[data-link*='/tv/']")
+        println("[CineAgora] 🔗 Elementos com data-link contendo /tv/: ${dataLinkElements.size}")
         
-        val tvPattern = Regex("""/tv/([^/?]+)""")
-        val tvMatch = tvPattern.find(dataLink)
-        if (tvMatch != null) {
-            val slug = tvMatch.groupValues[1]
-            println("[CineAgora] 🔗 ✅ Slug encontrado em botão data-link: $slug")
-            return slug
-        }
-    }
-    
-    // ESTRATÉGIA 3: Procurar por qualquer elemento com watch.brplayer.cc/tv/
-    val allElements = doc.select("[data-link], [href], [src]")
-    println("[CineAgora] 🔗 Todos elementos com links: ${allElements.size}")
-    
-    val brplayerPattern = Regex("""watch\.brplayer\.cc/tv/([^/?]+)""")
-    
-    for ((index, element) in allElements.withIndex().take(50)) { // Limitar para performance
-        val attributes = listOf(
-            element.attr("data-link"),
-            element.attr("href"),
-            element.attr("src"),
-            element.attr("data-src"),
-            element.attr("data-url")
-        )
-        
-        for (attrValue in attributes) {
-            if (attrValue.isNotBlank()) {
-                val match = brplayerPattern.find(attrValue)
-                if (match != null) {
-                    val slug = match.groupValues[1]
-                    println("[CineAgora] 🔗 ✅ Slug encontrado em atributo: $slug")
-                    println("[CineAgora] 🔗 Elemento: ${element.tagName()}, Atributo com valor: $attrValue")
-                    return slug
-                }
+        for ((index, element) in dataLinkElements.withIndex()) {
+            val dataLink = element.attr("data-link")
+            println("[CineAgora] 🔗 Elemento $index data-link: $dataLink")
+            
+            // Extrair slug do padrão /tv/{slug}
+            val tvPattern = Regex("""/tv/([^/?]+)""")
+            val tvMatch = tvPattern.find(dataLink)
+            if (tvMatch != null) {
+                val slug = tvMatch.groupValues[1]
+                println("[CineAgora] 🔗 ✅ Slug encontrado em data-link: $slug")
+                return slug
             }
         }
+        
+        // ESTRATÉGIA 2: Buscar botões ou spans com links que contenham /tv/
+        val tvButtons = doc.select("""
+            button[data-link*='/tv/'], 
+            span[data-link*='/tv/'], 
+            a[data-link*='/tv/'],
+            div[data-link*='/tv/']
+        """.trimIndent())
+        println("[CineAgora] 🔗 Botões/spans com data-link /tv/: ${tvButtons.size}")
+        
+        for ((index, element) in tvButtons.withIndex()) {
+            val dataLink = element.attr("data-link")
+            println("[CineAgora] 🔗 Botão $index data-link: $dataLink")
+            
+            val tvPattern = Regex("""/tv/([^/?]+)""")
+            val tvMatch = tvPattern.find(dataLink)
+            if (tvMatch != null) {
+                val slug = tvMatch.groupValues[1]
+                println("[CineAgora] 🔗 ✅ Slug encontrado em botão data-link: $slug")
+                return slug
+            }
+        }
+        
+        // ESTRATÉGIA 3: Buscar no texto do HTML
+        println("[CineAgora] 🔗 Buscando 'watch.brplayer.cc/tv/' no HTML...")
+        val html = doc.html()
+        val brplayerRegex = Regex("""watch\.brplayer\.cc/tv/([^"'\s?&]+)""")
+        val matches = brplayerRegex.findAll(html).toList()
+        
+        println("[CineAgora] 🔗 Encontrados ${matches.size} matches no HTML")
+        matches.take(3).forEachIndexed { index, match ->
+            val slug = match.groupValues[1]
+            println("[CineAgora] 🔗 Match $index no HTML: $slug")
+        }
+        
+        val firstMatch = matches.firstOrNull()
+        if (firstMatch != null) {
+            val slug = firstMatch.groupValues[1]
+            println("[CineAgora] 🔗 ✅ Slug extraído do HTML: $slug")
+            return slug
+        }
+        
+        println("[CineAgora] 🔗 ❌ Não foi possível encontrar o seriesSlug")
+        return null
     }
-    
-    // ESTRATÉGIA 4: Buscar no texto do HTML (fallback)
-    println("[CineAgora] 🔗 Buscando 'watch.brplayer.cc/tv/' no HTML...")
-    val html = doc.html()
-    val brplayerRegex = Regex("""watch\.brplayer\.cc/tv/([^"'\s?&]+)""")
-    val matches = brplayerRegex.findAll(html).toList()
-    
-    println("[CineAgora] 🔗 Encontrados ${matches.size} matches no HTML")
-    matches.take(3).forEachIndexed { index, match ->
-        val slug = match.groupValues[1]
-        println("[CineAgora] 🔗 Match $index no HTML: $slug")
-    }
-    
-    val firstMatch = matches.firstOrNull()
-    if (firstMatch != null) {
-        val slug = firstMatch.groupValues[1]
-        println("[CineAgora] 🔗 ✅ Slug extraído do HTML: $slug")
-        return slug
-    }
-    
-    println("[CineAgora] 🔗 ❌ Não foi possível encontrar o seriesSlug")
-    return null
-}
-    
-    
+
     private suspend fun getSeriesFromVideoSlug(videoSlug: String): String {
         try {
             val apiUrl = "https://watch.brplayer.cc/get_series_from_video.php?videoSlug=$videoSlug"
@@ -1154,28 +1126,11 @@ private suspend fun extractSeriesSlugFromPage(doc: org.jsoup.nodes.Document, bas
 
     // FUNÇÃO PRINCIPAL PARA EXTRAIR EPISÓDIOS
     private suspend fun extractEpisodes(doc: org.jsoup.nodes.Document, baseUrl: String): List<Episode> {
-        val episodes = mutableListOf<Episode>()
-        
         println("[CineAgora] 📺 ===========================================")
         println("[CineAgora] 📺 INICIANDO EXTRAÇÃO DE EPISÓDIOS para: $baseUrl")
         println("[CineAgora] 📺 ===========================================")
         
-        // 1. Verificar estrutura da página
-        println("[CineAgora] 📺 Verificando estrutura da página...")
-        println("[CineAgora] 📺 Título da página: ${doc.title()}")
-        
-        // Verificar se há elementos comuns de episódios
-        val episodeDropdown = doc.selectFirst("#episodeDropdown")
-        val hasEpisodeDropdown = episodeDropdown != null
-        println("[CineAgora] 📺 Tem #episodeDropdown? $hasEpisodeDropdown")
-        
-        val episodeElements = doc.select("[class*='episode'], [class*='Episode']")
-        println("[CineAgora] 📺 Elementos com 'episode' na classe: ${episodeElements.size}")
-        
-        val buttonElements = doc.select("button[data-id]")
-        println("[CineAgora] 📺 Botões com data-id: ${buttonElements.size}")
-        
-        // 2. PRIMEIRO: Tentar extrair o seriesSlug da página
+        // 1. Tentar extrair o seriesSlug da página
         val seriesSlug = extractSeriesSlugFromPage(doc, baseUrl)
         
         if (seriesSlug != null) {
@@ -1199,149 +1154,27 @@ private suspend fun extractSeriesSlugFromPage(doc: org.jsoup.nodes.Document, bas
                 return sortedEpisodes
             }
             
-            println("[CineAgora] 📺 ❌ API não retornou episódios, tentando fallback HTML")
+            println("[CineAgora] 📺 ❌ API não retornou episódios")
         } else {
-            println("[CineAgora] 📺 ❌ Não encontrou seriesSlug, tentando fallback HTML")
+            println("[CineAgora] 📺 ❌ Não encontrou seriesSlug")
         }
         
-        // 3. SEGUNDO: Fallback para extração direta do HTML
-        println("[CineAgora] 📺 Iniciando extração HTML fallback...")
-        return extractEpisodesFromHtmlFallback(doc, baseUrl)
-    }
-    
-    private fun extractEpisodesFromHtmlFallback(doc: org.jsoup.nodes.Document, baseUrl: String): List<Episode> {
+        // Fallback mínimo - criar um episódio básico
         val episodes = mutableListOf<Episode>()
-        
-        println("[CineAgora] 📺 Extraindo episódios do HTML fallback...")
-        
-        // ESTRATÉGIA 1: Tentar extrair do dropdown de episódios
-        val episodeDropdown = doc.selectFirst("#episodeDropdown")
-        if (episodeDropdown != null) {
-            println("[CineAgora] 📺 ✅ Encontrou #episodeDropdown")
-            
-            val episodeButtons = episodeDropdown.select("button[data-id], a[data-id]")
-            println("[CineAgora] 📺 Botões/episódios no dropdown: ${episodeButtons.size}")
-            
-            if (episodeButtons.isEmpty()) {
-                // Tentar seletores alternativos
-                val alternativeButtons = episodeDropdown.select("[data-url], [href*='watch']")
-                println("[CineAgora] 📺 Botões alternativos no dropdown: ${alternativeButtons.size}")
+        episodes.add(
+            newEpisode(baseUrl) {
+                name = "Episódio 1"
+                season = 1
+                episode = 1
             }
-            
-            episodeButtons.forEachIndexed { index, button ->
-                try {
-                    val episodeNum = index + 1
-                    val dataId = button.attr("data-id")
-                    val dataUrl = button.attr("data-url")
-                    val href = button.attr("href")
-                    
-                    println("[CineAgora] 📺 Botão $index - data-id: '$dataId', data-url: '$dataUrl', href: '$href'")
-                    
-                    val videoSlug = when {
-                        dataId.isNotBlank() -> dataId
-                        dataUrl.isNotBlank() -> dataUrl.substringAfterLast("/")
-                        href.isNotBlank() -> href.substringAfterLast("/")
-                        else -> {
-                            println("[CineAgora] 📺 ❌ Botão sem identificador válido")
-                            return@forEachIndexed
-                        }
-                    }
-                    
-                    val buttonText = button.text().trim()
-                    println("[CineAgora] 📺 Texto do botão: '$buttonText'")
-                    
-                    // Extrair número do episódio do texto
-                    val epNumberFromText = extractEpisodeNumberFromText(buttonText)
-                    val finalEpisodeNum = epNumberFromText ?: episodeNum
-                    
-                    val episodeTitle = if (buttonText.isNotBlank() && buttonText != "Episódio $finalEpisodeNum") {
-                        buttonText
-                    } else {
-                        "Episódio $finalEpisodeNum"
-                    }
-                    
-                    val episodeUrl = when {
-                        href.isNotBlank() && href.contains("http") -> href
-private suspend fun extractEpisodes(doc: org.jsoup.nodes.Document, baseUrl: String): List<Episode> {
-    val episodes = mutableListOf<Episode>()
-    
-    println("[CineAgora] 📺 ===========================================")
-    println("[CineAgora] 📺 INICIANDO EXTRAÇÃO DE EPISÓDIOS para: $baseUrl")
-    println("[CineAgora] 📺 ===========================================")
-    
-    // 1. PRIMEIRO: Tentar extrair o seriesSlug da página
-    val seriesSlug = extractSeriesSlugFromPage(doc, baseUrl)
-    
-    if (seriesSlug != null) {
-        println("[CineAgora] 📺 ✅ Series Slug encontrado: $seriesSlug")
+        )
         
-        // Buscar episódios da API
-        val apiEpisodes = fetchEpisodesFromApi(seriesSlug)
+        println("[CineAgora] 📺 ===========================================")
+        println("[CineAgora] 📺 FINALIZADA EXTRAÇÃO DE EPISÓDIOS")
+        println("[CineAgora] 📺 Total de episódios encontrados: ${episodes.size}")
+        println("[CineAgora] 📺 ===========================================")
         
-        if (apiEpisodes.isNotEmpty()) {
-            println("[CineAgora] 📺 ✅ ${apiEpisodes.size} episódios obtidos da API")
-            
-            // Ordenar por temporada e episódio
-            val sortedEpisodes = apiEpisodes.sortedWith(compareBy({ it.season }, { it.episode }))
-            
-            // Agrupar por temporada para debug
-            val episodesBySeason = sortedEpisodes.groupBy { it.season ?: 1 }
-            episodesBySeason.forEach { (season, eps) ->
-                println("[CineAgora] 📺 Temporada $season: ${eps.size} episódios")
-            }
-            
-            return sortedEpisodes
-        }
-        
-        println("[CineAgora] 📺 ❌ API não retornou episódios")
-    } else {
-        println("[CineAgora] 📺 ❌ Não encontrou seriesSlug")
-    }
-    
-    // Fallback mínimo
-    println("[CineAgora] 📺 ⚠️ Criando episódio básico com URL da página")
-    episodes.add(
-        newEpisode(baseUrl) {
-            name = "Episódio 1"
-            season = 1
-            episode = 1
-        }
-    )
-    
-    println("[CineAgora] 📺 ===========================================")
-    println("[CineAgora] 📺 FINALIZADA EXTRAÇÃO DE EPISÓDIOS")
-    println("[CineAgora] 📺 Total de episódios encontrados: ${episodes.size}")
-    println("[CineAgora] 📺 ===========================================")
-    
-    return episodes
-}
-    
-    private fun extractEpisodeNumberFromText(text: String): Int? {
-        println("[CineAgora] 📺 Extraindo número do episódio do texto: '$text'")
-        
-        try {
-            val patterns = listOf(
-                Regex("""Episódio\s+(\d+)""", RegexOption.IGNORE_CASE),
-                Regex("""Episode\s+(\d+)""", RegexOption.IGNORE_CASE),
-                Regex("""E(\d+)""", RegexOption.IGNORE_CASE),
-                Regex("""EP\s*(\d+)""", RegexOption.IGNORE_CASE),
-                Regex("""\b(\d{1,3})\b""")
-            )
-            
-            for (pattern in patterns) {
-                val match = pattern.find(text)
-                if (match != null) {
-                    val number = match.groupValues[1].toIntOrNull()
-                    println("[CineAgora] 📺 ✅ Número encontrado com padrão '$pattern': $number")
-                    return number
-                }
-            }
-        } catch (e: Exception) {
-            println("[CineAgora] 📺 ❌ Erro ao extrair número do episódio: ${e.message}")
-        }
-        
-        println("[CineAgora] 📺 ❌ Nenhum número encontrado no texto")
-        return null
+        return episodes
     }
 
     // =============================================
@@ -1437,18 +1270,6 @@ private suspend fun extractEpisodes(doc: org.jsoup.nodes.Document, baseUrl: Stri
         val episodes = tmdbInfo.seasonsEpisodes[season]
         if (episodes == null) {
             println("[CineAgora] 🌟 ❌ Não encontrou temporada $season no TMDB")
-            
-                        // Tentar encontrar em qualquer temporada se a temporada específica não for encontrada
-            println("[CineAgora] 🌟 Tentando encontrar em qualquer temporada...")
-            for ((tempSeason, seasonEpisodes) in tmdbInfo.seasonsEpisodes) {
-                val found = seasonEpisodes.find { it.episode_number == episode }
-                if (found != null) {
-                    println("[CineAgora] 🌟 ✅ Encontrou episódio $episode na temporada $tempSeason (não na $season)")
-                    return found
-                }
-            }
-            
-            println("[CineAgora] 🌟 ❌ Não encontrou episódio $episode em nenhuma temporada")
             return null
         }
 
@@ -1636,7 +1457,9 @@ private suspend fun extractEpisodes(doc: org.jsoup.nodes.Document, baseUrl: Stri
         println("[CineAgora] 🤝 Extraindo recomendações...")
         
         val recommendations = document.select(".item, .item-relative .item, .poster, .movie-item, .serie-item")
-            .mapNotNull { it.toSearchResult() }
+            .mapNotNull { element ->
+                element.toSearchResult()
+            }
             .take(10)
         
         println("[CineAgora] 🤝 ${recommendations.size} recomendações encontradas")
