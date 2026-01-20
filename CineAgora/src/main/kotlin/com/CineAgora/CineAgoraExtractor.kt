@@ -11,13 +11,18 @@ import org.jsoup.nodes.Element
 object CineAgoraExtractor {
     private const val BASE_PLAYER = "https://watch.brplayer.cc"
     private const val REFERER_CINEAGORA = "https://cineagora.net/"
+    
+    // Lista de fontes que queremos filtrar (apenas "CineAgora")
+    private val ALLOWED_SOURCES = listOf("CineAgora")
 
     suspend fun extractVideoLinks(
         url: String,
         name: String,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        return when {
+        println("[CineAgoraExtractor] 🔗 Iniciando extração para: $url")
+        
+        val result = when {
             url.contains("watch.brplayer.cc") -> {
                 extractHlsFromWatchPage(url, name, callback)
             }
@@ -28,6 +33,9 @@ object CineAgoraExtractor {
                 extractHlsFromWatchPage(url, name, callback)
             }
         }
+        
+        println("[CineAgoraExtractor] 🔗 Extração concluída: $result")
+        return result
     }
 
     private suspend fun extractFromCineAgoraPage(
@@ -35,8 +43,11 @@ object CineAgoraExtractor {
         name: String,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
+        println("[CineAgoraExtractor] 🔗 Extraindo da página CineAgora: $cineAgoraUrl")
+        
         try {
             val html = app.get(cineAgoraUrl, referer = REFERER_CINEAGORA).text
+            println("[CineAgoraExtractor] 🔗 HTML obtido (${html.length} caracteres)")
 
             val iframePatterns = listOf(
                 """<iframe[^>]*src=["'](https://watch\.brplayer\.cc/watch\?v=[^"']+)["']""",
@@ -53,6 +64,7 @@ object CineAgoraExtractor {
                     if (!playerUrl.startsWith("http")) {
                         playerUrl = BASE_PLAYER + (if (playerUrl.startsWith("/")) "" else "/") + playerUrl
                     }
+                    println("[CineAgoraExtractor] 🔗 Iframe encontrado: $playerUrl")
                     return extractHlsFromWatchPage(playerUrl, name, callback)
                 }
             }
@@ -63,12 +75,15 @@ object CineAgoraExtractor {
             for (match in allMatches) {
                 val playerUrl = match.value
                 if (playerUrl.contains("/watch")) {
+                    println("[CineAgoraExtractor] 🔗 URL encontrada no HTML: $playerUrl")
                     return extractHlsFromWatchPage(playerUrl, name, callback)
                 }
             }
 
+            println("[CineAgoraExtractor] 🔗 ❌ Nenhuma URL do player encontrada")
             return false
         } catch (e: Exception) {
+            println("[CineAgoraExtractor] 🔗 ❌ Erro ao extrair da página CineAgora: ${e.message}")
             return false
         }
     }
@@ -78,69 +93,89 @@ object CineAgoraExtractor {
         name: String,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
+        println("[CineAgoraExtractor] 🔗 Extraindo do watch page: $watchUrl")
+        
         try {
             val html = app.get(watchUrl, referer = REFERER_CINEAGORA).text
+            println("[CineAgoraExtractor] 🔗 Watch page HTML obtido (${html.length} caracteres)")
 
             val uid = extractFromRegex(html, "\"uid\"\\s*:\\s*\"(\\d+)\"")
             val md5 = extractFromRegex(html, "\"md5\"\\s*:\\s*\"([a-f0-9]{32})\"")
             val videoId = extractFromRegex(html, "\"id\"\\s*:\\s*\"(\\d+)\"")
             val status = extractFromRegex(html, "\"status\"\\s*:\\s*\"([01])\"") ?: "1"
 
-            if (uid != null && md5 != null && videoId != null) {
-                val masterUrl = "$BASE_PLAYER/m3u8/$uid/$md5/master.txt?s=1&id=$videoId&cache=$status"
-                val altUrl = "$BASE_PLAYER/alternative_stream/$uid/$md5/master.m3u8"
+            println("[CineAgoraExtractor] 🔗 Dados extraídos - UID: $uid, MD5: $md5, VideoID: $videoId, Status: $status")
 
+            if (uid != null && md5 != null && videoId != null) {
+                // Apenas criar link para o CineAgora (que contém todas as qualidades)
+                val masterUrl = "$BASE_PLAYER/m3u8/$uid/$md5/master.txt?s=1&id=$videoId&cache=$status"
+                println("[CineAgoraExtractor] 🔗 Master URL: $masterUrl")
+                
                 val headers = mapOf(
                     "Referer" to watchUrl,
                     "Origin" to BASE_PLAYER,
                     "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36"
                 )
 
-                val links = try {
-                    M3u8Helper.generateM3u8(
+                // Gerar M3U8 com todas as qualidades
+                try {
+                    val links = M3u8Helper.generateM3u8(
                         source = "CineAgora",
                         streamUrl = masterUrl,
                         referer = watchUrl,
                         headers = headers
                     )
+                    
+                    // Filtrar apenas links da fonte "CineAgora"
+                    val filteredLinks = links.filter { link ->
+                        ALLOWED_SOURCES.any { allowed -> link.source.contains(allowed, ignoreCase = true) }
+                    }
+                    
+                    println("[CineAgoraExtractor] 🔗 ${filteredLinks.size} links filtrados (de ${links.size} total)")
+                    
+                    if (filteredLinks.isNotEmpty()) {
+                        filteredLinks.forEach { callback(it) }
+                        return true
+                    }
+                    
+                    // Se não encontrou links filtrados, criar um link genérico
+                    val fallbackLink = newExtractorLink(
+                        source = "CineAgora",
+                        name = name,
+                        url = masterUrl,
+                        type = ExtractorLinkType.M3U8
+                    ) {
+                        this.referer = watchUrl
+                        this.quality = Qualities.Unknown.value
+                        this.headers = headers
+                    }
+                    callback(fallbackLink)
+                    
+                    return true
+                    
                 } catch (e: Exception) {
-                    emptyList()
-                }
-
-                if (links.isNotEmpty()) {
-                    links.forEach { callback(it) }
+                    println("[CineAgoraExtractor] 🔗 ❌ Erro ao gerar M3U8: ${e.message}")
+                    // Fallback para link direto
+                    val fallbackLink = newExtractorLink(
+                        source = "CineAgora",
+                        name = name,
+                        url = masterUrl,
+                        type = ExtractorLinkType.M3U8
+                    ) {
+                        this.referer = watchUrl
+                        this.quality = Qualities.Unknown.value
+                        this.headers = headers
+                    }
+                    callback(fallbackLink)
                     return true
                 }
-
-                val fallbackLink = newExtractorLink(
-                    source = "CineAgora",
-                    name = name,
-                    url = masterUrl,
-                    type = ExtractorLinkType.M3U8
-                ) {
-                    this.referer = watchUrl
-                    this.quality = Qualities.Unknown.value
-                    this.headers = headers
-                }
-                callback(fallbackLink)
-
-                val altLink = newExtractorLink(
-                    source = "CineAgora (Alt)",
-                    name = "$name (Alternativo)",
-                    url = altUrl,
-                    type = ExtractorLinkType.M3U8
-                ) {
-                    this.referer = watchUrl
-                    this.quality = Qualities.Unknown.value
-                    this.headers = headers
-                }
-                callback(altLink)
-
-                return true
             }
 
+            // Tentar métodos alternativos se o primeiro falhar
             val masterUrlDirect = extractMasterUrlDirect(html)
             if (masterUrlDirect != null) {
+                println("[CineAgoraExtractor] 🔗 Master URL direta encontrada: $masterUrlDirect")
+                
                 val headers = mapOf(
                     "Referer" to watchUrl,
                     "Origin" to BASE_PLAYER
@@ -163,11 +198,15 @@ object CineAgoraExtractor {
 
             val m3u8Urls = extractAllM3u8Urls(html)
             if (m3u8Urls.isNotEmpty()) {
-                m3u8Urls.forEach { m3u8Url ->
+                println("[CineAgoraExtractor] 🔗 ${m3u8Urls.size} URLs M3U8 encontradas")
+                
+                // Usar apenas a primeira URL encontrada (normalmente a melhor)
+                val primaryUrl = m3u8Urls.firstOrNull()
+                if (primaryUrl != null) {
                     val m3u8Link = newExtractorLink(
                         source = "CineAgora",
                         name = name,
-                        url = m3u8Url,
+                        url = primaryUrl,
                         type = ExtractorLinkType.M3U8
                     ) {
                         this.referer = watchUrl
@@ -175,12 +214,15 @@ object CineAgoraExtractor {
                         this.headers = mapOf("Referer" to watchUrl)
                     }
                     callback(m3u8Link)
+                    return true
                 }
-                return true
             }
 
+            println("[CineAgoraExtractor] 🔗 ❌ Nenhuma URL de vídeo encontrada")
             return false
+            
         } catch (e: Exception) {
+            println("[CineAgoraExtractor] 🔗 ❌ Erro ao extrair do watch page: ${e.message}")
             return false
         }
     }
