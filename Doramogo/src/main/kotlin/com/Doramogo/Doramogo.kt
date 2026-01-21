@@ -560,131 +560,276 @@ class Doramogo : MainAPI() {
             }
         }
     }
+override suspend fun loadLinks(
+    data: String,
+    isCasting: Boolean,
+    subtitleCallback: (SubtitleFile) -> Unit,
+    callback: (ExtractorLink) -> Unit
+): Boolean {
+    var linksFound = false
 
-    override suspend fun loadLinks(
-        data: String,
-        isCasting: Boolean,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        var linksFound = false
-        
-        val document = app.get(data).document
-        
-        val urlParts = data.split("/")
-        val slug = urlParts.getOrNull(urlParts.indexOf("series") + 1) 
-            ?: urlParts.getOrNull(urlParts.indexOf("filmes") + 1)
-            ?: return false
-        
-        val temporada = extractSeasonNumberFromUrl(data) ?: 1
-        val episodio = extractEpisodeNumberFromUrl(data) ?: 1
-        
-        val isFilme = data.contains("/filmes/")
-        val tipo = if (isFilme) "filmes" else "doramas"
-        
-        val streamPath = if (isFilme) {
-            val pt = slug.first().uppercase()
-            "$pt/$slug/stream/stream.m3u8?nocache=${System.currentTimeMillis()}"
-        } else {
-            val pt = slug.first().uppercase()
-            val tempNum = temporada.toString().padStart(2, '0')
-            val epNum = episodio.toString().padStart(2, '0')
-            "$pt/$slug/$tempNum-temporada/$epNum/stream.m3u8?nocache=${System.currentTimeMillis()}"
-        }
-        
-        val PRIMARY_URL = "https://proxy-us-east1-outbound-series.xreadycf.site"
-        val FALLBACK_URL = "https://proxy-us-east1-forks-doramas.xreadycf.site"
-        
-        val primaryStreamUrl = "$PRIMARY_URL/$streamPath"
-        val fallbackStreamUrl = "$FALLBACK_URL/$streamPath"
-        
-        val headers = mapOf(
-            "accept" to "*/*",
-            "accept-language" to "pt-BR",
-            "origin" to "https://www.doramogo.net",
-            "priority" to "u=1, i",
-            "referer" to "https://www.doramogo.net/",
-            "sec-ch-ua" to "\"Chromium\";v=\"127\", \"Not)A;Brand\";v=\"99\", \"Microsoft Edge Simulate\";v=\"127\", \"Lemur\";v=\"127\"",
-            "sec-ch-ua-mobile" to "?1",
-            "sec-ch-ua-platform" to "\"Android\"",
-            "sec-fetch-dest" to "empty",
-            "sec-fetch-mode" to "cors",
-            "sec-fetch-site" to "cross-site",
-            "user-agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36"
-        )
-        
-        suspend fun tryAddLink(url: String, name: String): Boolean {
-            return try {
-                val testResponse = app.get(
-                    url,
-                    headers = headers,
-                    allowRedirects = true,
-                    timeout = 15
-                )
-                
-                if (testResponse.code in 200..299) {
-                    callback(newExtractorLink(name, "Doramogo", url, ExtractorLinkType.M3U8) {
-                        referer = mainUrl
-                        quality = Qualities.P720.value
-                        this.headers = headers
-                    })
-                    true
-                } else {
-                    false
-                }
-            } catch (e: Exception) {
+    val document = app.get(data).document
+
+    // Extrair os URLs proxy dinamicamente da página - VERSÃO ATUALIZADA
+    val proxyUrls = extractProxyUrlsFromDocument(document)
+    val primaryProxy = proxyUrls.primaryUrl
+    val fallbackProxy = proxyUrls.fallbackUrl
+
+    // Log para debug
+    println("[Doramogo] Primary proxy: $primaryProxy")
+    println("[Doramogo] Fallback proxy: $fallbackProxy")
+
+    val urlParts = data.split("/")
+    val slug = urlParts.getOrNull(urlParts.indexOf("series") + 1) 
+        ?: urlParts.getOrNull(urlParts.indexOf("filmes") + 1)
+        ?: return false
+
+    val temporada = extractSeasonNumberFromUrl(data) ?: 1
+    val episodio = extractEpisodeNumberFromUrl(data) ?: 1
+
+    val isFilme = data.contains("/filmes/")
+
+    val streamPath = if (isFilme) {
+        val pt = slug.first().uppercase()
+        "$pt/$slug/stream/stream.m3u8?nocache=${System.currentTimeMillis()}"
+    } else {
+        val pt = slug.first().uppercase()
+        val tempNum = temporada.toString().padStart(2, '0')
+        val epNum = episodio.toString().padStart(2, '0')
+        "$pt/$slug/$tempNum-temporada/$epNum/stream.m3u8?nocache=${System.currentTimeMillis()}"
+    }
+
+    // Construir URLs com os proxies extraídos
+    val primaryStreamUrl = "$primaryProxy/$streamPath"
+    val fallbackStreamUrl = "$fallbackProxy/$streamPath"
+
+    val headers = mapOf(
+        "accept" to "*/*",
+        "accept-language" to "pt-BR",
+        "origin" to "https://www.doramogo.net",
+        "priority" to "u=1, i",
+        "referer" to "https://www.doramogo.net/",
+        "sec-ch-ua" to "\"Chromium\";v=\"127\", \"Not)A;Brand\";v=\"99\", \"Microsoft Edge Simulate\";v=\"127\", \"Lemur\";v=\"127\"",
+        "sec-ch-ua-mobile" to "?1",
+        "sec-ch-ua-platform" to "\"Android\"",
+        "sec-fetch-dest" to "empty",
+        "sec-fetch-mode" to "cors",
+        "sec-fetch-site" to "cross-site",
+        "user-agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36"
+    )
+
+    suspend fun tryAddLink(url: String, name: String): Boolean {
+        return try {
+            val testResponse = app.get(
+                url,
+                headers = headers,
+                allowRedirects = true,
+                timeout = 15
+            )
+
+            if (testResponse.code in 200..299) {
+                callback(newExtractorLink(name, "Doramogo", url, ExtractorLinkType.M3U8) {
+                    referer = mainUrl
+                    quality = Qualities.P720.value
+                    this.headers = headers
+                })
+                true
+            } else {
                 false
             }
+        } catch (e: Exception) {
+            false
         }
-        
-        if (tryAddLink(primaryStreamUrl, "Doramogo")) {
+    }
+
+    // Tentar primeiro com o proxy primário
+    if (tryAddLink(primaryStreamUrl, "Doramogo (Primary)")) {
+        linksFound = true
+    }
+
+    // Se não funcionar, tentar com fallback
+    if (!linksFound) {
+        if (tryAddLink(fallbackStreamUrl, "Doramogo (Fallback)")) {
             linksFound = true
         }
-        
-        if (!linksFound) {
-            if (tryAddLink(fallbackStreamUrl, "Doramogo")) {
+    }
+
+    // Se ainda não funcionar, tentar extrair URLs diretamente do JavaScript
+    if (!linksFound) {
+        extractM3u8UrlsFromJavaScript(document).forEach { url ->
+            if (url.contains(".m3u8")) {
+                callback(newExtractorLink(name, "Doramogo (JS)", url, ExtractorLinkType.M3U8) {
+                    referer = mainUrl
+                    quality = Qualities.P720.value
+                    this.headers = headers
+                })
                 linksFound = true
             }
         }
+    }
+
+    return linksFound
+}
+
+/**
+ * Extrai URLs de proxy dinamicamente do HTML da página.
+ * Baseado no HTML atual fornecido
+ */
+private fun extractProxyUrlsFromDocument(document: Document): ProxyUrls {
+    var primaryUrl = ""
+    var fallbackUrl = ""
+    
+    // Método 1: Procurar por const PRIMARY_URL e FALLBACK_URL no JavaScript
+    val scriptTags = document.select("script")
+    
+    for (script in scriptTags) {
+        val scriptContent = script.html()
         
-        if (!linksFound) {
-            callback(newExtractorLink(name, "Doramogo", primaryStreamUrl, ExtractorLinkType.M3U8) {
-                referer = mainUrl
-                quality = Qualities.P720.value
-                this.headers = headers
-            })
+        // Procura por const PRIMARY_URL = "..." e const FALLBACK_URL = "..."
+        if (scriptContent.contains("const PRIMARY_URL") || scriptContent.contains("const FALLBACK_URL")) {
+            // Regex para encontrar PRIMARY_URL = "valor"
+            val primaryPattern = Regex("""const\s+PRIMARY_URL\s*=\s*["']([^"']+)["']""")
+            val primaryMatch = primaryPattern.find(scriptContent)
+            if (primaryMatch != null) {
+                primaryUrl = primaryMatch.groupValues[1]
+            }
             
-            callback(newExtractorLink(name, "Doramogo", fallbackStreamUrl, ExtractorLinkType.M3U8) {
-                referer = mainUrl
-                quality = Qualities.P720.value
-                this.headers = headers
-            })
+            // Regex para encontrar FALLBACK_URL = "valor"
+            val fallbackPattern = Regex("""const\s+FALLBACK_URL\s*=\s*["']([^"']+)["']""")
+            val fallbackMatch = fallbackPattern.find(scriptContent)
+            if (fallbackMatch != null) {
+                fallbackUrl = fallbackMatch.groupValues[1]
+            }
             
-            linksFound = true
+            // Se encontrou ambos, sair
+            if (primaryUrl.isNotBlank() && fallbackUrl.isNotBlank()) {
+                break
+            }
         }
         
-        if (!linksFound) {
-            val scriptContent = document.select("script").find { 
-                it.html().contains("construirStreamPath") 
-            }?.html()
+        // Método 2: Procurar por urlConfig = { base: "..." }
+        if (scriptContent.contains("urlConfig")) {
+            val urlConfigPattern = Regex("""urlConfig\s*=\s*\{[^}]+\}""")
+            val urlConfigMatch = urlConfigPattern.find(scriptContent)
             
-            if (!scriptContent.isNullOrBlank()) {
-                val urls = extractUrlsFromJavaScript(scriptContent)
-                urls.forEachIndexed { index, url ->
-                    if (url.contains(".m3u8") && !url.contains("jwplatform.com")) {
-                        callback(newExtractorLink(name, "Doramogo", url, ExtractorLinkType.M3U8) {
-                            referer = mainUrl
-                            quality = Qualities.P720.value
-                            this.headers = headers
-                        })
-                        linksFound = true
+            if (urlConfigMatch != null) {
+                val configContent = urlConfigMatch.value
+                val basePattern = Regex(""""base"\s*:\s*"([^"]+)"""")
+                val baseMatch = basePattern.find(configContent)
+                
+                if (baseMatch != null) {
+                    fallbackUrl = baseMatch.groupValues[1]
+                }
+            }
+        }
+    }
+    
+    // Fallbacks caso não encontre
+    if (primaryUrl.isBlank()) {
+        // Do HTML atual: "https://proxy-us-east1-outbound-series.doaswin.shop"
+        primaryUrl = "https://proxy-us-east1-outbound-series.doaswin.shop"
+        println("[Doramogo Warning] Using default primary proxy")
+    }
+    
+    if (fallbackUrl.isBlank()) {
+        // Do HTML atual: "https://proxy-us-east1-forks-doramas.doaswin.shop"
+        fallbackUrl = "https://proxy-us-east1-forks-doramas.doaswin.shop"
+        println("[Doramogo Warning] Using default fallback proxy")
+    }
+    
+    // Garantir que as URLs terminam sem barra
+    primaryUrl = primaryUrl.removeSuffix("/")
+    fallbackUrl = fallbackUrl.removeSuffix("/")
+    
+    return ProxyUrls(primaryUrl, fallbackUrl)
+}
+
+/**
+ * Extrai URLs M3U8 diretamente do JavaScript da página
+ */
+private fun extractM3u8UrlsFromJavaScript(document: Document): List<String> {
+    val urls = mutableListOf<String>()
+    
+    val scripts = document.select("script")
+    
+    for (script in scripts) {
+        val scriptContent = script.html()
+        
+        // Procura por URLs M3U8 no código JavaScript
+        val patterns = listOf(
+            // Padrão para streams construídas
+            Regex("""['"](https?://[^'"]+\.m3u8[^'"]*)['"]"""),
+            // Padrão para URLs completas com proxy
+            Regex("""['"](https?://proxy-[^'"]+\.m3u8[^'"]*)['"]"""),
+            // Padrão para construção de URLs
+            Regex("""['"](\w+StreamUrl\s*[=:]\s*[^;]+)['"]""")
+        )
+        
+        for (pattern in patterns) {
+            val matches = pattern.findAll(scriptContent)
+            matches.forEach { match ->
+                val potentialUrl = match.groupValues[1]
+                
+                // Verificar se é uma URL M3U8 válida
+                if (potentialUrl.contains(".m3u8") && 
+                    (potentialUrl.startsWith("http://") || potentialUrl.startsWith("https://"))) {
+                    if (!urls.contains(potentialUrl)) {
+                        urls.add(potentialUrl)
                     }
                 }
             }
         }
         
-        return linksFound
+        // Extrair URLs específicas da função construirStreamPath
+        if (scriptContent.contains("construirStreamPath")) {
+            // Encontrar a função e extrair a lógica
+            val functionStart = scriptContent.indexOf("function construirStreamPath")
+            if (functionStart != -1) {
+                val functionEnd = scriptContent.indexOf("}", functionStart) + 1
+                if (functionEnd > functionStart) {
+                    val functionCode = scriptContent.substring(functionStart, functionEnd)
+                    
+                    // Procurar por URLs construídas
+                    val urlPatterns = listOf(
+                        Regex("""PRIMARY_URL\s*\+\s*["']/["']\s*\+\s*streamPath"""),
+                        Regex("""FALLBACK_URL\s*\+\s*["']/["']\s*\+\s*streamPath"""),
+                        Regex("""urlConfig\.base\s*\+\s*["']/["']\s*\+\s*streamPath""")
+                    )
+                    
+                    for (urlPattern in urlPatterns) {
+                        if (urlPattern.containsMatchIn(functionCode)) {
+                            // Isso indica que a URL é construída dinamicamente
+                            // Já tratamos isso na extração dos proxies
+                        }
+                    }
+                }
+            }
+        }
     }
+    
+    return urls
+}
+
+/**
+ * Função auxiliar para extrair informações da URL
+ */
+private fun extractSeasonNumberFromUrl(url: String): Int? {
+    val pattern = Regex("""/temporada-(\d+)""")
+    return pattern.find(url)?.groupValues?.get(1)?.toIntOrNull()
+}
+
+private fun extractEpisodeNumberFromUrl(url: String): Int? {
+    val pattern = Regex("""/episodio-(\d+)""")
+    return pattern.find(url)?.groupValues?.get(1)?.toIntOrNull()
+}
+
+/**
+ * Data class para armazenar as URLs de proxy
+ */
+data class ProxyUrls(
+    val primaryUrl: String,
+    val fallbackUrl: String
+)
     
     // === FUNÇÕES AUXILIARES ===
     
