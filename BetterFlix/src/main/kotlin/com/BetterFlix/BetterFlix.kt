@@ -41,31 +41,31 @@ class BetterFlix : MainAPI() {
         val home = mutableListOf<HomePageList>()
         
         try {
-            when {
+            val items = when {
                 url.contains("/api/trending") -> {
-                    val items = fetchTrending()
-                    if (items.isNotEmpty()) {
-                        home.add(HomePageList(request.name, items))
-                    }
+                    fetchTrending()
                 }
                 url.contains("/api/preview-genre") -> {
-                    val items = fetchGenre(url)
-                    if (items.isNotEmpty()) {
-                        home.add(HomePageList(request.name, items))
-                    }
+                    fetchGenre(url)
                 }
                 url.contains("/api/list-animes") -> {
-                    val items = fetchAnimes()
-                    if (items.isNotEmpty()) {
-                        home.add(HomePageList(request.name, items))
-                    }
+                    fetchAnimes()
                 }
+                else -> emptyList()
+            }
+            
+            if (items.isNotEmpty()) {
+                home.add(HomePageList(request.name, items))
             }
         } catch (e: Exception) {
             e.printStackTrace()
         }
         
-        return HomePageResponse(home)
+        return newHomePageResponse(
+            name = request.name,
+            list = home.flatMap { it.list },
+            hasNext = false
+        )
     }
 
     private suspend fun fetchTrending(): List<SearchResponse> {
@@ -135,17 +135,15 @@ class BetterFlix : MainAPI() {
             return when (type) {
                 TvType.Movie -> newMovieSearchResponse(title, detailsUrl, type) {
                     this.posterUrl = poster
-                    this.backgroundPosterUrl = backdrop
                     this.year = year
+                    // backgroundPosterUrl não é mais suportado, usar apenas posterUrl
                 }
                 TvType.Anime -> newAnimeSearchResponse(title, detailsUrl, type) {
                     this.posterUrl = poster
-                    this.backgroundPosterUrl = backdrop
                     this.year = year
                 }
                 else -> newTvSeriesSearchResponse(title, detailsUrl, type) {
                     this.posterUrl = poster
-                    this.backgroundPosterUrl = backdrop
                     this.year = year
                 }
             }
@@ -236,7 +234,6 @@ class BetterFlix : MainAPI() {
                     this.year = year
                     this.plot = synopsis
                     this.tags = genres
-                    this.backgroundPosterUrl = poster
                 }
             } else {
                 // Para filmes
@@ -245,7 +242,6 @@ class BetterFlix : MainAPI() {
                     this.year = year
                     this.plot = synopsis
                     this.tags = genres
-                    this.backgroundPosterUrl = poster
                 }
             }
         } catch (e: Exception) {
