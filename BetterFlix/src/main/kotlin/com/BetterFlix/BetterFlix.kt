@@ -73,7 +73,7 @@ class BetterFlix : MainAPI() {
                 
                 // Log dos primeiros 3 itens para verificação
                 items.take(3).forEachIndexed { index, item ->
-                    println("Item ${index + 1}: ${item.title} - ${item.url}")
+                    println("Item ${index + 1}: ${item.name} - ${item.url}")
                 }
             } else {
                 println("WARNING: Lista '${request.name}' está vazia")
