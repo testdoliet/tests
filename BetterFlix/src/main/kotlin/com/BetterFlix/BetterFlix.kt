@@ -43,8 +43,6 @@ class BetterFlix : MainAPI() {
         println("Name: ${request.name}")
         println("Page: $page")
         
-        val home = mutableListOf<HomePageList>()
-        
         try {
             val items = when {
                 url.contains("/api/trending") -> {
@@ -68,30 +66,34 @@ class BetterFlix : MainAPI() {
             println("DEBUG: ${request.name} - ${items.size} itens encontrados")
             
             if (items.isNotEmpty()) {
-                home.add(HomePageList(request.name, items))
-                println("DEBUG: Lista '${request.name}' adicionada com ${items.size} itens")
-                
                 // Log dos primeiros 3 itens para verificação
                 items.take(3).forEachIndexed { index, item ->
                     println("Item ${index + 1}: ${item.name} - ${item.url}")
                 }
+                
+                return newHomePageResponse(
+                    name = request.name,
+                    list = items,
+                    hasNext = false
+                )
             } else {
                 println("WARNING: Lista '${request.name}' está vazia")
+                return newHomePageResponse(
+                    name = request.name,
+                    list = emptyList(),
+                    hasNext = false
+                )
             }
         } catch (e: Exception) {
             println("ERROR: Erro em getMainPage: ${e.message}")
             e.printStackTrace()
+            
+            return newHomePageResponse(
+                name = request.name,
+                list = emptyList(),
+                hasNext = false
+            )
         }
-        
-        val response = newHomePageResponse(
-            name = request.name,
-            list = home.flatMap { it.list },
-            hasNext = false
-        )
-        
-        println("DEBUG: HomePageResponse criada com ${response.list.size} itens totais")
-        println("=== DEBUG: getMainPage finalizado ===\n")
-        return response
     }
 
     private suspend fun fetchTrending(): List<SearchResponse> {
