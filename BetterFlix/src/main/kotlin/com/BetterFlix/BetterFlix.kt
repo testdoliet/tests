@@ -14,133 +14,144 @@ class BetterFlix : MainAPI() {
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries, TvType.Anime, TvType.Live)
     override val usesWebView = false
 
-    // Agora temos apenas uma página principal com todas as seções
+    private val apiHeaders = mapOf(
+        "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
+        "Accept-Language" to "pt-BR",
+        "Referer" to "https://betterflix.vercel.app/",
+        "sec-ch-ua" to "\"Chromium\";v=\"127\", \"Not)A;Brand\";v=\"99\", \"Microsoft Edge Simulate\";v=\"127\", \"Lemur\";v=\"127\"",
+        "sec-ch-ua-mobile" to "?1",
+        "sec-ch-ua-platform" to "\"Android\""
+    )
+
     override val mainPage = mainPageOf(
-        "$mainUrl/" to "BetterFlix - Tudo"
+        "$mainUrl/api/trending?type=all" to "Em Alta",
+        "$mainUrl/api/preview-genre?id=28" to "Ação e Aventura",
+        "$mainUrl/api/preview-genre?id=35" to "Comédia",
+        "$mainUrl/api/preview-genre?id=27" to "Terror e Suspense",
+        "$mainUrl/api/preview-genre?id=99" to "Documentário",
+        "$mainUrl/api/preview-genre?id=10751" to "Para a Família",
+        "$mainUrl/api/preview-genre?id=80" to "Crime",
+        "$mainUrl/api/preview-genre?id=10402" to "Musical",
+        "$mainUrl/api/preview-genre?id=10749" to "Romance",
+        "$mainUrl/api/list-animes" to "Animes"
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val document = app.get(mainUrl).document
+        val url = request.data
+        val home = mutableListOf<HomePageList>()
         
-        // Criar listas separadas para cada seção
-        val homeLists = mutableListOf<HomePageList>()
-        
-        // 1. Tops da semana
-        val tops = extractSection(document, "Tops da semana")
-        if (tops.isNotEmpty()) {
-            homeLists.add(HomePageList("Tops da semana", tops))
-        }
-        
-        // 2. Filmes do momento  
-        val filmes = extractSection(document, "Filmes do momento")
-        if (filmes.isNotEmpty()) {
-            homeLists.add(HomePageList("Filmes do momento", filmes))
-        }
-        
-        // 3. Séries do momento
-        val series = extractSection(document, "Séries do momento")
-        if (series.isNotEmpty()) {
-            homeLists.add(HomePageList("Séries do momento", series))
-        }
-        
-        // 4. Canais de TV Ao Vivo
-        val canais = extractTVChannels(document)
-        if (canais.isNotEmpty()) {
-            homeLists.add(HomePageList("Canais de TV Ao Vivo", canais))
-        }
-        
-        // Usar newHomePageResponse corretamente
-        // Primeiro, criar uma lista única para a resposta
-        val allItems = homeLists.flatMap { it.list }
-        
-        return newHomePageResponse(
-            name = request.name,
-            list = allItems,
-            hasNext = false
-        )
-    }
-
-    private fun extractSection(doc: org.jsoup.nodes.Document, sectionTitle: String): List<SearchResponse> {
-        val items = mutableListOf<SearchResponse>()
-        
-        // Encontrar todas as seções com título
-        doc.select("div.py-8.w-full.mx-auto").forEach { section ->
-            val h2 = section.selectFirst("h2")?.text()?.trim()
-            if (h2 == sectionTitle) {
-                // Extrair links dentro desta seção
-                section.select("a[href*='?id=']").forEach { element ->
-                    try {
-                        val href = element.attr("href") ?: return@forEach
-                        if (href.startsWith("/canal")) return@forEach
-
-                        val imgElement = element.selectFirst("img")
-                        val title = imgElement?.attr("alt") ?: 
-                                   element.selectFirst("p")?.text() ?:
-                                   return@forEach
-
-                        val poster = imgElement?.attr("src")?.let { fixUrl(it) }
-                        val cleanTitle = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
-                        val year = Regex("\\((\\d{4})\\)").find(title)?.groupValues?.get(1)?.toIntOrNull()
-
-                        // Determinar tipo pelo URL
-                        val isSeries = href.contains("type=tv") || sectionTitle.contains("Séries")
-                        val isMovie = href.contains("type=movie") || sectionTitle.contains("Filmes")
-                        val isAnime = title.contains("(Anime)", ignoreCase = true)
-
-                        when {
-                            isAnime -> {
-                                newAnimeSearchResponse(cleanTitle, fixUrl(href), TvType.Anime) {
-                                    this.posterUrl = poster
-                                    this.year = year
-                                }.also { items.add(it) }
-                            }
-                            isSeries -> {
-                                newTvSeriesSearchResponse(cleanTitle, fixUrl(href), TvType.TvSeries) {
-                                    this.posterUrl = poster
-                                    this.year = year
-                                }.also { items.add(it) }
-                            }
-                            else -> {
-                                newMovieSearchResponse(cleanTitle, fixUrl(href), TvType.Movie) {
-                                    this.posterUrl = poster
-                                    this.year = year
-                                }.also { items.add(it) }
-                            }
-                        }
-                    } catch (e: Exception) {
-                        // Ignorar erro
+        try {
+            when {
+                url.contains("/api/trending") -> {
+                    val items = fetchTrending()
+                    if (items.isNotEmpty()) {
+                        home.add(HomePageList(request.name, items))
+                    }
+                }
+                url.contains("/api/preview-genre") -> {
+                    val items = fetchGenre(url)
+                    if (items.isNotEmpty()) {
+                        home.add(HomePageList(request.name, items))
+                    }
+                }
+                url.contains("/api/list-animes") -> {
+                    val items = fetchAnimes()
+                    if (items.isNotEmpty()) {
+                        home.add(HomePageList(request.name, items))
                     }
                 }
             }
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
         
-        return items.distinctBy { it.url }
+        return HomePageResponse(home)
     }
 
-    private fun extractTVChannels(document: org.jsoup.nodes.Document): List<SearchResponse> {
-        val channels = mutableListOf<SearchResponse>()
-
-        // Extrair canais da grid
-        document.select("a.canal-card, a[href^='/canal']").forEach { element ->
-            try {
-                val href = element.attr("href") ?: return@forEach
-                if (!href.contains("canal")) return@forEach
-
-                val nameElement = element.selectFirst("h3")
-                val title = nameElement?.text() ?: return@forEach
-
-                val imgElement = element.selectFirst("img")
-                val poster = imgElement?.attr("src")?.let { fixUrl(it) }
-
-                newTvSeriesSearchResponse(title, fixUrl(href), TvType.Live) {
-                    this.posterUrl = poster
-                }.also { channels.add(it) }
-            } catch (e: Exception) {
-                // Ignorar erro
-            }
+    private suspend fun fetchTrending(): List<SearchResponse> {
+        val url = "$mainUrl/api/trending?type=all"
+        val response = app.get(url, headers = apiHeaders)
+        
+        return try {
+            val json = response.parsedSafe<TrendingResponse>()
+            json?.results?.mapNotNull { item ->
+                createSearchResponse(item)
+            } ?: emptyList()
+        } catch (e: Exception) {
+            emptyList()
         }
+    }
 
-        return channels.distinctBy { it.url }
+    private suspend fun fetchGenre(url: String): List<SearchResponse> {
+        val response = app.get(url, headers = apiHeaders)
+        
+        return try {
+            val json = response.parsedSafe<TrendingResponse>()
+            json?.results?.mapNotNull { item ->
+                createSearchResponse(item)
+            } ?: emptyList()
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    private suspend fun fetchAnimes(): List<SearchResponse> {
+        val url = "$mainUrl/api/list-animes"
+        val response = app.get(url, headers = apiHeaders)
+        
+        return try {
+            val json = response.parsedSafe<TrendingResponse>()
+            json?.results?.mapNotNull { item ->
+                createSearchResponse(item)
+            } ?: emptyList()
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    private fun createSearchResponse(item: MediaItem): SearchResponse? {
+        try {
+            val title = item.title ?: item.name ?: return null
+            val poster = item.poster_path?.let { "https://image.tmdb.org/t/p/w500$it" }
+            val backdrop = item.backdrop_path?.let { "https://image.tmdb.org/t/p/w780$it" }
+            val year = item.release_date?.take(4)?.toIntOrNull() ?: 
+                      item.first_air_date?.take(4)?.toIntOrNull()
+            
+            // Determinar tipo
+            val type = when (item.media_type) {
+                "movie" -> TvType.Movie
+                "tv" -> TvType.TvSeries
+                "anime" -> TvType.Anime
+                else -> TvType.TvSeries
+            }
+            
+            // Criar URL para a página de detalhes
+            val detailsUrl = when (type) {
+                TvType.Movie -> "$mainUrl/?id=${item.id}&type=movie"
+                TvType.Anime -> "$mainUrl/?id=${item.id}&type=anime"
+                else -> "$mainUrl/?id=${item.id}&type=tv"
+            }
+            
+            return when (type) {
+                TvType.Movie -> newMovieSearchResponse(title, detailsUrl, type) {
+                    this.posterUrl = poster
+                    this.backgroundPosterUrl = backdrop
+                    this.year = year
+                }
+                TvType.Anime -> newAnimeSearchResponse(title, detailsUrl, type) {
+                    this.posterUrl = poster
+                    this.backgroundPosterUrl = backdrop
+                    this.year = year
+                }
+                else -> newTvSeriesSearchResponse(title, detailsUrl, type) {
+                    this.posterUrl = poster
+                    this.backgroundPosterUrl = backdrop
+                    this.year = year
+                }
+            }
+        } catch (e: Exception) {
+            return null
+        }
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
@@ -189,14 +200,7 @@ class BetterFlix : MainAPI() {
 
     override suspend fun load(url: String): LoadResponse? {
         try {
-            // Primeiro testar se a URL ainda é válida
-            val response = app.get(url, timeout = 10_000)
-            if (response.code >= 400) {
-                // URL pode ter mudado, tentar formatos alternativos
-                return tryAlternativeLoad(url)
-            }
-            
-            val document = response.document
+            val document = app.get(url).document
 
             // Extrair título
             val titleElement = document.selectFirst("h1, .title, header h1")
@@ -245,7 +249,6 @@ class BetterFlix : MainAPI() {
                 }
             }
         } catch (e: Exception) {
-            // Fallback: tentar formato alternativo
             return tryAlternativeLoad(url)
         }
     }
@@ -488,6 +491,25 @@ class BetterFlix : MainAPI() {
         }
     }
 }
+
+// Modelos de dados
+private data class TrendingResponse(
+    val results: List<MediaItem>
+)
+
+private data class MediaItem(
+    val id: Int,
+    val title: String?,
+    val name: String?,
+    val overview: String?,
+    val poster_path: String?,
+    val backdrop_path: String?,
+    val media_type: String,
+    val release_date: String?,
+    val first_air_date: String?,
+    val vote_average: Double?,
+    val vote_count: Int?
+)
 
 // Função de extensão para codificar query
 private fun String.encodeSearchQuery(): String {
