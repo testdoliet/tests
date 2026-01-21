@@ -101,16 +101,33 @@ class BetterFlix : MainAPI() {
         println("DEBUG fetchTrending - URL: $url")
         
         try {
-            val response = app.get(url, headers = apiHeaders)
+            // Adicionar delay para evitar rate limiting
+            kotlinx.coroutines.delay(500L)
+            
+            val response = app.get(url, headers = apiHeaders, timeout = 30)
             println("DEBUG fetchTrending - Status: ${response.code}")
+            
+            if (response.code == 429) {
+                println("ERROR fetchTrending - Rate limited (429). Tentando novamente...")
+                kotlinx.coroutines.delay(2000L) // Esperar 2 segundos
+                return fetchTrending() // Tentar novamente
+            }
+            
+            if (response.code != 200) {
+                println("ERROR fetchTrending - Status não é 200: ${response.code}")
+                return emptyList()
+            }
+            
             println("DEBUG fetchTrending - Response size: ${response.text.length} chars")
             
             // Verificar se a resposta é JSON válido
-            if (response.text.startsWith("{") || response.text.startsWith("[")) {
+            val responseText = response.text.trim()
+            if (responseText.startsWith("{") || responseText.startsWith("[")) {
                 println("DEBUG fetchTrending - Resposta parece ser JSON")
             } else {
                 println("ERROR fetchTrending - Resposta não parece ser JSON")
-                println("DEBUG fetchTrending - Primeiros 200 chars: ${response.text.take(200)}")
+                println("DEBUG fetchTrending - Primeiros 200 chars: ${responseText.take(200)}")
+                return emptyList()
             }
             
             return try {
@@ -150,8 +167,23 @@ class BetterFlix : MainAPI() {
         println("DEBUG fetchGenre - URL: $url")
         
         try {
-            val response = app.get(url, headers = apiHeaders)
+            // Adicionar delay para evitar rate limiting
+            kotlinx.coroutines.delay(500L)
+            
+            val response = app.get(url, headers = apiHeaders, timeout = 30)
             println("DEBUG fetchGenre - Status: ${response.code}")
+            
+            if (response.code == 429) {
+                println("ERROR fetchGenre - Rate limited (429). Tentando novamente...")
+                kotlinx.coroutines.delay(2000L) // Esperar 2 segundos
+                return fetchGenre(url) // Tentar novamente
+            }
+            
+            if (response.code != 200) {
+                println("ERROR fetchGenre - Status não é 200: ${response.code}")
+                return emptyList()
+            }
+            
             println("DEBUG fetchGenre - Response size: ${response.text.length} chars")
             
             return try {
@@ -179,8 +211,23 @@ class BetterFlix : MainAPI() {
         println("DEBUG fetchAnimes - URL: $url")
         
         try {
-            val response = app.get(url, headers = apiHeaders)
+            // Adicionar delay para evitar rate limiting
+            kotlinx.coroutines.delay(500L)
+            
+            val response = app.get(url, headers = apiHeaders, timeout = 30)
             println("DEBUG fetchAnimes - Status: ${response.code}")
+            
+            if (response.code == 429) {
+                println("ERROR fetchAnimes - Rate limited (429). Tentando novamente...")
+                kotlinx.coroutines.delay(2000L) // Esperar 2 segundos
+                return fetchAnimes() // Tentar novamente
+            }
+            
+            if (response.code != 200) {
+                println("ERROR fetchAnimes - Status não é 200: ${response.code}")
+                return emptyList()
+            }
+            
             println("DEBUG fetchAnimes - Response size: ${response.text.length} chars")
             
             return try {
@@ -268,58 +315,66 @@ class BetterFlix : MainAPI() {
         val searchUrl = "$mainUrl/search?q=${query.encodeSearchQuery()}"
         println("DEBUG search - URL: $searchUrl")
         
-        val document = app.get(searchUrl).document
-        println("DEBUG search - Document carregado")
+        try {
+            // Adicionar delay para evitar rate limiting
+            kotlinx.coroutines.delay(500L)
+            
+            val document = app.get(searchUrl, headers = apiHeaders, timeout = 30).document
+            println("DEBUG search - Document carregado")
 
-        val results = document.select("a[href*='?id=']").mapNotNull { element ->
-            try {
-                val href = element.attr("href") ?: return@mapNotNull null
-                if (href.startsWith("/canal")) return@mapNotNull null
+            val results = document.select("a[href*='?id=']").mapNotNull { element ->
+                try {
+                    val href = element.attr("href") ?: return@mapNotNull null
+                    if (href.startsWith("/canal")) return@mapNotNull null
 
-                val imgElement = element.selectFirst("img")
-                val title = imgElement?.attr("alt") ?: 
-                           element.selectFirst(".text-white")?.text() ?:
-                           return@mapNotNull null
+                    val imgElement = element.selectFirst("img")
+                    val title = imgElement?.attr("alt") ?: 
+                               element.selectFirst(".text-white")?.text() ?:
+                               return@mapNotNull null
 
-                val poster = imgElement?.attr("src")?.let { fixUrl(it) }
-                val cleanTitle = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
-                val year = Regex("\\((\\d{4})\\)").find(title)?.groupValues?.get(1)?.toIntOrNull()
+                    val poster = imgElement?.attr("src")?.let { fixUrl(it) }
+                    val cleanTitle = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
+                    val year = Regex("\\((\\d{4})\\)").find(title)?.groupValues?.get(1)?.toIntOrNull()
 
-                // Determinar tipo
-                val isSeries = href.contains("type=tv")
-                val isMovie = href.contains("type=movie")
-                val isAnime = title.contains("(Anime)", ignoreCase = true)
+                    // Determinar tipo
+                    val isSeries = href.contains("type=tv")
+                    val isMovie = href.contains("type=movie")
+                    val isAnime = title.contains("(Anime)", ignoreCase = true)
 
-                val result = when {
-                    isAnime -> newAnimeSearchResponse(cleanTitle, fixUrl(href), TvType.Anime) {
-                        this.posterUrl = poster
-                        this.year = year
+                    val result = when {
+                        isAnime -> newAnimeSearchResponse(cleanTitle, fixUrl(href), TvType.Anime) {
+                            this.posterUrl = poster
+                            this.year = year
+                        }
+                        isSeries -> newTvSeriesSearchResponse(cleanTitle, fixUrl(href), TvType.TvSeries) {
+                            this.posterUrl = poster
+                            this.year = year
+                        }
+                        isMovie -> newMovieSearchResponse(cleanTitle, fixUrl(href), TvType.Movie) {
+                            this.posterUrl = poster
+                            this.year = year
+                        }
+                        else -> null
                     }
-                    isSeries -> newTvSeriesSearchResponse(cleanTitle, fixUrl(href), TvType.TvSeries) {
-                        this.posterUrl = poster
-                        this.year = year
+                    
+                    if (result != null) {
+                        println("DEBUG search - Resultado encontrado: $cleanTitle")
                     }
-                    isMovie -> newMovieSearchResponse(cleanTitle, fixUrl(href), TvType.Movie) {
-                        this.posterUrl = poster
-                        this.year = year
-                    }
-                    else -> null
+                    
+                    result
+                } catch (e: Exception) {
+                    println("ERROR search - Erro processando elemento: ${e.message}")
+                    null
                 }
-                
-                if (result != null) {
-                    println("DEBUG search - Resultado encontrado: $cleanTitle")
-                }
-                
-                result
-            } catch (e: Exception) {
-                println("ERROR search - Erro processando elemento: ${e.message}")
-                null
             }
+            
+            println("DEBUG search - ${results.size} resultados encontrados")
+            println("=== DEBUG: search finalizado ===\n")
+            return results
+        } catch (e: Exception) {
+            println("ERROR search - Erro na requisição: ${e.message}")
+            return emptyList()
         }
-        
-        println("DEBUG search - ${results.size} resultados encontrados")
-        println("=== DEBUG: search finalizado ===\n")
-        return results
     }
 
     override suspend fun load(url: String): LoadResponse? {
@@ -327,7 +382,10 @@ class BetterFlix : MainAPI() {
         println("URL: $url")
         
         try {
-            val document = app.get(url).document
+            // Adicionar delay para evitar rate limiting
+            kotlinx.coroutines.delay(500L)
+            
+            val document = app.get(url, headers = apiHeaders, timeout = 30).document
             println("DEBUG load - Document carregado")
 
             // Extrair título
@@ -523,8 +581,11 @@ class BetterFlix : MainAPI() {
         println("Data: $data")
         
         return try {
+            // Adicionar delay para evitar rate limiting
+            kotlinx.coroutines.delay(500L)
+            
             // Tentar extrair links da página
-            val document = app.get(data).document
+            val document = app.get(data, headers = apiHeaders, timeout = 30).document
             println("DEBUG loadLinks - Document carregado")
             
             // Procurar por iframes de player
