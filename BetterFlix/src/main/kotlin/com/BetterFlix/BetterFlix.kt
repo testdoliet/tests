@@ -14,251 +14,111 @@ class BetterFlix : MainAPI() {
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries, TvType.Anime, TvType.Live)
     override val usesWebView = false
 
+    // Headers COMPLETOS do seu curl
     private val apiHeaders = mapOf(
         "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
+        "Accept" to "*/*",
         "Accept-Language" to "pt-BR",
         "Referer" to "https://betterflix.vercel.app/",
         "sec-ch-ua" to "\"Chromium\";v=\"127\", \"Not)A;Brand\";v=\"99\", \"Microsoft Edge Simulate\";v=\"127\", \"Lemur\";v=\"127\"",
         "sec-ch-ua-mobile" to "?1",
-        "sec-ch-ua-platform" to "\"Android\""
+        "sec-ch-ua-platform" to "\"Android\"",
+        "Cookie" to "dom3ic8zudi28v8lr6fgphwffqoz0j6c=33de42d8-3e93-4249-b175-d6bf5346ae91%3A2%3A1; pp_main_80d9775bdcedfb8fd29914d950374a08=1"
     )
 
+    // Testar apenas UMA seção primeiro
     override val mainPage = mainPageOf(
-        "$mainUrl/api/trending?type=all" to "Em Alta",
-        "$mainUrl/api/preview-genre?id=28" to "Ação e Aventura",
-        "$mainUrl/api/preview-genre?id=35" to "Comédia",
-        "$mainUrl/api/preview-genre?id=27" to "Terror e Suspense",
-        "$mainUrl/api/preview-genre?id=99" to "Documentário",
-        "$mainUrl/api/preview-genre?id=10751" to "Para a Família",
-        "$mainUrl/api/preview-genre?id=80" to "Crime",
-        "$mainUrl/api/preview-genre?id=10402" to "Musical",
-        "$mainUrl/api/preview-genre?id=10749" to "Romance",
-        "$mainUrl/api/list-animes" to "Animes"
+        "$mainUrl/api/trending?type=all" to "Teste API"
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val url = request.data
-        println("=== DEBUG: getMainPage chamado ===")
-        println("URL: $url")
-        println("Name: ${request.name}")
-        println("Page: $page")
+        println("=== DEBUG: Testando API ÚNICA ===")
+        println("URL: ${request.data}")
+        println("Headers sendo usados: $apiHeaders")
         
-        try {
-            val items = when {
-                url.contains("/api/trending") -> {
-                    println("DEBUG: Buscando Trending")
-                    fetchTrending()
-                }
-                url.contains("/api/preview-genre") -> {
-                    println("DEBUG: Buscando Gênero")
-                    fetchGenre(url)
-                }
-                url.contains("/api/list-animes") -> {
-                    println("DEBUG: Buscando Animes")
-                    fetchAnimes()
-                }
-                else -> {
-                    println("ERROR: URL não reconhecida: $url")
-                    emptyList()
-                }
-            }
-            
-            println("DEBUG: ${request.name} - ${items.size} itens encontrados")
-            
-            if (items.isNotEmpty()) {
-                // Log dos primeiros 3 itens para verificação
-                items.take(3).forEachIndexed { index, item ->
-                    println("Item ${index + 1}: ${item.name} - ${item.url}")
-                }
-                
-                return newHomePageResponse(
-                    name = request.name,
-                    list = items,
-                    hasNext = false
-                )
-            } else {
-                println("WARNING: Lista '${request.name}' está vazia")
-                return newHomePageResponse(
-                    name = request.name,
-                    list = emptyList(),
-                    hasNext = false
-                )
-            }
+        val items = try {
+            fetchSingleAPI(request.data)
         } catch (e: Exception) {
-            println("ERROR: Erro em getMainPage: ${e.message}")
+            println("ERROR no getMainPage: ${e.message}")
             e.printStackTrace()
-            
-            return newHomePageResponse(
-                name = request.name,
-                list = emptyList(),
-                hasNext = false
-            )
+            emptyList()
         }
+        
+        println("DEBUG: Retornando ${items.size} itens")
+        
+        return newHomePageResponse(
+            name = request.name,
+            list = items,
+            hasNext = false
+        )
     }
 
-    private suspend fun fetchTrending(): List<SearchResponse> {
-        val url = "$mainUrl/api/trending?type=all"
-        println("DEBUG fetchTrending - URL: $url")
+    private suspend fun fetchSingleAPI(url: String): List<SearchResponse> {
+        println("DEBUG fetchSingleAPI: $url")
         
         try {
-            // Adicionar delay para evitar rate limiting
-            kotlinx.coroutines.delay(500L)
-            
             val response = app.get(url, headers = apiHeaders, timeout = 30)
-            println("DEBUG fetchTrending - Status: ${response.code}")
+            println("DEBUG fetchSingleAPI - Status: ${response.code}")
+            println("DEBUG fetchSingleAPI - Response length: ${response.text.length}")
             
             if (response.code == 429) {
-                println("ERROR fetchTrending - Rate limited (429). Tentando novamente...")
-                kotlinx.coroutines.delay(2000L) // Esperar 2 segundos
-                return fetchTrending() // Tentar novamente
+                println("ERROR: Rate limited (429)")
+                println("DEBUG: Response body: ${response.text.take(500)}")
+                return emptyList()
             }
             
             if (response.code != 200) {
-                println("ERROR fetchTrending - Status não é 200: ${response.code}")
+                println("ERROR: Status ${response.code}")
+                println("DEBUG: Response body: ${response.text.take(500)}")
                 return emptyList()
             }
             
-            println("DEBUG fetchTrending - Response size: ${response.text.length} chars")
-            
-            // Verificar se a resposta é JSON válido
+            // Verificar se é JSON
             val responseText = response.text.trim()
-            if (responseText.startsWith("{") || responseText.startsWith("[")) {
-                println("DEBUG fetchTrending - Resposta parece ser JSON")
-            } else {
-                println("ERROR fetchTrending - Resposta não parece ser JSON")
-                println("DEBUG fetchTrending - Primeiros 200 chars: ${responseText.take(200)}")
+            if (!responseText.startsWith("{") && !responseText.startsWith("[")) {
+                println("ERROR: Não é JSON válido")
+                println("DEBUG: Primeiros chars: ${responseText.take(200)}")
                 return emptyList()
             }
+            
+            println("DEBUG: Parece ser JSON, tentando parse...")
             
             return try {
                 val json = response.parsedSafe<TrendingResponse>()
-                println("DEBUG fetchTrending - JSON parseado: ${json != null}")
-                
                 if (json == null) {
-                    println("ERROR fetchTrending - Falha ao parsear JSON")
-                    return emptyList()
+                    println("ERROR: JSON parse retornou null")
+                    emptyList()
+                } else {
+                    println("DEBUG: JSON parseado com sucesso! ${json.results?.size ?: 0} resultados")
+                    
+                    val items = json.results?.mapNotNull { item ->
+                        createSearchResponse(item)
+                    } ?: emptyList()
+                    
+                    println("DEBUG: ${items.size} SearchResponse criados")
+                    items
                 }
-                
-                println("DEBUG fetchTrending - ${json.results?.size ?: 0} resultados encontrados")
-                
-                val items = json.results?.mapNotNull { item ->
-                    val searchResponse = createSearchResponse(item)
-                    if (searchResponse == null) {
-                        println("WARNING fetchTrending - Item nulo: ${item.title ?: item.name}")
-                    }
-                    searchResponse
-                } ?: emptyList()
-                
-                println("DEBUG fetchTrending - ${items.size} SearchResponse criados")
-                return items
             } catch (e: Exception) {
-                println("ERROR fetchTrending - Erro ao parsear JSON: ${e.message}")
+                println("ERROR no parse JSON: ${e.message}")
                 e.printStackTrace()
                 emptyList()
             }
         } catch (e: Exception) {
-            println("ERROR fetchTrending - Erro na requisição: ${e.message}")
+            println("ERROR na requisição: ${e.message}")
             e.printStackTrace()
-            return emptyList()
-        }
-    }
-
-    private suspend fun fetchGenre(url: String): List<SearchResponse> {
-        println("DEBUG fetchGenre - URL: $url")
-        
-        try {
-            // Adicionar delay para evitar rate limiting
-            kotlinx.coroutines.delay(500L)
-            
-            val response = app.get(url, headers = apiHeaders, timeout = 30)
-            println("DEBUG fetchGenre - Status: ${response.code}")
-            
-            if (response.code == 429) {
-                println("ERROR fetchGenre - Rate limited (429). Tentando novamente...")
-                kotlinx.coroutines.delay(2000L) // Esperar 2 segundos
-                return fetchGenre(url) // Tentar novamente
-            }
-            
-            if (response.code != 200) {
-                println("ERROR fetchGenre - Status não é 200: ${response.code}")
-                return emptyList()
-            }
-            
-            println("DEBUG fetchGenre - Response size: ${response.text.length} chars")
-            
-            return try {
-                val json = response.parsedSafe<TrendingResponse>()
-                println("DEBUG fetchGenre - JSON parseado: ${json != null}")
-                
-                val items = json?.results?.mapNotNull { item ->
-                    createSearchResponse(item)
-                } ?: emptyList()
-                
-                println("DEBUG fetchGenre - ${items.size} itens criados")
-                return items
-            } catch (e: Exception) {
-                println("ERROR fetchGenre - Erro ao parsear JSON: ${e.message}")
-                emptyList()
-            }
-        } catch (e: Exception) {
-            println("ERROR fetchGenre - Erro na requisição: ${e.message}")
-            return emptyList()
-        }
-    }
-
-    private suspend fun fetchAnimes(): List<SearchResponse> {
-        val url = "$mainUrl/api/list-animes"
-        println("DEBUG fetchAnimes - URL: $url")
-        
-        try {
-            // Adicionar delay para evitar rate limiting
-            kotlinx.coroutines.delay(500L)
-            
-            val response = app.get(url, headers = apiHeaders, timeout = 30)
-            println("DEBUG fetchAnimes - Status: ${response.code}")
-            
-            if (response.code == 429) {
-                println("ERROR fetchAnimes - Rate limited (429). Tentando novamente...")
-                kotlinx.coroutines.delay(2000L) // Esperar 2 segundos
-                return fetchAnimes() // Tentar novamente
-            }
-            
-            if (response.code != 200) {
-                println("ERROR fetchAnimes - Status não é 200: ${response.code}")
-                return emptyList()
-            }
-            
-            println("DEBUG fetchAnimes - Response size: ${response.text.length} chars")
-            
-            return try {
-                val json = response.parsedSafe<TrendingResponse>()
-                println("DEBUG fetchAnimes - JSON parseado: ${json != null}")
-                
-                val items = json?.results?.mapNotNull { item ->
-                    createSearchResponse(item)
-                } ?: emptyList()
-                
-                println("DEBUG fetchAnimes - ${items.size} itens criados")
-                return items
-            } catch (e: Exception) {
-                println("ERROR fetchAnimes - Erro ao parsear JSON: ${e.message}")
-                emptyList()
-            }
-        } catch (e: Exception) {
-            println("ERROR fetchAnimes - Erro na requisição: ${e.message}")
             return emptyList()
         }
     }
 
     private fun createSearchResponse(item: MediaItem): SearchResponse? {
-        try {
+        return try {
             val title = item.title ?: item.name
             if (title == null) {
-                println("WARNING createSearchResponse - Título nulo para item ID: ${item.id}")
+                println("WARNING: Título nulo para item ${item.id}")
                 return null
             }
             
-            println("DEBUG createSearchResponse - Processando: $title (ID: ${item.id}, Type: ${item.media_type})")
+            println("DEBUG: Processando item: $title")
             
             val poster = item.poster_path?.let { "https://image.tmdb.org/t/p/w500$it" }
             val year = item.release_date?.take(4)?.toIntOrNull() ?: 
@@ -270,7 +130,7 @@ class BetterFlix : MainAPI() {
                 "tv" -> TvType.TvSeries
                 "anime" -> TvType.Anime
                 else -> {
-                    println("WARNING createSearchResponse - Tipo desconhecido: ${item.media_type}, usando TvSeries")
+                    println("WARNING: Tipo desconhecido '${item.media_type}' para $title")
                     TvType.TvSeries
                 }
             }
@@ -282,29 +142,25 @@ class BetterFlix : MainAPI() {
                 else -> "$mainUrl/?id=${item.id}&type=tv"
             }
             
-            println("DEBUG createSearchResponse - URL criada: $detailsUrl")
+            println("DEBUG: URL criada: $detailsUrl")
             
             return when (type) {
                 TvType.Movie -> newMovieSearchResponse(title, detailsUrl, type) {
                     this.posterUrl = poster
                     this.year = year
-                    println("DEBUG createSearchResponse - Movie criado: $title")
                 }
                 TvType.Anime -> newAnimeSearchResponse(title, detailsUrl, type) {
                     this.posterUrl = poster
                     this.year = year
-                    println("DEBUG createSearchResponse - Anime criado: $title")
                 }
                 else -> newTvSeriesSearchResponse(title, detailsUrl, type) {
                     this.posterUrl = poster
                     this.year = year
-                    println("DEBUG createSearchResponse - TV Series criado: $title")
                 }
             }
         } catch (e: Exception) {
-            println("ERROR createSearchResponse - Erro: ${e.message}")
-            e.printStackTrace()
-            return null
+            println("ERROR em createSearchResponse: ${e.message}")
+            null
         }
     }
 
@@ -315,66 +171,57 @@ class BetterFlix : MainAPI() {
         val searchUrl = "$mainUrl/search?q=${query.encodeSearchQuery()}"
         println("DEBUG search - URL: $searchUrl")
         
-        try {
-            // Adicionar delay para evitar rate limiting
-            kotlinx.coroutines.delay(500L)
-            
-            val document = app.get(searchUrl, headers = apiHeaders, timeout = 30).document
-            println("DEBUG search - Document carregado")
+        val document = app.get(searchUrl).document
+        println("DEBUG search - Document carregado")
 
-            val results = document.select("a[href*='?id=']").mapNotNull { element ->
-                try {
-                    val href = element.attr("href") ?: return@mapNotNull null
-                    if (href.startsWith("/canal")) return@mapNotNull null
+        val results = document.select("a[href*='?id=']").mapNotNull { element ->
+            try {
+                val href = element.attr("href") ?: return@mapNotNull null
+                if (href.startsWith("/canal")) return@mapNotNull null
 
-                    val imgElement = element.selectFirst("img")
-                    val title = imgElement?.attr("alt") ?: 
-                               element.selectFirst(".text-white")?.text() ?:
-                               return@mapNotNull null
+                val imgElement = element.selectFirst("img")
+                val title = imgElement?.attr("alt") ?: 
+                           element.selectFirst(".text-white")?.text() ?:
+                           return@mapNotNull null
 
-                    val poster = imgElement?.attr("src")?.let { fixUrl(it) }
-                    val cleanTitle = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
-                    val year = Regex("\\((\\d{4})\\)").find(title)?.groupValues?.get(1)?.toIntOrNull()
+                val poster = imgElement?.attr("src")?.let { fixUrl(it) }
+                val cleanTitle = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
+                val year = Regex("\\((\\d{4})\\)").find(title)?.groupValues?.get(1)?.toIntOrNull()
 
-                    // Determinar tipo
-                    val isSeries = href.contains("type=tv")
-                    val isMovie = href.contains("type=movie")
-                    val isAnime = title.contains("(Anime)", ignoreCase = true)
+                // Determinar tipo
+                val isSeries = href.contains("type=tv")
+                val isMovie = href.contains("type=movie")
+                val isAnime = title.contains("(Anime)", ignoreCase = true)
 
-                    val result = when {
-                        isAnime -> newAnimeSearchResponse(cleanTitle, fixUrl(href), TvType.Anime) {
-                            this.posterUrl = poster
-                            this.year = year
-                        }
-                        isSeries -> newTvSeriesSearchResponse(cleanTitle, fixUrl(href), TvType.TvSeries) {
-                            this.posterUrl = poster
-                            this.year = year
-                        }
-                        isMovie -> newMovieSearchResponse(cleanTitle, fixUrl(href), TvType.Movie) {
-                            this.posterUrl = poster
-                            this.year = year
-                        }
-                        else -> null
+                val result = when {
+                    isAnime -> newAnimeSearchResponse(cleanTitle, fixUrl(href), TvType.Anime) {
+                        this.posterUrl = poster
+                        this.year = year
                     }
-                    
-                    if (result != null) {
-                        println("DEBUG search - Resultado encontrado: $cleanTitle")
+                    isSeries -> newTvSeriesSearchResponse(cleanTitle, fixUrl(href), TvType.TvSeries) {
+                        this.posterUrl = poster
+                        this.year = year
                     }
-                    
-                    result
-                } catch (e: Exception) {
-                    println("ERROR search - Erro processando elemento: ${e.message}")
-                    null
+                    isMovie -> newMovieSearchResponse(cleanTitle, fixUrl(href), TvType.Movie) {
+                        this.posterUrl = poster
+                        this.year = year
+                    }
+                    else -> null
                 }
+                
+                if (result != null) {
+                    println("DEBUG search - Resultado encontrado: $cleanTitle")
+                }
+                
+                result
+            } catch (e: Exception) {
+                println("ERROR search - Erro processando elemento: ${e.message}")
+                null
             }
-            
-            println("DEBUG search - ${results.size} resultados encontrados")
-            println("=== DEBUG: search finalizado ===\n")
-            return results
-        } catch (e: Exception) {
-            println("ERROR search - Erro na requisição: ${e.message}")
-            return emptyList()
         }
+        
+        println("DEBUG search - ${results.size} resultados encontrados")
+        return results
     }
 
     override suspend fun load(url: String): LoadResponse? {
@@ -382,10 +229,7 @@ class BetterFlix : MainAPI() {
         println("URL: $url")
         
         try {
-            // Adicionar delay para evitar rate limiting
-            kotlinx.coroutines.delay(500L)
-            
-            val document = app.get(url, headers = apiHeaders, timeout = 30).document
+            val document = app.get(url).document
             println("DEBUG load - Document carregado")
 
             // Extrair título
@@ -581,11 +425,8 @@ class BetterFlix : MainAPI() {
         println("Data: $data")
         
         return try {
-            // Adicionar delay para evitar rate limiting
-            kotlinx.coroutines.delay(500L)
-            
             // Tentar extrair links da página
-            val document = app.get(data, headers = apiHeaders, timeout = 30).document
+            val document = app.get(data).document
             println("DEBUG loadLinks - Document carregado")
             
             // Procurar por iframes de player
