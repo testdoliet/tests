@@ -560,7 +560,8 @@ class Doramogo : MainAPI() {
             }
         }
     }
-override suspend fun loadLinks(
+
+            override suspend fun loadLinks(
     data: String,
     isCasting: Boolean,
     subtitleCallback: (SubtitleFile) -> Unit,
@@ -570,7 +571,7 @@ override suspend fun loadLinks(
 
     val document = app.get(data).document
 
-    // Extrair os URLs proxy dinamicamente da página - VERSÃO ATUALIZADA
+    // Extrair os URLs proxy dinamicamente da página
     val proxyUrls = extractProxyUrlsFromDocument(document)
     val primaryProxy = proxyUrls.primaryUrl
     val fallbackProxy = proxyUrls.fallbackUrl
@@ -675,7 +676,7 @@ override suspend fun loadLinks(
  * Extrai URLs de proxy dinamicamente do HTML da página.
  * Baseado no HTML atual fornecido
  */
-private fun extractProxyUrlsFromDocument(document: Document): ProxyUrls {
+private fun extractProxyUrlsFromDocument(document: org.jsoup.nodes.Document): ProxyUrls {
     var primaryUrl = ""
     var fallbackUrl = ""
     
@@ -747,7 +748,7 @@ private fun extractProxyUrlsFromDocument(document: Document): ProxyUrls {
 /**
  * Extrai URLs M3U8 diretamente do JavaScript da página
  */
-private fun extractM3u8UrlsFromJavaScript(document: Document): List<String> {
+private fun extractM3u8UrlsFromJavaScript(document: org.jsoup.nodes.Document): List<String> {
     val urls = mutableListOf<String>()
     
     val scripts = document.select("script")
@@ -811,7 +812,16 @@ private fun extractM3u8UrlsFromJavaScript(document: Document): List<String> {
 }
 
 /**
- * Função auxiliar para extrair informações da URL
+ * Data class para armazenar as URLs de proxy
+ */
+private data class ProxyUrls(
+    val primaryUrl: String,
+    val fallbackUrl: String
+)
+
+/**
+ * Funções auxiliares para extrair temporada e episódio da URL
+ * Se você já tem essas funções em outro lugar, pode remover estas
  */
 private fun extractSeasonNumberFromUrl(url: String): Int? {
     val pattern = Regex("""/temporada-(\d+)""")
@@ -823,14 +833,6 @@ private fun extractEpisodeNumberFromUrl(url: String): Int? {
     return pattern.find(url)?.groupValues?.get(1)?.toIntOrNull()
 }
 
-/**
- * Data class para armazenar as URLs de proxy
- */
-data class ProxyUrls(
-    val primaryUrl: String,
-    val fallbackUrl: String
-)
-    
     // === FUNÇÕES AUXILIARES ===
     
     private fun cleanTitle(title: String): String {
