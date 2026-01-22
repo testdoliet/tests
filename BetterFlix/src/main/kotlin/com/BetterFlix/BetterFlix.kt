@@ -105,6 +105,18 @@ class BetterFlix : MainAPI() {
         @JsonProperty("adult") val adult: Boolean?
     )
 
+    data class EmbeddedData(
+        val id: String? = null,
+        val name: String? = null,
+        val date: String? = null,
+        val bio: String? = null,
+        val inProduction: Boolean? = null,
+        val vote: Double? = null,
+        val genres: String? = null,
+        val poster: String? = null,
+        val backdrop: String? = null
+    )
+
     // Helper para fazer requests com rate limiting
     private suspend fun <T> safeApiRequest(url: String, block: suspend () -> T): T {
         // Adicionar delay para evitar rate limiting
@@ -478,6 +490,7 @@ class BetterFlix : MainAPI() {
         @JsonProperty("results") val results: List<ContentItem>
     )
 
+    // ========== LOAD() CORRIGIDO ==========
     override suspend fun load(url: String): LoadResponse? {
         return safeApiRequest(url) {
             try {
@@ -486,67 +499,185 @@ class BetterFlix : MainAPI() {
                 if (response.code >= 400) return@safeApiRequest null
                 
                 val document = response.document
+                val html = response.text
                 
-                // Extrair informações da página
-                val title = extractTitle(document)
-                val year = extractYear(document)
-                val overview = extractOverview(document)
-                val poster = extractPoster(document)
-                val backdrop = extractBackdrop(document)
-                val genres = extractGenres(document)
-                val actors = extractActors(document)
-                val trailerKey = extractTrailer(document)
+                // 1. EXTRAIR DADOS DO OBJETO JSON EMBUTIDO (dadosMulti)
+                val embeddedData = extractEmbeddedData(html)
+                if (embeddedData == null) {
+                    println("❌ [DEBUG] Não encontrou dadosMulti no HTML")
+                    return@safeApiRequest null
+                }
                 
-                // Determinar tipo pela URL
-                val isSeries = url.contains("type=tv") || document.select(".episode-list, .season-list").isNotEmpty()
-                val isAnime = url.contains("type=anime") || document.select(".anime-episodes").isNotEmpty()
+                println("✅ [DEBUG] Dados extraídos: ${embeddedData.name}")
+                
+                // 2. DETERMINAR TIPO PELA URL
+                val isSeries = url.contains("type=tv")
+                val isAnime = url.contains("type=anime")
                 val isMovie = !isSeries && !isAnime
                 
+                // 3. EXTRAIR EPISÓDIOS DO SELECT HTML (se for série/anime)
                 if (isSeries || isAnime) {
                     val type = if (isAnime) TvType.Anime else TvType.TvSeries
-                    val episodes = extractEpisodes(document, url)
+                    val episodes = extractEpisodesFromHTML(document, url, embeddedData.id)
                     
-                    newTvSeriesLoadResponse(title ?: "Sem título", url, type, episodes) {
-                        this.posterUrl = poster
-                        this.backgroundPosterUrl = backdrop
-                        this.year = year
-                        this.plot = overview
-                        this.tags = genres
-                        this.duration = extractDuration(document)
-                        this.recommendations = null
+                    println("✅ [DEBUG] Encontrou ${episodes.size} episódios")
+                    
+                    newTvSeriesLoadResponse(embeddedData.name ?: "Sem título", url, type, episodes) {
+                        this.posterUrl = embeddedData.poster?.let { fixUrl(it) }
+                        this.backgroundPosterUrl = embeddedData.backdrop?.let { fixUrl(it) }
+                        this.year = embeddedData.date?.substring(0, 4)?.toIntOrNull()
+                        this.plot = embeddedData.bio
+                        this.rating = embeddedData.vote
+                        this.tags = embeddedData.genres?.split(",")?.map { it.trim() } ?: emptyList()
+                        this.status = if (embeddedData.inProduction == true) "Em Produção" else "Lançado"
+                        
+                        // Extrair duração se disponível
+                        val duration = extractDuration(document)
+                        this.duration = duration
+                        
+                        // Extrair atores e trailer (mantém suas funções originais)
+                        val actors = extractActors(document)
                         if (actors.isNotEmpty()) {
                             addActors(actors)
                         }
                         
+                        val trailerKey = extractTrailer(document)
                         if (trailerKey != null) {
                             addTrailer(trailerKey)
                         }
                     }
                 } else {
-                    newMovieLoadResponse(title ?: "Sem título", url, TvType.Movie, url) {
-                        this.posterUrl = poster
-                        this.backgroundPosterUrl = backdrop
-                        this.year = year
-                        this.plot = overview
-                        this.tags = genres
-                        this.duration = extractDuration(document)
-                        this.recommendations = null
+                    // PARA FILMES
+                    newMovieLoadResponse(embeddedData.name ?: "Sem título", url, TvType.Movie, url) {
+                        this.posterUrl = embeddedData.poster?.let { fixUrl(it) }
+                        this.backgroundPosterUrl = embeddedData.backdrop?.let { fixUrl(it) }
+                        this.year = embeddedData.date?.substring(0, 4)?.toIntOrNull()
+                        this.plot = embeddedData.bio
+                        this.rating = embeddedData.vote
+                        this.tags = embeddedData.genres?.split(",")?.map { it.trim() } ?: emptyList()
+                        this.status = if (embeddedData.inProduction == true) "Em Produção" else "Lançado"
+                        
+                        val duration = extractDuration(document)
+                        this.duration = duration
+                        
+                        val actors = extractActors(document)
                         if (actors.isNotEmpty()) {
                             addActors(actors)
                         }
                         
+                        val trailerKey = extractTrailer(document)
                         if (trailerKey != null) {
                             addTrailer(trailerKey)
                         }
                     }
                 }
             } catch (e: Exception) {
+                e.printStackTrace()
                 null
             }
         }
     }
 
-    // IMPLEMENTAÇÃO DA EXTRAÇÃO DE VÍDEO CORRIGIDA
+    // FUNÇÃO PARA EXTRAIR OBJETO JSON EMBUTIDO
+    private fun extractEmbeddedData(html: String): EmbeddedData? {
+        try {
+            // Procura pelo objeto dadosMulti no script
+            val pattern = Regex("""const dadosMulti\s*=\s*(\{.*?\});""", RegexOption.DOT_MATCHES_ALL)
+            val match = pattern.find(html)
+            
+            if (match != null) {
+                val jsonString = match.groupValues[1]
+                println("✅ [DEBUG] Encontrou dadosMulti: $jsonString")
+                return AppUtils.tryParseJson<EmbeddedData>(jsonString)
+            }
+            
+            // Se não encontrou, tenta extrair manualmente
+            println("⚠️ [DEBUG] Não encontrou padrão dadosMulti, tentando extração manual")
+            return extractEmbeddedDataManually(html)
+        } catch (e: Exception) {
+            println("❌ [DEBUG] Erro ao extrair embedded data: ${e.message}")
+            return null
+        }
+    }
+
+    private fun extractEmbeddedDataManually(html: String): EmbeddedData? {
+        try {
+            fun extract(pattern: String): String? {
+                val regex = Regex(pattern, RegexOption.DOT_MATCHES_ALL)
+                return regex.find(html)?.groupValues?.get(1)
+            }
+            
+            return EmbeddedData(
+                id = extract("\"id\"\\s*:\\s*\"([^\"]+)\"") ?: extract("'id'\\s*:\\s*'([^']+)'"),
+                name = extract("\"name\"\\s*:\\s*\"([^\"]+)\"") ?: extract("'name'\\s*:\\s*'([^']+)'"),
+                date = extract("\"date\"\\s*:\\s*\"([^\"]+)\"") ?: extract("'date'\\s*:\\s*'([^']+)'"),
+                bio = extract("\"bio\"\\s*:\\s*\"([^\"]+)\"") ?: extract("'bio'\\s*:\\s*'([^']+)'"),
+                inProduction = extract("\"inProduction\"\\s*:\\s*(true|false)")?.toBoolean(),
+                vote = extract("\"vote\"\\s*:\\s*([0-9.]+)")?.toDoubleOrNull(),
+                genres = extract("\"genres\"\\s*:\\s*\"([^\"]+)\"") ?: extract("'genres'\\s*:\\s*'([^']+)'"),
+                poster = extract("\"poster\"\\s*:\\s*\"([^\"]+)\"") ?: extract("'poster'\\s*:\\s*'([^']+)'"),
+                backdrop = extract("\"backdrop\"\\s*:\\s*\"([^\"]+)\"") ?: extract("'backdrop'\\s*:\\s*'([^']+)'")
+            )
+        } catch (e: Exception) {
+            return null
+        }
+    }
+
+    // FUNÇÃO PARA EXTRAIR EPISÓDIOS DO SELECT HTML
+    private fun extractEpisodesFromHTML(document: org.jsoup.nodes.Document, baseUrl: String, contentId: String?): List<Episode> {
+        val episodes = mutableListOf<Episode>()
+        
+        try {
+            // Extrair temporada
+            val seasonSelect = document.selectFirst("select#seasonSelect")
+            val seasonNumber = seasonSelect?.select("option[selected]")?.attr("value")?.toIntOrNull() ?: 1
+            
+            // Extrair episódios do select
+            val episodeSelect = document.selectFirst("select#episodeSelect")
+            if (episodeSelect != null) {
+                episodeSelect.select("option").forEach { option ->
+                    try {
+                        val epNumber = option.attr("value").toIntOrNull() ?: return@forEach
+                        val optionText = option.text().trim()
+                        
+                        // Formato: "Ep 1: O Cavaleiro Andante"
+                        val title = if (optionText.contains(":")) {
+                            optionText.substringAfter(":").trim()
+                        } else {
+                            optionText
+                        }
+                        
+                        // Construir URL do episódio
+                        val episodeUrl = if (contentId != null) {
+                            "$baseUrl&season=$seasonNumber&episode=$epNumber"
+                        } else {
+                            "$baseUrl&season=$seasonNumber&episode=$epNumber"
+                        }
+                        
+                        episodes.add(
+                            newEpisode(episodeUrl) {
+                                this.name = title
+                                this.season = seasonNumber
+                                this.episode = epNumber
+                            }
+                        )
+                        
+                        println("✅ [DEBUG] Episódio adicionado: S${seasonNumber}E${epNumber} - $title")
+                    } catch (e: Exception) {
+                        println("❌ [DEBUG] Erro ao processar episódio: ${e.message}")
+                    }
+                }
+            } else {
+                println("⚠️ [DEBUG] Não encontrou select#episodeSelect")
+            }
+        } catch (e: Exception) {
+            println("❌ [DEBUG] Erro ao extrair episódios: ${e.message}")
+        }
+        
+        return episodes
+    }
+
+    // ========== LOAD LINKS (MANTENDO SEU CÓDIGO ORIGINAL) ==========
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -823,6 +954,7 @@ private suspend fun requestPlayerHash(
         return false
     }
 }
+
 // Nova função para extrair de redirecionamento
 private suspend fun extractFromRedirectUrl(
     redirectUrl: String,
