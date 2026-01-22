@@ -464,6 +464,7 @@ class BetterFlix : MainAPI() {
                 val backdrop = tmdbData.backdropPath?.let { "https://image.tmdb.org/t/p/original$it" }
                 val overview = tmdbData.overview
                 val genres = tmdbData.genres?.map { it.name } ?: emptyList()
+                val score = tmdbData.voteAverage?.times(10)?.toInt() // Converter de 0-10 para 0-100
                 
                 // Buscar trailers
                 val trailerUrl = when (type) {
@@ -491,14 +492,14 @@ class BetterFlix : MainAPI() {
                     }
                 }
                 
-                // Buscar atores
+                // Buscar atores (sistema atualizado)
                 val creditsUrl = when (type) {
                     "movie" -> "https://api.themoviedb.org/3/movie/$id/credits?language=pt-BR"
                     "tv" -> "https://api.themoviedb.org/3/tv/$id/credits?language=pt-BR"
                     else -> null
                 }
                 
-                val actors = mutableListOf<ActorData>()
+                val actors = mutableListOf<Actor>()
                 if (creditsUrl != null) {
                     try {
                         val creditsResponse = app.get(
@@ -509,12 +510,11 @@ class BetterFlix : MainAPI() {
                             )
                         )
                         val creditsData = creditsResponse.parsed<CreditsResponse>()
-                        actors.addAll(creditsData.cast.take(10).map { cast ->
-                            ActorData(
-                                actor = cast.name,
-                                role = cast.character,
-                                imageUrl = cast.profilePath?.let { "https://image.tmdb.org/t/p/w185$it" }
-                            )
+                        actors.addAll(creditsData.cast.take(10).mapNotNull { cast ->
+                            val actorName = cast.name ?: return@mapNotNull null
+                            val character = cast.character ?: ""
+                            val image = cast.profilePath?.let { "https://image.tmdb.org/t/p/w185$it" }
+                            Actor(actorName, image)
                         })
                     } catch (e: Exception) {
                         // Ignorar erro de créditos
@@ -567,10 +567,12 @@ class BetterFlix : MainAPI() {
                         this.year = year
                         this.plot = overview
                         this.tags = genres
-                        this.rating = tmdbData.voteAverage?.toInt()
+                        this.score = score
                         this.duration = tmdbData.episodeRunTime?.firstOrNull()
                         this.recommendations = null
-                        this.actors = actors
+                        if (actors.isNotEmpty()) {
+                            addActors(actors)
+                        }
                         
                         if (trailerKey != null) {
                             addTrailer(trailerKey)
@@ -583,10 +585,12 @@ class BetterFlix : MainAPI() {
                         this.year = year
                         this.plot = overview
                         this.tags = genres
-                        this.rating = tmdbData.voteAverage?.toInt()
+                        this.score = score
                         this.duration = tmdbData.runtime
                         this.recommendations = null
-                        this.actors = actors
+                        if (actors.isNotEmpty()) {
+                            addActors(actors)
+                        }
                         
                         if (trailerKey != null) {
                             addTrailer(trailerKey)
@@ -598,6 +602,71 @@ class BetterFlix : MainAPI() {
             }
         }
     }
+
+    // Modelos de dados TMDB
+    data class TmdbItem(
+        @JsonProperty("id") val id: Int,
+        @JsonProperty("title") val title: String?,
+        @JsonProperty("name") val name: String?,
+        @JsonProperty("original_title") val originalTitle: String?,
+        @JsonProperty("original_name") val originalName: String?,
+        @JsonProperty("overview") val overview: String?,
+        @JsonProperty("poster_path") val posterPath: String?,
+        @JsonProperty("backdrop_path") val backdropPath: String?,
+        @JsonProperty("release_date") val releaseDate: String?,
+        @JsonProperty("first_air_date") val firstAirDate: String?,
+        @JsonProperty("vote_average") val voteAverage: Double?,
+        @JsonProperty("genres") val genres: List<Genre>?,
+        @JsonProperty("runtime") val runtime: Int?,
+        @JsonProperty("episode_run_time") val episodeRunTime: List<Int>?,
+        @JsonProperty("seasons") val seasons: List<Season>?
+    )
+
+    data class Genre(
+        @JsonProperty("id") val id: Int,
+        @JsonProperty("name") val name: String
+    )
+
+    data class Season(
+        @JsonProperty("id") val id: Int,
+        @JsonProperty("name") val name: String,
+        @JsonProperty("season_number") val seasonNumber: Int,
+        @JsonProperty("episode_count") val episodeCount: Int,
+        @JsonProperty("poster_path") val posterPath: String?
+    )
+
+    data class TrailerResponse(
+        @JsonProperty("results") val results: List<Trailer>
+    )
+
+    data class Trailer(
+        @JsonProperty("key") val key: String,
+        @JsonProperty("site") val site: String,
+        @JsonProperty("type") val type: String
+    )
+
+    data class CreditsResponse(
+        @JsonProperty("cast") val cast: List<CastMember>
+    )
+
+    data class CastMember(
+        @JsonProperty("name") val name: String?,
+        @JsonProperty("character") val character: String?,
+        @JsonProperty("profile_path") val profilePath: String?
+    )
+
+    data class SeasonResponse(
+        @JsonProperty("episodes") val episodes: List<EpisodeItem>
+    )
+
+    data class EpisodeItem(
+        @JsonProperty("id") val id: Int,
+        @JsonProperty("name") val name: String?,
+        @JsonProperty("overview") val overview: String?,
+        @JsonProperty("episode_number") val episodeNumber: Int,
+        @JsonProperty("season_number") val seasonNumber: Int,
+        @JsonProperty("still_path") val stillPath: String?
+    )
 
     // Fallback para carregamento
     private suspend fun fallbackLoad(url: String): LoadResponse? {
@@ -657,71 +726,6 @@ class BetterFlix : MainAPI() {
             null
         }
     }
-
-    // Modelos de dados TMDB
-    data class TmdbItem(
-        @JsonProperty("id") val id: Int,
-        @JsonProperty("title") val title: String?,
-        @JsonProperty("name") val name: String?,
-        @JsonProperty("original_title") val originalTitle: String?,
-        @JsonProperty("original_name") val originalName: String?,
-        @JsonProperty("overview") val overview: String?,
-        @JsonProperty("poster_path") val posterPath: String?,
-        @JsonProperty("backdrop_path") val backdropPath: String?,
-        @JsonProperty("release_date") val releaseDate: String?,
-        @JsonProperty("first_air_date") val firstAirDate: String?,
-        @JsonProperty("vote_average") val voteAverage: Double?,
-        @JsonProperty("genres") val genres: List<Genre>?,
-        @JsonProperty("runtime") val runtime: Int?,
-        @JsonProperty("episode_run_time") val episodeRunTime: List<Int>?,
-        @JsonProperty("seasons") val seasons: List<Season>?
-    )
-
-    data class Genre(
-        @JsonProperty("id") val id: Int,
-        @JsonProperty("name") val name: String
-    )
-
-    data class Season(
-        @JsonProperty("id") val id: Int,
-        @JsonProperty("name") val name: String,
-        @JsonProperty("season_number") val seasonNumber: Int,
-        @JsonProperty("episode_count") val episodeCount: Int,
-        @JsonProperty("poster_path") val posterPath: String?
-    )
-
-    data class TrailerResponse(
-        @JsonProperty("results") val results: List<Trailer>
-    )
-
-    data class Trailer(
-        @JsonProperty("key") val key: String,
-        @JsonProperty("site") val site: String,
-        @JsonProperty("type") val type: String
-    )
-
-    data class CreditsResponse(
-        @JsonProperty("cast") val cast: List<CastMember>
-    )
-
-    data class CastMember(
-        @JsonProperty("name") val name: String,
-        @JsonProperty("character") val character: String,
-        @JsonProperty("profile_path") val profilePath: String?
-    )
-
-    data class SeasonResponse(
-        @JsonProperty("episodes") val episodes: List<EpisodeItem>
-    )
-
-    data class EpisodeItem(
-        @JsonProperty("id") val id: Int,
-        @JsonProperty("name") val name: String?,
-        @JsonProperty("overview") val overview: String?,
-        @JsonProperty("episode_number") val episodeNumber: Int,
-        @JsonProperty("season_number") val seasonNumber: Int,
-        @JsonProperty("still_path") val stillPath: String?
-    )
 
     // Mantendo as funções auxiliares do seu código original
     private suspend fun tryExtractEpisodes(document: org.jsoup.nodes.Document, url: String): List<Episode> {
