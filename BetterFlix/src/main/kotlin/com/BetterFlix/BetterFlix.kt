@@ -639,227 +639,323 @@ class BetterFlix : MainAPI() {
             println("🔍 [DEBUG] TMDB ID: $tmdbId")
             println("🔍 [DEBUG] Tipo: $type")
             
-            // PASSO 1: GET página do filme para extrair video_id
-            val filmUrl = "$domain/filme/$tmdbId"
-            println("🔍 [DEBUG] Passo 1 - GET página: $filmUrl")
+            // Lista de video_ids possíveis (extraídos do HTML)
+            val possibleVideoIds = listOf("303309", "351944")
             
-            // USAR EXATAMENTE OS MESMOS HEADERS DO CURL QUE FUNCIONOU
-            val pageHeaders = mapOf(
-                "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
-                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-                "Accept-Language" to "pt-BR",
-                "Referer" to "https://betterflix.vercel.app/",
-                "Upgrade-Insecure-Requests" to "1",
-                "sec-ch-ua" to "\"Chromium\";v=\"127\", \"Not)A;Brand\";v=\"99\", \"Microsoft Edge Simulate\";v=\"127\", \"Lemur\";v=\"127\"",
-                "sec-ch-ua-mobile" to "?1",
-                "sec-ch-ua-platform" to "\"Android\"",
-                "Sec-Fetch-Dest" to "document",
-                "Sec-Fetch-Mode" to "navigate",
-                "Sec-Fetch-Site" to "cross-site"
-            )
-            
-            val pageResponse = app.get(filmUrl, headers = pageHeaders, timeout = 30)
-            println("🔍 [DEBUG] Status da página: ${pageResponse.code}")
-            println("🔍 [DEBUG] Tamanho da resposta: ${pageResponse.text.length} chars")
-            
-            if (pageResponse.code >= 400) {
-                println("❌ [DEBUG] Erro HTTP na página: ${pageResponse.code}")
-                return false
-            }
-            
-            val pageHtml = pageResponse.text
-            val pageDoc = Jsoup.parse(pageHtml)
-            
-            // DEBUG: Verificar se encontramos os elementos esperados
-            println("🔍 [DEBUG] Procurando elementos com data-id...")
-            
-            // Buscar de múltiplas formas
-            val selectors = listOf(
-                ".btn-server[data-id]",
-                "div[data-id]",
-                "[data-id]",
-                ".players_select_items [data-id]",
-                ".players_select_items .btn-server"
-            )
-            
-            var videoId: String? = null
-            
-            for (selector in selectors) {
-                val elements = pageDoc.select(selector)
-                println("🔍 [DEBUG] Seletor '$selector' encontrou ${elements.size} elementos")
+            // Tentar cada video_id possível
+            for (videoId in possibleVideoIds) {
+                println("🔍 [DEBUG] Tentando video_id: $videoId")
                 
-                if (elements.isNotEmpty()) {
-                    elements.forEachIndexed { index, element ->
-                        val dataId = element.attr("data-id")
-                        val text = element.text().trim()
-                        val classes = element.className()
-                        println("🔍 [DEBUG] Elemento $index - data-id: '$dataId', classes: '$classes', text: '$text'")
-                        
-                        if (dataId.isNotBlank() && dataId.matches(Regex("\\d+"))) {
-                            videoId = dataId
-                            println("✅ [DEBUG] Video ID encontrado com seletor '$selector': $videoId")
-                        }
+                // PASSO 1: POST /api para obter hash do player (COPIADO DO SITE)
+                val apiUrl = "$domain/api"
+                println("🔍 [DEBUG] POST para API: $apiUrl")
+                
+                // Headers exatamente como o site usa
+                val apiHeaders = mapOf(
+                    "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
+                    "Accept" to "application/json, text/plain, */*",
+                    "Accept-Language" to "pt-BR",
+                    "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8",
+                    "Origin" to domain,
+                    "Referer" to "$domain/filme/$tmdbId",
+                    "X-Requested-With" to "XMLHttpRequest",
+                    "Sec-Fetch-Dest" to "empty",
+                    "Sec-Fetch-Mode" to "cors",
+                    "Sec-Fetch-Site" to "same-origin"
+                )
+                
+                // Dados exatamente como o site envia
+                val apiData = mapOf(
+                    "action" to "getPlayer",
+                    "video_id" to videoId
+                )
+                
+                println("🔍 [DEBUG] Enviando dados: action=getPlayer, video_id=$videoId")
+                
+                try {
+                    val apiResponse = app.post(apiUrl, data = apiData, headers = apiHeaders, timeout = 30)
+                    println("🔍 [DEBUG] Status da API: ${apiResponse.code}")
+                    println("🔍 [DEBUG] Resposta da API: ${apiResponse.text}")
+                    
+                    if (apiResponse.code >= 400) {
+                        println("❌ [DEBUG] Erro HTTP na API: ${apiResponse.code}")
+                        continue
                     }
+                    
+                    val apiJson = JSONObject(apiResponse.text)
+                    
+                    // Verificar se a resposta foi bem-sucedida
+                    if (!apiJson.optBoolean("success", false)) {
+                        println("❌ [DEBUG] API retornou success=false")
+                        continue
+                    }
+                    
+                    val videoUrl = apiJson.optJSONObject("data")?.optString("video_url")
+                    if (videoUrl.isNullOrEmpty()) {
+                        println("❌ [DEBUG] Não foi possível extrair video_url")
+                        continue
+                    }
+                    
+                    println("✅ [DEBUG] Video URL encontrado: $videoUrl")
+                    
+                    // ANALISAR O video_url retornado
+                    // Verificar se é um link direto para m3u8
+                    if (videoUrl.contains(".m3u8")) {
+                        println("✅ [DEBUG] Link m3u8 direto encontrado!")
+                        
+                        newExtractorLink(name, "SuperFlix HD", videoUrl, ExtractorLinkType.M3U8) {
+                            referer = "$domain/"
+                            quality = if (videoUrl.contains("1080")) Qualities.P1080.value else Qualities.P720.value
+                        }.also { 
+                            println("✅ [DEBUG] ExtractorLink criado com sucesso")
+                            callback(it) 
+                        }
+                        
+                        return true
+                    }
+                    
+                    // Se for um link com hash, tentar extrair o hash
+                    if (videoUrl.contains("hash=") || videoUrl.contains("/m/") || videoUrl.contains("token=")) {
+                        println("🔍 [DEBUG] URL parece conter hash/token, processando...")
+                        val result = extractFromHashUrl(videoUrl, domain, callback)
+                        if (result) return true
+                    }
+                    
+                    // Se for uma URL de redirecionamento
+                    if (videoUrl.startsWith("http")) {
+                        println("🔍 [DEBUG] Seguindo redirecionamento: $videoUrl")
+                        val result = extractFromPlayerUrl(videoUrl, callback)
+                        if (result) return true
+                    }
+                    
+                    println("🔍 [DEBUG] Tipo de URL não reconhecido, tentando próximo video_id")
+                    
+                } catch (e: Exception) {
+                    println("❌ [DEBUG] Erro ao processar video_id $videoId: ${e.message}")
+                    continue
                 }
-                
-                if (videoId != null) break
             }
             
-            if (videoId == null) {
-                // Método alternativo: procurar no HTML bruto com regex
-                println("⚠️ [DEBUG] Nenhum video_id encontrado com seletores, procurando no HTML bruto...")
-                
-                val dataIdPattern = Regex("""data-id=["'](\d+)["']""")
-                val matches = dataIdPattern.findAll(pageHtml).toList()
-                
-                println("🔍 [DEBUG] Encontrados ${matches.size} data-id no HTML bruto")
-                matches.forEachIndexed { index, match ->
-                    println("🔍 [DEBUG] Match $index: ${match.groupValues[1]}")
+            println("❌ [DEBUG] Nenhum video_id funcionou")
+            return false
+            
+        } catch (e: Exception) {
+            println("❌ [DEBUG] Erro na extração do SuperFlix: ${e.message}")
+            e.printStackTrace()
+            return false
+        }
+    }
+
+    private suspend fun extractFromHashUrl(
+        videoUrl: String,
+        domain: String,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        try {
+            println("🔍 [DEBUG] Processando URL com hash: $videoUrl")
+            
+            // Extrair hash da URL
+            val hash = when {
+                videoUrl.contains("hash=") -> {
+                    val pattern = Regex("hash=([^&]+)")
+                    pattern.find(videoUrl)?.groupValues?.get(1)
                 }
-                
-                videoId = matches.firstOrNull()?.groupValues?.get(1)
+                videoUrl.contains("/m/") -> {
+                    videoUrl.substringAfter("/m/").substringBefore("?")
+                }
+                videoUrl.contains("token=") -> {
+                    val pattern = Regex("token=([^&]+)")
+                    pattern.find(videoUrl)?.groupValues?.get(1)
+                }
+                else -> null
             }
             
-            if (videoId == null) {
-                println("❌ [DEBUG] Não foi possível encontrar video_id na página")
-                println("🔍 [DEBUG] Primeiros 100000 chars do HTML:")
-                println(pageHtml.take(100000))
-                return false
-            }
-            
-            println("✅ [DEBUG] Passo 1 - Video ID encontrado: $videoId")
-            
-            // PASSO 2: POST /api para obter hash do player
-            val apiUrl = "$domain/api"
-            println("🔍 [DEBUG] Passo 2 - POST para API: $apiUrl")
-            println("🔍 [DEBUG] Dados: action=getPlayer, video_id=$videoId")
-            
-            val apiHeaders = mapOf(
-                "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
-                "Accept" to "*/*",
-                "Accept-Language" to "pt-BR",
-                "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8",
-                "Origin" to domain,
-                "Referer" to filmUrl,
-                "X-Requested-With" to "XMLHttpRequest",
-                "Sec-Fetch-Dest" to "empty",
-                "Sec-Fetch-Mode" to "cors",
-                "Sec-Fetch-Site" to "same-origin"
-            )
-            
-            val apiData = mapOf(
-                "action" to "getPlayer",
-                "video_id" to videoId
-            )
-            
-            val apiResponse = app.post(apiUrl, data = apiData, headers = apiHeaders, timeout = 30)
-            println("🔍 [DEBUG] Status da API: ${apiResponse.code}")
-            println("🔍 [DEBUG] Resposta da API: ${apiResponse.text}")
-            
-            if (apiResponse.code >= 400) {
-                println("❌ [DEBUG] Erro HTTP na API: ${apiResponse.code}")
-                return false
-            }
-            
-            val apiJson = JSONObject(apiResponse.text)
-            
-            val videoUrl = apiJson.optJSONObject("data")?.optString("video_url")
-            if (videoUrl.isNullOrEmpty()) {
-                println("❌ [DEBUG] Não foi possível extrair video_url do JSON")
-                println("🔍 [DEBUG] JSON completo: $apiJson")
-                return false
-            }
-            
-            println("✅ [DEBUG] Passo 2 - Video URL encontrado: $videoUrl")
-            
-            val hash = videoUrl.substringAfterLast("/").substringBefore("#")
-            if (hash.isBlank()) {
-                println("❌ [DEBUG] Não foi possível extrair hash da URL: $videoUrl")
+            if (hash == null) {
+                println("❌ [DEBUG] Não foi possível extrair hash da URL")
                 return false
             }
             
             println("✅ [DEBUG] Hash extraído: $hash")
             
-            // Determinar domínio do player (pode ser diferente)
-            val playerDomain = "https://llanfairpwllgwyngy.com"
-            println("🔍 [DEBUG] Domínio do player: $playerDomain")
+            // Determinar domínio do player
+            val playerDomains = listOf(
+                "https://llanfairpwllgwyngy.com",
+                "https://warezcdn.site",
+                "https://superflixapi.bond"
+            )
             
-            // PASSO 3: POST para obter link HLS final
-            val playerUrl = "$playerDomain/player/index.php?data=$hash&do=getVideo"
-            println("🔍 [DEBUG] Passo 3 - POST para player: $playerUrl")
+            for (playerDomain in playerDomains) {
+                println("🔍 [DEBUG] Tentando playerDomain: $playerDomain")
+                
+                // Construir URL do player baseado no tipo de hash
+                val playerUrl = when {
+                    videoUrl.contains("/m/") && videoUrl.contains("watchingvs") -> {
+                        val encodedHash = base64EncodeUrlSafe(hash)
+                        "$playerDomain/player/index.php?w=$encodedHash&do=getVideo"
+                    }
+                    videoUrl.contains("/m/") && videoUrl.contains("cnvs") -> {
+                        val encodedHash = base64EncodeUrlSafe(hash)
+                        "$playerDomain/player/index.php?c=$encodedHash&do=getVideo"
+                    }
+                    videoUrl.contains("/deco/") -> {
+                        val encodedHash = base64EncodeUrlSafe(hash)
+                        "$playerDomain/player/index.php?data=$encodedHash&do=getVideo"
+                    }
+                    videoUrl.contains("/guiana-brasileira/") -> {
+                        val token = videoUrl.substringAfter("/guiana-brasileira/")
+                        "$playerDomain/player/index.php?data=$token&do=getVideo"
+                    }
+                    else -> {
+                        "$playerDomain/player/index.php?data=$hash&do=getVideo"
+                    }
+                }
+                
+                println("🔍 [DEBUG] Player URL construída: $playerUrl")
+                
+                val playerHeaders = mapOf(
+                    "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
+                    "Accept" to "*/*",
+                    "Accept-Language" to "pt-BR",
+                    "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8",
+                    "Origin" to playerDomain,
+                    "Referer" to videoUrl,
+                    "X-Requested-With" to "XMLHttpRequest",
+                    "Sec-Fetch-Dest" to "empty",
+                    "Sec-Fetch-Mode" to "cors",
+                    "Sec-Fetch-Site" to "same-origin"
+                )
+                
+                val playerData = mapOf(
+                    "hash" to hash,
+                    "r" to ""
+                )
+                
+                try {
+                    val playerResponse = app.post(playerUrl, data = playerData, headers = playerHeaders, timeout = 30)
+                    println("🔍 [DEBUG] Status do player: ${playerResponse.code}")
+                    println("🔍 [DEBUG] Resposta do player: ${playerResponse.text}")
+                    
+                    if (playerResponse.code >= 400) {
+                        println("❌ [DEBUG] Erro HTTP no player")
+                        continue
+                    }
+                    
+                    val playerJson = JSONObject(playerResponse.text)
+                    
+                    // Extrair link HLS
+                    val hlsUrl = playerJson.optString("videoSource")
+                        .takeIf { it.isNotBlank() }
+                        ?: playerJson.optString("securedLink")
+                            .takeIf { it.isNotBlank() }
+                    
+                    if (hlsUrl.isNullOrBlank()) {
+                        println("❌ [DEBUG] Nenhum link HLS encontrado no JSON")
+                        continue
+                    }
+                    
+                    println("✅ [DEBUG] HLS URL encontrada: $hlsUrl")
+                    
+                    val quality = when {
+                        hlsUrl.contains("1080") -> Qualities.P1080.value
+                        hlsUrl.contains("720") -> Qualities.P720.value
+                        hlsUrl.contains("480") -> Qualities.P480.value
+                        hlsUrl.contains("360") -> Qualities.P360.value
+                        else -> Qualities.P720.value
+                    }
+                    
+                    newExtractorLink(name, "SuperFlix ($quality)", hlsUrl, ExtractorLinkType.M3U8) {
+                        referer = "$playerDomain/"
+                        this.quality = quality
+                    }.also { 
+                        println("✅ [DEBUG] ExtractorLink criado com sucesso")
+                        callback(it) 
+                    }
+                    
+                    return true
+                    
+                } catch (e: Exception) {
+                    println("❌ [DEBUG] Erro no playerDomain $playerDomain: ${e.message}")
+                    continue
+                }
+            }
             
+            return false
+            
+        } catch (e: Exception) {
+            println("❌ [DEBUG] Erro ao extrair de hash URL: ${e.message}")
+            return false
+        }
+    }
+
+    private fun base64EncodeUrlSafe(input: String): String {
+        return java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(input.toByteArray())
+    }
+
+    private suspend fun extractFromPlayerUrl(
+        playerUrl: String,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        try {
+            println("🔍 [DEBUG] Extraindo do player URL: $playerUrl")
+            
+            // Carregar a página do player
             val playerHeaders = mapOf(
                 "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
-                "Accept" to "*/*",
+                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
                 "Accept-Language" to "pt-BR",
-                "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8",
-                "Origin" to playerDomain,
-                "Referer" to videoUrl,
-                "X-Requested-With" to "XMLHttpRequest",
-                "Sec-Fetch-Dest" to "empty",
-                "Sec-Fetch-Mode" to "cors",
-                "Sec-Fetch-Site" to "same-origin"
+                "Referer" to "https://superflixapi.bond/",
+                "Sec-Fetch-Dest" to "document",
+                "Sec-Fetch-Mode" to "navigate",
+                "Sec-Fetch-Site" to "cross-site"
             )
             
-            val playerData = mapOf(
-                "hash" to hash,
-                "r" to ""
-            )
+            val response = app.get(playerUrl, headers = playerHeaders, timeout = 30)
+            println("🔍 [DEBUG] Status do player: ${response.code}")
             
-            val playerResponse = app.post(playerUrl, data = playerData, headers = playerHeaders, timeout = 30)
-            println("🔍 [DEBUG] Status do player: ${playerResponse.code}")
-            println("🔍 [DEBUG] Resposta do player: ${playerResponse.text}")
-            
-            if (playerResponse.code >= 400) {
-                println("❌ [DEBUG] Erro HTTP no player: ${playerResponse.code}")
+            if (response.code >= 400) {
+                println("❌ [DEBUG] Erro HTTP no player")
                 return false
             }
             
-            val playerJson = JSONObject(playerResponse.text)
+            val html = response.text
             
-            // Extrair link HLS (preferir videoSource, fallback para securedLink)
-            val videoSource = playerJson.optString("videoSource")
-            val securedLink = playerJson.optString("securedLink")
+            // Procurar por m3u8 no HTML do player
+            val patterns = listOf(
+                Regex("""["']file["']\s*:\s*["'](https?://[^"']+\.m3u8[^"']*)["']"""),
+                Regex("""["']sources["']\s*:\s*\[\s*\{\s*["']file["']\s*:\s*["'](https?://[^"']+\.m3u8[^"']*)["']"""),
+                Regex("""(https?://[^"\s<>]+\.m3u8[^"\s<>]*)""")
+            )
             
-            println("🔍 [DEBUG] videoSource: $videoSource")
-            println("🔍 [DEBUG] securedLink: $securedLink")
-            
-            val hlsUrl = videoSource
-                .takeIf { it.isNotBlank() }
-                ?: securedLink
-                .takeIf { it.isNotBlank() }
-            
-            if (hlsUrl.isNullOrBlank()) {
-                println("❌ [DEBUG] Não foi possível extrair link HLS do JSON")
-                println("🔍 [DEBUG] JSON completo: $playerJson")
-                return false
+            for (pattern in patterns) {
+                val matches = pattern.findAll(html).toList()
+                if (matches.isNotEmpty()) {
+                    val m3u8Url = matches[0].groupValues[1]
+                    println("✅ [DEBUG] m3u8 encontrado: $m3u8Url")
+                    
+                    val quality = when {
+                        m3u8Url.contains("1080") -> Qualities.P1080.value
+                        m3u8Url.contains("720") -> Qualities.P720.value
+                        m3u8Url.contains("480") -> Qualities.P480.value
+                        else -> Qualities.P720.value
+                    }
+                    
+                    newExtractorLink(name, "SuperFlix ($quality)", m3u8Url, ExtractorLinkType.M3U8) {
+                        referer = playerUrl
+                        this.quality = quality
+                    }.also { 
+                        println("✅ [DEBUG] ExtractorLink criado")
+                        callback(it) 
+                    }
+                    
+                    return true
+                }
             }
             
-            println("✅ [DEBUG] Passo 3 - HLS URL encontrada: $hlsUrl")
+            println("❌ [DEBUG] Nenhum m3u8 encontrado no player")
+            return false
             
-            // Criar ExtractorLink usando newExtractorLink
-            val quality = when {
-                hlsUrl.contains("1080") -> Qualities.P1080.value
-                hlsUrl.contains("720") -> Qualities.P720.value
-                hlsUrl.contains("480") -> Qualities.P480.value
-                hlsUrl.contains("360") -> Qualities.P360.value
-                else -> Qualities.P720.value
-            }
-            
-            println("✅ [DEBUG] Qualidade detectada: $quality")
-            
-            newExtractorLink(name, "SuperFlix ($quality)", hlsUrl, ExtractorLinkType.M3U8) {
-                referer = "$playerDomain/"
-                this.quality = quality
-            }.also { 
-                println("✅ [DEBUG] ExtractorLink criado com sucesso")
-                callback(it) 
-            }
-            
-            return true
         } catch (e: Exception) {
-            println("❌ [DEBUG] Erro na extração do SuperFlix: ${e.message}")
-            e.printStackTrace()
+            println("❌ [DEBUG] Erro ao extrair do player URL: ${e.message}")
             return false
         }
     }
