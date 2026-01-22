@@ -315,11 +315,32 @@ class BetterFlix : MainAPI() {
         }
     }
 
+    // Função para extrair ano do documento
+    private fun extractYear(document: org.jsoup.nodes.Document): Int? {
+        // Tenta extrair do título
+        val title = document.selectFirst("h1, .title")?.text() ?: ""
+        val yearMatch = Regex("\\((\\d{4})\\)").find(title)
+        if (yearMatch != null) {
+            return yearMatch.groupValues[1].toIntOrNull()
+        }
+        
+        // Tenta extrair de metadados
+        document.select("div.bg-gray-800\\/50, .info-grid, .metadata").forEach { div ->
+            val label = div.selectFirst("p.text-gray-400, .label, .info-label")?.text()
+            if (label?.contains("Ano") == true || label?.contains("Year") == true) {
+                val yearText = div.selectFirst("p.text-white, .value, .info-value")?.text()
+                return yearText?.toIntOrNull()
+            }
+        }
+        
+        return null
+    }
+
     // Função para gerar slug a partir do título
     private fun generateSlug(title: String): String {
         return title
             .lowercase()
-            .replace(Regex("[^a-z0-9\\s]"), "")
+            .replace(Regex("[^a-z0-9\\s-]"), "")
             .replace(Regex("\\s+"), "-")
             .replace(Regex("-+"), "-")
             .trim('-')
@@ -649,7 +670,7 @@ class BetterFlix : MainAPI() {
                 .takeIf { it.isNotBlank() }
                 ?: return false
             
-            // Criar ExtractorLink com qualidade
+            // Criar ExtractorLink usando newExtractorLink
             val quality = when {
                 hlsUrl.contains("1080") -> Qualities.P1080.value
                 hlsUrl.contains("720") -> Qualities.P720.value
@@ -658,16 +679,10 @@ class BetterFlix : MainAPI() {
                 else -> Qualities.P720.value
             }
             
-            callback.invoke(
-                ExtractorLink(
-                    source = name,
-                    name = "SuperFlix (${quality}p)",
-                    url = hlsUrl,
-                    referer = "$playerDomain/",
-                    quality = quality,
-                    isM3u8 = true
-                )
-            )
+            newExtractorLink(name, "SuperFlix ($quality)", hlsUrl, ExtractorLinkType.M3U8) {
+                referer = "$playerDomain/"
+                this.quality = quality
+            }.also { callback(it) }
             
             return true
         } catch (e: Exception) {
@@ -755,15 +770,10 @@ class BetterFlix : MainAPI() {
                 links.forEach { callback(it) }
                 true
             } else {
-                val link = ExtractorLink(
-                    source = name,
-                    name = "Video",
-                    url = m3u8Url,
-                    referer = mainUrl,
-                    quality = Qualities.P720.value,
-                    isM3u8 = true
-                )
-                callback(link)
+                newExtractorLink(name, "Video", m3u8Url, ExtractorLinkType.M3U8) {
+                    referer = mainUrl
+                    quality = Qualities.P720.value
+                }.also { callback(it) }
                 true
             }
         } catch (e: Exception) {
