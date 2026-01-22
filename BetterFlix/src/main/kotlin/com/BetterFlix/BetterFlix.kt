@@ -102,7 +102,7 @@ class BetterFlixProvider : MainAPI() {
         page: Int, 
         request: MainPageRequest
     ): HomePageResponse {
-        debug("📥 Iniciando getMainPage: Página $page | Categoria: ${request.name} (${request.displayName})")
+        debug("📥 Iniciando getMainPage: Página $page | Categoria: ${request.name}")
         
         val items = mutableListOf<HomePageList>()
         
@@ -125,7 +125,7 @@ class BetterFlixProvider : MainAPI() {
                     }
                     
                     items.add(HomePageList(
-                        name = request.displayName,
+                        name = "🔥 Em Alta", // ✅ CORREÇÃO: Usar string fixa em vez de request.displayName
                         list = results.mapNotNull { 
                             debug("   ➡️ Convertendo: ${it.title ?: it.name}")
                             it.toSearchResponse() 
@@ -152,7 +152,7 @@ class BetterFlixProvider : MainAPI() {
                     }
                     
                     items.add(HomePageList(
-                        name = request.displayName,
+                        name = "🇯🇵 Animes", // ✅ CORREÇÃO: Usar string fixa
                         list = results.mapNotNull { 
                             debug("   ➡️ Convertendo anime: ${it.title ?: it.name}")
                             it.toSearchResponse() 
@@ -294,7 +294,7 @@ class BetterFlixProvider : MainAPI() {
             }
             else -> {
                 debug("   ⚠️ Avaliação baixa/desconhecida: $vote")
-                null // ✅ CORREÇÃO: Não usar SearchQuality.Unknown
+                null
             }
         }
         
@@ -303,19 +303,18 @@ class BetterFlixProvider : MainAPI() {
         
         debugSuccess("   ✅ Item convertido: $itemTitle (ID: $itemId)")
         
-        // ✅ CORREÇÃO: Usar a nova API corretamente
-        return newMovieSearchResponse(
+        // ✅ CORREÇÃO: Versão simplificada e compatível
+        return MovieSearchResponse(
             name = itemTitle,
             url = itemId.toString(),
             apiName = this@BetterFlixProvider.name,
-            type = itemType
-        ) {
-            this.posterUrl = posterUrl
-            this.backgroundPosterUrl = backdropUrl // ✅ CORREÇÃO: backdropUrl mudou para backgroundPosterUrl
-            this.year = year
-            this.quality = quality
-            addPlot(this@toSearchResponse.overview) // ✅ CORREÇÃO: Usar addPlot
-        }
+            type = itemType,
+            posterUrl = posterUrl,
+            quality = quality,
+            plot = this.overview,
+            year = year,
+            backgroundPosterUrl = backdropUrl
+        )
     }
 
     // 🔍 Busca simples (pode ser expandida depois)
@@ -336,15 +335,14 @@ class BetterFlixProvider : MainAPI() {
         
         debug("🎬 Preparando LoadResponse para ID: $id")
         
-        // ✅ CORREÇÃO: Usar newMovieLoadResponse em vez do construtor antigo
-        return newMovieLoadResponse(
+        // ✅ CORREÇÃO: Versão simplificada e compatível
+        return MovieLoadResponse(
             name = "🔄 Carregando detalhes...",
             url = url,
             apiName = this.name,
             type = TvType.Movie,
-            dataUrl = url
-        ) {
-            addPlot("""
+            dataUrl = url,
+            plot = """
             📋 **Informações do Item**
             
             🆔 **ID:** $id
@@ -360,8 +358,8 @@ class BetterFlixProvider : MainAPI() {
             📢 **Debug Info:**
             - URL recebida: $url
             - Plugin: BetterFlix
-            """.trimIndent())
-        }
+            """.trimIndent()
+        )
     }
 
     // 🎬 Links de streaming (placeholder com debug)
@@ -385,21 +383,8 @@ class BetterFlixProvider : MainAPI() {
         return false
     }
 
-    // 🌐 Teste de conexão (opcional)
-    override suspend fun checkAvailability(): Boolean {
-        debug("🌐 Testando conexão com a API...")
-        return try {
-            val response = app.get("$mainUrl/api/trending?type=all", headers = headers, timeout = 30)
-            val available = response.code == 200
-            if (available) {
-                debugSuccess("✅ API está online! Status: ${response.code}")
-            } else {
-                debugError("❌ API offline ou com erro. Status: ${response.code}")
-            }
-            available
-        } catch (e: Exception) {
-            debugError("💥 Falha ao conectar com a API", e)
-            false
-        }
-    }
+    // 🌐 Teste de conexão (opcional) - REMOVIDO pois não existe na API atual
+    // override suspend fun checkAvailability(): Boolean {
+    //     return true
+    // }
 }
