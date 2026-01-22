@@ -179,13 +179,13 @@ class BetterFlix : MainAPI() {
                     }
                 }
                 
-                // Gerar URL no formato correto do site
+                // Gerar URL no formato correto do site COM TYPE
                 val slug = generateSlug(title)
                 val url = when (type) {
-                    TvType.Movie -> "$mainUrl/filme/$slug?id=$id"
-                    TvType.TvSeries -> "$mainUrl/tv/$slug?id=$id"
-                    TvType.Anime -> "$mainUrl/anime/$slug?id=$id"
-                    else -> "$mainUrl/filme/$slug?id=$id"
+                    TvType.Movie -> "$mainUrl/$slug?id=$id&type=movie"
+                    TvType.TvSeries -> "$mainUrl/$slug?id=$id&type=tv"
+                    TvType.Anime -> "$mainUrl/$slug?id=$id&type=anime"
+                    else -> "$mainUrl/$slug?id=$id&type=movie"
                 }
                 
                 when (type) {
@@ -230,9 +230,9 @@ class BetterFlix : MainAPI() {
                 val poster = item.posterPath?.let { "https://image.tmdb.org/t/p/w500$it" }
                 val id = item.id
                 
-                // Gerar URL no formato correto
+                // Gerar URL no formato correto COM TYPE
                 val slug = generateSlug(title)
-                val url = "$mainUrl/anime/$slug?id=$id"
+                val url = "$mainUrl/$slug?id=$id&type=anime"
                 
                 newAnimeSearchResponse(title, url, TvType.Anime) {
                     this.posterUrl = poster
@@ -274,13 +274,13 @@ class BetterFlix : MainAPI() {
                     }
                 }
                 
-                // Gerar URL no formato correto
+                // Gerar URL no formato correto COM TYPE
                 val slug = generateSlug(title)
                 val url = when (type) {
-                    TvType.Movie -> "$mainUrl/filme/$slug?id=$id"
-                    TvType.TvSeries -> "$mainUrl/tv/$slug?id=$id"
-                    TvType.Anime -> "$mainUrl/anime/$slug?id=$id"
-                    else -> "$mainUrl/filme/$slug?id=$id"
+                    TvType.Movie -> "$mainUrl/$slug?id=$id&type=movie"
+                    TvType.TvSeries -> "$mainUrl/$slug?id=$id&type=tv"
+                    TvType.Anime -> "$mainUrl/$slug?id=$id&type=anime"
+                    else -> "$mainUrl/$slug?id=$id&type=movie"
                 }
                 
                 when (type) {
@@ -381,13 +381,13 @@ class BetterFlix : MainAPI() {
                             }
                         }
                         
-                        // Gerar URL no formato correto
+                        // Gerar URL no formato correto COM TYPE
                         val slug = generateSlug(title)
                         val url = when (type) {
-                            TvType.Movie -> "$mainUrl/filme/$slug?id=$id"
-                            TvType.TvSeries -> "$mainUrl/tv/$slug?id=$id"
-                            TvType.Anime -> "$mainUrl/anime/$slug?id=$id"
-                            else -> "$mainUrl/filme/$slug?id=$id"
+                            TvType.Movie -> "$mainUrl/$slug?id=$id&type=movie"
+                            TvType.TvSeries -> "$mainUrl/$slug?id=$id&type=tv"
+                            TvType.Anime -> "$mainUrl/$slug?id=$id&type=anime"
+                            else -> "$mainUrl/$slug?id=$id&type=movie"
                         }
                         
                         when (type) {
@@ -443,16 +443,26 @@ class BetterFlix : MainAPI() {
                 val isMovie = href.contains("type=movie") || href.contains("/movie")
                 val isAnime = title.contains("(Anime)", ignoreCase = true) || href.contains("type=anime")
                 
+                // Corrigir URL para incluir type se necessário
+                var finalUrl = fixUrl(href)
+                if (!finalUrl.contains("type=")) {
+                    when {
+                        isAnime -> finalUrl += "&type=anime"
+                        isSeries -> finalUrl += "&type=tv"
+                        isMovie -> finalUrl += "&type=movie"
+                    }
+                }
+                
                 when {
-                    isAnime -> newAnimeSearchResponse(cleanTitle, fixUrl(href), TvType.Anime) {
+                    isAnime -> newAnimeSearchResponse(cleanTitle, finalUrl, TvType.Anime) {
                         this.posterUrl = poster
                         this.year = year
                     }
-                    isSeries -> newTvSeriesSearchResponse(cleanTitle, fixUrl(href), TvType.TvSeries) {
+                    isSeries -> newTvSeriesSearchResponse(cleanTitle, finalUrl, TvType.TvSeries) {
                         this.posterUrl = poster
                         this.year = year
                     }
-                    isMovie -> newMovieSearchResponse(cleanTitle, fixUrl(href), TvType.Movie) {
+                    isMovie -> newMovieSearchResponse(cleanTitle, finalUrl, TvType.Movie) {
                         this.posterUrl = poster
                         this.year = year
                     }
@@ -488,8 +498,8 @@ class BetterFlix : MainAPI() {
                 val trailerKey = extractTrailer(document)
                 
                 // Determinar tipo pela URL
-                val isSeries = url.contains("/tv/") || document.select(".episode-list, .season-list").isNotEmpty()
-                val isAnime = url.contains("/anime/") || document.select(".anime-episodes").isNotEmpty()
+                val isSeries = url.contains("type=tv") || document.select(".episode-list, .season-list").isNotEmpty()
+                val isAnime = url.contains("type=anime") || document.select(".anime-episodes").isNotEmpty()
                 val isMovie = !isSeries && !isAnime
                 
                 if (isSeries || isAnime) {
@@ -548,10 +558,17 @@ class BetterFlix : MainAPI() {
                 // Extrair TMDB ID da URL
                 val tmdbId = extractTmdbId(data) ?: return@safeApiRequest false
                 
+                // Determinar tipo da URL para usar na extração
+                val type = when {
+                    data.contains("type=anime") -> "anime"
+                    data.contains("type=tv") -> "tv"
+                    else -> "movie"
+                }
+                
                 // TENTAR TODOS OS DOMÍNIOS DO SUPERFLIX
                 for (superflixDomain in superflixDomains) {
                     try {
-                        val success = extractVideoFromSuperflix(superflixDomain, tmdbId, callback)
+                        val success = extractVideoFromSuperflix(superflixDomain, tmdbId, type, callback)
                         if (success) {
                             // Adicionar legenda em português se disponível
                             try {
@@ -579,7 +596,7 @@ class BetterFlix : MainAPI() {
     }
 
     private fun extractTmdbId(url: String): String? {
-        // Extrair ID da URL: /filme/dinheiro-suspeito?id=1306368
+        // Extrair ID da URL: /dinheiro-suspeito?id=1306368&type=movie
         val idMatch = Regex("[?&]id=(\\d+)").find(url)
         return idMatch?.groupValues?.get(1)
     }
@@ -587,6 +604,7 @@ class BetterFlix : MainAPI() {
     private suspend fun extractVideoFromSuperflix(
         domain: String,
         tmdbId: String,
+        type: String,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         try {
