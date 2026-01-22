@@ -11,6 +11,35 @@ class BetterFlixProvider : MainAPI() {
     override val hasQuickSearch = false
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries, TvType.Anime)
 
+    // 🔧 Configuração de debug
+    private val DEBUG = true
+    
+    private fun debug(message: String) {
+        if (DEBUG) {
+            println("🔍 [BetterFlix] $message")
+        }
+    }
+
+    private fun debugError(message: String, error: Throwable? = null) {
+        if (DEBUG) {
+            println("❌ [BetterFlix] ERRO: $message")
+            error?.printStackTrace()
+        }
+    }
+
+    private fun debugSuccess(message: String) {
+        if (DEBUG) {
+            println("✅ [BetterFlix] $message")
+        }
+    }
+
+    private fun debugApi(url: String, status: Int, itemsCount: Int = 0) {
+        if (DEBUG) {
+            println("🌐 [BetterFlix] API: $url")
+            println("   📊 Status: $status | Itens: $itemsCount")
+        }
+    }
+
     // Headers fixos para todas as requisições
     private val headers = mapOf(
         "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
@@ -22,19 +51,19 @@ class BetterFlixProvider : MainAPI() {
         "sec-ch-ua-platform" to "\"Android\""
     )
 
-    // Mapeamento de gêneros
+    // 📂 Mapeamento de gêneros
     private val genreMap = mapOf(
-        "28" to "Ação e Aventura",
-        "35" to "Comédia", 
-        "27" to "Terror e Suspense",
-        "99" to "Documentário",
-        "10751" to "Para a Família",
-        "80" to "Crime",
-        "10402" to "Musical",
-        "10749" to "Romance"
+        "28" to "🎬 Ação e Aventura",
+        "35" to "😂 Comédia", 
+        "27" to "😱 Terror e Suspense",
+        "99" to "📚 Documentário",
+        "10751" to "👨‍👩‍👧‍👦 Para a Família",
+        "80" to "🔫 Crime",
+        "10402" to "🎵 Musical",
+        "10749" to "💖 Romance"
     )
 
-    // Modelo da resposta da API
+    // 📦 Modelo da resposta da API
     data class ApiResponse(
         @JsonProperty("results") val results: List<MediaItem> = emptyList(),
         @JsonProperty("items") val items: List<MediaItem> = emptyList()
@@ -51,10 +80,11 @@ class BetterFlixProvider : MainAPI() {
         @JsonProperty("release_date") val releaseDate: String? = null,
         @JsonProperty("first_air_date") val firstAirDate: String? = null,
         @JsonProperty("vote_average") val voteAverage: Double? = null,
-        @JsonProperty("genre_ids") val genreIds: List<Int>? = null
+        @JsonProperty("genre_ids") val genreIds: List<Int>? = null,
+        @JsonProperty("original_language") val originalLanguage: String? = null
     )
 
-    // Páginas principais
+    // 🏠 Páginas principais
     override val mainPage = mainPageOf(
         "trending" to "🔥 Em Alta",
         "28" to "🎬 Ação e Aventura",
@@ -72,129 +102,304 @@ class BetterFlixProvider : MainAPI() {
         page: Int, 
         request: MainPageRequest
     ): HomePageResponse {
+        debug("📥 Iniciando getMainPage: Página $page | Categoria: ${request.name} (${request.displayName})")
+        
         val items = mutableListOf<HomePageList>()
         
         try {
             when (request.name) {
                 "trending" -> {
-                    val data = app.get(
-                        "$mainUrl/api/trending?type=all",
-                        headers = headers
-                    ).parsedSafe<ApiResponse>()
+                    debug("📈 Buscando conteúdos em alta...")
+                    val url = "$mainUrl/api/trending?type=all"
+                    
+                    val response = app.get(url, headers = headers)
+                    debugApi(url, response.code)
+                    
+                    val data = response.parsedSafe<ApiResponse>()
+                    val results = data?.results ?: emptyList()
+                    
+                    debug("🎯 Em Alta: ${results.size} itens encontrados")
+                    if (results.isNotEmpty()) {
+                        debug("   📌 Primeiro item: ${results.first().title ?: results.first().name}")
+                        debug("   🎬 Tipo: ${results.first().mediaType}")
+                    }
                     
                     items.add(HomePageList(
-                        name = request.name,
-                        list = (data?.results ?: emptyList()).mapNotNull { it.toSearchResponse() },
+                        name = request.displayName,
+                        list = results.mapNotNull { 
+                            debug("   ➡️ Convertendo: ${it.title ?: it.name}")
+                            it.toSearchResponse() 
+                        },
                         isHorizontalImages = true
                     ))
+                    debugSuccess("✅ Seção 'Em Alta' carregada com ${results.size} itens")
                 }
                 
                 "anime" -> {
-                    val data = app.get(
-                        "$mainUrl/api/list-animes", 
-                        headers = headers
-                    ).parsedSafe<ApiResponse>()
+                    debug("🇯🇵 Buscando animes...")
+                    val url = "$mainUrl/api/list-animes"
+                    
+                    val response = app.get(url, headers = headers)
+                    debugApi(url, response.code)
+                    
+                    val data = response.parsedSafe<ApiResponse>()
+                    val results = data?.results ?: data?.items ?: emptyList()
+                    
+                    debug("🎌 Animes: ${results.size} itens encontrados")
+                    if (results.isNotEmpty()) {
+                        debug("   📌 Primeiro anime: ${results.first().title ?: results.first().name}")
+                        debug("   🌐 Idioma: ${results.first().originalLanguage ?: "N/A"}")
+                    }
                     
                     items.add(HomePageList(
-                        name = request.name,
-                        list = (data?.results ?: data?.items ?: emptyList())
-                            .mapNotNull { it.toSearchResponse() },
+                        name = request.displayName,
+                        list = results.mapNotNull { 
+                            debug("   ➡️ Convertendo anime: ${it.title ?: it.name}")
+                            it.toSearchResponse() 
+                        },
                         isHorizontalImages = true
                     ))
+                    debugSuccess("✅ Seção 'Animes' carregada com ${results.size} itens")
                 }
                 
                 else -> {
                     if (genreMap.containsKey(request.name)) {
-                        val data = app.get(
-                            "$mainUrl/api/preview-genre?id=${request.name}",
-                            headers = headers
-                        ).parsedSafe<ApiResponse>()
+                        val genreName = genreMap[request.name] ?: request.name
+                        debug("🎭 Buscando gênero: $genreName (ID: ${request.name})")
+                        
+                        val url = "$mainUrl/api/preview-genre?id=${request.name}"
+                        
+                        val response = app.get(url, headers = headers)
+                        debugApi(url, response.code)
+                        
+                        val data = response.parsedSafe<ApiResponse>()
+                        val results = data?.results ?: emptyList()
+                        
+                        debug("📊 Gênero $genreName: ${results.size} itens encontrados")
+                        if (results.isNotEmpty()) {
+                            val firstItem = results.first()
+                            debug("   📌 Primeiro item: ${firstItem.title ?: firstItem.name}")
+                            debug("   🎬 Tipo: ${firstItem.mediaType}")
+                            debug("   ⭐ Avaliação: ${firstItem.voteAverage ?: "N/A"}")
+                        }
                         
                         items.add(HomePageList(
-                            name = genreMap[request.name] ?: request.name,
-                            list = (data?.results ?: emptyList())
-                                .mapNotNull { it.toSearchResponse() },
+                            name = genreName,
+                            list = results.mapNotNull { 
+                                debug("   ➡️ Convertendo: ${it.title ?: it.name} (${it.mediaType})")
+                                it.toSearchResponse() 
+                            },
                             isHorizontalImages = true
                         ))
+                        debugSuccess("✅ Gênero '$genreName' carregado com ${results.size} itens")
+                    } else {
+                        debugError("⚠️ Categoria desconhecida: ${request.name}")
                     }
                 }
             }
         } catch (e: Exception) {
-            e.printStackTrace()
+            debugError("💥 Erro ao carregar página principal", e)
         }
         
-        return HomePageResponse(items)
+        debug("📊 Total de seções carregadas: ${items.size}")
+        debug("📦 Total de itens em todas as seções: ${items.sumOf { it.list.size }}")
+        
+        if (items.isEmpty()) {
+            debugError("🚨 Nenhum item carregado! Verifique a conexão ou a API")
+        } else {
+            debugSuccess("✨ HomePage carregada com sucesso!")
+        }
+        
+        // ✅ CORREÇÃO: Usar newHomePageResponse em vez do construtor antigo
+        return newHomePageResponse(items, hasNext = false)
     }
 
-    // Converte item da API para SearchResponse do CloudStream
+    // 🎯 Converte item da API para SearchResponse do CloudStream
     private fun MediaItem.toSearchResponse(): SearchResponse? {
-        val itemId = this.id ?: return null
-        val itemTitle = this.title ?: this.name ?: return null
-        val itemType = when (this.mediaType) {
-            "movie" -> TvType.Movie
-            "tv" -> TvType.TvSeries
-            "anime" -> TvType.Anime
-            else -> TvType.TvSeries
+        debug("   🛠️ Iniciando conversão do item...")
+        
+        val itemId = this.id ?: run {
+            debugError("   ❌ Item sem ID!")
+            return null
         }
         
-        // URL da imagem
+        val itemTitle = this.title ?: this.name ?: run {
+            debugError("   ❌ Item sem título! ID: $itemId")
+            return null
+        }
+        
+        val itemType = when (this.mediaType) {
+            "movie" -> {
+                debug("   🎥 Tipo: Filme")
+                TvType.Movie
+            }
+            "tv" -> {
+                debug("   📺 Tipo: Série")
+                TvType.TvSeries
+            }
+            "anime" -> {
+                debug("   🇯🇵 Tipo: Anime")
+                TvType.Anime
+            }
+            else -> {
+                debug("   ❓ Tipo desconhecido: ${this.mediaType}, usando Série como padrão")
+                TvType.TvSeries
+            }
+        }
+        
+        // 🖼️ URL da imagem
         val posterUrl = this.posterPath?.let { path ->
-            if (path.startsWith("http")) path else "https://image.tmdb.org/t/p/w500$path"
+            if (path.startsWith("http")) {
+                debug("   🖼️ Poster URL completo: ${path.take(50)}...")
+                path
+            } else {
+                val fullPath = "https://image.tmdb.org/t/p/w500$path"
+                debug("   🖼️ Poster TMDB: $fullPath")
+                fullPath
+            }
+        } ?: run {
+            debug("   ⚠️ Sem poster")
+            null
         }
         
         val backdropUrl = this.backdropPath?.let { path ->
-            if (path.startsWith("http")) path else "https://image.tmdb.org/t/p/w780$path"
+            if (path.startsWith("http")) {
+                debug("   🎨 Backdrop URL completo: ${path.take(50)}...")
+                path
+            } else {
+                val fullPath = "https://image.tmdb.org/t/p/w780$path"
+                debug("   🎨 Backdrop TMDB: $fullPath")
+                fullPath
+            }
+        } ?: run {
+            debug("   ⚠️ Sem backdrop")
+            null
         }
         
-        // Ano de lançamento
+        // 📅 Ano de lançamento
         val year = (this.releaseDate ?: this.firstAirDate)?.take(4)?.toIntOrNull()
+        debug("   📅 Ano: ${year ?: "Desconhecido"}")
         
-        // Qualidade baseada na avaliação
-        val quality = when (this.voteAverage ?: 0.0) {
-            in 8.0..10.0 -> SearchQuality.HD
-            in 6.0..7.9 -> SearchQuality.SD
-            else -> SearchQuality.Unknown
+        // ⭐ Qualidade baseada na avaliação
+        val vote = this.voteAverage ?: 0.0
+        // ✅ CORREÇÃO: Usar o enum correto para qualidade
+        val quality = when (vote) {
+            in 8.0..10.0 -> {
+                debug("   ⭐⭐ Avaliação excelente: $vote (HD)")
+                SearchQuality.HD
+            }
+            in 6.0..7.9 -> {
+                debug("   ⭐ Avaliação boa: $vote (SD)")
+                SearchQuality.SD
+            }
+            else -> {
+                debug("   ⚠️ Avaliação baixa/desconhecida: $vote")
+                null // ✅ CORREÇÃO: Não usar SearchQuality.Unknown
+            }
         }
         
+        debug("   📝 Sinopse: ${this.overview?.take(50) ?: "N/A"}...")
+        debug("   🎭 Gêneros: ${this.genreIds?.size ?: 0} gêneros")
+        
+        debugSuccess("   ✅ Item convertido: $itemTitle (ID: $itemId)")
+        
+        // ✅ CORREÇÃO: Usar a nova API corretamente
         return newMovieSearchResponse(
-            title = itemTitle,
+            name = itemTitle,
             url = itemId.toString(),
+            apiName = this@BetterFlixProvider.name,
             type = itemType
         ) {
             this.posterUrl = posterUrl
-            this.backdropUrl = backdropUrl
+            this.backgroundPosterUrl = backdropUrl // ✅ CORREÇÃO: backdropUrl mudou para backgroundPosterUrl
             this.year = year
             this.quality = quality
-            this.plot = this@toSearchResponse.overview
+            addPlot(this@toSearchResponse.overview) // ✅ CORREÇÃO: Usar addPlot
         }
     }
 
-    // Busca simples (pode ser expandida depois)
+    // 🔍 Busca simples (pode ser expandida depois)
     override suspend fun search(query: String): List<SearchResponse> {
-        // Implementar se tiver endpoint de busca
+        debug("🔎 Buscando: '$query'")
+        debug("⚠️ Busca não implementada ainda")
         return emptyList()
     }
 
-    // Carregar detalhes (placeholder)
+    // 📄 Carregar detalhes (placeholder com debug)
     override suspend fun load(url: String): LoadResponse {
-        val id = url.toIntOrNull() ?: throw ErrorLoadingException("ID inválido")
+        debug("📄 Carregando detalhes para URL: $url")
         
-        return MovieLoadResponse(
-            title = "Carregando...",
+        val id = url.toIntOrNull() ?: run {
+            debugError("❌ ID inválido na URL: $url")
+            throw ErrorLoadingException("ID inválido: $url")
+        }
+        
+        debug("🎬 Preparando LoadResponse para ID: $id")
+        
+        // ✅ CORREÇÃO: Usar newMovieLoadResponse em vez do construtor antigo
+        return newMovieLoadResponse(
+            name = "🔄 Carregando detalhes...",
             url = url,
-            posterUrl = null,
-            plot = "Detalhes serão implementados posteriormente.\nID: $id",
-            year = null
-        )
+            apiName = this.name,
+            type = TvType.Movie,
+            dataUrl = url
+        ) {
+            addPlot("""
+            📋 **Informações do Item**
+            
+            🆔 **ID:** $id
+            🌐 **Fonte:** BetterFlix API
+            
+            ⚠️ **Status:** Detalhes completos não implementados ainda.
+            
+            🔧 **Próximos passos:**
+            1. Implementar endpoint de detalhes na API
+            2. Buscar informações completas do TMDB
+            3. Adicionar elenco, temporadas, etc.
+            
+            📢 **Debug Info:**
+            - URL recebida: $url
+            - Plugin: BetterFlix
+            """.trimIndent())
+        }
     }
 
-    // Links de streaming (placeholder)
+    // 🎬 Links de streaming (placeholder com debug)
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
+        debug("🎬 loadLinks chamado")
+        debug("📦 Data recebida: ${data.take(100)}...")
+        debug("🎥 Casting mode: $isCasting")
+        debug("⚠️ Links de streaming não implementados ainda")
+        
+        // Simulando um link para teste
+        if (DEBUG) {
+            debug("🧪 Modo debug ativo - criando link de teste")
+            // callback(ExtractorLink(...)) // Descomente para testar
+        }
+        
         return false
+    }
+
+    // 🌐 Teste de conexão (opcional)
+    override suspend fun checkAvailability(): Boolean {
+        debug("🌐 Testando conexão com a API...")
+        return try {
+            val response = app.get("$mainUrl/api/trending?type=all", headers = headers, timeout = 30)
+            val available = response.code == 200
+            if (available) {
+                debugSuccess("✅ API está online! Status: ${response.code}")
+            } else {
+                debugError("❌ API offline ou com erro. Status: ${response.code}")
+            }
+            available
+        } catch (e: Exception) {
+            debugError("💥 Falha ao conectar com a API", e)
+            false
+        }
     }
 }
