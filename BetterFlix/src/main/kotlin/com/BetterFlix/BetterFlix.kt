@@ -628,123 +628,184 @@ class BetterFlix : MainAPI() {
     }
 
     private suspend fun extractVideoFromSuperflix(
-        domain: String,
-        tmdbId: String,
-        type: String,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        try {
-            println("🔍 [DEBUG] Iniciando extração de vídeo do SuperFlix")
-            println("🔍 [DEBUG] Domínio: $domain")
-            println("🔍 [DEBUG] TMDB ID: $tmdbId")
-            println("🔍 [DEBUG] Tipo: $type")
+    domain: String,
+    tmdbId: String,
+    type: String,
+    callback: (ExtractorLink) -> Unit
+): Boolean {
+    try {
+        println("🔍 [DEBUG] Iniciando extração de vídeo do SuperFlix")
+        println("🔍 [DEBUG] Domínio: $domain")
+        println("🔍 [DEBUG] TMDB ID: $tmdbId")
+        println("🔍 [DEBUG] Tipo: $type")
+        
+        // Lista de video_ids possíveis
+        val possibleVideoIds = listOf("303309", "351944")
+        
+        for (videoId in possibleVideoIds) {
+            println("🔍 [DEBUG] Tentando video_id: $videoId")
             
-            // Lista de video_ids possíveis (extraídos do HTML)
-            val possibleVideoIds = listOf("303309", "351944")
+            val apiUrl = "$domain/api"
+            println("🔍 [DEBUG] POST para API: $apiUrl")
             
-            // Tentar cada video_id possível
-            for (videoId in possibleVideoIds) {
-                println("🔍 [DEBUG] Tentando video_id: $videoId")
+            val apiHeaders = mapOf(
+                "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
+                "Accept" to "application/json, text/plain, */*",
+                "Accept-Language" to "pt-BR",
+                "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8",
+                "Origin" to domain,
+                "Referer" to "$domain/filme/$tmdbId",
+                "X-Requested-With" to "XMLHttpRequest",
+                "Sec-Fetch-Dest" to "empty",
+                "Sec-Fetch-Mode" to "cors",
+                "Sec-Fetch-Site" to "same-origin"
+            )
+            
+            val apiData = mapOf(
+                "action" to "getPlayer",
+                "video_id" to videoId
+            )
+            
+            println("🔍 [DEBUG] Enviando dados: action=getPlayer, video_id=$videoId")
+            
+            try {
+                val apiResponse = app.post(apiUrl, data = apiData, headers = apiHeaders, timeout = 30)
+                println("🔍 [DEBUG] Status da API: ${apiResponse.code}")
+                println("🔍 [DEBUG] Resposta da API: ${apiResponse.text}")
                 
-                // PASSO 1: POST /api para obter hash do player (COPIADO DO SITE)
-                val apiUrl = "$domain/api"
-                println("🔍 [DEBUG] POST para API: $apiUrl")
-                
-                // Headers exatamente como o site usa
-                val apiHeaders = mapOf(
-                    "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
-                    "Accept" to "application/json, text/plain, */*",
-                    "Accept-Language" to "pt-BR",
-                    "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8",
-                    "Origin" to domain,
-                    "Referer" to "$domain/filme/$tmdbId",
-                    "X-Requested-With" to "XMLHttpRequest",
-                    "Sec-Fetch-Dest" to "empty",
-                    "Sec-Fetch-Mode" to "cors",
-                    "Sec-Fetch-Site" to "same-origin"
-                )
-                
-                // Dados exatamente como o site envia
-                val apiData = mapOf(
-                    "action" to "getPlayer",
-                    "video_id" to videoId
-                )
-                
-                println("🔍 [DEBUG] Enviando dados: action=getPlayer, video_id=$videoId")
-                
-                try {
-                    val apiResponse = app.post(apiUrl, data = apiData, headers = apiHeaders, timeout = 30)
-                    println("🔍 [DEBUG] Status da API: ${apiResponse.code}")
-                    println("🔍 [DEBUG] Resposta da API: ${apiResponse.text}")
-                    
-                    if (apiResponse.code >= 400) {
-                        println("❌ [DEBUG] Erro HTTP na API: ${apiResponse.code}")
-                        continue
-                    }
-                    
-                    val apiJson = JSONObject(apiResponse.text)
-                    
-                    // Verificar se a resposta foi bem-sucedida
-                    if (!apiJson.optBoolean("success", false)) {
-                        println("❌ [DEBUG] API retornou success=false")
-                        continue
-                    }
-                    
-                    val videoUrl = apiJson.optJSONObject("data")?.optString("video_url")
-                    if (videoUrl.isNullOrEmpty()) {
-                        println("❌ [DEBUG] Não foi possível extrair video_url")
-                        continue
-                    }
-                    
-                    println("✅ [DEBUG] Video URL encontrado: $videoUrl")
-                    
-                    // ANALISAR O video_url retornado
-                    // Verificar se é um link direto para m3u8
-                    if (videoUrl.contains(".m3u8")) {
-                        println("✅ [DEBUG] Link m3u8 direto encontrado!")
-                        
-                        newExtractorLink(name, "SuperFlix HD", videoUrl, ExtractorLinkType.M3U8) {
-                            referer = "$domain/"
-                            quality = if (videoUrl.contains("1080")) Qualities.P1080.value else Qualities.P720.value
-                        }.also { 
-                            println("✅ [DEBUG] ExtractorLink criado com sucesso")
-                            callback(it) 
-                        }
-                        
-                        return true
-                    }
-                    
-                    // Se for um link com hash, tentar extrair o hash
-                    if (videoUrl.contains("hash=") || videoUrl.contains("/m/") || videoUrl.contains("token=")) {
-                        println("🔍 [DEBUG] URL parece conter hash/token, processando...")
-                        val result = extractFromHashUrl(videoUrl, domain, callback)
-                        if (result) return true
-                    }
-                    
-                    // Se for uma URL de redirecionamento
-                    if (videoUrl.startsWith("http")) {
-                        println("🔍 [DEBUG] Seguindo redirecionamento: $videoUrl")
-                        val result = extractFromPlayerUrl(videoUrl, callback)
-                        if (result) return true
-                    }
-                    
-                    println("🔍 [DEBUG] Tipo de URL não reconhecido, tentando próximo video_id")
-                    
-                } catch (e: Exception) {
-                    println("❌ [DEBUG] Erro ao processar video_id $videoId: ${e.message}")
+                if (apiResponse.code >= 400) {
+                    println("❌ [DEBUG] Erro HTTP na API: ${apiResponse.code}")
                     continue
                 }
+                
+                val apiJson = JSONObject(apiResponse.text)
+                
+                // CORREÇÃO AQUI: Verificar corretamente o status
+                val errors = apiJson.optString("errors", "1")
+                val message = apiJson.optString("message", "")
+                
+                if (errors == "1" || message != "success") {
+                    println("❌ [DEBUG] API retornou errors=$errors, message=$message")
+                    continue
+                }
+                
+                val videoUrl = apiJson.optJSONObject("data")?.optString("video_url")
+                if (videoUrl.isNullOrEmpty()) {
+                    println("❌ [DEBUG] Não foi possível extrair video_url")
+                    continue
+                }
+                
+                println("✅ [DEBUG] Video URL encontrado: $videoUrl")
+                
+                // Processar o video_url
+                if (videoUrl.contains(".m3u8")) {
+                    println("✅ [DEBUG] Link m3u8 direto encontrado!")
+                    
+                    newExtractorLink(name, "SuperFlix HD", videoUrl, ExtractorLinkType.M3U8) {
+                        referer = "$domain/"
+                        quality = if (videoUrl.contains("1080")) Qualities.P1080.value 
+                                 else if (videoUrl.contains("720")) Qualities.P720.value
+                                 else Qualities.P480.value
+                    }.also { 
+                        println("✅ [DEBUG] ExtractorLink criado com sucesso")
+                        callback(it) 
+                    }
+                    
+                    return true
+                }
+                
+                // Se for uma URL de player
+                if (videoUrl.contains("/m/") || videoUrl.contains("/video/")) {
+                    println("🔍 [DEBUG] Processando URL de player: $videoUrl")
+                    val playerResult = extractFromPlayerUrl(videoUrl, callback)
+                    if (playerResult) return true
+                }
+                
+                // Tentar seguir redirecionamento
+                println("🔍 [DEBUG] Tentando seguir redirecionamento")
+                val redirectResult = extractFromRedirectUrl(videoUrl, callback)
+                if (redirectResult) return true
+                
+            } catch (e: Exception) {
+                println("❌ [DEBUG] Erro ao processar video_id $videoId: ${e.message}")
+                continue
             }
-            
-            println("❌ [DEBUG] Nenhum video_id funcionou")
-            return false
-            
-        } catch (e: Exception) {
-            println("❌ [DEBUG] Erro na extração do SuperFlix: ${e.message}")
-            e.printStackTrace()
+        }
+        
+        println("❌ [DEBUG] Nenhum video_id funcionou")
+        return false
+        
+    } catch (e: Exception) {
+        println("❌ [DEBUG] Erro na extração do SuperFlix: ${e.message}")
+        e.printStackTrace()
+        return false
+    }
+}
+
+// Nova função para extrair de redirecionamento
+private suspend fun extractFromRedirectUrl(
+    redirectUrl: String,
+    callback: (ExtractorLink) -> Unit
+): Boolean {
+    try {
+        println("🔍 [DEBUG] Extraindo de URL de redirecionamento: $redirectUrl")
+        
+        val headers = mapOf(
+            "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
+            "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+            "Accept-Language" to "pt-BR",
+            "Referer" to "https://superflixapi.bond/"
+        )
+        
+        val response = app.get(redirectUrl, headers = headers, timeout = 30)
+        println("🔍 [DEBUG] Status do redirecionamento: ${response.code}")
+        
+        if (response.code >= 400) {
             return false
         }
+        
+        val html = response.text
+        
+        // Procurar por m3u8
+        val patterns = listOf(
+            Regex("""["']file["']\s*:\s*["'](https?://[^"']+\.m3u8[^"']*)["']"""),
+            Regex("""["']sources["']\s*:\s*\[\s*\{\s*["']file["']\s*:\s*["'](https?://[^"']+\.m3u8[^"']*)["']"""),
+            Regex("""(https?://[^"\s<>]+\.m3u8[^"\s<>]*)""")
+        )
+        
+        for (pattern in patterns) {
+            val matches = pattern.findAll(html).toList()
+            if (matches.isNotEmpty()) {
+                val m3u8Url = matches[0].groupValues[1]
+                println("✅ [DEBUG] m3u8 encontrado no redirecionamento: $m3u8Url")
+                
+                val quality = when {
+                    m3u8Url.contains("1080") -> Qualities.P1080.value
+                    m3u8Url.contains("720") -> Qualities.P720.value
+                    m3u8Url.contains("480") -> Qualities.P480.value
+                    else -> Qualities.P720.value
+                }
+                
+                newExtractorLink(name, "SuperFlix ($quality)", m3u8Url, ExtractorLinkType.M3U8) {
+                    referer = redirectUrl
+                    this.quality = quality
+                }.also { 
+                    println("✅ [DEBUG] ExtractorLink criado")
+                    callback(it) 
+                }
+                
+                return true
+            }
+        }
+        
+        println("❌ [DEBUG] Nenhum m3u8 encontrado no redirecionamento")
+        return false
+        
+    } catch (e: Exception) {
+        println("❌ [DEBUG] Erro ao extrair do redirecionamento: ${e.message}")
+        return false
     }
+}
 
     private suspend fun extractFromHashUrl(
         videoUrl: String,
