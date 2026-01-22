@@ -722,8 +722,8 @@ class BetterFlix : MainAPI() {
             
             if (videoId == null) {
                 println("❌ [DEBUG] Não foi possível encontrar video_id na página")
-                println("🔍 [DEBUG] Primeiros 1000 chars do HTML:")
-                println(pageHtml.take(1000))
+                println("🔍 [DEBUG] Primeiros 100000 chars do HTML:")
+                println(pageHtml.take(100000))
                 return false
             }
             
