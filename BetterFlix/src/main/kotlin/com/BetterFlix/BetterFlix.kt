@@ -546,17 +546,25 @@ class BetterFlix : MainAPI() {
         }
     }
 
-    // IMPLEMENTAÇÃO DA EXTRAÇÃO DE VÍDEO - PASSO A PASSO
+    // IMPLEMENTAÇÃO DA EXTRAÇÃO DE VÍDEO COM DEBUG
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
+        println("🔍 [DEBUG] loadLinks chamado com data: $data")
+        
         return safeApiRequest(data) {
             try {
                 // Extrair TMDB ID da URL
-                val tmdbId = extractTmdbId(data) ?: return@safeApiRequest false
+                val tmdbId = extractTmdbId(data)
+                println("🔍 [DEBUG] TMDB ID extraído: $tmdbId")
+                
+                if (tmdbId == null) {
+                    println("❌ [DEBUG] Falha ao extrair TMDB ID da URL")
+                    return@safeApiRequest false
+                }
                 
                 // Determinar tipo da URL para usar na extração
                 val type = when {
@@ -564,32 +572,50 @@ class BetterFlix : MainAPI() {
                     data.contains("type=tv") -> "tv"
                     else -> "movie"
                 }
+                println("🔍 [DEBUG] Tipo detectado: $type")
                 
                 // TENTAR TODOS OS DOMÍNIOS DO SUPERFLIX
                 for (superflixDomain in superflixDomains) {
+                    println("🔍 [DEBUG] Tentando domínio: $superflixDomain")
                     try {
                         val success = extractVideoFromSuperflix(superflixDomain, tmdbId, type, callback)
                         if (success) {
+                            println("✅ [DEBUG] Sucesso na extração do vídeo usando $superflixDomain")
+                            
                             // Adicionar legenda em português se disponível
                             try {
                                 val subtitleUrl = "https://complicado.sbs/cdn/down/disk11/${tmdbId.substring(0, 32)}/Subtitle/subtitle_por.vtt"
+                                println("🔍 [DEBUG] Tentando adicionar legenda: $subtitleUrl")
                                 subtitleCallback.invoke(
                                     SubtitleFile("Português", subtitleUrl)
                                 )
                             } catch (e: Exception) {
-                                // Ignorar erro de legenda
+                                println("⚠️ [DEBUG] Erro ao adicionar legenda: ${e.message}")
                             }
+                            
                             return@safeApiRequest true
                         }
                     } catch (e: Exception) {
+                        println("❌ [DEBUG] Erro no domínio $superflixDomain: ${e.message}")
                         // Tentar próximo domínio
                         continue
                     }
                 }
                 
+                println("⚠️ [DEBUG] Nenhum domínio SuperFlix funcionou, tentando método alternativo")
+                
                 // Se nenhum domínio funcionou, tentar método alternativo
-                extractVideoAlternative(data, callback)
+                val alternativeResult = extractVideoAlternative(data, callback)
+                if (alternativeResult) {
+                    println("✅ [DEBUG] Método alternativo funcionou")
+                } else {
+                    println("❌ [DEBUG] Método alternativo também falhou")
+                }
+                
+                return@safeApiRequest alternativeResult
             } catch (e: Exception) {
+                println("❌ [DEBUG] Erro geral no loadLinks: ${e.message}")
+                e.printStackTrace()
                 false
             }
         }
@@ -608,8 +634,14 @@ class BetterFlix : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         try {
+            println("🔍 [DEBUG] Iniciando extração de vídeo do SuperFlix")
+            println("🔍 [DEBUG] Domínio: $domain")
+            println("🔍 [DEBUG] TMDB ID: $tmdbId")
+            println("🔍 [DEBUG] Tipo: $type")
+            
             // PASSO 1: GET página do filme para extrair video_id
             val filmUrl = "$domain/filme/$tmdbId"
+            println("🔍 [DEBUG] Passo 1 - GET página: $filmUrl")
             
             val pageHeaders = mapOf(
                 "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
@@ -622,15 +654,40 @@ class BetterFlix : MainAPI() {
             )
             
             val pageResponse = app.get(filmUrl, headers = pageHeaders, timeout = 30)
+            println("🔍 [DEBUG] Status da página: ${pageResponse.code}")
+            
+            if (pageResponse.code >= 400) {
+                println("❌ [DEBUG] Erro HTTP na página: ${pageResponse.code}")
+                return false
+            }
+            
             val pageHtml = pageResponse.text
             val pageDoc = Jsoup.parse(pageHtml)
             
             // Extrair video_id do botão do servidor Premium (primeiro .btn-server)
-            val btnServer = pageDoc.select(".btn-server[data-id]").firstOrNull()
-            val videoId = btnServer?.attr("data-id") ?: return false
+            val btnServers = pageDoc.select(".btn-server[data-id]")
+            println("🔍 [DEBUG] Botões .btn-server encontrados: ${btnServers.size}")
+            
+            btnServers.forEachIndexed { index, element ->
+                println("🔍 [DEBUG] Botão $index - data-id: ${element.attr("data-id")}, texto: ${element.text()}")
+            }
+            
+            val btnServer = btnServers.firstOrNull()
+            val videoId = btnServer?.attr("data-id")
+            
+            if (videoId == null) {
+                println("❌ [DEBUG] Não foi possível encontrar .btn-server[data-id]")
+                println("🔍 [DEBUG] HTML da página (primeiros 2000 chars): ${pageHtml.take(2000)}")
+                return false
+            }
+            
+            println("✅ [DEBUG] Passo 1 - Video ID encontrado: $videoId")
             
             // PASSO 2: POST /api para obter hash do player
             val apiUrl = "$domain/api"
+            println("🔍 [DEBUG] Passo 2 - POST para API: $apiUrl")
+            println("🔍 [DEBUG] Dados: action=getPlayer, video_id=$videoId")
+            
             val apiHeaders = mapOf(
                 "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
                 "Accept" to "*/*",
@@ -650,16 +707,41 @@ class BetterFlix : MainAPI() {
             )
             
             val apiResponse = app.post(apiUrl, data = apiData, headers = apiHeaders, timeout = 30)
+            println("🔍 [DEBUG] Status da API: ${apiResponse.code}")
+            println("🔍 [DEBUG] Resposta da API: ${apiResponse.text}")
+            
+            if (apiResponse.code >= 400) {
+                println("❌ [DEBUG] Erro HTTP na API: ${apiResponse.code}")
+                return false
+            }
+            
             val apiJson = JSONObject(apiResponse.text)
             
-            val videoUrl = apiJson.optJSONObject("data")?.optString("video_url") ?: return false
+            val videoUrl = apiJson.optJSONObject("data")?.optString("video_url")
+            if (videoUrl.isNullOrEmpty()) {
+                println("❌ [DEBUG] Não foi possível extrair video_url do JSON")
+                println("🔍 [DEBUG] JSON completo: $apiJson")
+                return false
+            }
+            
+            println("✅ [DEBUG] Passo 2 - Video URL encontrado: $videoUrl")
+            
             val hash = videoUrl.substringAfterLast("/").substringBefore("#")
+            if (hash.isBlank()) {
+                println("❌ [DEBUG] Não foi possível extrair hash da URL: $videoUrl")
+                return false
+            }
+            
+            println("✅ [DEBUG] Hash extraído: $hash")
             
             // Determinar domínio do player (pode ser diferente)
             val playerDomain = "https://llanfairpwllgwyngy.com"
+            println("🔍 [DEBUG] Domínio do player: $playerDomain")
             
             // PASSO 3: POST para obter link HLS final
             val playerUrl = "$playerDomain/player/index.php?data=$hash&do=getVideo"
+            println("🔍 [DEBUG] Passo 3 - POST para player: $playerUrl")
+            
             val playerHeaders = mapOf(
                 "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
                 "Accept" to "*/*",
@@ -679,14 +761,35 @@ class BetterFlix : MainAPI() {
             )
             
             val playerResponse = app.post(playerUrl, data = playerData, headers = playerHeaders, timeout = 30)
+            println("🔍 [DEBUG] Status do player: ${playerResponse.code}")
+            println("🔍 [DEBUG] Resposta do player: ${playerResponse.text}")
+            
+            if (playerResponse.code >= 400) {
+                println("❌ [DEBUG] Erro HTTP no player: ${playerResponse.code}")
+                return false
+            }
+            
             val playerJson = JSONObject(playerResponse.text)
             
             // Extrair link HLS (preferir videoSource, fallback para securedLink)
-            val hlsUrl = playerJson.optString("videoSource")
+            val videoSource = playerJson.optString("videoSource")
+            val securedLink = playerJson.optString("securedLink")
+            
+            println("🔍 [DEBUG] videoSource: $videoSource")
+            println("🔍 [DEBUG] securedLink: $securedLink")
+            
+            val hlsUrl = videoSource
                 .takeIf { it.isNotBlank() }
-                ?: playerJson.optString("securedLink")
+                ?: securedLink
                 .takeIf { it.isNotBlank() }
-                ?: return false
+            
+            if (hlsUrl.isNullOrBlank()) {
+                println("❌ [DEBUG] Não foi possível extrair link HLS do JSON")
+                println("🔍 [DEBUG] JSON completo: $playerJson")
+                return false
+            }
+            
+            println("✅ [DEBUG] Passo 3 - HLS URL encontrada: $hlsUrl")
             
             // Criar ExtractorLink usando newExtractorLink
             val quality = when {
@@ -697,13 +800,20 @@ class BetterFlix : MainAPI() {
                 else -> Qualities.P720.value
             }
             
+            println("✅ [DEBUG] Qualidade detectada: $quality")
+            
             newExtractorLink(name, "SuperFlix ($quality)", hlsUrl, ExtractorLinkType.M3U8) {
                 referer = "$playerDomain/"
                 this.quality = quality
-            }.also { callback(it) }
+            }.also { 
+                println("✅ [DEBUG] ExtractorLink criado com sucesso")
+                callback(it) 
+            }
             
             return true
         } catch (e: Exception) {
+            println("❌ [DEBUG] Erro na extração do SuperFlix: ${e.message}")
+            e.printStackTrace()
             return false
         }
     }
@@ -712,31 +822,60 @@ class BetterFlix : MainAPI() {
         data: String,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
+        println("🔍 [DEBUG] Iniciando método alternativo de extração")
+        
         // Método alternativo: buscar diretamente na página do BetterFlix
         try {
+            println("🔍 [DEBUG] Carregando página: $data")
             val response = app.get(data, headers = headers, cookies = cookies, timeout = 30)
+            println("🔍 [DEBUG] Status da página: ${response.code}")
+            
+            if (response.code >= 400) {
+                println("❌ [DEBUG] Erro HTTP: ${response.code}")
+                return false
+            }
+            
             val document = response.document
             
             // Procurar por iframes de player
-            val iframe = document.selectFirst("iframe[src*='embed'], iframe[src*='player']")
+            val iframes = document.select("iframe[src*='embed'], iframe[src*='player']")
+            println("🔍 [DEBUG] Iframes encontrados: ${iframes.size}")
+            
+            iframes.forEachIndexed { index, iframe ->
+                val src = iframe.attr("src")
+                println("🔍 [DEBUG] Iframe $index - src: $src")
+            }
+            
+            val iframe = iframes.firstOrNull()
             val iframeSrc = iframe?.attr("src")
             
             if (iframeSrc != null) {
+                println("✅ [DEBUG] Iframe encontrado: $iframeSrc")
                 return extractFromIframe(iframeSrc, callback)
             }
             
+            println("⚠️ [DEBUG] Nenhum iframe encontrado, procurando por scripts com m3u8")
+            
             // Procurar por scripts com m3u8
             val scripts = document.select("script")
+            println("🔍 [DEBUG] Scripts encontrados: ${scripts.size}")
+            
             for (script in scripts) {
                 val html = script.html()
                 val m3u8Pattern = Regex("""(https?://[^"\s]+\.m3u8[^"\s]*)""")
                 val match = m3u8Pattern.find(html)
                 if (match != null) {
                     val m3u8Url = match.groupValues[1]
+                    println("✅ [DEBUG] m3u8 encontrado em script: $m3u8Url")
                     return createM3u8Link(m3u8Url, callback)
                 }
             }
+            
+            println("❌ [DEBUG] Nenhum link m3u8 encontrado nos scripts")
+            
         } catch (e: Exception) {
+            println("❌ [DEBUG] Erro no método alternativo: ${e.message}")
+            e.printStackTrace()
             return false
         }
         
@@ -747,8 +886,17 @@ class BetterFlix : MainAPI() {
         iframeUrl: String,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
+        println("🔍 [DEBUG] Extraindo do iframe: $iframeUrl")
+        
         return try {
             val response = app.get(fixUrl(iframeUrl), headers = headers, timeout = 30)
+            println("🔍 [DEBUG] Status do iframe: ${response.code}")
+            
+            if (response.code >= 400) {
+                println("❌ [DEBUG] Erro HTTP no iframe: ${response.code}")
+                return false
+            }
+            
             val html = response.text
             
             // Procurar por m3u8 no iframe
@@ -758,16 +906,20 @@ class BetterFlix : MainAPI() {
                 Regex("""(https?://[^"\s]+\.m3u8[^"\s]*)""")
             )
             
-            for (pattern in patterns) {
+            patterns.forEachIndexed { index, pattern ->
                 val match = pattern.find(html)
                 if (match != null) {
                     val m3u8Url = match.groupValues[1]
+                    println("✅ [DEBUG] m3u8 encontrado no iframe (padrão $index): $m3u8Url")
                     return createM3u8Link(m3u8Url, callback)
                 }
             }
             
+            println("❌ [DEBUG] Nenhum m3u8 encontrado no iframe")
             false
         } catch (e: Exception) {
+            println("❌ [DEBUG] Erro ao extrair do iframe: ${e.message}")
+            e.printStackTrace()
             false
         }
     }
@@ -776,7 +928,11 @@ class BetterFlix : MainAPI() {
         m3u8Url: String,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
+        println("🔍 [DEBUG] Criando link M3U8: $m3u8Url")
+        
         return try {
+            // Gerar múltiplas qualidades
+            println("🔍 [DEBUG] Gerando qualidades com M3u8Helper")
             val links = M3u8Helper.generateM3u8(
                 source = name,
                 streamUrl = m3u8Url,
@@ -785,16 +941,26 @@ class BetterFlix : MainAPI() {
             )
             
             if (links.isNotEmpty()) {
+                println("✅ [DEBUG] ${links.size} link(s) gerado(s) pelo M3u8Helper")
+                links.forEachIndexed { index, link ->
+                    println("🔍 [DEBUG] Link $index - Qualidade: ${link.quality}, URL: ${link.url}")
+                }
                 links.forEach { callback(it) }
                 true
             } else {
+                println("⚠️ [DEBUG] M3u8Helper não gerou links, criando link direto")
                 newExtractorLink(name, "Video", m3u8Url, ExtractorLinkType.M3U8) {
                     referer = mainUrl
                     quality = Qualities.P720.value
-                }.also { callback(it) }
+                }.also { 
+                    println("✅ [DEBUG] Link direto criado")
+                    callback(it) 
+                }
                 true
             }
         } catch (e: Exception) {
+            println("❌ [DEBUG] Erro ao criar link M3U8: ${e.message}")
+            e.printStackTrace()
             false
         }
     }
