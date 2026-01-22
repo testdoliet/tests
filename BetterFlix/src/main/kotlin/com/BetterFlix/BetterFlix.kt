@@ -546,7 +546,7 @@ class BetterFlix : MainAPI() {
         }
     }
 
-    // IMPLEMENTAÇÃO DA EXTRAÇÃO DE VÍDEO COM DEBUG
+    // IMPLEMENTAÇÃO DA EXTRAÇÃO DE VÍDEO CORRIGIDA
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -643,11 +643,16 @@ class BetterFlix : MainAPI() {
             val filmUrl = "$domain/filme/$tmdbId"
             println("🔍 [DEBUG] Passo 1 - GET página: $filmUrl")
             
+            // USAR EXATAMENTE OS MESMOS HEADERS DO CURL QUE FUNCIONOU
             val pageHeaders = mapOf(
                 "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
                 "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
                 "Accept-Language" to "pt-BR",
                 "Referer" to "https://betterflix.vercel.app/",
+                "Upgrade-Insecure-Requests" to "1",
+                "sec-ch-ua" to "\"Chromium\";v=\"127\", \"Not)A;Brand\";v=\"99\", \"Microsoft Edge Simulate\";v=\"127\", \"Lemur\";v=\"127\"",
+                "sec-ch-ua-mobile" to "?1",
+                "sec-ch-ua-platform" to "\"Android\"",
                 "Sec-Fetch-Dest" to "document",
                 "Sec-Fetch-Mode" to "navigate",
                 "Sec-Fetch-Site" to "cross-site"
@@ -655,6 +660,7 @@ class BetterFlix : MainAPI() {
             
             val pageResponse = app.get(filmUrl, headers = pageHeaders, timeout = 30)
             println("🔍 [DEBUG] Status da página: ${pageResponse.code}")
+            println("🔍 [DEBUG] Tamanho da resposta: ${pageResponse.text.length} chars")
             
             if (pageResponse.code >= 400) {
                 println("❌ [DEBUG] Erro HTTP na página: ${pageResponse.code}")
@@ -664,20 +670,60 @@ class BetterFlix : MainAPI() {
             val pageHtml = pageResponse.text
             val pageDoc = Jsoup.parse(pageHtml)
             
-            // Extrair video_id do botão do servidor Premium (primeiro .btn-server)
-            val btnServers = pageDoc.select(".btn-server[data-id]")
-            println("🔍 [DEBUG] Botões .btn-server encontrados: ${btnServers.size}")
+            // DEBUG: Verificar se encontramos os elementos esperados
+            println("🔍 [DEBUG] Procurando elementos com data-id...")
             
-            btnServers.forEachIndexed { index, element ->
-                println("🔍 [DEBUG] Botão $index - data-id: ${element.attr("data-id")}, texto: ${element.text()}")
+            // Buscar de múltiplas formas
+            val selectors = listOf(
+                ".btn-server[data-id]",
+                "div[data-id]",
+                "[data-id]",
+                ".players_select_items [data-id]",
+                ".players_select_items .btn-server"
+            )
+            
+            var videoId: String? = null
+            
+            for (selector in selectors) {
+                val elements = pageDoc.select(selector)
+                println("🔍 [DEBUG] Seletor '$selector' encontrou ${elements.size} elementos")
+                
+                if (elements.isNotEmpty()) {
+                    elements.forEachIndexed { index, element ->
+                        val dataId = element.attr("data-id")
+                        val text = element.text().trim()
+                        val classes = element.className()
+                        println("🔍 [DEBUG] Elemento $index - data-id: '$dataId', classes: '$classes', text: '$text'")
+                        
+                        if (dataId.isNotBlank() && dataId.matches(Regex("\\d+"))) {
+                            videoId = dataId
+                            println("✅ [DEBUG] Video ID encontrado com seletor '$selector': $videoId")
+                        }
+                    }
+                }
+                
+                if (videoId != null) break
             }
             
-            val btnServer = btnServers.firstOrNull()
-            val videoId = btnServer?.attr("data-id")
+            if (videoId == null) {
+                // Método alternativo: procurar no HTML bruto com regex
+                println("⚠️ [DEBUG] Nenhum video_id encontrado com seletores, procurando no HTML bruto...")
+                
+                val dataIdPattern = Regex("""data-id=["'](\d+)["']""")
+                val matches = dataIdPattern.findAll(pageHtml).toList()
+                
+                println("🔍 [DEBUG] Encontrados ${matches.size} data-id no HTML bruto")
+                matches.forEachIndexed { index, match ->
+                    println("🔍 [DEBUG] Match $index: ${match.groupValues[1]}")
+                }
+                
+                videoId = matches.firstOrNull()?.groupValues?.get(1)
+            }
             
             if (videoId == null) {
-                println("❌ [DEBUG] Não foi possível encontrar .btn-server[data-id]")
-                println("🔍 [DEBUG] HTML da página (primeiros 2000 chars): ${pageHtml.take(2000)}")
+                println("❌ [DEBUG] Não foi possível encontrar video_id na página")
+                println("🔍 [DEBUG] Primeiros 1000 chars do HTML:")
+                println(pageHtml.take(1000))
                 return false
             }
             
