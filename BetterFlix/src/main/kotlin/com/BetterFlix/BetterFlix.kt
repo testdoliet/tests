@@ -464,7 +464,6 @@ class BetterFlix : MainAPI() {
                 val backdrop = tmdbData.backdropPath?.let { "https://image.tmdb.org/t/p/original$it" }
                 val overview = tmdbData.overview
                 val genres = tmdbData.genres?.map { it.name } ?: emptyList()
-                val score = tmdbData.voteAverage?.times(10)?.toInt() // Converter de 0-10 para 0-100
                 
                 // Buscar trailers
                 val trailerUrl = when (type) {
@@ -567,7 +566,6 @@ class BetterFlix : MainAPI() {
                         this.year = year
                         this.plot = overview
                         this.tags = genres
-                        this.score = score
                         this.duration = tmdbData.episodeRunTime?.firstOrNull()
                         this.recommendations = null
                         if (actors.isNotEmpty()) {
@@ -585,7 +583,6 @@ class BetterFlix : MainAPI() {
                         this.year = year
                         this.plot = overview
                         this.tags = genres
-                        this.score = score
                         this.duration = tmdbData.runtime
                         this.recommendations = null
                         if (actors.isNotEmpty()) {
