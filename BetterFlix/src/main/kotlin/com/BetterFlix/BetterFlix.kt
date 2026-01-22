@@ -7,6 +7,7 @@ import com.lagradost.cloudstream3.LoadResponse.Companion.addTrailer
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import org.jsoup.Jsoup
+import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
 class BetterFlix : MainAPI() {
@@ -37,6 +38,13 @@ class BetterFlix : MainAPI() {
     private val cookies = mapOf(
         "dom3ic8zudi28v8lr6fgphwffqoz0j6c" to "33de42d8-3e93-4249-b175-d6bf5346ae91%3A2%3A1",
         "pp_main_80d9775bdcedfb8fd29914d950374a08" to "1"
+    )
+
+    // Domínios para extração de vídeo
+    private val superflixDomains = listOf(
+        "https://superflixapi.bond",
+        "https://superflixapi.asia",
+        "https://superflixapi.top"
     )
 
     // Mapeamento de gêneros
@@ -174,10 +182,10 @@ class BetterFlix : MainAPI() {
                 // Gerar URL no formato correto do site
                 val slug = generateSlug(title)
                 val url = when (type) {
-                    TvType.Movie -> "$mainUrl/$slug?id=$id&type=movie"
-                    TvType.TvSeries -> "$mainUrl/$slug?id=$id&type=tv"
-                    TvType.Anime -> "$mainUrl/$slug?id=$id&type=anime"
-                    else -> "$mainUrl/$slug?id=$id&type=movie"
+                    TvType.Movie -> "$mainUrl/filme/$slug?id=$id"
+                    TvType.TvSeries -> "$mainUrl/tv/$slug?id=$id"
+                    TvType.Anime -> "$mainUrl/anime/$slug?id=$id"
+                    else -> "$mainUrl/filme/$slug?id=$id"
                 }
                 
                 when (type) {
@@ -224,7 +232,7 @@ class BetterFlix : MainAPI() {
                 
                 // Gerar URL no formato correto
                 val slug = generateSlug(title)
-                val url = "$mainUrl/$slug?id=$id&type=anime"
+                val url = "$mainUrl/anime/$slug?id=$id"
                 
                 newAnimeSearchResponse(title, url, TvType.Anime) {
                     this.posterUrl = poster
@@ -269,10 +277,10 @@ class BetterFlix : MainAPI() {
                 // Gerar URL no formato correto
                 val slug = generateSlug(title)
                 val url = when (type) {
-                    TvType.Movie -> "$mainUrl/$slug?id=$id&type=movie"
-                    TvType.TvSeries -> "$mainUrl/$slug?id=$id&type=tv"
-                    TvType.Anime -> "$mainUrl/$slug?id=$id&type=anime"
-                    else -> "$mainUrl/$slug?id=$id&type=movie"
+                    TvType.Movie -> "$mainUrl/filme/$slug?id=$id"
+                    TvType.TvSeries -> "$mainUrl/tv/$slug?id=$id"
+                    TvType.Anime -> "$mainUrl/anime/$slug?id=$id"
+                    else -> "$mainUrl/filme/$slug?id=$id"
                 }
                 
                 when (type) {
@@ -355,10 +363,10 @@ class BetterFlix : MainAPI() {
                         // Gerar URL no formato correto
                         val slug = generateSlug(title)
                         val url = when (type) {
-                            TvType.Movie -> "$mainUrl/$slug?id=$id&type=movie"
-                            TvType.TvSeries -> "$mainUrl/$slug?id=$id&type=tv"
-                            TvType.Anime -> "$mainUrl/$slug?id=$id&type=anime"
-                            else -> "$mainUrl/$slug?id=$id&type=movie"
+                            TvType.Movie -> "$mainUrl/filme/$slug?id=$id"
+                            TvType.TvSeries -> "$mainUrl/tv/$slug?id=$id"
+                            TvType.Anime -> "$mainUrl/anime/$slug?id=$id"
+                            else -> "$mainUrl/filme/$slug?id=$id"
                         }
                         
                         when (type) {
@@ -459,8 +467,8 @@ class BetterFlix : MainAPI() {
                 val trailerKey = extractTrailer(document)
                 
                 // Determinar tipo pela URL
-                val isSeries = url.contains("type=tv") || url.contains("/tv")
-                val isAnime = url.contains("type=anime") || url.contains("/anime")
+                val isSeries = url.contains("/tv/") || document.select(".episode-list, .season-list").isNotEmpty()
+                val isAnime = url.contains("/anime/") || document.select(".anime-episodes").isNotEmpty()
                 val isMovie = !isSeries && !isAnime
                 
                 if (isSeries || isAnime) {
@@ -507,7 +515,263 @@ class BetterFlix : MainAPI() {
         }
     }
 
-    // Funções para extrair informações da página de detalhes
+    // IMPLEMENTAÇÃO DA EXTRAÇÃO DE VÍDEO - PASSO A PASSO
+    override suspend fun loadLinks(
+        data: String,
+        isCasting: Boolean,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        return safeApiRequest(data) {
+            try {
+                // Extrair TMDB ID da URL
+                val tmdbId = extractTmdbId(data) ?: return@safeApiRequest false
+                
+                // TENTAR TODOS OS DOMÍNIOS DO SUPERFLIX
+                for (superflixDomain in superflixDomains) {
+                    try {
+                        val success = extractVideoFromSuperflix(superflixDomain, tmdbId, callback)
+                        if (success) {
+                            // Adicionar legenda em português se disponível
+                            try {
+                                val subtitleUrl = "https://complicado.sbs/cdn/down/disk11/${tmdbId.substring(0, 32)}/Subtitle/subtitle_por.vtt"
+                                subtitleCallback.invoke(
+                                    SubtitleFile("Português", subtitleUrl)
+                                )
+                            } catch (e: Exception) {
+                                // Ignorar erro de legenda
+                            }
+                            return@safeApiRequest true
+                        }
+                    } catch (e: Exception) {
+                        // Tentar próximo domínio
+                        continue
+                    }
+                }
+                
+                // Se nenhum domínio funcionou, tentar método alternativo
+                extractVideoAlternative(data, callback)
+            } catch (e: Exception) {
+                false
+            }
+        }
+    }
+
+    private fun extractTmdbId(url: String): String? {
+        // Extrair ID da URL: /filme/dinheiro-suspeito?id=1306368
+        val idMatch = Regex("[?&]id=(\\d+)").find(url)
+        return idMatch?.groupValues?.get(1)
+    }
+
+    private suspend fun extractVideoFromSuperflix(
+        domain: String,
+        tmdbId: String,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        try {
+            // PASSO 1: GET página do filme para extrair video_id
+            val filmUrl = "$domain/filme/$tmdbId"
+            
+            val pageHeaders = mapOf(
+                "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
+                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+                "Accept-Language" to "pt-BR",
+                "Referer" to "https://betterflix.vercel.app/",
+                "Sec-Fetch-Dest" to "document",
+                "Sec-Fetch-Mode" to "navigate",
+                "Sec-Fetch-Site" to "cross-site"
+            )
+            
+            val pageResponse = app.get(filmUrl, headers = pageHeaders, timeout = 30)
+            val pageHtml = pageResponse.text
+            val pageDoc = Jsoup.parse(pageHtml)
+            
+            // Extrair video_id do botão do servidor Premium (primeiro .btn-server)
+            val btnServer = pageDoc.select(".btn-server[data-id]").firstOrNull()
+            val videoId = btnServer?.attr("data-id") ?: return false
+            
+            // PASSO 2: POST /api para obter hash do player
+            val apiUrl = "$domain/api"
+            val apiHeaders = mapOf(
+                "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
+                "Accept" to "*/*",
+                "Accept-Language" to "pt-BR",
+                "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8",
+                "Origin" to domain,
+                "Referer" to filmUrl,
+                "X-Requested-With" to "XMLHttpRequest",
+                "Sec-Fetch-Dest" to "empty",
+                "Sec-Fetch-Mode" to "cors",
+                "Sec-Fetch-Site" to "same-origin"
+            )
+            
+            val apiData = mapOf(
+                "action" to "getPlayer",
+                "video_id" to videoId
+            )
+            
+            val apiResponse = app.post(apiUrl, data = apiData, headers = apiHeaders, timeout = 30)
+            val apiJson = JSONObject(apiResponse.text)
+            
+            val videoUrl = apiJson.optJSONObject("data")?.optString("video_url") ?: return false
+            val hash = videoUrl.substringAfterLast("/").substringBefore("#")
+            
+            // Determinar domínio do player (pode ser diferente)
+            val playerDomain = "https://llanfairpwllgwyngy.com"
+            
+            // PASSO 3: POST para obter link HLS final
+            val playerUrl = "$playerDomain/player/index.php?data=$hash&do=getVideo"
+            val playerHeaders = mapOf(
+                "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
+                "Accept" to "*/*",
+                "Accept-Language" to "pt-BR",
+                "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8",
+                "Origin" to playerDomain,
+                "Referer" to videoUrl,
+                "X-Requested-With" to "XMLHttpRequest",
+                "Sec-Fetch-Dest" to "empty",
+                "Sec-Fetch-Mode" to "cors",
+                "Sec-Fetch-Site" to "same-origin"
+            )
+            
+            val playerData = mapOf(
+                "hash" to hash,
+                "r" to ""
+            )
+            
+            val playerResponse = app.post(playerUrl, data = playerData, headers = playerHeaders, timeout = 30)
+            val playerJson = JSONObject(playerResponse.text)
+            
+            // Extrair link HLS (preferir videoSource, fallback para securedLink)
+            val hlsUrl = playerJson.optString("videoSource")
+                .takeIf { it.isNotBlank() }
+                ?: playerJson.optString("securedLink")
+                .takeIf { it.isNotBlank() }
+                ?: return false
+            
+            // Criar ExtractorLink com qualidade
+            val quality = when {
+                hlsUrl.contains("1080") -> Qualities.P1080.value
+                hlsUrl.contains("720") -> Qualities.P720.value
+                hlsUrl.contains("480") -> Qualities.P480.value
+                hlsUrl.contains("360") -> Qualities.P360.value
+                else -> Qualities.P720.value
+            }
+            
+            callback.invoke(
+                ExtractorLink(
+                    source = name,
+                    name = "SuperFlix (${quality}p)",
+                    url = hlsUrl,
+                    referer = "$playerDomain/",
+                    quality = quality,
+                    isM3u8 = true
+                )
+            )
+            
+            return true
+        } catch (e: Exception) {
+            return false
+        }
+    }
+
+    private suspend fun extractVideoAlternative(
+        data: String,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        // Método alternativo: buscar diretamente na página do BetterFlix
+        try {
+            val response = app.get(data, headers = headers, cookies = cookies, timeout = 30)
+            val document = response.document
+            
+            // Procurar por iframes de player
+            val iframe = document.selectFirst("iframe[src*='embed'], iframe[src*='player']")
+            val iframeSrc = iframe?.attr("src")
+            
+            if (iframeSrc != null) {
+                return extractFromIframe(iframeSrc, callback)
+            }
+            
+            // Procurar por scripts com m3u8
+            val scripts = document.select("script")
+            for (script in scripts) {
+                val html = script.html()
+                val m3u8Pattern = Regex("""(https?://[^"\s]+\.m3u8[^"\s]*)""")
+                val match = m3u8Pattern.find(html)
+                if (match != null) {
+                    val m3u8Url = match.groupValues[1]
+                    return createM3u8Link(m3u8Url, callback)
+                }
+            }
+        } catch (e: Exception) {
+            return false
+        }
+        
+        return false
+    }
+
+    private suspend fun extractFromIframe(
+        iframeUrl: String,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        return try {
+            val response = app.get(fixUrl(iframeUrl), headers = headers, timeout = 30)
+            val html = response.text
+            
+            // Procurar por m3u8 no iframe
+            val patterns = listOf(
+                Regex("""file["']?\s*:\s*["'](https?://[^"']+\.m3u8[^"']*)["']"""),
+                Regex("""src=["'](https?://[^"']+\.m3u8[^"']*)["']"""),
+                Regex("""(https?://[^"\s]+\.m3u8[^"\s]*)""")
+            )
+            
+            for (pattern in patterns) {
+                val match = pattern.find(html)
+                if (match != null) {
+                    val m3u8Url = match.groupValues[1]
+                    return createM3u8Link(m3u8Url, callback)
+                }
+            }
+            
+            false
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    private suspend fun createM3u8Link(
+        m3u8Url: String,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        return try {
+            val links = M3u8Helper.generateM3u8(
+                source = name,
+                streamUrl = m3u8Url,
+                referer = mainUrl,
+                headers = headers
+            )
+            
+            if (links.isNotEmpty()) {
+                links.forEach { callback(it) }
+                true
+            } else {
+                val link = ExtractorLink(
+                    source = name,
+                    name = "Video",
+                    url = m3u8Url,
+                    referer = mainUrl,
+                    quality = Qualities.P720.value,
+                    isM3u8 = true
+                )
+                callback(link)
+                true
+            }
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    // Funções auxiliares para extração de informações da página
     private fun extractTitle(document: org.jsoup.nodes.Document): String? {
         return document.selectFirst("h1, .title, .movie-title, .tv-title, .anime-title")?.text()?.trim()
     }
@@ -550,16 +814,13 @@ class BetterFlix : MainAPI() {
     }
 
     private fun extractTrailer(document: org.jsoup.nodes.Document): String? {
-        // Procurar por iframe do YouTube
         val iframe = document.selectFirst("iframe[src*='youtube'], iframe[src*='youtu.be']")
         if (iframe != null) {
             val src = iframe.attr("src")
-            // Extrair ID do YouTube do URL
             val youtubeId = Regex("(?:youtube\\.com\\/embed\\/|youtu\\.be\\/)([^?&]+)").find(src)?.groupValues?.get(1)
             return youtubeId
         }
         
-        // Procurar por links de trailer
         val trailerLink = document.selectFirst("a[href*='youtube'], a[href*='youtu.be']")
         trailerLink?.attr("href")?.let { href ->
             val youtubeId = Regex("(?:youtube\\.com\\/watch\\?v=|youtu\\.be\\/)([^?&]+)").find(href)?.groupValues?.get(1)
@@ -572,13 +833,11 @@ class BetterFlix : MainAPI() {
     private fun extractDuration(document: org.jsoup.nodes.Document): Int? {
         val durationText = document.selectFirst(".duration, .runtime, .time")?.text()?.trim()
         if (durationText != null) {
-            // Tentar extrair minutos do texto (ex: "120 min", "2h 30m")
             val minutesMatch = Regex("(\\d+)\\s*min").find(durationText)
             if (minutesMatch != null) {
                 return minutesMatch.groupValues[1].toIntOrNull()
             }
             
-            // Tentar extrair horas e minutos
             val hoursMatch = Regex("(\\d+)\\s*h").find(durationText)
             val minsMatch = Regex("(\\d+)\\s*m").find(durationText)
             
@@ -593,7 +852,6 @@ class BetterFlix : MainAPI() {
     private fun extractEpisodes(document: org.jsoup.nodes.Document, baseUrl: String): List<Episode> {
         val episodes = mutableListOf<Episode>()
         
-        // Extrair episódios da página
         document.select(".episode, .episode-item, .season-episode").forEach { element ->
             try {
                 val epNumber = element.selectFirst(".episode-number, .number")?.text()?.toIntOrNull() ?: 
@@ -605,7 +863,6 @@ class BetterFlix : MainAPI() {
                 val description = element.selectFirst(".description, .overview")?.text()?.trim()
                 val poster = element.selectFirst("img")?.attr("src")?.let { fixUrl(it) }
                 
-                // Tentar extrair URL do episódio
                 val epUrl = element.attr("href") ?: element.attr("data-url") ?: 
                            "$baseUrl&season=$seasonNumber&episode=$epNumber"
                 
@@ -623,243 +880,7 @@ class BetterFlix : MainAPI() {
             }
         }
         
-        // Se não encontrar episódios, tentar extrair da URL
-        if (episodes.isEmpty()) {
-            val idMatch = Regex("[?&]id=(\\d+)").find(baseUrl)
-            val id = idMatch?.groupValues?.get(1)
-            val type = if (baseUrl.contains("type=tv")) "tv" else "anime"
-            
-            if (id != null) {
-                // Buscar episódios da API do TMDB
-                try {
-                    val tmdbApiKey = "eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiIxNjY3Y2I1N2UzNmEwZmQyYmEyYTQ3OWQ5NjU4MzcxZiIsInN1YiI6IjY1YzVlYTA5NTRhMDk4MDE4MjVmMDgxMCIsInNjb3BlcyI6WyJhcGlfcmVhZCJdLCJ2ZXJzaW9uIjoxfQ.3aVdvwzT41fFf7m_TfZc4cP7P8z_Rk-t-BZST_t4vzY"
-                    
-                    // Primeiro buscar temporadas
-                    val tvUrl = "https://api.themoviedb.org/3/tv/$id?language=pt-BR"
-                    val tvResponse = app.get(
-                        tvUrl,
-                        headers = mapOf("Authorization" to "Bearer $tmdbApiKey", "Accept" to "application/json")
-                    )
-                    
-                    val tvData = tvResponse.parsed<TvData>()
-                    tvData.seasons?.forEach { season ->
-                        if (season.seasonNumber > 0) {
-                            // Buscar episódios da temporada
-                            val seasonUrl = "https://api.themoviedb.org/3/tv/$id/season/${season.seasonNumber}?language=pt-BR"
-                            val seasonResponse = app.get(
-                                seasonUrl,
-                                headers = mapOf("Authorization" to "Bearer $tmdbApiKey", "Accept" to "application/json")
-                            )
-                            
-                            val seasonData = seasonResponse.parsed<SeasonData>()
-                            seasonData.episodes?.forEach { ep ->
-                                val episode = newEpisode("$baseUrl&season=${season.seasonNumber}&episode=${ep.episodeNumber}") {
-                                    this.name = ep.name ?: "Episódio ${ep.episodeNumber}"
-                                    this.season = season.seasonNumber
-                                    this.episode = ep.episodeNumber
-                                    this.description = ep.overview
-                                    this.posterUrl = ep.stillPath?.let { "https://image.tmdb.org/t/p/w300$it" }
-                                }
-                                episodes.add(episode)
-                            }
-                        }
-                    }
-                } catch (e: Exception) {
-                    // Ignorar erro da API
-                }
-            }
-        }
-        
         return episodes
-    }
-
-    // Modelos de dados TMDB para episódios
-    data class TvData(
-        @JsonProperty("seasons") val seasons: List<TvSeason>?
-    )
-    
-    data class TvSeason(
-        @JsonProperty("season_number") val seasonNumber: Int
-    )
-    
-    data class SeasonData(
-        @JsonProperty("episodes") val episodes: List<SeasonEpisode>?
-    )
-    
-    data class SeasonEpisode(
-        @JsonProperty("episode_number") val episodeNumber: Int,
-        @JsonProperty("name") val name: String?,
-        @JsonProperty("overview") val overview: String?,
-        @JsonProperty("still_path") val stillPath: String?
-    )
-
-    data class SearchResponseData(
-        @JsonProperty("results") val results: List<ContentItem>
-    )
-
-    override suspend fun loadLinks(
-        data: String,
-        isCasting: Boolean,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        return safeApiRequest(data) {
-            try {
-                // Tentar extrair links da página
-                val document = app.get(data, headers = headers, cookies = cookies).document
-                
-                // Procurar por botões de player
-                val playButton = document.selectFirst("button[onclick*='play'], button[data-player], .play-button")
-                if (playButton != null) {
-                    // Extrair URL do player do onclick ou data attribute
-                    val onclick = playButton.attr("onclick")
-                    val playerUrl = Regex("['\"](https?://[^'\"]+)['\"]").find(onclick)?.groupValues?.get(1) ?:
-                                   playButton.attr("data-player") ?:
-                                   playButton.attr("data-url")
-                    
-                    if (playerUrl != null) {
-                        return extractFromPlayerUrl(fixUrl(playerUrl), callback)
-                    }
-                }
-                
-                // Procurar por iframes de player
-                val iframeSrc = document.selectFirst("iframe[src*='embed'], iframe[src*='player']")?.attr("src")
-                if (iframeSrc != null) {
-                    return extractFromIframe(fixUrl(iframeSrc), callback)
-                }
-                
-                // Procurar por scripts com m3u8
-                val scripts = document.select("script")
-                for (script in scripts) {
-                    val html = script.html()
-                    val m3u8Pattern = Regex("""(https?://[^"\s]+\.m3u8[^"\s]*)""")
-                    val match = m3u8Pattern.find(html)
-                    if (match != null) {
-                        val m3u8Url = match.groupValues[1]
-                        return createM3u8Link(m3u8Url, callback)
-                    }
-                }
-                
-                // Procurar por links diretos
-                val videoLinks = document.select("a[href*='.m3u8'], a[href*='mp4'], a[href*='.mkv']")
-                for (link in videoLinks) {
-                    val href = link.attr("href")
-                    if (href.contains(".m3u8")) {
-                        return createM3u8Link(fixUrl(href), callback)
-                    }
-                }
-                
-                false
-            } catch (e: Exception) {
-                false
-            }
-        }
-    }
-
-    private suspend fun extractFromPlayerUrl(playerUrl: String, callback: (ExtractorLink) -> Unit): Boolean {
-        return safeApiRequest(playerUrl) {
-            try {
-                val response = app.get(playerUrl, headers = headers, cookies = cookies)
-                val html = response.text
-                
-                // Procurar por m3u8 no HTML do player
-                val patterns = listOf(
-                    Regex("""file["']?\s*:\s*["'](https?://[^"']+\.m3u8[^"']*)["']"""),
-                    Regex("""src=["'](https?://[^"']+\.m3u8[^"']*)["']"""),
-                    Regex("""(https?://[^"\s]+\.m3u8[^"\s]*)""")
-                )
-                
-                for (pattern in patterns) {
-                    val match = pattern.find(html)
-                    if (match != null) {
-                        val m3u8Url = match.groupValues[1]
-                        createM3u8Link(m3u8Url, callback)
-                        return@safeApiRequest true
-                    }
-                }
-                
-                // Procurar por iframe dentro do player
-                val iframeMatch = Regex("""<iframe[^>]+src=["']([^"']+)["']""").find(html)
-                if (iframeMatch != null) {
-                    val iframeSrc = iframeMatch.groupValues[1]
-                    return extractFromIframe(fixUrl(iframeSrc), callback)
-                }
-                
-                false
-            } catch (e: Exception) {
-                false
-            }
-        }
-    }
-
-    private suspend fun extractFromIframe(
-        iframeUrl: String,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        return safeApiRequest(iframeUrl) {
-            try {
-                val response = app.get(iframeUrl, headers = headers, cookies = cookies)
-                val html = response.text
-                
-                // Procurar por m3u8
-                val patterns = listOf(
-                    Regex("""file["']?\s*:\s*["'](https?://[^"']+\.m3u8[^"']*)["']"""),
-                    Regex("""src=["'](https?://[^"']+\.m3u8[^"']*)["']"""),
-                    Regex("""(https?://[^"\s]+\.m3u8[^"\s]*)""")
-                )
-                
-                for (pattern in patterns) {
-                    val match = pattern.find(html)
-                    if (match != null) {
-                        val m3u8Url = match.groupValues[1]
-                        createM3u8Link(m3u8Url, callback)
-                        return@safeApiRequest true
-                    }
-                }
-                
-                false
-            } catch (e: Exception) {
-                false
-            }
-        }
-    }
-
-    private suspend fun createM3u8Link(
-        m3u8Url: String,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        return safeApiRequest(m3u8Url) {
-            try {
-                // Gerar múltiplas qualidades
-                val links = M3u8Helper.generateM3u8(
-                    source = name,
-                    streamUrl = m3u8Url,
-                    referer = mainUrl,
-                    headers = headers
-                )
-                
-                if (links.isNotEmpty()) {
-                    links.forEach { callback(it) }
-                    true
-                } else {
-                    // Link direto se M3u8Helper falhar
-                    val link = newExtractorLink(
-                        source = name,
-                        name = "Video",
-                        url = m3u8Url,
-                        type = ExtractorLinkType.M3U8
-                    ) {
-                        this.referer = mainUrl
-                        this.quality = 720
-                        this.headers = headers
-                    }
-                    callback(link)
-                    true
-                }
-            } catch (e: Exception) {
-                false
-            }
-        }
     }
 }
 
