@@ -362,45 +362,47 @@ class BetterFlix : MainAPI() {
     override suspend fun search(query: String): List<SearchResponse> {
     return safeApiRequest(query) {
         try {
-            // Tentar a API de busca primeiro
             val encodedQuery = query.encodeSearchQuery()
             val apiUrl = "$mainUrl/api/search?query=$encodedQuery"
             
-            println("🔍 [SEARCH] Tentando API: $apiUrl")
+            println("🔍 [SEARCH] Buscando: $query")
+            println("🔗 [SEARCH] URL da API: $apiUrl")
             
-            try {
-                val response = app.get(
-                    apiUrl,
-                    headers = headers,
-                    cookies = cookies,
-                    timeout = 30
-                )
-                
-                if (response.code == 200) {
-                    println("✅ [SEARCH] API respondeu com status ${response.code}")
-                    val data = response.parsedSafe<SearchResponseData>()
-                    
-                    if (data != null && data.results.isNotEmpty()) {
-                        println("✅ [SEARCH] API retornou ${data.results.size} resultados")
-                        return@safeApiRequest data.results.mapNotNull { item ->
-                            processSearchItem(item)
-                        }
-                    } else {
-                        println("⚠️ [SEARCH] API retornou dados vazios, usando fallback HTML")
-                    }
-                } else {
-                    println("⚠️ [SEARCH] API falhou com status ${response.code}, usando fallback HTML")
-                }
-            } catch (e: Exception) {
-                println("⚠️ [SEARCH] Erro na API: ${e.message}, usando fallback HTML")
+            val response = app.get(
+                apiUrl,
+                headers = headers,
+                cookies = cookies,
+                timeout = 30
+            )
+            
+            if (response.code != 200) {
+                println("❌ [SEARCH] API falhou com status: ${response.code}")
+                return@safeApiRequest emptyList()
             }
             
-            // Fallback: Busca HTML
-            println("🔍 [SEARCH] Usando fallback HTML para: $query")
-            fallbackSearch(query)
+            println("✅ [SEARCH] API respondeu com sucesso")
+            
+            val data = response.parsedSafe<SearchResponseData>()
+            
+            if (data == null || data.results.isEmpty()) {
+                println("⚠️ [SEARCH] Nenhum resultado encontrado")
+                return@safeApiRequest emptyList()
+            }
+            
+            println("✅ [SEARCH] ${data.results.size} resultados encontrados")
+            
+            data.results.mapNotNull { item ->
+                try {
+                    processSearchItem(item)
+                } catch (e: Exception) {
+                    println("❌ [SEARCH] Erro ao processar item: ${e.message}")
+                    null
+                }
+            }
             
         } catch (e: Exception) {
-            println("❌ [SEARCH] Erro geral: ${e.message}")
+            println("❌ [SEARCH] Erro na busca: ${e.message}")
+            e.printStackTrace()
             emptyList()
         }
     }
@@ -408,7 +410,7 @@ class BetterFlix : MainAPI() {
 
 private fun processSearchItem(item: ContentItem): SearchResponse? {
     return try {
-        val title = item.title ?: item.name ?: item.originalTitle ?: item.originalName ?: return@processSearchItem null
+        val title = item.title ?: item.name ?: item.originalTitle ?: item.originalName ?: return null
         val year = getYearFromDate(item.releaseDate ?: item.firstAirDate)
         val poster = item.posterPath?.let { "https://image.tmdb.org/t/p/w500$it" }
         val id = item.id.toString()
@@ -433,6 +435,8 @@ private fun processSearchItem(item: ContentItem): SearchResponse? {
             else -> "$mainUrl/$slug?id=$id&type=movie"
         }
 
+        println("🎬 [SEARCH] Processando: $title ($year) - $type")
+
         when (type) {
             TvType.Movie -> newMovieSearchResponse(title, url, TvType.Movie) {
                 this.posterUrl = poster
@@ -456,115 +460,6 @@ private fun processSearchItem(item: ContentItem): SearchResponse? {
         null
     }
 }
-private suspend fun fallbackSearch(query: String): List<SearchResponse> {
-    try {
-        val searchUrl = "$mainUrl/results?q=${query.encodeSearchQuery()}"
-        println("🔍 [SEARCH-HTML] Acessando: $searchUrl")
-        
-        val response = app.get(searchUrl, headers = headers, cookies = cookies, timeout = 30)
-        
-        if (response.code != 200) {
-            println("❌ [SEARCH-HTML] Falha: status ${response.code}")
-            return emptyList()
-        }
-        
-        val document = response.document
-        println("✅ [SEARCH-HTML] HTML carregado")
-        
-        // Extrair todos os elementos <a> que são resultados
-        val resultElements = document.select("a[href*='?id='][href*='type=']")
-        println("🔍 [SEARCH-HTML] Encontrados ${resultElements.size} elementos")
-        
-        if (resultElements.isEmpty()) {
-            println("⚠️ [SEARCH-HTML] Nenhum resultado encontrado")
-            return emptyList()
-        }
-        
-        return resultElements.mapNotNull { element ->
-            try {
-                // Extrair URL
-                val href = element.attr("href") ?: return@mapNotNull null
-                val url = fixUrl(href)
-                println("🔗 [SEARCH-HTML] URL encontrada: $url")
-                
-                // Extrair título
-                val titleElement = element.selectFirst("h3")
-                val title = titleElement?.text()?.trim() ?: 
-                          element.selectFirst("img")?.attr("alt")?.trim() ?:
-                          return@mapNotNull null
-                
-                println("📝 [SEARCH-HTML] Título: $title")
-                
-                // Extrair poster
-                val imgElement = element.selectFirst("img")
-                val poster = imgElement?.attr("src")?.takeIf { it.isNotBlank() }?.let { fixUrl(it) }
-                
-                // Extrair ano
-                var year: Int? = null
-                val yearElement = element.selectFirst("span.text-gray-400")
-                if (yearElement != null) {
-                    val yearText = yearElement.text().trim()
-                    year = yearText.toIntOrNull()
-                    if (year == null) {
-                        // Tentar extrair ano do título (ex: "Dark (2017)")
-                        val yearMatch = Regex("\\((\\d{4})\\)").find(title)
-                        year = yearMatch?.groupValues?.get(1)?.toIntOrNull()
-                    }
-                }
-                
-                // Extrair tipo do badge ou da URL
-                val typeBadge = element.selectFirst("span:contains(Série), span:contains(Filme), span:contains(Anime)")
-                val typeText = typeBadge?.text()?.lowercase() ?: ""
-                
-                val isSeries = typeText.contains("série") || url.contains("type=tv")
-                val isMovie = typeText.contains("filme") || url.contains("type=movie")
-                val isAnime = typeText.contains("anime") || url.contains("type=anime")
-                
-                // Determinar tipo
-                val type = when {
-                    isAnime -> TvType.Anime
-                    isSeries -> TvType.TvSeries
-                    isMovie -> TvType.Movie
-                    else -> {
-                        // Fallback baseado no título
-                        when {
-                            title.contains("(Anime)", ignoreCase = true) -> TvType.Anime
-                            url.contains("/tv") -> TvType.TvSeries
-                            else -> TvType.Movie
-                        }
-                    }
-                }
-                
-                // Criar resposta de busca
-                when (type) {
-                    TvType.Anime -> newAnimeSearchResponse(title, url, TvType.Anime) {
-                        this.posterUrl = poster
-                        this.year = year
-                    }
-                    TvType.TvSeries -> newTvSeriesSearchResponse(title, url, TvType.TvSeries) {
-                        this.posterUrl = poster
-                        this.year = year
-                    }
-                    TvType.Movie -> newMovieSearchResponse(title, url, TvType.Movie) {
-                        this.posterUrl = poster
-                        this.year = year
-                    }
-                    else -> null
-                }
-                
-            } catch (e: Exception) {
-                println("❌ [SEARCH-HTML] Erro ao processar elemento: ${e.message}")
-                null
-            }
-        }.filterNotNull()
-        
-    } catch (e: Exception) {
-        println("❌ [SEARCH-HTML] Erro geral: ${e.message}")
-        emptyList()
-    }
-}
-
-
     // ========== LOAD ==========
     override suspend fun load(url: String): LoadResponse? {
         return safeApiRequest(url) {
