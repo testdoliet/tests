@@ -363,101 +363,111 @@ class BetterFlix : MainAPI() {
     return safeApiRequest(query) {
         try {
             val encodedQuery = query.encodeSearchQuery()
-            val apiUrl = "$mainUrl/api/search?query=$encodedQuery"
+            val searchUrl = "$mainUrl/results?q=$encodedQuery"
             
             println("🔍 [SEARCH] Buscando: $query")
-            println("🔗 [SEARCH] URL da API: $apiUrl")
+            println("🔗 [SEARCH] URL: $searchUrl")
             
             val response = app.get(
-                apiUrl,
+                searchUrl,
                 headers = headers,
                 cookies = cookies,
                 timeout = 30
             )
             
             if (response.code != 200) {
-                println("❌ [SEARCH] API falhou com status: ${response.code}")
+                println("❌ [SEARCH] Falha: status ${response.code}")
                 return@safeApiRequest emptyList()
             }
             
-            println("✅ [SEARCH] API respondeu com sucesso")
+            val html = response.text
+            val document = response.document
+            println("✅ [SEARCH] HTML carregado (${html.length} chars)")
             
-            val data = response.parsedSafe<SearchResponseData>()
+            // Método 1: Procurar por links com ?id= e type=
+            val resultLinks = document.select("a[href*='?id='][href*='type=']")
+            println("🔍 [SEARCH] Método 1: ${resultLinks.size} links encontrados")
             
-            if (data == null || data.results.isEmpty()) {
-                println("⚠️ [SEARCH] Nenhum resultado encontrado")
+            if (resultLinks.isEmpty()) {
+                println("⚠️ [SEARCH] Nenhum link encontrado, tentando método 2...")
                 return@safeApiRequest emptyList()
             }
             
-            println("✅ [SEARCH] ${data.results.size} resultados encontrados")
-            
-            data.results.mapNotNull { item ->
+            resultLinks.mapIndexedNotNull { index, link ->
                 try {
-                    processSearchItem(item)
+                    // 1. Extrair URL
+                    val href = link.attr("href") ?: return@mapIndexedNotNull null
+                    val fullUrl = fixUrl(href)
+                    
+                    // 2. Extrair ID da URL
+                    val idMatch = Regex("[?&]id=(\\d+)").find(fullUrl)
+                    val id = idMatch?.groupValues?.get(1) ?: return@mapIndexedNotNull null
+                    
+                    // 3. Extrair tipo da URL
+                    val type = when {
+                        fullUrl.contains("type=tv") -> TvType.TvSeries
+                        fullUrl.contains("type=anime") -> TvType.Anime
+                        fullUrl.contains("type=movie") -> TvType.Movie
+                        else -> {
+                            // Tentar deduzir pelo contexto
+                            val imgAlt = link.selectFirst("img")?.attr("alt") ?: ""
+                            when {
+                                imgAlt.contains("(Anime)", ignoreCase = true) -> TvType.Anime
+                                fullUrl.contains("/tv") -> TvType.TvSeries
+                                else -> TvType.Movie
+                            }
+                        }
+                    }
+                    
+                    // 4. Extrair título
+                    val title = link.selectFirst("img")?.attr("alt")?.trim() ?:
+                               link.selectFirst("h3")?.text()?.trim() ?:
+                               link.selectFirst(".text-white")?.text()?.trim() ?:
+                               // Fallback: extrair do texto do link
+                               link.text().trim().takeIf { it.isNotBlank() && it.length < 100 } ?:
+                               return@mapIndexedNotNull null
+                    
+                    // 5. Extrair poster
+                    val poster = link.selectFirst("img[src*='image.tmdb.org']")?.attr("src")?.let { fixUrl(it) }
+                    
+                    // 6. Limpar título (remover ano se houver)
+                    val cleanTitle = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
+                    
+                    // 7. Tentar extrair ano do título
+                    var year: Int? = null
+                    val yearMatch = Regex("\\((\\d{4})\\)").find(title)
+                    year = yearMatch?.groupValues?.get(1)?.toIntOrNull()
+                    
+                    println("✅ [SEARCH-$index] '$cleanTitle' - $type - ID: $id${year?.let { " ($it)" } ?: ""}")
+                    
+                    // 8. Criar SearchResponse
+                    when (type) {
+                        TvType.Anime -> newAnimeSearchResponse(cleanTitle, fullUrl, TvType.Anime) {
+                            this.posterUrl = poster
+                            this.year = year
+                        }
+                        TvType.TvSeries -> newTvSeriesSearchResponse(cleanTitle, fullUrl, TvType.TvSeries) {
+                            this.posterUrl = poster
+                            this.year = year
+                        }
+                        TvType.Movie -> newMovieSearchResponse(cleanTitle, fullUrl, TvType.Movie) {
+                            this.posterUrl = poster
+                            this.year = year
+                        }
+                        else -> null
+                    }
+                    
                 } catch (e: Exception) {
-                    println("❌ [SEARCH] Erro ao processar item: ${e.message}")
+                    println("❌ [SEARCH] Erro ao processar link $index: ${e.message}")
                     null
                 }
-            }
+            }.filterNotNull()
             
         } catch (e: Exception) {
-            println("❌ [SEARCH] Erro na busca: ${e.message}")
+            println("❌ [SEARCH] Erro geral: ${e.message}")
             e.printStackTrace()
             emptyList()
         }
-    }
-}
-
-private fun processSearchItem(item: ContentItem): SearchResponse? {
-    return try {
-        val title = item.title ?: item.name ?: item.originalTitle ?: item.originalName ?: return null
-        val year = getYearFromDate(item.releaseDate ?: item.firstAirDate)
-        val poster = item.posterPath?.let { "https://image.tmdb.org/t/p/w500$it" }
-        val id = item.id.toString()
-
-        val type = when (item.mediaType) {
-            "movie" -> TvType.Movie
-            "tv" -> TvType.TvSeries
-            "anime" -> TvType.Anime
-            else -> when {
-                title.contains("(Anime)", ignoreCase = true) -> TvType.Anime
-                item.releaseDate != null -> TvType.Movie
-                item.firstAirDate != null -> TvType.TvSeries
-                else -> TvType.Movie
-            }
-        }
-
-        val slug = generateSlug(title)
-        val url = when (type) {
-            TvType.Movie -> "$mainUrl/$slug?id=$id&type=movie"
-            TvType.TvSeries -> "$mainUrl/$slug?id=$id&type=tv"
-            TvType.Anime -> "$mainUrl/$slug?id=$id&type=anime"
-            else -> "$mainUrl/$slug?id=$id&type=movie"
-        }
-
-        println("🎬 [SEARCH] Processando: $title ($year) - $type")
-
-        when (type) {
-            TvType.Movie -> newMovieSearchResponse(title, url, TvType.Movie) {
-                this.posterUrl = poster
-                this.year = year
-            }
-            TvType.TvSeries -> newTvSeriesSearchResponse(title, url, TvType.TvSeries) {
-                this.posterUrl = poster
-                this.year = year
-            }
-            TvType.Anime -> newAnimeSearchResponse(title, url, TvType.Anime) {
-                this.posterUrl = poster
-                this.year = year
-            }
-            else -> newMovieSearchResponse(title, url, TvType.Movie) {
-                this.posterUrl = poster
-                this.year = year
-            }
-        }
-    } catch (e: Exception) {
-        println("❌ [SEARCH] Erro ao processar item: ${e.message}")
-        null
     }
 }
     // ========== LOAD ==========
