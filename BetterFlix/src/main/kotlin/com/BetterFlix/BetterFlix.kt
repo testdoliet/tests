@@ -466,8 +466,7 @@ private fun extractScoreFromSearchElement(element: org.jsoup.nodes.Element): Sco
                         // Extrair score do elemento HTML
                         val score = extractScoreFromSearchElement(link)
                         
-                        println("✅ [SEARCH-$index] '$cleanTitle' - $type - ID: $id - Score: ${score?.value ?: "N/A"}")
-                        
+                     
                         // Criar SearchResponse com score
                         when (type) {
                             TvType.Anime -> newAnimeSearchResponse(cleanTitle, fullUrl, TvType.Anime) {
