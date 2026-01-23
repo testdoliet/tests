@@ -684,16 +684,30 @@ class BetterFlix : MainAPI() {
 
     // EXTRAIR OBJETO ALL_EPISODES DO HTML DO SUPERFLIX
     private fun extractAllEpisodesData(html: String): Map<String, List<EpisodeData>>? {
-        try {
-            // Procura pelo objeto ALL_EPISODES no script
-            val pattern = Regex("""var\s+ALL_EPISODES\s*=\s*(\{.*?\});""", RegexOption.DOT_MATCHES_ALL)
+    try {
+        println("🔍 [DEBUG] Extraindo ALL_EPISODES do HTML")
+        
+        // VERSÃO 1: Padrão mais flexível que aceita quebras de linha
+        val pattern1 = Regex("""var\s+ALL_EPISODES\s*=\s*(\{[^;]+?\});""", RegexOption.DOT_MATCHES_ALL)
+        
+        // VERSÃO 2: Padrão alternativo
+        val pattern2 = Regex("""ALL_EPISODES\s*=\s*(\{.*?\})\s*;""", RegexOption.DOT_MATCHES_ALL)
+        
+        // VERSÃO 3: Procura pelo objeto JSON diretamente
+        val pattern3 = Regex("""\{"1"\s*:\s*\[.*?\]\}""", RegexOption.DOT_MATCHES_ALL)
+        
+        val patterns = listOf(pattern1, pattern2, pattern3)
+        
+        for ((index, pattern) in patterns.withIndex()) {
+            println("🔍 [DEBUG] Tentando padrão $index")
             val match = pattern.find(html)
             
             if (match != null) {
-                val jsonString = match.groupValues[1]
-                println("✅ [DEBUG] Encontrou ALL_EPISODES: ${jsonString.take(200)}...")
+                val jsonString = match.groupValues[1].trim()
+                println("✅ [DEBUG] Encontrou JSON com padrão $index: ${jsonString.take(100)}...")
                 
                 try {
+                    // Parse o JSON
                     val jsonObject = JSONObject(jsonString)
                     val result = mutableMapOf<String, List<EpisodeData>>()
                     
@@ -701,16 +715,25 @@ class BetterFlix : MainAPI() {
                         val episodesArray = jsonObject.getJSONArray(seasonKey)
                         val episodesList = mutableListOf<EpisodeData>()
                         
+                        println("🔍 [DEBUG] Processando temporada $seasonKey com ${episodesArray.length()} episódios")
+                        
                         for (i in 0 until episodesArray.length()) {
                             val episodeObj = episodesArray.getJSONObject(i)
+                            
+                            // Mapeie os campos corretamente - observe os nomes no HTML fornecido:
+                            // ID, title, sinopse, item, thumb_url, air_date, duration, epi_num, season
                             episodesList.add(
                                 EpisodeData(
                                     ID = episodeObj.optInt("ID"),
                                     title = episodeObj.optString("title"),
                                     sinopse = episodeObj.optString("sinopse"),
                                     item = episodeObj.optInt("item"),
-                                    thumb_url = episodeObj.optString("thumb_url").takeIf { it != "null" && it.isNotBlank() },
-                                    air_date = episodeObj.optString("air_date").takeIf { it != "null" && it.isNotBlank() },
+                                    thumb_url = episodeObj.optString("thumb_url").takeIf { 
+                                        it != "null" && it.isNotBlank() && it != "null" 
+                                    },
+                                    air_date = episodeObj.optString("air_date").takeIf { 
+                                        it != "null" && it.isNotBlank() && it != "null" 
+                                    },
                                     duration = episodeObj.optInt("duration"),
                                     epi_num = episodeObj.optInt("epi_num"),
                                     season = episodeObj.optInt("season")
@@ -721,64 +744,101 @@ class BetterFlix : MainAPI() {
                         result[seasonKey] = episodesList
                     }
                     
+                    println("✅ [DEBUG] Extraiu ${result.size} temporadas")
                     return result
+                    
                 } catch (e: Exception) {
-                    println("❌ [DEBUG] Erro ao parsear JSON ALL_EPISODES: ${e.message}")
+                    println("❌ [DEBUG] Erro ao parsear JSON com padrão $index: ${e.message}")
+                    e.printStackTrace()
                 }
             }
-            
-            // Fallback: tentar extrair manualmente
-            return extractAllEpisodesManually(html)
-        } catch (e: Exception) {
-            println("❌ [DEBUG] Erro ao extrair ALL_EPISODES: ${e.message}")
-            return null
         }
+        
+        // Se nenhum padrão funcionou, tente extração manual direta
+        println("⚠️ [DEBUG] Padrões regulares falharam, tentando extração manual")
+        return extractAllEpisodesManuallyDirect(html)
+        
+    } catch (e: Exception) {
+        println("❌ [DEBUG] Erro ao extrair ALL_EPISODES: ${e.message}")
+        e.printStackTrace()
+        return null
     }
+}
 
-    private fun extractAllEpisodesManually(html: String): Map<String, List<EpisodeData>>? {
-        try {
-            val result = mutableMapOf<String, List<EpisodeData>>()
-            
-            // Procura por padrão de temporadas
-            val seasonPattern = Regex("""(\d+)\s*:\s*\[(.*?)\]""", RegexOption.DOT_MATCHES_ALL)
-            val seasonMatches = seasonPattern.findAll(html)
-            
-            for (seasonMatch in seasonMatches) {
-                val seasonNum = seasonMatch.groupValues[1]
-                val episodesJson = "[${seasonMatch.groupValues[2]}]"
-                
-                try {
-                    val episodesArray = JSONObject("{\"episodes\":$episodesJson}").getJSONArray("episodes")
-                    val episodesList = mutableListOf<EpisodeData>()
-                    
-                    for (i in 0 until episodesArray.length()) {
-                        val episodeObj = episodesArray.getJSONObject(i)
-                        episodesList.add(
-                            EpisodeData(
-                                ID = episodeObj.optInt("ID"),
-                                title = episodeObj.optString("title"),
-                                sinopse = episodeObj.optString("sinopse"),
-                                item = episodeObj.optInt("item"),
-                                thumb_url = episodeObj.optString("thumb_url").takeIf { it != "null" && it.isNotBlank() },
-                                air_date = episodeObj.optString("air_date").takeIf { it != "null" && it.isNotBlank() },
-                                duration = episodeObj.optInt("duration"),
-                                epi_num = episodeObj.optInt("epi_num"),
-                                season = episodeObj.optInt("season")
-                            )
-                        )
-                    }
-                    
-                    result[seasonNum] = episodesList
-                } catch (e: Exception) {
-                    // Ignora erro nesta temporada
-                }
-            }
-            
-            return if (result.isNotEmpty()) result else null
-        } catch (e: Exception) {
+private fun extractAllEpisodesManuallyDirect(html: String): Map<String, List<EpisodeData>>? {
+    try {
+        // Método mais direto: procure pelo JSON começando com {"1":
+        val startIndex = html.indexOf("""{"1":""")
+        if (startIndex == -1) {
+            println("❌ [DEBUG] Não encontrou início do JSON")
             return null
         }
+        
+        // Encontre o fim do objeto JSON
+        var braceCount = 0
+        var i = startIndex
+        var foundEnd = false
+        
+        while (i < html.length) {
+            when (html[i]) {
+                '{' -> braceCount++
+                '}' -> {
+                    braceCount--
+                    if (braceCount == 0) {
+                        foundEnd = true
+                        break
+                    }
+                }
+            }
+            i++
+        }
+        
+        if (!foundEnd) {
+            println("❌ [DEBUG] Não conseguiu encontrar fim do JSON")
+            return null
+        }
+        
+        val jsonString = html.substring(startIndex, i + 1)
+        println("✅ [DEBUG] Extraiu JSON manualmente: ${jsonString.take(100)}...")
+        
+        val jsonObject = JSONObject(jsonString)
+        val result = mutableMapOf<String, List<EpisodeData>>()
+        
+        jsonObject.keys().forEach { seasonKey ->
+            val episodesArray = jsonObject.getJSONArray(seasonKey)
+            val episodesList = mutableListOf<EpisodeData>()
+            
+            for (j in 0 until episodesArray.length()) {
+                val episodeObj = episodesArray.getJSONObject(j)
+                episodesList.add(
+                    EpisodeData(
+                        ID = episodeObj.optInt("ID"),
+                        title = episodeObj.optString("title"),
+                        sinopse = episodeObj.optString("sinopse"),
+                        item = episodeObj.optInt("item"),
+                        thumb_url = episodeObj.optString("thumb_url").takeIf { 
+                            it != "null" && it.isNotBlank() && it != "null" 
+                        },
+                        air_date = episodeObj.optString("air_date").takeIf { 
+                            it != "null" && it.isNotBlank() && it != "null" 
+                        },
+                        duration = episodeObj.optInt("duration"),
+                        epi_num = episodeObj.optInt("epi_num"),
+                        season = episodeObj.optInt("season")
+                    )
+                )
+            }
+            
+            result[seasonKey] = episodesList
+        }
+        
+        return result
+        
+    } catch (e: Exception) {
+        println("❌ [DEBUG] Erro na extração manual direta: ${e.message}")
+        return null
     }
+}
 
     // FUNÇÃO PARA EXTRAIR OBJETO JSON EMBUTIDO (dadosMulti)
     private fun extractEmbeddedData(html: String): EmbeddedData? {
