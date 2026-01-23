@@ -561,135 +561,89 @@ class BetterFlix : MainAPI() {
     
     // EXTRAIR EPISÓDIOS DO SUPERFLIX COM LOGS DETALHADOS
     private suspend fun extractEpisodesFromSuperflix(tmdbId: String?, baseUrl: String): List<Episode> {
-        println("🔍 [EPISODIOS] ===== INICIANDO EXTRAÇÃO DE EPISÓDIOS =====")
-        println("🔍 [EPISODIOS] TMDB ID: $tmdbId")
-        println("🔍 [EPISODIOS] URL base: $baseUrl")
-        
-        val episodes = mutableListOf<Episode>()
-        
-        if (tmdbId == null) {
-            println("❌ [EPISODIOS] TMDB ID não encontrado")
-            return episodes
-        }
-        
-        try {
-            // Fazer requisição para o SuperFlix para obter lista de episódios
-            val superflixUrl = "https://superflixapi.bond/serie/$tmdbId/1/1"
-            println("🔍 [EPISODIOS] URL do SuperFlix: $superflixUrl")
-            
-            val superflixHeaders = mapOf(
-                "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
-                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-                "Accept-Language" to "pt-BR",
-                "Referer" to "https://betterflix.vercel.app/",
-                "Sec-Fetch-Dest" to "document",
-                "Sec-Fetch-Mode" to "navigate",
-                "Sec-Fetch-Site" to "cross-site"
-            )
-            
-            println("🔍 [EPISODIOS] Fazendo requisição ao SuperFlix...")
-            val response = app.get(superflixUrl, headers = superflixHeaders, timeout = 30)
-            println("✅ [EPISODIOS] Status da resposta: ${response.code}")
-            
-            if (response.code >= 400) {
-                println("❌ [EPISODIOS] Erro HTTP: ${response.code}")
-                return episodes
-            }
-            
-            val html = response.text
-            println("✅ [EPISODIOS] Tamanho do HTML: ${html.length} caracteres")
-            
-            // DEBUG: Mostrar primeiros 2000 caracteres do HTML
-            val htmlPreview = html.take(20000)
-            println("🔍 [EPISODIOS] HTML (primeiros 20000 chars):")
-            println("=".repeat(50))
-            println(htmlPreview)
-            println("=".repeat(50))
-            
-            // Procurar por ALL_EPISODES no HTML
-            println("🔍 [EPISODIOS] Procurando por ALL_EPISODES no HTML...")
-            val allEpisodesIndex = html.indexOf("ALL_EPISODES")
-            if (allEpisodesIndex != -1) {
-                println("✅ [EPISODIOS] Encontrou 'ALL_EPISODES' na posição $allEpisodesIndex")
-                // Mostrar contexto
-                val contextStart = maxOf(0, allEpisodesIndex - 50)
-                val contextEnd = minOf(allEpisodesIndex + 500, html.length)
-                val context = html.substring(contextStart, contextEnd)
-                println("🔍 [EPISODIOS] Contexto de ALL_EPISODES:")
-                println(context)
-            } else {
-                println("❌ [EPISODIOS] NÃO encontrou 'ALL_EPISODES' no HTML")
-                // Procurar por variações
-                val variations = listOf("all_episodes", "All_Episodes", "episodes")
-                variations.forEach { variation ->
-                    val index = html.indexOf(variation, ignoreCase = true)
-                    if (index != -1) {
-                        println("⚠️ [EPISODIOS] Encontrou variação '$variation' na posição $index")
-                    }
-                }
-            }
-            
-            // Extrair objeto ALL_EPISODES
-            println("🔍 [EPISODIOS] Extraindo objeto ALL_EPISODES...")
-            val allEpisodesData = extractAllEpisodesDataWithLogs(html)
-            if (allEpisodesData == null) {
-                println("❌ [EPISODIOS] Não conseguiu extrair dados de episódios")
-                return episodes
-            }
-            
-            println("✅ [EPISODIOS] Encontrou ${allEpisodesData.size} temporada(s)")
-            
-            // Processar todas as temporadas e episódios
-            allEpisodesData.forEach { (seasonNumber, seasonEpisodes) ->
-                val seasonNum = seasonNumber.toIntOrNull() ?: 1
-                println("🔍 [EPISODIOS] Processando Temporada $seasonNum com ${seasonEpisodes.size} episódios")
-                
-                seasonEpisodes.forEach { episodeData ->
-                    try {
-                        val epNumber = episodeData.epi_num
-                        val title = episodeData.title
-                        val description = episodeData.sinopse.takeIf { it.isNotBlank() }
-                        val airDate = episodeData.air_date
-                        val thumbUrl = episodeData.thumb_url?.let { 
-                            if (it.startsWith("/")) "https://image.tmdb.org/t/p/w300$it" else it 
-                        }
-                        
-                        println("📺 [EPISODIOS] Episódio: S${seasonNum}E${epNumber} - $title")
-                        println("   📅 Data: $airDate")
-                        println("   🖼️ Thumb: $thumbUrl")
-                        println("   📝 Descrição: ${description?.take(50)}...")
-                        
-                        // Construir URL do episódio
-                        val episodeUrl = "$baseUrl&season=$seasonNum&episode=$epNumber"
-                        
-                        episodes.add(
-                            newEpisode(episodeUrl) {
-                                this.name = title
-                                this.season = seasonNum
-                                this.episode = epNumber
-                                this.description = description
-                                this.posterUrl = thumbUrl?.let { fixUrl(it) }
-                            }
-                        )
-                        
-                        println("✅ [EPISODIOS] Adicionado: S${seasonNum}E${epNumber} - $title")
-                    } catch (e: Exception) {
-                        println("❌ [EPISODIOS] Erro ao processar episódio: ${e.message}")
-                    }
-                }
-            }
-            
-            println("✅ [EPISODIOS] ===== EXTRAÇÃO CONCLUÍDA =====")
-            println("✅ [EPISODIOS] Total de episódios extraídos: ${episodes.size}")
-            
-        } catch (e: Exception) {
-            println("❌ [EPISODIOS] Erro geral na extração: ${e.message}")
-            e.printStackTrace()
-        }
-        
+    println("🔍 [EPISODIOS] ===== INICIANDO EXTRAÇÃO DE EPISÓDIOS =====")
+    println("🔍 [EPISODIOS] TMDB ID: $tmdbId")
+    
+    val episodes = mutableListOf<Episode>()
+    
+    if (tmdbId == null) {
+        println("❌ [EPISODIOS] TMDB ID não encontrado")
         return episodes
     }
-
+    
+    // TENTAR DIFERENTES ENDPOINTS DA API DO BETTERFLIX
+    val possibleEndpoints = listOf(
+        "$mainUrl/api/serie/$tmdbId",
+        "$mainUrl/api/tv/$tmdbId",
+        "$mainUrl/api/seasons/$tmdbId",
+        "$mainUrl/api/serie-details/$tmdbId",
+        "$mainUrl/api/tv-details/$tmdbId",
+        "$mainUrl/api/episodes/$tmdbId"
+    )
+    
+    for (apiUrl in possibleEndpoints) {
+        try {
+            println("🔍 [EPISODIOS] Tentando endpoint: $apiUrl")
+            
+            val response = app.get(
+                apiUrl,
+                headers = headers,
+                cookies = cookies,
+                timeout = 30
+            )
+            
+            println("✅ [EPISODIOS] Status: ${response.code}")
+            println("✅ [EPISODIOS] Content-Type: ${response.headers["content-type"]}")
+            
+            if (response.code == 200) {
+                val contentType = response.headers["content-type"] ?: ""
+                
+                // Se for JSON
+                if (contentType.contains("application/json")) {
+                    val jsonText = response.text
+                    println("✅ [EPISODIOS] Recebeu JSON: ${jsonText.length} chars")
+                    println("🔍 [EPISODIOS] JSON preview: ${jsonText.take(500)}")
+                    
+                    // Tentar parsear
+                    val json = JSONObject(jsonText)
+                    
+                    // Verificar estrutura comum
+                    if (json.has("seasons") || json.has("episodes") || json.has("results")) {
+                        println("✅ [EPISODIOS] JSON parece conter dados de episódios!")
+                        // Processar aqui...
+                        break
+                    }
+                }
+                // Se for HTML
+                else if (contentType.contains("text/html")) {
+                    val html = response.text
+                    println("✅ [EPISODIOS] Recebeu HTML: ${html.length} chars")
+                    
+                    // Procurar por dados embutidos
+                    val document = Jsoup.parse(html)
+                    val scripts = document.select("script")
+                    
+                    for (script in scripts) {
+                        val scriptText = script.html()
+                        if (scriptText.contains("ALL_EPISODES") || 
+                            scriptText.contains("episodes") ||
+                            scriptText.contains("seasons")) {
+                            println("✅ [EPISODIOS] Encontrou dados em script!")
+                            // Extrair dados...
+                            break
+                        }
+                    }
+                }
+            }
+            
+        } catch (e: Exception) {
+            println("❌ [EPISODIOS] Erro no endpoint $apiUrl: ${e.message}")
+            continue
+        }
+    }
+    
+    return episodes
+}
     // Função de extração com logs detalhados
     private fun extractAllEpisodesDataWithLogs(html: String): Map<String, List<EpisodeData>>? {
         println("🔍 [EPISODIOS-PARSER] Iniciando extração de dados...")
