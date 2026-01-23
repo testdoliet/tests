@@ -600,8 +600,8 @@ class BetterFlix : MainAPI() {
             println("✅ [EPISODIOS] Tamanho do HTML: ${html.length} caracteres")
             
             // DEBUG: Mostrar primeiros 2000 caracteres do HTML
-            val htmlPreview = html.take(2000)
-            println("🔍 [EPISODIOS] HTML (primeiros 2000 chars):")
+            val htmlPreview = html.take(20000)
+            println("🔍 [EPISODIOS] HTML (primeiros 20000 chars):")
             println("=".repeat(50))
             println(htmlPreview)
             println("=".repeat(50))
