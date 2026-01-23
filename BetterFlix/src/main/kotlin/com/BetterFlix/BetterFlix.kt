@@ -47,7 +47,7 @@ class BetterFlix : MainAPI() {
         "https://superflixapi.top"
     )
 
-    // Mapeamento de gêneros (ORIGINAL)
+    // Mapeamento de gêneros
     private val genreMap = mapOf(
         "28" to "Ação e Aventura",
         "35" to "Comédia",
@@ -72,7 +72,7 @@ class BetterFlix : MainAPI() {
         "$mainUrl/animes" to "Animes"
     )
 
-    // Modelos de dados para a API (ORIGINAL)
+    // Modelos de dados para a API
     data class TrendingResponse(
         @JsonProperty("results") val results: List<ContentItem>
     )
@@ -117,7 +117,7 @@ class BetterFlix : MainAPI() {
         val backdrop: String? = null
     )
 
-    // Helper para fazer requests com rate limiting (ORIGINAL)
+    // Helper para fazer requests com rate limiting
     private suspend fun <T> safeApiRequest(url: String, block: suspend () -> T): T {
         // Adicionar delay para evitar rate limiting
         kotlinx.coroutines.delay(500)
@@ -134,8 +134,6 @@ class BetterFlix : MainAPI() {
         }
     }
 
-    // ========== FUNÇÕES QUE VOU MANTER ORIGINAIS ==========
-    
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val items = mutableListOf<SearchResponse>()
         
@@ -329,7 +327,37 @@ class BetterFlix : MainAPI() {
         }
     }
 
-    // ========== SEARCH ORIGINAL ==========
+    // Função para extrair ano do documento
+    private fun extractYear(document: org.jsoup.nodes.Document): Int? {
+        // Tenta extrair do título
+        val title = document.selectFirst("h1, .title")?.text() ?: ""
+        val yearMatch = Regex("\\((\\d{4})\\)").find(title)
+        if (yearMatch != null) {
+            return yearMatch.groupValues[1].toIntOrNull()
+        }
+        
+        // Tenta extrair de metadados
+        document.select("div.bg-gray-800\\/50, .info-grid, .metadata").forEach { div ->
+            val label = div.selectFirst("p.text-gray-400, .label, .info-label")?.text()
+            if (label?.contains("Ano") == true || label?.contains("Year") == true) {
+                val yearText = div.selectFirst("p.text-white, .value, .info-value")?.text()
+                return yearText?.toIntOrNull()
+            }
+        }
+        
+        return null
+    }
+
+    // Função para gerar slug a partir do título
+    private fun generateSlug(title: String): String {
+        return title
+            .lowercase()
+            .replace(Regex("[^a-z0-9\\s-]"), "")
+            .replace(Regex("\\s+"), "-")
+            .replace(Regex("-+"), "-")
+            .trim('-')
+    }
+
     override suspend fun search(query: String): List<SearchResponse> {
         return safeApiRequest(query) {
             // Primeiro tentar a API de busca do site
@@ -397,13 +425,13 @@ class BetterFlix : MainAPI() {
                     }
                 }
             } catch (e: Exception) {
-                // Fallback para busca HTML (ORIGINAL)
+                // Fallback para busca HTML
                 fallbackSearch(query)
             }
         }
     }
 
-    // Fallback caso a API de busca não esteja disponível (ORIGINAL)
+    // Fallback caso a API de busca não esteja disponível
     private suspend fun fallbackSearch(query: String): List<SearchResponse> {
         val searchUrl = "$mainUrl/search?q=${query.encodeSearchQuery()}"
         val document = app.get(searchUrl, headers = headers, cookies = cookies).document
@@ -462,7 +490,7 @@ class BetterFlix : MainAPI() {
         @JsonProperty("results") val results: List<ContentItem>
     )
 
-    // ========== LOAD ORIGINAL ==========
+    // ========== LOAD() ==========
     override suspend fun load(url: String): LoadResponse? {
         return safeApiRequest(url) {
             try {
@@ -490,6 +518,8 @@ class BetterFlix : MainAPI() {
                     val type = if (isAnime) TvType.Anime else TvType.TvSeries
                     val episodes = extractEpisodesFromSuperflix(tmdbId, url)
                     
+                    println("✅ [EPISODIOS] Total extraído: ${episodes.size} episódios")
+                    
                     newTvSeriesLoadResponse(embeddedData.name ?: "Sem título", url, type, episodes) {
                         this.posterUrl = embeddedData.poster?.let { fixUrl(it) }
                         this.backgroundPosterUrl = embeddedData.backdrop?.let { fixUrl(it) }
@@ -513,7 +543,7 @@ class BetterFlix : MainAPI() {
         }
     }
 
-    // ========== FUNÇÕES AUXILIARES DO LOAD (ORIGINAL) ==========
+    // ========== FUNÇÕES AUXILIARES DO LOAD ==========
 
     data class EpisodeData(
         val ID: Int,
@@ -527,17 +557,26 @@ class BetterFlix : MainAPI() {
         val season: Int
     )
 
-    // EXTRAIR EPISÓDIOS DO SUPERFLIX (ORIGINAL - APENAS RETIRANDO DEBUGS)
+    // ========== LOGS DETALHADOS NA EXTRAÇÃO DE EPISÓDIOS ==========
+    
+    // EXTRAIR EPISÓDIOS DO SUPERFLIX COM LOGS DETALHADOS
     private suspend fun extractEpisodesFromSuperflix(tmdbId: String?, baseUrl: String): List<Episode> {
+        println("🔍 [EPISODIOS] ===== INICIANDO EXTRAÇÃO DE EPISÓDIOS =====")
+        println("🔍 [EPISODIOS] TMDB ID: $tmdbId")
+        println("🔍 [EPISODIOS] URL base: $baseUrl")
+        
         val episodes = mutableListOf<Episode>()
         
         if (tmdbId == null) {
+            println("❌ [EPISODIOS] TMDB ID não encontrado")
             return episodes
         }
         
         try {
-            // Fazer requisição para o SuperFlix
+            // Fazer requisição para o SuperFlix para obter lista de episódios
             val superflixUrl = "https://superflixapi.bond/serie/$tmdbId/1/1"
+            println("🔍 [EPISODIOS] URL do SuperFlix: $superflixUrl")
+            
             val superflixHeaders = mapOf(
                 "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
                 "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
@@ -548,32 +587,77 @@ class BetterFlix : MainAPI() {
                 "Sec-Fetch-Site" to "cross-site"
             )
             
+            println("🔍 [EPISODIOS] Fazendo requisição ao SuperFlix...")
             val response = app.get(superflixUrl, headers = superflixHeaders, timeout = 30)
+            println("✅ [EPISODIOS] Status da resposta: ${response.code}")
             
             if (response.code >= 400) {
+                println("❌ [EPISODIOS] Erro HTTP: ${response.code}")
                 return episodes
             }
             
             val html = response.text
+            println("✅ [EPISODIOS] Tamanho do HTML: ${html.length} caracteres")
+            
+            // DEBUG: Mostrar primeiros 2000 caracteres do HTML
+            val htmlPreview = html.take(2000)
+            println("🔍 [EPISODIOS] HTML (primeiros 2000 chars):")
+            println("=".repeat(50))
+            println(htmlPreview)
+            println("=".repeat(50))
+            
+            // Procurar por ALL_EPISODES no HTML
+            println("🔍 [EPISODIOS] Procurando por ALL_EPISODES no HTML...")
+            val allEpisodesIndex = html.indexOf("ALL_EPISODES")
+            if (allEpisodesIndex != -1) {
+                println("✅ [EPISODIOS] Encontrou 'ALL_EPISODES' na posição $allEpisodesIndex")
+                // Mostrar contexto
+                val contextStart = maxOf(0, allEpisodesIndex - 50)
+                val contextEnd = minOf(allEpisodesIndex + 500, html.length)
+                val context = html.substring(contextStart, contextEnd)
+                println("🔍 [EPISODIOS] Contexto de ALL_EPISODES:")
+                println(context)
+            } else {
+                println("❌ [EPISODIOS] NÃO encontrou 'ALL_EPISODES' no HTML")
+                // Procurar por variações
+                val variations = listOf("all_episodes", "All_Episodes", "episodes")
+                variations.forEach { variation ->
+                    val index = html.indexOf(variation, ignoreCase = true)
+                    if (index != -1) {
+                        println("⚠️ [EPISODIOS] Encontrou variação '$variation' na posição $index")
+                    }
+                }
+            }
             
             // Extrair objeto ALL_EPISODES
-            val allEpisodesData = extractAllEpisodesData(html)
+            println("🔍 [EPISODIOS] Extraindo objeto ALL_EPISODES...")
+            val allEpisodesData = extractAllEpisodesDataWithLogs(html)
             if (allEpisodesData == null) {
+                println("❌ [EPISODIOS] Não conseguiu extrair dados de episódios")
                 return episodes
             }
+            
+            println("✅ [EPISODIOS] Encontrou ${allEpisodesData.size} temporada(s)")
             
             // Processar todas as temporadas e episódios
             allEpisodesData.forEach { (seasonNumber, seasonEpisodes) ->
                 val seasonNum = seasonNumber.toIntOrNull() ?: 1
+                println("🔍 [EPISODIOS] Processando Temporada $seasonNum com ${seasonEpisodes.size} episódios")
                 
                 seasonEpisodes.forEach { episodeData ->
                     try {
                         val epNumber = episodeData.epi_num
                         val title = episodeData.title
                         val description = episodeData.sinopse.takeIf { it.isNotBlank() }
+                        val airDate = episodeData.air_date
                         val thumbUrl = episodeData.thumb_url?.let { 
                             if (it.startsWith("/")) "https://image.tmdb.org/t/p/w300$it" else it 
                         }
+                        
+                        println("📺 [EPISODIOS] Episódio: S${seasonNum}E${epNumber} - $title")
+                        println("   📅 Data: $airDate")
+                        println("   🖼️ Thumb: $thumbUrl")
+                        println("   📝 Descrição: ${description?.take(50)}...")
                         
                         // Construir URL do episódio
                         val episodeUrl = "$baseUrl&season=$seasonNum&episode=$epNumber"
@@ -587,73 +671,174 @@ class BetterFlix : MainAPI() {
                                 this.posterUrl = thumbUrl?.let { fixUrl(it) }
                             }
                         )
+                        
+                        println("✅ [EPISODIOS] Adicionado: S${seasonNum}E${epNumber} - $title")
                     } catch (e: Exception) {
-                        // Ignorar erro
+                        println("❌ [EPISODIOS] Erro ao processar episódio: ${e.message}")
                     }
                 }
             }
             
+            println("✅ [EPISODIOS] ===== EXTRAÇÃO CONCLUÍDA =====")
+            println("✅ [EPISODIOS] Total de episódios extraídos: ${episodes.size}")
+            
         } catch (e: Exception) {
-            // Ignorar erro
+            println("❌ [EPISODIOS] Erro geral na extração: ${e.message}")
+            e.printStackTrace()
         }
         
         return episodes
     }
 
-    // EXTRAIR OBJETO ALL_EPISODES DO HTML DO SUPERFLIX (ORIGINAL)
-    private fun extractAllEpisodesData(html: String): Map<String, List<EpisodeData>>? {
+    // Função de extração com logs detalhados
+    private fun extractAllEpisodesDataWithLogs(html: String): Map<String, List<EpisodeData>>? {
+        println("🔍 [EPISODIOS-PARSER] Iniciando extração de dados...")
+        
         try {
-            // Procura pelo objeto ALL_EPISODES no script
-            val pattern = Regex("""var\s+ALL_EPISODES\s*=\s*(\{.*?\});""", RegexOption.DOT_MATCHES_ALL)
-            val match = pattern.find(html)
+            // VERSÃO 1: Padrão mais comum
+            val pattern1 = Regex("""var\s+ALL_EPISODES\s*=\s*(\{.*?\});""", RegexOption.DOT_MATCHES_ALL)
+            println("🔍 [EPISODIOS-PARSER] Tentando padrão 1: var ALL_EPISODES = {...};")
             
-            if (match != null) {
-                val jsonString = match.groupValues[1]
+            val match1 = pattern1.find(html)
+            if (match1 != null) {
+                println("✅ [EPISODIOS-PARSER] Padrão 1 encontrou match!")
+                val jsonString = match1.groupValues[1].trim()
+                println("🔍 [EPISODIOS-PARSER] JSON extraído (primeiros 300 chars):")
+                println(jsonString.take(300))
+                return parseEpisodesJsonWithLogs(jsonString)
+            }
+            
+            // VERSÃO 2: Padrão alternativo
+            val pattern2 = Regex("""ALL_EPISODES\s*=\s*(\{.*?\})\s*;""", RegexOption.DOT_MATCHES_ALL)
+            println("🔍 [EPISODIOS-PARSER] Tentando padrão 2: ALL_EPISODES = {...};")
+            
+            val match2 = pattern2.find(html)
+            if (match2 != null) {
+                println("✅ [EPISODIOS-PARSER] Padrão 2 encontrou match!")
+                val jsonString = match2.groupValues[1].trim()
+                println("🔍 [EPISODIOS-PARSER] JSON extraído (primeiros 300 chars):")
+                println(jsonString.take(300))
+                return parseEpisodesJsonWithLogs(jsonString)
+            }
+            
+            // VERSÃO 3: Procura direta pelo JSON
+            println("🔍 [EPISODIOS-PARSER] Tentando busca direta por JSON...")
+            val jsonStart = html.indexOf("""{"1":""")
+            if (jsonStart != -1) {
+                println("✅ [EPISODIOS-PARSER] Encontrou início do JSON na posição $jsonStart")
                 
-                try {
-                    val jsonObject = JSONObject(jsonString)
-                    val result = mutableMapOf<String, List<EpisodeData>>()
-                    
-                    jsonObject.keys().forEach { seasonKey ->
-                        val episodesArray = jsonObject.getJSONArray(seasonKey)
-                        val episodesList = mutableListOf<EpisodeData>()
-                        
-                        for (i in 0 until episodesArray.length()) {
-                            val episodeObj = episodesArray.getJSONObject(i)
-                            episodesList.add(
-                                EpisodeData(
-                                    ID = episodeObj.optInt("ID"),
-                                    title = episodeObj.optString("title"),
-                                    sinopse = episodeObj.optString("sinopse"),
-                                    item = episodeObj.optInt("item"),
-                                    thumb_url = episodeObj.optString("thumb_url").takeIf { it != "null" && it.isNotBlank() },
-                                    air_date = episodeObj.optString("air_date").takeIf { it != "null" && it.isNotBlank() },
-                                    duration = episodeObj.optInt("duration"),
-                                    epi_num = episodeObj.optInt("epi_num"),
-                                    season = episodeObj.optInt("season")
-                                )
-                            )
+                // Encontrar fim do objeto
+                var braceCount = 0
+                var i = jsonStart
+                var foundEnd = false
+                
+                while (i < html.length) {
+                    when (html[i]) {
+                        '{' -> braceCount++
+                        '}' -> {
+                            braceCount--
+                            if (braceCount == 0) {
+                                foundEnd = true
+                                break
+                            }
                         }
-                        
-                        result[seasonKey] = episodesList
                     }
-                    
-                    return result
-                } catch (e: Exception) {
-                    return null
+                    i++
+                }
+                
+                if (foundEnd) {
+                    val jsonString = html.substring(jsonStart, i + 1)
+                    println("✅ [EPISODIOS-PARSER] JSON extraído (${jsonString.length} chars)")
+                    println("🔍 [EPISODIOS-PARSER] JSON (primeiros 300 chars):")
+                    println(jsonString.take(300))
+                    return parseEpisodesJsonWithLogs(jsonString)
                 }
             }
             
+            println("❌ [EPISODIOS-PARSER] Nenhum padrão encontrou ALL_EPISODES")
             return null
+            
         } catch (e: Exception) {
+            println("❌ [EPISODIOS-PARSER] Erro na extração: ${e.message}")
+            e.printStackTrace()
             return null
         }
     }
 
-    // FUNÇÃO PARA EXTRAIR OBJETO JSON EMBUTIDO (dadosMulti) - ORIGINAL
+    private fun parseEpisodesJsonWithLogs(jsonString: String): Map<String, List<EpisodeData>>? {
+        println("🔍 [EPISODIOS-PARSER] Parseando JSON...")
+        
+        try {
+            val jsonObject = JSONObject(jsonString)
+            val result = mutableMapOf<String, List<EpisodeData>>()
+            
+            val seasonKeys = jsonObject.keys().asSequence().toList()
+            println("✅ [EPISODIOS-PARSER] Temporadas encontradas: ${seasonKeys.joinToString(", ")}")
+            
+            seasonKeys.forEach { seasonKey ->
+                println("🔍 [EPISODIOS-PARSER] Processando temporada: $seasonKey")
+                val episodesArray = jsonObject.getJSONArray(seasonKey)
+                println("🔍 [EPISODIOS-PARSER] Temporada $seasonKey tem ${episodesArray.length()} episódios")
+                
+                val episodesList = mutableListOf<EpisodeData>()
+                
+                for (i in 0 until episodesArray.length()) {
+                    try {
+                        val episodeObj = episodesArray.getJSONObject(i)
+                        
+                        // Log dos campos para debug
+                        if (i == 0) { // Mostrar apenas para o primeiro episódio de cada temporada
+                            println("🔍 [EPISODIOS-PARSER] Campos do episódio 1:")
+                            episodeObj.keys().forEach { key ->
+                                println("   - $key: ${episodeObj.opt(key)}")
+                            }
+                        }
+                        
+                        episodesList.add(
+                            EpisodeData(
+                                ID = episodeObj.optInt("ID"),
+                                title = episodeObj.optString("title"),
+                                sinopse = episodeObj.optString("sinopse"),
+                                item = episodeObj.optInt("item"),
+                                thumb_url = episodeObj.optString("thumb_url").takeIf { 
+                                    it != "null" && it.isNotBlank() && it != "null" 
+                                },
+                                air_date = episodeObj.optString("air_date").takeIf { 
+                                    it != "null" && it.isNotBlank() && it != "null" 
+                                },
+                                duration = episodeObj.optInt("duration"),
+                                epi_num = episodeObj.optInt("epi_num"),
+                                season = episodeObj.optInt("season")
+                            )
+                        )
+                        
+                        if (i < 3) { // Log dos primeiros 3 episódios
+                            println("✅ [EPISODIOS-PARSER] Episódio ${i+1}: ${episodeObj.optString("title")}")
+                        }
+                        
+                    } catch (e: Exception) {
+                        println("❌ [EPISODIOS-PARSER] Erro ao parsear episódio $i: ${e.message}")
+                    }
+                }
+                
+                result[seasonKey] = episodesList
+                println("✅ [EPISODIOS-PARSER] Temporada $seasonKey processada: ${episodesList.size} episódios")
+            }
+            
+            println("✅ [EPISODIOS-PARSER] Parse concluído: ${result.size} temporadas no total")
+            return result
+            
+        } catch (e: Exception) {
+            println("❌ [EPISODIOS-PARSER] Erro ao parsear JSON: ${e.message}")
+            e.printStackTrace()
+            return null
+        }
+    }
+
+    // ========== FUNÇÕES ORIGINAIS (SEM LOGS) ==========
+
     private fun extractEmbeddedData(html: String): EmbeddedData? {
         try {
-            // Procura pelo objeto dadosMulti no script
             val pattern = Regex("""const dadosMulti\s*=\s*(\{.*?\});""", RegexOption.DOT_MATCHES_ALL)
             val match = pattern.find(html)
             
@@ -673,7 +858,7 @@ class BetterFlix : MainAPI() {
         return idMatch?.groupValues?.get(1)
     }
 
-    // ========== LOAD LINKS (ORIGINAL) ==========
+    // ========== LOAD LINKS (ORIGINAL SEM LOGS) ==========
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -887,17 +1072,7 @@ class BetterFlix : MainAPI() {
         }
     }
 
-    // ========== FUNÇÕES AUXILIARES (ORIGINAL) ==========
-
-    private fun generateSlug(title: String): String {
-        return title
-            .lowercase()
-            .replace(Regex("[^a-z0-9\\s-]"), "")
-            .replace(Regex("\\s+"), "-")
-            .replace(Regex("-+"), "-")
-            .trim('-')
-    }
-
+    // Função de extensão para codificar query
     private fun String.encodeSearchQuery(): String {
         return java.net.URLEncoder.encode(this, "UTF-8")
     }
