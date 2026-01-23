@@ -100,7 +100,8 @@ class BetterFlix : MainAPI() {
         "$mainUrl/genre/80" to "Crime",
         "$mainUrl/genre/10402" to "Musical",
         "$mainUrl/genre/10749" to "Romance",
-        "$mainUrl/animes" to "Animes"
+        "$mainUrl/animes" to "Animes",
+        "live_channels" to "Canais Ao Vivo"
     )
 
     // Modelos de dados
@@ -113,6 +114,10 @@ class BetterFlix : MainAPI() {
     )
 
     data class AnimeResponse(
+        @JsonProperty("results") val results: List<ContentItem>
+    )
+
+    data class RecommendationsResponse(
         @JsonProperty("results") val results: List<ContentItem>
     )
 
@@ -164,6 +169,124 @@ class BetterFlix : MainAPI() {
         val season: Int
     )
 
+    // =============================================
+    // FUNÇÕES DE RATING/BADGES DE AVALIAÇÃO
+    // =============================================
+    private fun extractRatingFromContentItem(item: ContentItem): Score? {
+        return item.voteAverage?.let { rating ->
+            println("⭐ [RATING] Avaliação encontrada: $rating")
+            Score.from10(rating)
+        }
+    }
+
+    private fun extractRatingFromEmbeddedData(data: EmbeddedData?): Score? {
+        return data?.vote?.let { rating ->
+            println("⭐ [RATING] Avaliação do embedded data: $rating")
+            Score.from10(rating)
+        }
+    }
+
+    // =============================================
+    // FUNÇÕES DE RECOMENDAÇÕES
+    // =============================================
+    private suspend fun fetchRecommendations(tmdbId: String?, type: String?): List<SearchResponse> {
+        if (tmdbId == null || type == null) {
+            println("❌ [RECOMMENDATIONS] ID ou tipo não disponível")
+            return emptyList()
+        }
+
+        return try {
+            val apiUrl = "$mainUrl/api/recommendations?id=$tmdbId&type=$type"
+            println("🤝 [RECOMMENDATIONS] Buscando: $apiUrl")
+            
+            val response = app.get(apiUrl, headers = headers, cookies = cookies, timeout = 30)
+            
+            if (response.code != 200) {
+                println("❌ [RECOMMENDATIONS] Falha: ${response.code}")
+                return emptyList()
+            }
+            
+            val data = response.parsedSafe<RecommendationsResponse>()
+            if (data == null || data.results.isEmpty()) {
+                println("⚠️ [RECOMMENDATIONS] Sem recomendações")
+                return emptyList()
+            }
+            
+            println("✅ [RECOMMENDATIONS] ${data.results.size} recomendações encontradas")
+            
+            data.results.mapNotNull { item ->
+                createSearchResponseFromItem(item)
+            }
+            
+        } catch (e: Exception) {
+            println("❌ [RECOMMENDATIONS] Erro: ${e.message}")
+            emptyList()
+        }
+    }
+
+    // =============================================
+    // FUNÇÕES DE CANAIS AO VIVO
+    // =============================================
+    private suspend fun fetchLiveChannels(): List<SearchResponse> {
+        return try {
+            val liveUrl = "$mainUrl/canais"
+            println("📺 [LIVE] Buscando canais ao vivo: $liveUrl")
+            
+            val response = app.get(liveUrl, headers = headers, cookies = cookies, timeout = 30)
+            
+            if (response.code != 200) {
+                println("❌ [LIVE] Falha: ${response.code}")
+                return emptyList()
+            }
+            
+            val document = response.document
+            
+            val channelElements = document.select("""
+                a[href*='canal'],
+                .channel-item,
+                .live-channel,
+                .canais-item,
+                .grid a[href*='?id=']
+            """.trimIndent())
+            
+            println("📺 [LIVE] ${channelElements.size} elementos encontrados")
+            
+            channelElements.mapIndexedNotNull { index, element ->
+                try {
+                    val href = element.attr("href") ?: return@mapIndexedNotNull null
+                    
+                    if (!href.contains("?id=") && !href.contains("canal")) {
+                        return@mapIndexedNotNull null
+                    }
+                    
+                    val fullUrl = fixUrl(href)
+                    
+                    val title = element.selectFirst("img")?.attr("alt") ?:
+                               element.selectFirst("h3, h4, .title, .channel-name")?.text() ?:
+                               element.text().trim().takeIf { it.isNotBlank() } ?:
+                               return@mapIndexedNotNull null
+                    
+                    val poster = element.selectFirst("img")?.attr("src")?.let { fixUrl(it) }
+                    
+                    println("📺 [LIVE-$index] $title - $fullUrl")
+                    
+                    newMovieSearchResponse(title, fullUrl, TvType.Movie) {
+                        this.posterUrl = poster
+                        this.year = null
+                    }
+                    
+                } catch (e: Exception) {
+                    println("❌ [LIVE] Erro ao extrair canal $index: ${e.message}")
+                    null
+                }
+            }.filterNotNull().take(20)
+            
+        } catch (e: Exception) {
+            println("❌ [LIVE] Erro: ${e.message}")
+            emptyList()
+        }
+    }
+
     // Helper para fazer requests com rate limiting
     private suspend fun <T> safeApiRequest(url: String, block: suspend () -> T): T {
         kotlinx.coroutines.delay(500)
@@ -192,6 +315,10 @@ class BetterFlix : MainAPI() {
                     val animes = getAnimes()
                     items.addAll(animes)
                 }
+                request.name == "Canais Ao Vivo" -> {
+                    val liveChannels = fetchLiveChannels()
+                    items.addAll(liveChannels)
+                }
                 request.name in genreMap.values -> {
                     val genreId = genreMap.entries.find { it.value == request.name }?.key
                     if (genreId != null) {
@@ -216,53 +343,7 @@ class BetterFlix : MainAPI() {
         val data = response.parsedSafe<TrendingResponse>() ?: return emptyList()
 
         return data.results.mapNotNull { item ->
-            try {
-                val title = item.title ?: item.name ?: item.originalTitle ?: item.originalName ?: return@mapNotNull null
-                val year = getYearFromDate(item.releaseDate ?: item.firstAirDate)
-                val poster = item.posterPath?.let { "https://image.tmdb.org/t/p/w500$it" }
-                val id = item.id
-
-                val type = when (item.mediaType) {
-                    "movie" -> TvType.Movie
-                    "tv" -> TvType.TvSeries
-                    "anime" -> TvType.Anime
-                    else -> when {
-                        title.contains("(Anime)", ignoreCase = true) -> TvType.Anime
-                        item.releaseDate != null -> TvType.Movie
-                        item.firstAirDate != null -> TvType.TvSeries
-                        else -> TvType.Movie
-                    }
-                }
-
-                val slug = generateSlug(title)
-                val url = when (type) {
-                    TvType.Movie -> "$mainUrl/$slug?id=$id&type=movie"
-                    TvType.TvSeries -> "$mainUrl/$slug?id=$id&type=tv"
-                    TvType.Anime -> "$mainUrl/$slug?id=$id&type=anime"
-                    else -> "$mainUrl/$slug?id=$id&type=movie"
-                }
-
-                when (type) {
-                    TvType.Movie -> newMovieSearchResponse(title, url, TvType.Movie) {
-                        this.posterUrl = poster
-                        this.year = year
-                    }
-                    TvType.TvSeries -> newTvSeriesSearchResponse(title, url, TvType.TvSeries) {
-                        this.posterUrl = poster
-                        this.year = year
-                    }
-                    TvType.Anime -> newAnimeSearchResponse(title, url, TvType.Anime) {
-                        this.posterUrl = poster
-                        this.year = year
-                    }
-                    else -> newMovieSearchResponse(title, url, TvType.Movie) {
-                        this.posterUrl = poster
-                        this.year = year
-                    }
-                }
-            } catch (e: Exception) {
-                null
-            }
+            createSearchResponseFromItem(item)
         }
     }
 
@@ -278,22 +359,7 @@ class BetterFlix : MainAPI() {
         val data = response.parsedSafe<AnimeResponse>() ?: return emptyList()
 
         return data.results.mapNotNull { item ->
-            try {
-                val title = item.title ?: item.name ?: item.originalTitle ?: item.originalName ?: return@mapNotNull null
-                val year = getYearFromDate(item.releaseDate ?: item.firstAirDate)
-                val poster = item.posterPath?.let { "https://image.tmdb.org/t/p/w500$it" }
-                val id = item.id
-
-                val slug = generateSlug(title)
-                val url = "$mainUrl/$slug?id=$id&type=anime"
-
-                newAnimeSearchResponse(title, url, TvType.Anime) {
-                    this.posterUrl = poster
-                    this.year = year
-                }
-            } catch (e: Exception) {
-                null
-            }
+            createSearchResponseFromItem(item)
         }
     }
 
@@ -309,167 +375,103 @@ class BetterFlix : MainAPI() {
         val data = response.parsedSafe<GenreResponse>() ?: return emptyList()
 
         return data.results.mapNotNull { item ->
-            try {
-                val title = item.title ?: item.name ?: item.originalTitle ?: item.originalName ?: return@mapNotNull null
-                val year = getYearFromDate(item.releaseDate ?: item.firstAirDate)
-                val poster = item.posterPath?.let { "https://image.tmdb.org/t/p/w500$it" }
-                val id = item.id
-
-                val type = when (item.mediaType) {
-                    "movie" -> TvType.Movie
-                    "tv" -> TvType.TvSeries
-                    else -> when {
-                        title.contains("(Anime)", ignoreCase = true) -> TvType.Anime
-                        item.releaseDate != null -> TvType.Movie
-                        item.firstAirDate != null -> TvType.TvSeries
-                        else -> TvType.Movie
-                    }
-                }
-
-                val slug = generateSlug(title)
-                val url = when (type) {
-                    TvType.Movie -> "$mainUrl/$slug?id=$id&type=movie"
-                    TvType.TvSeries -> "$mainUrl/$slug?id=$id&type=tv"
-                    TvType.Anime -> "$mainUrl/$slug?id=$id&type=anime"
-                    else -> "$mainUrl/$slug?id=$id&type=movie"
-                }
-
-                when (type) {
-                    TvType.Movie -> newMovieSearchResponse(title, url, TvType.Movie) {
-                        this.posterUrl = poster
-                        this.year = year
-                    }
-                    TvType.TvSeries -> newTvSeriesSearchResponse(title, url, TvType.TvSeries) {
-                        this.posterUrl = poster
-                        this.year = year
-                    }
-                    TvType.Anime -> newAnimeSearchResponse(title, url, TvType.Anime) {
-                        this.posterUrl = poster
-                        this.year = year
-                    }
-                    else -> newMovieSearchResponse(title, url, TvType.Movie) {
-                        this.posterUrl = poster
-                        this.year = year
-                    }
-                }
-            } catch (e: Exception) {
-                null
-            }
+            createSearchResponseFromItem(item)
         }
     }
 
     // ========== SEARCH ==========
     override suspend fun search(query: String): List<SearchResponse> {
-    return safeApiRequest(query) {
-        try {
-            val encodedQuery = query.encodeSearchQuery()
-            val searchUrl = "$mainUrl/results?q=$encodedQuery"
-            
-            println("🔍 [SEARCH] Buscando: $query")
-            println("🔗 [SEARCH] URL: $searchUrl")
-            
-            val response = app.get(
-                searchUrl,
-                headers = headers,
-                cookies = cookies,
-                timeout = 30
-            )
-            
-            if (response.code != 200) {
-                println("❌ [SEARCH] Falha: status ${response.code}")
-                return@safeApiRequest emptyList()
-            }
-            
-            val html = response.text
-            val document = response.document
-            println("✅ [SEARCH] HTML carregado (${html.length} chars)")
-            
-            // Método 1: Procurar por links com ?id= e type=
-            val resultLinks = document.select("a[href*='?id='][href*='type=']")
-            println("🔍 [SEARCH] Método 1: ${resultLinks.size} links encontrados")
-            
-            if (resultLinks.isEmpty()) {
-                println("⚠️ [SEARCH] Nenhum link encontrado, tentando método 2...")
-                return@safeApiRequest emptyList()
-            }
-            
-            resultLinks.mapIndexedNotNull { index, link ->
-                try {
-                    // 1. Extrair URL
-                    val href = link.attr("href") ?: return@mapIndexedNotNull null
-                    val fullUrl = fixUrl(href)
-                    
-                    // 2. Extrair ID da URL
-                    val idMatch = Regex("[?&]id=(\\d+)").find(fullUrl)
-                    val id = idMatch?.groupValues?.get(1) ?: return@mapIndexedNotNull null
-                    
-                    // 3. Extrair tipo da URL
-                    val type = when {
-                        fullUrl.contains("type=tv") -> TvType.TvSeries
-                        fullUrl.contains("type=anime") -> TvType.Anime
-                        fullUrl.contains("type=movie") -> TvType.Movie
-                        else -> {
-                            // Tentar deduzir pelo contexto
-                            val imgAlt = link.selectFirst("img")?.attr("alt") ?: ""
-                            when {
-                                imgAlt.contains("(Anime)", ignoreCase = true) -> TvType.Anime
-                                fullUrl.contains("/tv") -> TvType.TvSeries
-                                else -> TvType.Movie
-                            }
-                        }
-                    }
-                    
-                    // 4. Extrair título
-                    val title = link.selectFirst("img")?.attr("alt")?.trim() ?:
-                               link.selectFirst("h3")?.text()?.trim() ?:
-                               link.selectFirst(".text-white")?.text()?.trim() ?:
-                               // Fallback: extrair do texto do link
-                               link.text().trim().takeIf { it.isNotBlank() && it.length < 100 } ?:
-                               return@mapIndexedNotNull null
-                    
-                    // 5. Extrair poster
-                    val poster = link.selectFirst("img[src*='image.tmdb.org']")?.attr("src")?.let { fixUrl(it) }
-                    
-                    // 6. Limpar título (remover ano se houver)
-                    val cleanTitle = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
-                    
-                    // 7. Tentar extrair ano do título
-                    var year: Int? = null
-                    val yearMatch = Regex("\\((\\d{4})\\)").find(title)
-                    year = yearMatch?.groupValues?.get(1)?.toIntOrNull()
-                    
-                    println("✅ [SEARCH-$index] '$cleanTitle' - $type - ID: $id${year?.let { " ($it)" } ?: ""}")
-                    
-                    // 8. Criar SearchResponse
-                    when (type) {
-                        TvType.Anime -> newAnimeSearchResponse(cleanTitle, fullUrl, TvType.Anime) {
-                            this.posterUrl = poster
-                            this.year = year
-                        }
-                        TvType.TvSeries -> newTvSeriesSearchResponse(cleanTitle, fullUrl, TvType.TvSeries) {
-                            this.posterUrl = poster
-                            this.year = year
-                        }
-                        TvType.Movie -> newMovieSearchResponse(cleanTitle, fullUrl, TvType.Movie) {
-                            this.posterUrl = poster
-                            this.year = year
-                        }
-                        else -> null
-                    }
-                    
-                } catch (e: Exception) {
-                    println("❌ [SEARCH] Erro ao processar link $index: ${e.message}")
-                    null
+        return safeApiRequest(query) {
+            try {
+                val encodedQuery = query.encodeSearchQuery()
+                val searchUrl = "$mainUrl/results?q=$encodedQuery"
+                
+                println("🔍 [SEARCH] Buscando: $query")
+                println("🔗 [SEARCH] URL: $searchUrl")
+                
+                val response = app.get(
+                    searchUrl,
+                    headers = headers,
+                    cookies = cookies,
+                    timeout = 30
+                )
+                
+                if (response.code != 200) {
+                    println("❌ [SEARCH] Falha: ${response.code}")
+                    return@safeApiRequest emptyList()
                 }
-            }.filterNotNull()
-            
-        } catch (e: Exception) {
-            println("❌ [SEARCH] Erro geral: ${e.message}")
-            e.printStackTrace()
-            emptyList()
+                
+                val document = response.document
+                println("✅ [SEARCH] HTML carregado")
+                
+                val resultLinks = document.select("a[href*='?id='][href*='type=']")
+                println("🔍 [SEARCH] ${resultLinks.size} links encontrados")
+                
+                if (resultLinks.isEmpty()) {
+                    println("⚠️ [SEARCH] Nenhum resultado encontrado")
+                    return@safeApiRequest emptyList()
+                }
+                
+                resultLinks.mapIndexedNotNull { index, link ->
+                    try {
+                        val href = link.attr("href") ?: return@mapIndexedNotNull null
+                        val fullUrl = fixUrl(href)
+                        
+                        val idMatch = Regex("[?&]id=(\\d+)").find(fullUrl)
+                        val id = idMatch?.groupValues?.get(1) ?: return@mapIndexedNotNull null
+                        
+                        val type = when {
+                            fullUrl.contains("type=tv") -> TvType.TvSeries
+                            fullUrl.contains("type=anime") -> TvType.Anime
+                            fullUrl.contains("type=movie") -> TvType.Movie
+                            else -> TvType.Movie
+                        }
+                        
+                        val title = link.selectFirst("img")?.attr("alt")?.trim() ?:
+                                   link.selectFirst("h3")?.text()?.trim() ?:
+                                   link.text().trim().takeIf { it.isNotBlank() } ?:
+                                   return@mapIndexedNotNull null
+                        
+                        val poster = link.selectFirst("img[src*='image.tmdb.org']")?.attr("src")?.let { fixUrl(it) }
+                        
+                        val cleanTitle = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
+                        
+                        var year: Int? = null
+                        val yearMatch = Regex("\\((\\d{4})\\)").find(title)
+                        year = yearMatch?.groupValues?.get(1)?.toIntOrNull()
+                        
+                        println("✅ [SEARCH-$index] '$cleanTitle' - $type - ID: $id")
+                        
+                        when (type) {
+                            TvType.Anime -> newAnimeSearchResponse(cleanTitle, fullUrl, TvType.Anime) {
+                                this.posterUrl = poster
+                                this.year = year
+                            }
+                            TvType.TvSeries -> newTvSeriesSearchResponse(cleanTitle, fullUrl, TvType.TvSeries) {
+                                this.posterUrl = poster
+                                this.year = year
+                            }
+                            TvType.Movie -> newMovieSearchResponse(cleanTitle, fullUrl, TvType.Movie) {
+                                this.posterUrl = poster
+                                this.year = year
+                            }
+                            else -> null
+                        }
+                        
+                    } catch (e: Exception) {
+                        println("❌ [SEARCH] Erro ao processar link $index: ${e.message}")
+                        null
+                    }
+                }.filterNotNull()
+                
+            } catch (e: Exception) {
+                println("❌ [SEARCH] Erro geral: ${e.message}")
+                e.printStackTrace()
+                emptyList()
+            }
         }
     }
-}
+
     // ========== LOAD ==========
     override suspend fun load(url: String): LoadResponse? {
         return safeApiRequest(url) {
@@ -490,6 +492,21 @@ class BetterFlix : MainAPI() {
                 val isAnime = url.contains("type=anime")
                 val isMovie = !isSeries && !isAnime
 
+                // 1. Extrair rating
+                val rating = extractRatingFromEmbeddedData(embeddedData)
+                
+                // 2. Buscar recomendações
+                val typeParam = when {
+                    isSeries -> "tv"
+                    isAnime -> "anime"
+                    else -> "movie"
+                }
+                val recommendations = if (tmdbId != null) {
+                    fetchRecommendations(tmdbId, typeParam)
+                } else {
+                    emptyList()
+                }
+
                 if (isSeries || isAnime) {
                     val type = if (isAnime) TvType.Anime else TvType.TvSeries
                     val episodes = extractEpisodesFromSuperflix(tmdbId, url)
@@ -500,6 +517,8 @@ class BetterFlix : MainAPI() {
                         this.year = embeddedData.date?.substring(0, 4)?.toIntOrNull()
                         this.plot = embeddedData.bio
                         this.tags = embeddedData.genres?.split(",")?.map { it.trim() } ?: emptyList()
+                        this.score = rating
+                        this.recommendations = recommendations.takeIf { it.isNotEmpty() }
                     }
                 } else {
                     newMovieLoadResponse(embeddedData.name ?: "Sem título", url, TvType.Movie, url) {
@@ -508,6 +527,8 @@ class BetterFlix : MainAPI() {
                         this.year = embeddedData.date?.substring(0, 4)?.toIntOrNull()
                         this.plot = embeddedData.bio
                         this.tags = embeddedData.genres?.split(",")?.map { it.trim() } ?: emptyList()
+                        this.score = rating
+                        this.recommendations = recommendations.takeIf { it.isNotEmpty() }
                     }
                 }
             } catch (e: Exception) {
@@ -633,78 +654,74 @@ class BetterFlix : MainAPI() {
         return episodes
     }
 
-    // ========== LOAD LINKS (CORRIGIDO) =========
+    // ========== LOAD LINKS ==========
     override suspend fun loadLinks(
-    data: String,
-    isCasting: Boolean,
-    subtitleCallback: (SubtitleFile) -> Unit,
-    callback: (ExtractorLink) -> Unit
-): Boolean {
-    return safeApiRequest(data) {
-        try {
-            println("🔗 [LINKS] Iniciando extração para: $data")
-            
-            // Extrair TMDB ID de diferentes formatos
-            val tmdbId = extractTmdbId(data)
-            if (tmdbId == null) {
-                println("❌ [LINKS] TMDB ID não encontrado na URL: $data")
-                return@safeApiRequest false
-            }
-            
-            println("✅ [LINKS] TMDB ID: $tmdbId")
-            
-            // Determinar tipo baseado na URL
-            val type = extractTypeFromUrl(data)
-            println("📋 [LINKS] Tipo detectado: $type")
-            
-            // Extrair temporada e episódio (se for série)
-            var season: Int = 1
-            var episode: Int = 1
-            
-            if (type == "tv" || type == "anime") {
-                season = extractSeason(data) ?: 1
-                episode = extractEpisode(data) ?: 1
-                println("📺 [LINKS] Episódio: Temporada $season, Episódio $episode")
-            }
-            
-            // TENTAR TODOS OS DOMÍNIOS DO SUPERFLIX
-            for (superflixDomain in superflixDomains) {
-                try {
-                    println("🌐 [LINKS] Tentando domínio: $superflixDomain")
-                    
-                    val success = when (type) {
-                        "movie" -> extractMovieVideo(superflixDomain, tmdbId, callback)
-                        "tv", "anime" -> {
-                            extractSeriesVideo(superflixDomain, tmdbId, season, episode, callback)
-                        }
-                        else -> false
-                    }
-                    
-                    if (success) {
-                        try {
-                            addPortugueseSubtitle(tmdbId, subtitleCallback)
-                        } catch (e: Exception) {
-                            println("⚠️ [LINKS] Erro ao adicionar legenda: ${e.message}")
+        data: String,
+        isCasting: Boolean,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        return safeApiRequest(data) {
+            try {
+                println("🔗 [LINKS] Iniciando extração para: $data")
+                
+                val tmdbId = extractTmdbId(data)
+                if (tmdbId == null) {
+                    println("❌ [LINKS] TMDB ID não encontrado")
+                    return@safeApiRequest false
+                }
+                
+                println("✅ [LINKS] TMDB ID: $tmdbId")
+                
+                val type = extractTypeFromUrl(data)
+                println("📋 [LINKS] Tipo: $type")
+                
+                var season: Int = 1
+                var episode: Int = 1
+                
+                if (type == "tv" || type == "anime") {
+                    season = extractSeason(data) ?: 1
+                    episode = extractEpisode(data) ?: 1
+                    println("📺 [LINKS] Episódio: Temporada $season, Episódio $episode")
+                }
+                
+                for (superflixDomain in superflixDomains) {
+                    try {
+                        println("🌐 [LINKS] Tentando domínio: $superflixDomain")
+                        
+                        val success = when (type) {
+                            "movie" -> extractMovieVideo(superflixDomain, tmdbId, callback)
+                            "tv", "anime" -> {
+                                extractSeriesVideo(superflixDomain, tmdbId, season, episode, callback)
+                            }
+                            else -> false
                         }
                         
-                        return@safeApiRequest true
+                        if (success) {
+                            try {
+                                addPortugueseSubtitle(tmdbId, subtitleCallback)
+                            } catch (e: Exception) {
+                                println("⚠️ [LINKS] Erro ao adicionar legenda: ${e.message}")
+                            }
+                            
+                            return@safeApiRequest true
+                        }
+                    } catch (e: Exception) {
+                        println("❌ [LINKS] Erro no domínio $superflixDomain: ${e.message}")
+                        continue
                     }
-                } catch (e: Exception) {
-                    println("❌ [LINKS] Erro no domínio $superflixDomain: ${e.message}")
-                    continue
                 }
+                
+                println("❌ [LINKS] Nenhum domínio funcionou")
+                return@safeApiRequest false
+                
+            } catch (e: Exception) {
+                println("❌ [LINKS] Erro geral: ${e.message}")
+                e.printStackTrace()
+                false
             }
-            
-            println("❌ [LINKS] Nenhum domínio funcionou")
-            return@safeApiRequest false
-            
-        } catch (e: Exception) {
-            println("❌ [LINKS] Erro geral: ${e.message}")
-            e.printStackTrace()
-            false
         }
     }
-}
 
     // ========== FUNÇÕES PARA FILMES ==========
     private suspend fun extractMovieVideo(
@@ -1147,69 +1164,57 @@ class BetterFlix : MainAPI() {
         }
     }
 
-    // ========== FUNÇÕES AUXILIARES ==========
-    private fun extractTmdbId(url: String): String? {
-    // Tentar padrão com parâmetro ?id=
-    val idMatch = Regex("[?&]id=(\\d+)").find(url)
-    if (idMatch != null) {
-        return idMatch.groupValues[1]
-    }
-    
-    // Tentar padrão de série do SuperFlix: /serie/{tmdbId}/{season}/{episode}
-    val serieMatch = Regex("""/serie/(\d+)/\d+/\d+""").find(url)
-    if (serieMatch != null) {
-        return serieMatch.groupValues[1]
-    }
-    
-    // Tentar padrão de filme do SuperFlix: /filme/{tmdbId}
-    val filmeMatch = Regex("""/filme/(\d+)""").find(url)
-    if (filmeMatch != null) {
-        return filmeMatch.groupValues[1]
-    }
-    
-    return null
-}
-  private fun extractSeason(url: String): Int? {
-    // Tentar padrão com parâmetro ?season=
-    val seasonMatch = Regex("[?&]season=(\\d+)").find(url)
-    if (seasonMatch != null) {
-        return seasonMatch.groupValues[1].toIntOrNull()
-    }
-    
-    // Tentar padrão de série do SuperFlix: /serie/{tmdbId}/{season}/{episode}
-    val serieMatch = Regex("""/serie/\d+/(\d+)/(\d+)""").find(url)
-    if (serieMatch != null) {
-        return serieMatch.groupValues[1].toIntOrNull()
-    }
-    
-    return 1 // Default
-}
+    // =============================================
+    // FUNÇÕES AUXILIARES
+    // =============================================
+    private fun createSearchResponseFromItem(item: ContentItem): SearchResponse? {
+        return try {
+            val title = item.title ?: item.name ?: item.originalTitle ?: item.originalName ?: return null
+            val year = getYearFromDate(item.releaseDate ?: item.firstAirDate)
+            val poster = item.posterPath?.let { "https://image.tmdb.org/t/p/w500$it" }
+            val id = item.id.toString()
 
-private fun extractEpisode(url: String): Int? {
-    // Tentar padrão com parâmetro ?episode=
-    val episodeMatch = Regex("[?&]episode=(\\d+)").find(url)
-    if (episodeMatch != null) {
-        return episodeMatch.groupValues[1].toIntOrNull()
+            val type = when (item.mediaType) {
+                "movie" -> TvType.Movie
+                "tv" -> TvType.TvSeries
+                "anime" -> TvType.Anime
+                else -> when {
+                    title.contains("(Anime)", ignoreCase = true) -> TvType.Anime
+                    item.releaseDate != null -> TvType.Movie
+                    item.firstAirDate != null -> TvType.TvSeries
+                    else -> TvType.Movie
+                }
+            }
+
+            val slug = generateSlug(title)
+            val url = when (type) {
+                TvType.Movie -> "$mainUrl/$slug?id=$id&type=movie"
+                TvType.TvSeries -> "$mainUrl/$slug?id=$id&type=tv"
+                TvType.Anime -> "$mainUrl/$slug?id=$id&type=anime"
+                else -> "$mainUrl/$slug?id=$id&type=movie"
+            }
+
+            when (type) {
+                TvType.Movie -> newMovieSearchResponse(title, url, TvType.Movie) {
+                    this.posterUrl = poster
+                    this.year = year
+                }
+                TvType.TvSeries -> newTvSeriesSearchResponse(title, url, TvType.TvSeries) {
+                    this.posterUrl = poster
+                    this.year = year
+                }
+                TvType.Anime -> newAnimeSearchResponse(title, url, TvType.Anime) {
+                    this.posterUrl = poster
+                    this.year = year
+                }
+                else -> null
+            }
+        } catch (e: Exception) {
+            println("❌ Erro ao criar SearchResponse: ${e.message}")
+            null
+        }
     }
-    
-    // Tentar padrão de série do SuperFlix: /serie/{tmdbId}/{season}/{episode}
-    val serieMatch = Regex("""/serie/\d+/\d+/(\d+)""").find(url)
-    if (serieMatch != null) {
-        return serieMatch.groupValues[1].toIntOrNull()
-    }
-    
-    return 1 // Default
-}
-private fun extractTypeFromUrl(url: String): String {
-    return when {
-        url.contains("/serie/") -> "tv"
-        url.contains("/filme/") -> "movie"
-        url.contains("type=anime") -> "anime"
-        url.contains("type=tv") -> "tv"
-        else -> "movie"
-    }
-}
- 
+
     private fun getYearFromDate(dateString: String?): Int? {
         return try {
             dateString?.substring(0, 4)?.toIntOrNull()
@@ -1218,8 +1223,6 @@ private fun extractTypeFromUrl(url: String): String {
         }
     }
 
-
-    
     private fun generateSlug(title: String): String {
         return title
             .lowercase()
@@ -1235,5 +1238,63 @@ private fun extractTypeFromUrl(url: String): String {
 
     private fun fixUrl(url: String): String {
         return if (url.startsWith("http")) url else "$mainUrl${if (url.startsWith("/")) "" else "/"}$url"
+    }
+
+    // Funções de extração de IDs (já existentes)
+    private fun extractTmdbId(url: String): String? {
+        val idMatch = Regex("[?&]id=(\\d+)").find(url)
+        if (idMatch != null) {
+            return idMatch.groupValues[1]
+        }
+        
+        val serieMatch = Regex("""/serie/(\d+)/\d+/\d+""").find(url)
+        if (serieMatch != null) {
+            return serieMatch.groupValues[1]
+        }
+        
+        val filmeMatch = Regex("""/filme/(\d+)""").find(url)
+        if (filmeMatch != null) {
+            return filmeMatch.groupValues[1]
+        }
+        
+        return null
+    }
+
+    private fun extractTypeFromUrl(url: String): String {
+        return when {
+            url.contains("/serie/") -> "tv"
+            url.contains("/filme/") -> "movie"
+            url.contains("type=anime") -> "anime"
+            url.contains("type=tv") -> "tv"
+            else -> "movie"
+        }
+    }
+
+    private fun extractSeason(url: String): Int? {
+        val seasonMatch = Regex("[?&]season=(\\d+)").find(url)
+        if (seasonMatch != null) {
+            return seasonMatch.groupValues[1].toIntOrNull()
+        }
+        
+        val serieMatch = Regex("""/serie/\d+/(\d+)/(\d+)""").find(url)
+        if (serieMatch != null) {
+            return serieMatch.groupValues[1].toIntOrNull()
+        }
+        
+        return 1
+    }
+
+    private fun extractEpisode(url: String): Int? {
+        val episodeMatch = Regex("[?&]episode=(\\d+)").find(url)
+        if (episodeMatch != null) {
+            return episodeMatch.groupValues[1].toIntOrNull()
+        }
+        
+        val serieMatch = Regex("""/serie/\d+/\d+/(\d+)""").find(url)
+        if (serieMatch != null) {
+            return serieMatch.groupValues[1].toIntOrNull()
+        }
+        
+        return 1
     }
 }
