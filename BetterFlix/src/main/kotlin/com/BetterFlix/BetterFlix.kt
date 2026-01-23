@@ -492,23 +492,38 @@ class BetterFlix : MainAPI() {
 
     // ========== LOAD() TOTALMENTE CORRIGIDO ==========
     override suspend fun load(url: String): LoadResponse? {
+        println("🔍 [DEBUG] === LOAD() INICIADO ===")
+        println("🔍 [DEBUG] URL recebida: $url")
+        
         return safeApiRequest(url) {
             try {
                 // 1. CARREGAR PÁGINA DE DETALHES DO BETTERFLIX
+                println("🔍 [DEBUG] Carregando página do BetterFlix...")
                 val response = app.get(url, headers = headers, cookies = cookies, timeout = 30)
-                if (response.code >= 400) return@safeApiRequest null
+                println("🔍 [DEBUG] Status da página: ${response.code}")
+                
+                if (response.code >= 400) {
+                    println("❌ [DEBUG] Erro HTTP: ${response.code}")
+                    return@safeApiRequest null
+                }
                 
                 val document = response.document
                 val html = response.text
+                println("🔍 [DEBUG] Tamanho do HTML: ${html.length} caracteres")
                 
                 // 2. EXTRAIR DADOS DO OBJETO JSON EMBUTIDO (dadosMulti)
                 val embeddedData = extractEmbeddedData(html)
                 if (embeddedData == null) {
                     println("❌ [DEBUG] Não encontrou dadosMulti no HTML")
+                    println("🔍 [DEBUG] HTML sample (primeiros 500 chars): ${html.take(500)}")
                     return@safeApiRequest null
                 }
                 
-                println("✅ [DEBUG] Dados extraídos: ${embeddedData.name}")
+                println("✅ [DEBUG] Dados extraídos:")
+                println("  - Nome: ${embeddedData.name}")
+                println("  - ID: ${embeddedData.id}")
+                println("  - Data: ${embeddedData.date}")
+                println("  - Gêneros: ${embeddedData.genres}")
                 
                 // 3. DETERMINAR TIPO
                 val tmdbId = embeddedData.id ?: extractTmdbIdFromUrl(url)
@@ -516,9 +531,16 @@ class BetterFlix : MainAPI() {
                 val isAnime = url.contains("type=anime")
                 val isMovie = !isSeries && !isAnime
                 
+                println("🔍 [DEBUG] Tipo detectado:")
+                println("  - TMDB ID: $tmdbId")
+                println("  - É Série: $isSeries")
+                println("  - É Anime: $isAnime")
+                println("  - É Filme: $isMovie")
+                
                 // 4. SE FOR SÉRIE/ANIME, EXTRAIR EPISÓDIOS DO SUPERFLIX
                 if (isSeries || isAnime) {
                     val type = if (isAnime) TvType.Anime else TvType.TvSeries
+                    println("🔍 [DEBUG] Extraindo episódios para $type...")
                     val episodes = extractEpisodesFromSuperflix(tmdbId, url)
                     
                     println("✅ [DEBUG] Encontrou ${episodes.size} episódios")
@@ -537,16 +559,19 @@ class BetterFlix : MainAPI() {
                         // Extrair atores e trailer (mantém suas funções originais)
                         val actors = extractActors(document)
                         if (actors.isNotEmpty()) {
+                            println("✅ [DEBUG] Encontrou ${actors.size} atores")
                             addActors(actors)
                         }
                         
                         val trailerKey = extractTrailer(document)
                         if (trailerKey != null) {
+                            println("✅ [DEBUG] Encontrou trailer: $trailerKey")
                             addTrailer(trailerKey)
                         }
                     }
                 } else {
                     // PARA FILMES
+                    println("🔍 [DEBUG] Criando resposta para filme...")
                     newMovieLoadResponse(embeddedData.name ?: "Sem título", url, TvType.Movie, url) {
                         this.posterUrl = embeddedData.poster?.let { fixUrl(it) }
                         this.backgroundPosterUrl = embeddedData.backdrop?.let { fixUrl(it) }
@@ -559,16 +584,19 @@ class BetterFlix : MainAPI() {
                         
                         val actors = extractActors(document)
                         if (actors.isNotEmpty()) {
+                            println("✅ [DEBUG] Encontrou ${actors.size} atores")
                             addActors(actors)
                         }
                         
                         val trailerKey = extractTrailer(document)
                         if (trailerKey != null) {
+                            println("✅ [DEBUG] Encontrou trailer: $trailerKey")
                             addTrailer(trailerKey)
                         }
                     }
                 }
             } catch (e: Exception) {
+                println("❌ [DEBUG] Erro no load(): ${e.message}")
                 e.printStackTrace()
                 null
             }
@@ -603,10 +631,13 @@ class BetterFlix : MainAPI() {
         }
         
         try {
+            println("🔍 [DEBUG] === EXTRACAO DE EPISÓDIOS INICIADA ===")
             println("🔍 [DEBUG] Buscando episódios para TMDB ID: $tmdbId")
             
             // Fazer requisição para o SuperFlix para obter lista de episódios
             val superflixUrl = "https://superflixapi.bond/serie/$tmdbId/1/1"
+            println("🔍 [DEBUG] URL do SuperFlix: $superflixUrl")
+            
             val superflixHeaders = mapOf(
                 "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
                 "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
@@ -617,21 +648,32 @@ class BetterFlix : MainAPI() {
                 "Sec-Fetch-Site" to "cross-site"
             )
             
+            println("🔍 [DEBUG] Fazendo requisição ao SuperFlix...")
             val response = app.get(superflixUrl, headers = superflixHeaders, timeout = 30)
             println("🔍 [DEBUG] Status SuperFlix: ${response.code}")
             
             if (response.code >= 400) {
-                println("❌ [DEBUG] Erro ao carregar SuperFlix")
+                println("❌ [DEBUG] Erro ao carregar SuperFlix: ${response.code}")
                 return episodes
             }
             
             val html = response.text
+            println("✅ [DEBUG] HTML recebido (${html.length} caracteres)")
             
-            // Extrair objeto ALL_EPISODES do script
+            // DEBUG: Analisar o HTML recebido
+            debugExtractEpisodes(html)
+            
+            // Extrair objeto ALL_EPISODES
+            println("🔍 [DEBUG] Extraindo objeto ALL_EPISODES...")
             val allEpisodesData = extractAllEpisodesData(html)
             if (allEpisodesData == null) {
                 println("❌ [DEBUG] Não encontrou ALL_EPISODES no SuperFlix")
-                return episodes
+                
+                // Fallback: tentar extrair de outra forma
+                println("🔍 [DEBUG] Tentando fallback de extração...")
+                val fallbackEpisodes = extractEpisodesFallback(html, tmdbId, baseUrl)
+                println("✅ [DEBUG] Fallback encontrou ${fallbackEpisodes.size} episódios")
+                return fallbackEpisodes
             }
             
             println("✅ [DEBUG] Encontrou ${allEpisodesData.size} temporada(s)")
@@ -639,6 +681,7 @@ class BetterFlix : MainAPI() {
             // Processar todas as temporadas e episódios
             allEpisodesData.forEach { (seasonNumber, seasonEpisodes) ->
                 val seasonNum = seasonNumber.toIntOrNull() ?: 1
+                println("🔍 [DEBUG] Processando temporada $seasonNum com ${seasonEpisodes.size} episódios")
                 
                 seasonEpisodes.forEach { episodeData ->
                     try {
@@ -679,177 +722,304 @@ class BetterFlix : MainAPI() {
             e.printStackTrace()
         }
         
+        println("✅ [DEBUG] Total de episódios extraídos: ${episodes.size}")
         return episodes
+    }
+
+    // DEBUG: Função para analisar o HTML
+    private fun debugExtractEpisodes(html: String) {
+        println("🔍 [DEBUG] === DEBUG DE EXTRACAO DE EPISÓDIOS ===")
+        
+        // Procurar por "ALL_EPISODES"
+        val allEpisodesIndex = html.indexOf("ALL_EPISODES")
+        if (allEpisodesIndex != -1) {
+            println("✅ [DEBUG] Encontrou 'ALL_EPISODES' na posição $allEpisodesIndex")
+            val context = html.substring(
+                maxOf(0, allEpisodesIndex - 50), 
+                minOf(allEpisodesIndex + 500, html.length)
+            )
+            println("🔍 [DEBUG] Contexto (50 chars antes, 500 depois):")
+            println("--- INÍCIO CONTEXTO ---")
+            println(context)
+            println("--- FIM CONTEXTO ---")
+        } else {
+            println("❌ [DEBUG] NÃO encontrou 'ALL_EPISODES' no HTML")
+        }
+        
+        // Procurar por padrão {"1":
+        val jsonStart = html.indexOf("""{"1":""")
+        if (jsonStart != -1) {
+            println("✅ [DEBUG] Encontrou '{\"1\":' na posição $jsonStart")
+            val jsonSnippet = html.substring(
+                jsonStart, 
+                minOf(jsonStart + 1000, html.length)
+            )
+            println("🔍 [DEBUG] Snippet JSON (1000 chars):")
+            println("--- INÍCIO SNIPPET ---")
+            println(jsonSnippet)
+            println("--- FIM SNIPPET ---")
+        } else {
+            println("❌ [DEBUG] NÃO encontrou padrão JSON '{\"1\":'")
+        }
+        
+        // Procurar por "var ALL_EPISODES"
+        val varPattern = Regex("""var\s+ALL_EPISODES""")
+        val varMatch = varPattern.find(html)
+        if (varMatch != null) {
+            println("✅ [DEBUG] Encontrou 'var ALL_EPISODES'")
+            val start = maxOf(0, varMatch.range.first - 10)
+            val end = minOf(varMatch.range.last + 200, html.length)
+            val varContext = html.substring(start, end)
+            println("🔍 [DEBUG] Contexto de 'var ALL_EPISODES':")
+            println(varContext)
+        }
+        
+        println("🔍 [DEBUG] === FIM DO DEBUG ===")
     }
 
     // EXTRAIR OBJETO ALL_EPISODES DO HTML DO SUPERFLIX
     private fun extractAllEpisodesData(html: String): Map<String, List<EpisodeData>>? {
-    try {
-        println("🔍 [DEBUG] Extraindo ALL_EPISODES do HTML")
-        
-        // VERSÃO 1: Padrão mais flexível que aceita quebras de linha
-        val pattern1 = Regex("""var\s+ALL_EPISODES\s*=\s*(\{[^;]+?\});""", RegexOption.DOT_MATCHES_ALL)
-        
-        // VERSÃO 2: Padrão alternativo
-        val pattern2 = Regex("""ALL_EPISODES\s*=\s*(\{.*?\})\s*;""", RegexOption.DOT_MATCHES_ALL)
-        
-        // VERSÃO 3: Procura pelo objeto JSON diretamente
-        val pattern3 = Regex("""\{"1"\s*:\s*\[.*?\]\}""", RegexOption.DOT_MATCHES_ALL)
-        
-        val patterns = listOf(pattern1, pattern2, pattern3)
-        
-        for ((index, pattern) in patterns.withIndex()) {
-            println("🔍 [DEBUG] Tentando padrão $index")
-            val match = pattern.find(html)
+        try {
+            println("🔍 [DEBUG] === EXTRACAÇÃO DE ALL_EPISODES ===")
             
-            if (match != null) {
-                val jsonString = match.groupValues[1].trim()
-                println("✅ [DEBUG] Encontrou JSON com padrão $index: ${jsonString.take(100)}...")
+            // VERSÃO 1: Padrão mais flexível
+            val pattern1 = Regex("""var\s+ALL_EPISODES\s*=\s*(\{.*?\});""", RegexOption.DOT_MATCHES_ALL)
+            println("🔍 [DEBUG] Tentando padrão 1...")
+            
+            val match1 = pattern1.find(html)
+            if (match1 != null) {
+                println("✅ [DEBUG] Padrão 1 encontrou match!")
+                val jsonString = match1.groupValues[1].trim()
+                println("🔍 [DEBUG] JSON extraído (primeiros 200 chars): ${jsonString.take(200)}...")
+                return parseEpisodesJson(jsonString)
+            }
+            
+            // VERSÃO 2: Padrão alternativo
+            val pattern2 = Regex("""ALL_EPISODES\s*=\s*(\{.*?\})\s*;""", RegexOption.DOT_MATCHES_ALL)
+            println("🔍 [DEBUG] Tentando padrão 2...")
+            
+            val match2 = pattern2.find(html)
+            if (match2 != null) {
+                println("✅ [DEBUG] Padrão 2 encontrou match!")
+                val jsonString = match2.groupValues[1].trim()
+                println("🔍 [DEBUG] JSON extraído (primeiros 200 chars): ${jsonString.take(200)}...")
+                return parseEpisodesJson(jsonString)
+            }
+            
+            // VERSÃO 3: Procura direta pelo JSON
+            println("🔍 [DEBUG] Tentando padrão 3 (busca direta)...")
+            val jsonMatch = findJsonDirectly(html)
+            if (jsonMatch != null) {
+                println("✅ [DEBUG] Encontrou JSON diretamente!")
+                return parseEpisodesJson(jsonMatch)
+            }
+            
+            println("❌ [DEBUG] Nenhum padrão encontrou ALL_EPISODES")
+            return null
+            
+        } catch (e: Exception) {
+            println("❌ [DEBUG] Erro ao extrair ALL_EPISODES: ${e.message}")
+            e.printStackTrace()
+            return null
+        }
+    }
+
+    private fun findJsonDirectly(html: String): String? {
+        try {
+            // Procura pelo início do JSON
+            val startIndex = html.indexOf("""{"1":""")
+            if (startIndex == -1) {
+                println("❌ [DEBUG] Não encontrou início do JSON '{\"1\":'")
+                return null
+            }
+            
+            println("✅ [DEBUG] Encontrou início do JSON na posição $startIndex")
+            
+            // Encontra o fim do objeto JSON
+            var braceCount = 0
+            var i = startIndex
+            var foundEnd = false
+            
+            while (i < html.length) {
+                when (html[i]) {
+                    '{' -> braceCount++
+                    '}' -> {
+                        braceCount--
+                        if (braceCount == 0) {
+                            foundEnd = true
+                            break
+                        }
+                    }
+                }
+                i++
+            }
+            
+            if (!foundEnd) {
+                println("❌ [DEBUG] Não conseguiu encontrar fim do JSON")
+                return null
+            }
+            
+            val jsonString = html.substring(startIndex, i + 1)
+            println("✅ [DEBUG] JSON extraído (${jsonString.length} chars)")
+            return jsonString
+            
+        } catch (e: Exception) {
+            println("❌ [DEBUG] Erro na busca direta: ${e.message}")
+            return null
+        }
+    }
+
+    private fun parseEpisodesJson(jsonString: String): Map<String, List<EpisodeData>>? {
+        try {
+            println("🔍 [DEBUG] Parseando JSON...")
+            val jsonObject = JSONObject(jsonString)
+            val result = mutableMapOf<String, List<EpisodeData>>()
+            
+            jsonObject.keys().forEach { seasonKey ->
+                println("🔍 [DEBUG] Processando temporada: $seasonKey")
+                val episodesArray = jsonObject.getJSONArray(seasonKey)
+                val episodesList = mutableListOf<EpisodeData>()
                 
-                try {
-                    // Parse o JSON
-                    val jsonObject = JSONObject(jsonString)
-                    val result = mutableMapOf<String, List<EpisodeData>>()
-                    
-                    jsonObject.keys().forEach { seasonKey ->
-                        val episodesArray = jsonObject.getJSONArray(seasonKey)
-                        val episodesList = mutableListOf<EpisodeData>()
+                println("🔍 [DEBUG] Temporada $seasonKey tem ${episodesArray.length()} episódios")
+                
+                for (i in 0 until episodesArray.length()) {
+                    try {
+                        val episodeObj = episodesArray.getJSONObject(i)
                         
-                        println("🔍 [DEBUG] Processando temporada $seasonKey com ${episodesArray.length()} episódios")
-                        
-                        for (i in 0 until episodesArray.length()) {
-                            val episodeObj = episodesArray.getJSONObject(i)
-                            
-                            // Mapeie os campos corretamente - observe os nomes no HTML fornecido:
-                            // ID, title, sinopse, item, thumb_url, air_date, duration, epi_num, season
-                            episodesList.add(
-                                EpisodeData(
-                                    ID = episodeObj.optInt("ID"),
-                                    title = episodeObj.optString("title"),
-                                    sinopse = episodeObj.optString("sinopse"),
-                                    item = episodeObj.optInt("item"),
-                                    thumb_url = episodeObj.optString("thumb_url").takeIf { 
-                                        it != "null" && it.isNotBlank() && it != "null" 
-                                    },
-                                    air_date = episodeObj.optString("air_date").takeIf { 
-                                        it != "null" && it.isNotBlank() && it != "null" 
-                                    },
-                                    duration = episodeObj.optInt("duration"),
-                                    epi_num = episodeObj.optInt("epi_num"),
-                                    season = episodeObj.optInt("season")
-                                )
-                            )
+                        // Log dos campos para debug
+                        println("🔍 [DEBUG] Episódio $i campos:")
+                        episodeObj.keys().forEach { key ->
+                            println("  - $key: ${episodeObj.opt(key)}")
                         }
                         
-                        result[seasonKey] = episodesList
+                        episodesList.add(
+                            EpisodeData(
+                                ID = episodeObj.optInt("ID"),
+                                title = episodeObj.optString("title"),
+                                sinopse = episodeObj.optString("sinopse"),
+                                item = episodeObj.optInt("item"),
+                                thumb_url = episodeObj.optString("thumb_url").takeIf { 
+                                    it != "null" && it.isNotBlank() && it != "null" 
+                                },
+                                air_date = episodeObj.optString("air_date").takeIf { 
+                                    it != "null" && it.isNotBlank() && it != "null" 
+                                },
+                                duration = episodeObj.optInt("duration"),
+                                epi_num = episodeObj.optInt("epi_num"),
+                                season = episodeObj.optInt("season")
+                            )
+                        )
+                        
+                        println("✅ [DEBUG] Episódio $i parseado: ${episodeObj.optString("title")}")
+                    } catch (e: Exception) {
+                        println("❌ [DEBUG] Erro ao parsear episódio $i: ${e.message}")
                     }
-                    
-                    println("✅ [DEBUG] Extraiu ${result.size} temporadas")
-                    return result
-                    
-                } catch (e: Exception) {
-                    println("❌ [DEBUG] Erro ao parsear JSON com padrão $index: ${e.message}")
-                    e.printStackTrace()
                 }
+                
+                result[seasonKey] = episodesList
             }
+            
+            println("✅ [DEBUG] Parse concluído: ${result.size} temporadas")
+            return result
+            
+        } catch (e: Exception) {
+            println("❌ [DEBUG] Erro ao parsear JSON: ${e.message}")
+            e.printStackTrace()
+            return null
         }
-        
-        // Se nenhum padrão funcionou, tente extração manual direta
-        println("⚠️ [DEBUG] Padrões regulares falharam, tentando extração manual")
-        return extractAllEpisodesManuallyDirect(html)
-        
-    } catch (e: Exception) {
-        println("❌ [DEBUG] Erro ao extrair ALL_EPISODES: ${e.message}")
-        e.printStackTrace()
-        return null
     }
-}
 
-private fun extractAllEpisodesManuallyDirect(html: String): Map<String, List<EpisodeData>>? {
-    try {
-        // Método mais direto: procure pelo JSON começando com {"1":
-        val startIndex = html.indexOf("""{"1":""")
-        if (startIndex == -1) {
-            println("❌ [DEBUG] Não encontrou início do JSON")
-            return null
-        }
+    // FUNÇÃO FALLBACK PARA EXTRACAÇÃO DE EPISÓDIOS
+    private fun extractEpisodesFallback(html: String, tmdbId: String, baseUrl: String): List<Episode> {
+        val episodes = mutableListOf<Episode>()
         
-        // Encontre o fim do objeto JSON
-        var braceCount = 0
-        var i = startIndex
-        var foundEnd = false
-        
-        while (i < html.length) {
-            when (html[i]) {
-                '{' -> braceCount++
-                '}' -> {
-                    braceCount--
-                    if (braceCount == 0) {
-                        foundEnd = true
-                        break
+        try {
+            println("🔍 [DEBUG] === FALLBACK DE EXTRACAÇÃO INICIADO ===")
+            
+            // Tentar extrair do HTML diretamente usando Jsoup
+            val document = Jsoup.parse(html)
+            
+            // Método 1: Procurar por elementos de episódio
+            val episodeElements = document.select(".episode-item, [class*='episode'], .episode")
+            
+            if (episodeElements.isNotEmpty()) {
+                println("✅ [DEBUG] Encontrou ${episodeElements.size} elementos .episode-item")
+                
+                episodeElements.forEachIndexed { index, element ->
+                    try {
+                        // Extrair título
+                        val titleElement = element.selectFirst(".ep-title, .title, h3, h4")
+                        var title = titleElement?.text() ?: "Episódio ${index + 1}"
+                        
+                        // Extrair número do episódio
+                        val epNumberMatch = Regex("""Episódio\s+(\d+)""").find(title)
+                        val epNumber = epNumberMatch?.groupValues?.get(1)?.toIntOrNull() ?: (index + 1)
+                        
+                        // Extrair thumbnail
+                        val thumbElement = element.selectFirst("img")
+                        val thumbUrl = thumbElement?.attr("src")?.let { 
+                            if (it.startsWith("/")) "https://image.tmdb.org/t/p/w300$it" else it 
+                        }
+                        
+                        // Extrair data
+                        val dateElement = element.selectFirst(".ep-meta, .date, .air-date")
+                        val airDate = dateElement?.text()
+                        
+                        val episodeUrl = "$baseUrl&season=1&episode=$epNumber"
+                        
+                        episodes.add(
+                            newEpisode(episodeUrl) {
+                                this.name = title
+                                this.season = 1
+                                this.episode = epNumber
+                                this.description = airDate
+                                this.posterUrl = thumbUrl?.let { fixUrl(it) }
+                            }
+                        )
+                        
+                        println("✅ [DEBUG] Fallback - Episódio adicionado: E$epNumber - $title")
+                    } catch (e: Exception) {
+                        println("❌ [DEBUG] Erro no fallback episódio $index: ${e.message}")
+                    }
+                }
+            } else {
+                println("❌ [DEBUG] Nenhum elemento .episode-item encontrado no fallback")
+                
+                // Método 2: Procurar por scripts
+                val scripts = document.select("script")
+                println("🔍 [DEBUG] Analisando ${scripts.size} scripts...")
+                
+                scripts.forEachIndexed { index, script ->
+                    val scriptContent = script.html()
+                    if (scriptContent.contains("ALL_EPISODES") || scriptContent.contains("episode")) {
+                        println("🔍 [DEBUG] Script $index pode conter dados de episódios")
+                        println("🔍 [DEBUG] Conteúdo (primeiros 300 chars): ${scriptContent.take(300)}")
                     }
                 }
             }
-            i++
-        }
-        
-        if (!foundEnd) {
-            println("❌ [DEBUG] Não conseguiu encontrar fim do JSON")
-            return null
-        }
-        
-        val jsonString = html.substring(startIndex, i + 1)
-        println("✅ [DEBUG] Extraiu JSON manualmente: ${jsonString.take(100)}...")
-        
-        val jsonObject = JSONObject(jsonString)
-        val result = mutableMapOf<String, List<EpisodeData>>()
-        
-        jsonObject.keys().forEach { seasonKey ->
-            val episodesArray = jsonObject.getJSONArray(seasonKey)
-            val episodesList = mutableListOf<EpisodeData>()
             
-            for (j in 0 until episodesArray.length()) {
-                val episodeObj = episodesArray.getJSONObject(j)
-                episodesList.add(
-                    EpisodeData(
-                        ID = episodeObj.optInt("ID"),
-                        title = episodeObj.optString("title"),
-                        sinopse = episodeObj.optString("sinopse"),
-                        item = episodeObj.optInt("item"),
-                        thumb_url = episodeObj.optString("thumb_url").takeIf { 
-                            it != "null" && it.isNotBlank() && it != "null" 
-                        },
-                        air_date = episodeObj.optString("air_date").takeIf { 
-                            it != "null" && it.isNotBlank() && it != "null" 
-                        },
-                        duration = episodeObj.optInt("duration"),
-                        epi_num = episodeObj.optInt("epi_num"),
-                        season = episodeObj.optInt("season")
-                    )
-                )
-            }
-            
-            result[seasonKey] = episodesList
+        } catch (e: Exception) {
+            println("❌ [DEBUG] Erro no fallback: ${e.message}")
+            e.printStackTrace()
         }
         
-        return result
-        
-    } catch (e: Exception) {
-        println("❌ [DEBUG] Erro na extração manual direta: ${e.message}")
-        return null
+        println("✅ [DEBUG] Fallback retornou ${episodes.size} episódios")
+        return episodes
     }
-}
 
     // FUNÇÃO PARA EXTRAIR OBJETO JSON EMBUTIDO (dadosMulti)
     private fun extractEmbeddedData(html: String): EmbeddedData? {
         try {
+            println("🔍 [DEBUG] === EXTRACÃO DE DADOS MULTI ===")
+            
             // Procura pelo objeto dadosMulti no script
             val pattern = Regex("""const dadosMulti\s*=\s*(\{.*?\});""", RegexOption.DOT_MATCHES_ALL)
             val match = pattern.find(html)
             
             if (match != null) {
                 val jsonString = match.groupValues[1]
-                println("✅ [DEBUG] Encontrou dadosMulti: $jsonString")
+                println("✅ [DEBUG] Encontrou dadosMulti!")
+                println("🔍 [DEBUG] JSON: $jsonString")
                 return AppUtils.tryParseJson<EmbeddedData>(jsonString)
             }
             
@@ -864,16 +1034,29 @@ private fun extractAllEpisodesManuallyDirect(html: String): Map<String, List<Epi
 
     private fun extractEmbeddedDataManually(html: String): EmbeddedData? {
         try {
+            println("🔍 [DEBUG] Extraindo dados manualmente...")
+            
             fun extract(pattern: String): String? {
                 val regex = Regex(pattern, RegexOption.DOT_MATCHES_ALL)
                 return regex.find(html)?.groupValues?.get(1)
             }
             
+            val id = extract("\"id\"\\s*:\\s*\"([^\"]+)\"") ?: extract("'id'\\s*:\\s*'([^']+)'")
+            val name = extract("\"name\"\\s*:\\s*\"([^\"]+)\"") ?: extract("'name'\\s*:\\s*'([^']+)'")
+            val date = extract("\"date\"\\s*:\\s*\"([^\"]+)\"") ?: extract("'date'\\s*:\\s*'([^']+)'")
+            val bio = extract("\"bio\"\\s*:\\s*\"([^\"]+)\"") ?: extract("'bio'\\s*:\\s*'([^']+)'")
+            
+            println("🔍 [DEBUG] Dados extraídos:")
+            println("  - ID: $id")
+            println("  - Nome: $name")
+            println("  - Data: $date")
+            println("  - Bio: ${bio?.take(50)}...")
+            
             return EmbeddedData(
-                id = extract("\"id\"\\s*:\\s*\"([^\"]+)\"") ?: extract("'id'\\s*:\\s*'([^']+)'"),
-                name = extract("\"name\"\\s*:\\s*\"([^\"]+)\"") ?: extract("'name'\\s*:\\s*'([^']+)'"),
-                date = extract("\"date\"\\s*:\\s*\"([^\"]+)\"") ?: extract("'date'\\s*:\\s*'([^']+)'"),
-                bio = extract("\"bio\"\\s*:\\s*\"([^\"]+)\"") ?: extract("'bio'\\s*:\\s*'([^']+)'"),
+                id = id,
+                name = name,
+                date = date,
+                bio = bio,
                 inProduction = extract("\"inProduction\"\\s*:\\s*(true|false)")?.toBoolean(),
                 vote = extract("\"vote\"\\s*:\\s*([0-9.]+)")?.toDoubleOrNull(),
                 genres = extract("\"genres\"\\s*:\\s*\"([^\"]+)\"") ?: extract("'genres'\\s*:\\s*'([^']+)'"),
@@ -881,6 +1064,7 @@ private fun extractAllEpisodesManuallyDirect(html: String): Map<String, List<Epi
                 backdrop = extract("\"backdrop\"\\s*:\\s*\"([^\"]+)\"") ?: extract("'backdrop'\\s*:\\s*'([^']+)'")
             )
         } catch (e: Exception) {
+            println("❌ [DEBUG] Erro na extração manual: ${e.message}")
             return null
         }
     }
@@ -897,7 +1081,9 @@ private fun extractAllEpisodesManuallyDirect(html: String): Map<String, List<Epi
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        println("🔍 [DEBUG] loadLinks chamado com data: $data")
+        println("🔍 [DEBUG] === LOAD LINKS INICIADO ===")
+        println("🔍 [DEBUG] Data recebida: $data")
+        println("🔍 [DEBUG] isCasting: $isCasting")
         
         return safeApiRequest(data) {
             try {
@@ -972,266 +1158,294 @@ private fun extractAllEpisodesManuallyDirect(html: String): Map<String, List<Epi
     }
 
     private suspend fun extractVideoFromSuperflix(
-    domain: String,
-    tmdbId: String,
-    type: String,
-    callback: (ExtractorLink) -> Unit
-): Boolean {
-    try {
-        println("🔍 [DEBUG] Iniciando extração de vídeo do SuperFlix")
-        println("🔍 [DEBUG] Domínio: $domain")
-        println("🔍 [DEBUG] TMDB ID: $tmdbId")
-        println("🔍 [DEBUG] Tipo: $type")
-        
-        // Lista de video_ids possíveis
-        val possibleVideoIds = listOf("303309", "351944")
-        
-        for (videoId in possibleVideoIds) {
-            println("🔍 [DEBUG] Tentando video_id: $videoId")
+        domain: String,
+        tmdbId: String,
+        type: String,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        try {
+            println("🔍 [DEBUG] === EXTRACÇÃO DE VÍDEO DO SUPERFLIX ===")
+            println("🔍 [DEBUG] Domínio: $domain")
+            println("🔍 [DEBUG] TMDB ID: $tmdbId")
+            println("🔍 [DEBUG] Tipo: $type")
             
-            // PASSO 1: Obter o video_url da API do SuperFlix
-            val apiUrl = "$domain/api"
-            println("🔍 [DEBUG] POST para API: $apiUrl")
+            // Lista de video_ids possíveis
+            val possibleVideoIds = listOf("303309", "351944", "1", "2", "3")
             
-            val apiHeaders = mapOf(
+            for (videoId in possibleVideoIds) {
+                println("🔍 [DEBUG] Tentando video_id: $videoId")
+                
+                // PASSO 1: Obter o video_url da API do SuperFlix
+                val apiUrl = "$domain/api"
+                println("🔍 [DEBUG] POST para API: $apiUrl")
+                
+                val apiHeaders = mapOf(
+                    "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
+                    "Accept" to "application/json, text/plain, */*",
+                    "Accept-Language" to "pt-BR",
+                    "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8",
+                    "Origin" to domain,
+                    "Referer" to "$domain/filme/$tmdbId",
+                    "X-Requested-With" to "XMLHttpRequest",
+                    "Sec-Fetch-Dest" to "empty",
+                    "Sec-Fetch-Mode" to "cors",
+                    "Sec-Fetch-Site" to "same-origin"
+                )
+                
+                val apiData = mapOf(
+                    "action" to "getPlayer",
+                    "video_id" to videoId
+                )
+                
+                println("🔍 [DEBUG] Enviando dados: action=getPlayer, video_id=$videoId")
+                
+                try {
+                    val apiResponse = app.post(apiUrl, data = apiData, headers = apiHeaders, timeout = 30)
+                    println("🔍 [DEBUG] Status da API: ${apiResponse.code}")
+                    println("🔍 [DEBUG] Resposta da API (primeiros 500 chars): ${apiResponse.text.take(500)}...")
+                    
+                    if (apiResponse.code >= 400) {
+                        println("❌ [DEBUG] Erro HTTP na API: ${apiResponse.code}")
+                        continue
+                    }
+                    
+                    val apiJson = JSONObject(apiResponse.text)
+                    
+                    // Verificar corretamente o status
+                    val errors = apiJson.optString("errors", "1")
+                    val message = apiJson.optString("message", "")
+                    
+                    if (errors == "1" || message != "success") {
+                        println("❌ [DEBUG] API retornou errors=$errors, message=$message")
+                        continue
+                    }
+                    
+                    val videoUrl = apiJson.optJSONObject("data")?.optString("video_url")
+                    if (videoUrl.isNullOrEmpty()) {
+                        println("❌ [DEBUG] Não foi possível extrair video_url")
+                        continue
+                    }
+                    
+                    println("✅ [DEBUG] Video URL obtido: $videoUrl")
+                    
+                    // PASSO 2: Extrair o hash/token da URL
+                    val hash = extractHashFromVideoUrl(videoUrl)
+                    if (hash == null) {
+                        println("❌ [DEBUG] Não foi possível extrair hash da URL")
+                        continue
+                    }
+                    
+                    println("✅ [DEBUG] Hash extraído: $hash")
+                    
+                    // PASSO 3: Fazer a requisição para obter o m3u8
+                    val playerResult = requestPlayerHash(hash, callback)
+                    if (playerResult) {
+                        return true
+                    }
+                    
+                } catch (e: Exception) {
+                    println("❌ [DEBUG] Erro ao processar video_id $videoId: ${e.message}")
+                    continue
+                }
+            }
+            
+            println("❌ [DEBUG] Nenhum video_id funcionou")
+            return false
+            
+        } catch (e: Exception) {
+            println("❌ [DEBUG] Erro na extração do SuperFlix: ${e.message}")
+            e.printStackTrace()
+            return false
+        }
+    }
+
+    private fun extractHashFromVideoUrl(videoUrl: String): String? {
+        println("🔍 [DEBUG] Extraindo hash da URL: $videoUrl")
+        
+        return when {
+            // Exemplo: https://llanfairpwllgwyngy.com/video/a269ba2de7c47692cce1956aca54f22d
+            videoUrl.contains("/video/") -> {
+                val hash = videoUrl.substringAfter("/video/").substringBefore("?")
+                println("✅ [DEBUG] Hash extraído (padrão /video/): $hash")
+                hash
+            }
+            // Exemplo: https://play-utx.playmycnvs.com/m/Pecadores.2025.1080p.WEB-DL.DUAL.5.1.mp4
+            videoUrl.contains("/m/") -> {
+                val hash = videoUrl.substringAfter("/m/").substringBefore("?")
+                println("✅ [DEBUG] Hash extraído (padrão /m/): $hash")
+                hash
+            }
+            // Exemplo: token=xyz
+            videoUrl.contains("token=") -> {
+                val pattern = Regex("token=([^&]+)")
+                val match = pattern.find(videoUrl)
+                val hash = match?.groupValues?.get(1)
+                println("✅ [DEBUG] Hash extraído (padrão token=): $hash")
+                hash
+            }
+            else -> {
+                println("❌ [DEBUG] Não reconheceu padrão na URL")
+                null
+            }
+        }
+    }
+
+    private suspend fun requestPlayerHash(
+        hash: String,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        try {
+            println("🔍 [DEBUG] === REQUISIÇÃO DE PLAYER HASH ===")
+            println("🔍 [DEBUG] Hash recebido: $hash")
+            
+            // Baseado no exemplo: llAnfairpwllgwyngy.com
+            val playerDomain = "https://llanfairpwllgwyngy.com"
+            val playerUrl = "$playerDomain/player/index.php?data=$hash&do=getVideo"
+            println("🔍 [DEBUG] Player URL: $playerUrl")
+            
+            val playerHeaders = mapOf(
                 "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
-                "Accept" to "application/json, text/plain, */*",
+                "Accept" to "*/*",
                 "Accept-Language" to "pt-BR",
                 "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8",
-                "Origin" to domain,
-                "Referer" to "$domain/filme/$tmdbId",
+                "Origin" to playerDomain,
+                "Referer" to "$playerDomain/",
                 "X-Requested-With" to "XMLHttpRequest",
                 "Sec-Fetch-Dest" to "empty",
                 "Sec-Fetch-Mode" to "cors",
                 "Sec-Fetch-Site" to "same-origin"
             )
             
-            val apiData = mapOf(
-                "action" to "getPlayer",
-                "video_id" to videoId
+            val playerData = mapOf(
+                "hash" to hash,
+                "r" to ""
             )
             
-            println("🔍 [DEBUG] Enviando dados: action=getPlayer, video_id=$videoId")
+            println("🔍 [DEBUG] Enviando requisição POST...")
+            val playerResponse = app.post(playerUrl, data = playerData, headers = playerHeaders, timeout = 30)
+            println("🔍 [DEBUG] Status do player: ${playerResponse.code}")
+            println("🔍 [DEBUG] Resposta do player: ${playerResponse.text}")
             
-            try {
-                val apiResponse = app.post(apiUrl, data = apiData, headers = apiHeaders, timeout = 30)
-                println("🔍 [DEBUG] Status da API: ${apiResponse.code}")
-                println("🔍 [DEBUG] Resposta da API: ${apiResponse.text}")
-                
-                if (apiResponse.code >= 400) {
-                    println("❌ [DEBUG] Erro HTTP na API: ${apiResponse.code}")
-                    continue
+            if (playerResponse.code >= 400) {
+                println("❌ [DEBUG] Erro HTTP no player: ${playerResponse.code}")
+                return false
+            }
+            
+            val playerJson = JSONObject(playerResponse.text)
+            
+            // Extrair o link m3u8
+            val m3u8Url = playerJson.optString("securedLink")
+                .takeIf { it.isNotBlank() }
+                ?: playerJson.optString("videoSource")
+                    .takeIf { it.isNotBlank() }
+            
+            if (m3u8Url.isNullOrBlank()) {
+                println("❌ [DEBUG] Nenhum link m3u8 encontrado na resposta")
+                println("🔍 [DEBUG] Campos disponíveis no JSON:")
+                playerJson.keys().forEach { key ->
+                    println("  - $key: ${playerJson.opt(key)}")
                 }
-                
-                val apiJson = JSONObject(apiResponse.text)
-                
-                // Verificar corretamente o status
-                val errors = apiJson.optString("errors", "1")
-                val message = apiJson.optString("message", "")
-                
-                if (errors == "1" || message != "success") {
-                    println("❌ [DEBUG] API retornou errors=$errors, message=$message")
-                    continue
+                return false
+            }
+            
+            println("✅ [DEBUG] M3U8 URL encontrada: $m3u8Url")
+            
+            // Determinar qualidade
+            val quality = when {
+                m3u8Url.contains("1080") -> Qualities.P1080.value
+                m3u8Url.contains("720") -> Qualities.P720.value
+                m3u8Url.contains("480") -> Qualities.P480.value
+                m3u8Url.contains("360") -> Qualities.P360.value
+                else -> {
+                    println("⚠️ [DEBUG] Qualidade não detectada, usando 720p como padrão")
+                    Qualities.P720.value
                 }
-                
-                val videoUrl = apiJson.optJSONObject("data")?.optString("video_url")
-                if (videoUrl.isNullOrEmpty()) {
-                    println("❌ [DEBUG] Não foi possível extrair video_url")
-                    continue
-                }
-                
-                println("✅ [DEBUG] Video URL obtido: $videoUrl")
-                
-                // PASSO 2: Extrair o hash/token da URL
-                val hash = extractHashFromVideoUrl(videoUrl)
-                if (hash == null) {
-                    println("❌ [DEBUG] Não foi possível extrair hash da URL")
-                    continue
-                }
-                
-                println("✅ [DEBUG] Hash extraído: $hash")
-                
-                // PASSO 3: Fazer a requisição para obter o m3u8
-                val playerResult = requestPlayerHash(hash, callback)
-                if (playerResult) {
+            }
+            
+            println("✅ [DEBUG] Qualidade detectada: $quality")
+            
+            // Criar o ExtractorLink
+            newExtractorLink(name, "SuperFlix ($quality)", m3u8Url, ExtractorLinkType.M3U8) {
+                referer = "$playerDomain/"
+                this.quality = quality
+            }.also { 
+                println("✅ [DEBUG] ExtractorLink criado com sucesso")
+                callback(it) 
+            }
+            
+            return true
+            
+        } catch (e: Exception) {
+            println("❌ [DEBUG] Erro ao obter player hash: ${e.message}")
+            e.printStackTrace()
+            return false
+        }
+    }
+
+    // Nova função para extrair de redirecionamento
+    private suspend fun extractFromRedirectUrl(
+        redirectUrl: String,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        try {
+            println("🔍 [DEBUG] Extraindo de URL de redirecionamento: $redirectUrl")
+            
+            val headers = mapOf(
+                "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
+                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+                "Accept-Language" to "pt-BR",
+                "Referer" to "https://superflixapi.bond/"
+            )
+            
+            val response = app.get(redirectUrl, headers = headers, timeout = 30)
+            println("🔍 [DEBUG] Status do redirecionamento: ${response.code}")
+            
+            if (response.code >= 400) {
+                return false
+            }
+            
+            val html = response.text
+            
+            // Procurar por m3u8
+            val patterns = listOf(
+                Regex("""["']file["']\s*:\s*["'](https?://[^"']+\.m3u8[^"']*)["']"""),
+                Regex("""["']sources["']\s*:\s*\[\s*\{\s*["']file["']\s*:\s*["'](https?://[^"']+\.m3u8[^"']*)["']"""),
+                Regex("""(https?://[^"\s<>]+\.m3u8[^"\s<>]*)""")
+            )
+            
+            for (pattern in patterns) {
+                val matches = pattern.findAll(html).toList()
+                if (matches.isNotEmpty()) {
+                    val m3u8Url = matches[0].groupValues[1]
+                    println("✅ [DEBUG] m3u8 encontrado no redirecionamento: $m3u8Url")
+                    
+                    val quality = when {
+                        m3u8Url.contains("1080") -> Qualities.P1080.value
+                        m3u8Url.contains("720") -> Qualities.P720.value
+                        m3u8Url.contains("480") -> Qualities.P480.value
+                        else -> Qualities.P720.value
+                    }
+                    
+                    newExtractorLink(name, "SuperFlix ($quality)", m3u8Url, ExtractorLinkType.M3U8) {
+                        referer = redirectUrl
+                        this.quality = quality
+                    }.also { 
+                        println("✅ [DEBUG] ExtractorLink criado")
+                        callback(it) 
+                    }
+                    
                     return true
                 }
-                
-            } catch (e: Exception) {
-                println("❌ [DEBUG] Erro ao processar video_id $videoId: ${e.message}")
-                continue
             }
-        }
-        
-        println("❌ [DEBUG] Nenhum video_id funcionou")
-        return false
-        
-    } catch (e: Exception) {
-        println("❌ [DEBUG] Erro na extração do SuperFlix: ${e.message}")
-        e.printStackTrace()
-        return false
-    }
-}
-
-private fun extractHashFromVideoUrl(videoUrl: String): String? {
-    return when {
-        // Exemplo: https://llanfairpwllgwyngy.com/video/a269ba2de7c47692cce1956aca54f22d
-        videoUrl.contains("/video/") -> {
-            videoUrl.substringAfter("/video/").substringBefore("?")
-        }
-        // Exemplo: https://play-utx.playmycnvs.com/m/Pecadores.2025.1080p.WEB-DL.DUAL.5.1.mp4
-        videoUrl.contains("/m/") -> {
-            videoUrl.substringAfter("/m/").substringBefore("?")
-        }
-        else -> null
-    }
-}
-
-private suspend fun requestPlayerHash(
-    hash: String,
-    callback: (ExtractorLink) -> Unit
-): Boolean {
-    try {
-        println("🔍 [DEBUG] Fazendo requisição para obter m3u8 com hash: $hash")
-        
-        // Baseado no exemplo: llAnfairpwllgwyngy.com (nota: domínio está escrito errado nos logs)
-        val playerDomain = "https://llanfairpwllgwyngy.com"
-        val playerUrl = "$playerDomain/player/index.php?data=$hash&do=getVideo"
-        println("🔍 [DEBUG] Player URL: $playerUrl")
-        
-        val playerHeaders = mapOf(
-            "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
-            "Accept" to "*/*",
-            "Accept-Language" to "pt-BR",
-            "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8",
-            "Origin" to playerDomain,
-            "Referer" to "$playerDomain/",
-            "X-Requested-With" to "XMLHttpRequest",
-            "Sec-Fetch-Dest" to "empty",
-            "Sec-Fetch-Mode" to "cors",
-            "Sec-Fetch-Site" to "same-origin"
-        )
-        
-        val playerData = mapOf(
-            "hash" to hash,
-            "r" to ""
-        )
-        
-        val playerResponse = app.post(playerUrl, data = playerData, headers = playerHeaders, timeout = 30)
-        println("🔍 [DEBUG] Status do player: ${playerResponse.code}")
-        println("🔍 [DEBUG] Resposta do player: ${playerResponse.text}")
-        
-        if (playerResponse.code >= 400) {
-            println("❌ [DEBUG] Erro HTTP no player: ${playerResponse.code}")
+            
+            println("❌ [DEBUG] Nenhum m3u8 encontrado no redirecionamento")
+            return false
+            
+        } catch (e: Exception) {
+            println("❌ [DEBUG] Erro ao extrair do redirecionamento: ${e.message}")
             return false
         }
-        
-        val playerJson = JSONObject(playerResponse.text)
-        
-        // Extrair o link m3u8
-        val m3u8Url = playerJson.optString("securedLink")
-            .takeIf { it.isNotBlank() }
-            ?: playerJson.optString("videoSource")
-                .takeIf { it.isNotBlank() }
-        
-        if (m3u8Url.isNullOrBlank()) {
-            println("❌ [DEBUG] Nenhum link m3u8 encontrado na resposta")
-            return false
-        }
-        
-        println("✅ [DEBUG] M3U8 URL encontrada: $m3u8Url")
-        
-        // Determinar qualidade
-        val quality = when {
-            m3u8Url.contains("1080") -> Qualities.P1080.value
-            m3u8Url.contains("720") -> Qualities.P720.value
-            m3u8Url.contains("480") -> Qualities.P480.value
-            m3u8Url.contains("360") -> Qualities.P360.value
-            else -> Qualities.P720.value
-        }
-        
-        // Criar o ExtractorLink
-        newExtractorLink(name, "SuperFlix ($quality)", m3u8Url, ExtractorLinkType.M3U8) {
-            referer = "$playerDomain/"
-            this.quality = quality
-        }.also { 
-            println("✅ [DEBUG] ExtractorLink criado com sucesso")
-            callback(it) 
-        }
-        
-        return true
-        
-    } catch (e: Exception) {
-        println("❌ [DEBUG] Erro ao obter player hash: ${e.message}")
-        e.printStackTrace()
-        return false
     }
-}
-
-// Nova função para extrair de redirecionamento
-private suspend fun extractFromRedirectUrl(
-    redirectUrl: String,
-    callback: (ExtractorLink) -> Unit
-): Boolean {
-    try {
-        println("🔍 [DEBUG] Extraindo de URL de redirecionamento: $redirectUrl")
-        
-        val headers = mapOf(
-            "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
-            "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-            "Accept-Language" to "pt-BR",
-            "Referer" to "https://superflixapi.bond/"
-        )
-        
-        val response = app.get(redirectUrl, headers = headers, timeout = 30)
-        println("🔍 [DEBUG] Status do redirecionamento: ${response.code}")
-        
-        if (response.code >= 400) {
-            return false
-        }
-        
-        val html = response.text
-        
-        // Procurar por m3u8
-        val patterns = listOf(
-            Regex("""["']file["']\s*:\s*["'](https?://[^"']+\.m3u8[^"']*)["']"""),
-            Regex("""["']sources["']\s*:\s*\[\s*\{\s*["']file["']\s*:\s*["'](https?://[^"']+\.m3u8[^"']*)["']"""),
-            Regex("""(https?://[^"\s<>]+\.m3u8[^"\s<>]*)""")
-        )
-        
-        for (pattern in patterns) {
-            val matches = pattern.findAll(html).toList()
-            if (matches.isNotEmpty()) {
-                val m3u8Url = matches[0].groupValues[1]
-                println("✅ [DEBUG] m3u8 encontrado no redirecionamento: $m3u8Url")
-                
-                val quality = when {
-                    m3u8Url.contains("1080") -> Qualities.P1080.value
-                    m3u8Url.contains("720") -> Qualities.P720.value
-                    m3u8Url.contains("480") -> Qualities.P480.value
-                    else -> Qualities.P720.value
-                }
-                
-                newExtractorLink(name, "SuperFlix ($quality)", m3u8Url, ExtractorLinkType.M3U8) {
-                    referer = redirectUrl
-                    this.quality = quality
-                }.also { 
-                    println("✅ [DEBUG] ExtractorLink criado")
-                    callback(it) 
-                }
-                
-                return true
-            }
-        }
-        
-        println("❌ [DEBUG] Nenhum m3u8 encontrado no redirecionamento")
-        return false
-        
-    } catch (e: Exception) {
-        println("❌ [DEBUG] Erro ao extrair do redirecionamento: ${e.message}")
-        return false
-    }
-}
 
     private suspend fun extractFromHashUrl(
         videoUrl: String,
@@ -1451,7 +1665,7 @@ private suspend fun extractFromRedirectUrl(
         data: String,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        println("🔍 [DEBUG] Iniciando método alternativo de extração")
+        println("🔍 [DEBUG] === MÉTODO ALTERNATIVO DE EXTRAÇÃO ===")
         
         // Método alternativo: buscar diretamente na página do BetterFlix
         try {
