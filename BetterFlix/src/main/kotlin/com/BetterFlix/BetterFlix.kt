@@ -360,126 +360,103 @@ class BetterFlix : MainAPI() {
 
     // ========== SEARCH ==========
     override suspend fun search(query: String): List<SearchResponse> {
-        return safeApiRequest(query) {
+    return safeApiRequest(query) {
+        try {
+            // Tentar a API de busca primeiro
+            val encodedQuery = query.encodeSearchQuery()
+            val apiUrl = "$mainUrl/api/search?query=$encodedQuery"
+            
+            println("🔍 [SEARCH] Tentando API: $apiUrl")
+            
             try {
-                val encodedQuery = query.encodeSearchQuery()
-                val url = "$mainUrl/api/search?query=$encodedQuery"
-
                 val response = app.get(
-                    url,
+                    apiUrl,
                     headers = headers,
                     cookies = cookies,
                     timeout = 30
                 )
-
-                val data = response.parsedSafe<SearchResponseData>() ?: return@safeApiRequest emptyList()
-
-                return@safeApiRequest data.results.mapNotNull { item ->
-                    try {
-                        val title = item.title ?: item.name ?: item.originalTitle ?: item.originalName ?: return@mapNotNull null
-                        val year = getYearFromDate(item.releaseDate ?: item.firstAirDate)
-                        val poster = item.posterPath?.let { "https://image.tmdb.org/t/p/w500$it" }
-                        val id = item.id
-
-                        val type = when (item.mediaType) {
-                            "movie" -> TvType.Movie
-                            "tv" -> TvType.TvSeries
-                            "anime" -> TvType.Anime
-                            else -> when {
-                                title.contains("(Anime)", ignoreCase = true) -> TvType.Anime
-                                item.releaseDate != null -> TvType.Movie
-                                item.firstAirDate != null -> TvType.TvSeries
-                                else -> TvType.Movie
-                            }
+                
+                if (response.code == 200) {
+                    println("✅ [SEARCH] API respondeu com status ${response.code}")
+                    val data = response.parsedSafe<SearchResponseData>()
+                    
+                    if (data != null && data.results.isNotEmpty()) {
+                        println("✅ [SEARCH] API retornou ${data.results.size} resultados")
+                        return@safeApiRequest data.results.mapNotNull { item ->
+                            processSearchItem(item)
                         }
-
-                        val slug = generateSlug(title)
-                        val url = when (type) {
-                            TvType.Movie -> "$mainUrl/$slug?id=$id&type=movie"
-                            TvType.TvSeries -> "$mainUrl/$slug?id=$id&type=tv"
-                            TvType.Anime -> "$mainUrl/$slug?id=$id&type=anime"
-                            else -> "$mainUrl/$slug?id=$id&type=movie"
-                        }
-
-                        when (type) {
-                            TvType.Movie -> newMovieSearchResponse(title, url, TvType.Movie) {
-                                this.posterUrl = poster
-                                this.year = year
-                            }
-                            TvType.TvSeries -> newTvSeriesSearchResponse(title, url, TvType.TvSeries) {
-                                this.posterUrl = poster
-                                this.year = year
-                            }
-                            TvType.Anime -> newAnimeSearchResponse(title, url, TvType.Anime) {
-                                this.posterUrl = poster
-                                this.year = year
-                            }
-                            else -> newMovieSearchResponse(title, url, TvType.Movie) {
-                                this.posterUrl = poster
-                                this.year = year
-                            }
-                        }
-                    } catch (e: Exception) {
-                        null
+                    } else {
+                        println("⚠️ [SEARCH] API retornou dados vazios, usando fallback HTML")
                     }
+                } else {
+                    println("⚠️ [SEARCH] API falhou com status ${response.code}, usando fallback HTML")
                 }
             } catch (e: Exception) {
-                fallbackSearch(query)
+                println("⚠️ [SEARCH] Erro na API: ${e.message}, usando fallback HTML")
             }
+            
+            // Fallback: Busca HTML
+            println("🔍 [SEARCH] Usando fallback HTML para: $query")
+            fallbackSearch(query)
+            
+        } catch (e: Exception) {
+            println("❌ [SEARCH] Erro geral: ${e.message}")
+            emptyList()
         }
     }
+}
 
-    private suspend fun fallbackSearch(query: String): List<SearchResponse> {
-        val searchUrl = "$mainUrl/search?q=${query.encodeSearchQuery()}"
-        val document = app.get(searchUrl, headers = headers, cookies = cookies).document
+private fun processSearchItem(item: ContentItem): SearchResponse? {
+    return try {
+        val title = item.title ?: item.name ?: item.originalTitle ?: item.originalName ?: return@processSearchItem null
+        val year = getYearFromDate(item.releaseDate ?: item.firstAirDate)
+        val poster = item.posterPath?.let { "https://image.tmdb.org/t/p/w500$it" }
+        val id = item.id.toString()
 
-        return document.select("a[href*='?id=']").mapNotNull { element ->
-            try {
-                val href = element.attr("href") ?: return@mapNotNull null
-                if (href.startsWith("/canal")) return@mapNotNull null
-
-                val imgElement = element.selectFirst("img")
-                val title = imgElement?.attr("alt") ?: 
-                element.selectFirst(".text-white")?.text() ?:
-                return@mapNotNull null
-
-                val poster = imgElement?.attr("src")?.let { fixUrl(it) }
-                val cleanTitle = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
-                val year = Regex("\\((\\d{4})\\)").find(title)?.groupValues?.get(1)?.toIntOrNull()
-
-                val isSeries = href.contains("type=tv") || href.contains("/tv")
-                val isMovie = href.contains("type=movie") || href.contains("/movie")
-                val isAnime = title.contains("(Anime)", ignoreCase = true) || href.contains("type=anime")
-
-                var finalUrl = fixUrl(href)
-                if (!finalUrl.contains("type=")) {
-                    when {
-                        isAnime -> finalUrl += "&type=anime"
-                        isSeries -> finalUrl += "&type=tv"
-                        isMovie -> finalUrl += "&type=movie"
-                    }
-                }
-
-                when {
-                    isAnime -> newAnimeSearchResponse(cleanTitle, finalUrl, TvType.Anime) {
-                        this.posterUrl = poster
-                        this.year = year
-                    }
-                    isSeries -> newTvSeriesSearchResponse(cleanTitle, finalUrl, TvType.TvSeries) {
-                        this.posterUrl = poster
-                        this.year = year
-                    }
-                    isMovie -> newMovieSearchResponse(cleanTitle, finalUrl, TvType.Movie) {
-                        this.posterUrl = poster
-                        this.year = year
-                    }
-                    else -> null
-                }
-            } catch (e: Exception) {
-                null
+        val type = when (item.mediaType) {
+            "movie" -> TvType.Movie
+            "tv" -> TvType.TvSeries
+            "anime" -> TvType.Anime
+            else -> when {
+                title.contains("(Anime)", ignoreCase = true) -> TvType.Anime
+                item.releaseDate != null -> TvType.Movie
+                item.firstAirDate != null -> TvType.TvSeries
+                else -> TvType.Movie
             }
         }
+
+        val slug = generateSlug(title)
+        val url = when (type) {
+            TvType.Movie -> "$mainUrl/$slug?id=$id&type=movie"
+            TvType.TvSeries -> "$mainUrl/$slug?id=$id&type=tv"
+            TvType.Anime -> "$mainUrl/$slug?id=$id&type=anime"
+            else -> "$mainUrl/$slug?id=$id&type=movie"
+        }
+
+        when (type) {
+            TvType.Movie -> newMovieSearchResponse(title, url, TvType.Movie) {
+                this.posterUrl = poster
+                this.year = year
+            }
+            TvType.TvSeries -> newTvSeriesSearchResponse(title, url, TvType.TvSeries) {
+                this.posterUrl = poster
+                this.year = year
+            }
+            TvType.Anime -> newAnimeSearchResponse(title, url, TvType.Anime) {
+                this.posterUrl = poster
+                this.year = year
+            }
+            else -> newMovieSearchResponse(title, url, TvType.Movie) {
+                this.posterUrl = poster
+                this.year = year
+            }
+        }
+    } catch (e: Exception) {
+        println("❌ [SEARCH] Erro ao processar item: ${e.message}")
+        null
     }
+}
+
 
     // ========== LOAD ==========
     override suspend fun load(url: String): LoadResponse? {
