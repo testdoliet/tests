@@ -571,75 +571,191 @@ class BetterFlix : MainAPI() {
         return episodes
     }
     
-    // TENTAR DIFERENTES ENDPOINTS DA API DO BETTERFLIX
-    val possibleEndpoints = listOf(
-        "$mainUrl/api/serie/$tmdbId",
-        "$mainUrl/api/tv/$tmdbId",
-        "$mainUrl/api/seasons/$tmdbId",
-        "$mainUrl/api/serie-details/$tmdbId",
-        "$mainUrl/api/tv-details/$tmdbId",
-        "$mainUrl/api/episodes/$tmdbId"
+    // Headers específicos para o SuperFlix (baseado no seu curl)
+    val superflixHeaders = mapOf(
+        "accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+        "accept-language" to "pt-BR",
+        "priority" to "u=0, i",
+        "referer" to "https://betterflix.vercel.app/",
+        "sec-ch-ua" to "\"Chromium\";v=\"127\", \"Not)A;Brand\";v=\"99\", \"Microsoft Edge Simulate\";v=\"127\", \"Lemur\";v=\"127\"",
+        "sec-ch-ua-mobile" to "?1",
+        "sec-ch-ua-platform" to "\"Android\"",
+        "sec-fetch-dest" to "iframe",
+        "sec-fetch-mode" to "navigate",
+        "sec-fetch-site" to "cross-site",
+        "upgrade-insecure-requests" to "1",
+        "user-agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36"
     )
     
-    for (apiUrl in possibleEndpoints) {
-        try {
-            println("🔍 [EPISODIOS] Tentando endpoint: $apiUrl")
-            
-            val response = app.get(
-                apiUrl,
-                headers = headers,
-                cookies = cookies,
-                timeout = 30
-            )
-            
-            println("✅ [EPISODIOS] Status: ${response.code}")
-            println("✅ [EPISODIOS] Content-Type: ${response.headers["content-type"]}")
-            
-            if (response.code == 200) {
-                val contentType = response.headers["content-type"] ?: ""
+    try {
+        // TENTAR DIFERENTES DOMÍNIOS DO SUPERFLIX
+        val superflixDomains = listOf(
+            "https://superflixapi.buzz",
+            "https://superflixapi.bond",
+            "https://superflixapi.asia",
+            "https://superflixapi.top"
+        )
+        
+        for (domain in superflixDomains) {
+            try {
+                // Primeiro precisamos descobrir quantas temporadas existem
+                println("🔍 [EPISODIOS] Tentando domínio: $domain")
                 
-                // Se for JSON
-                if (contentType.contains("application/json")) {
-                    val jsonText = response.text
-                    println("✅ [EPISODIOS] Recebeu JSON: ${jsonText.length} chars")
-                    println("🔍 [EPISODIOS] JSON preview: ${jsonText.take(500)}")
-                    
-                    // Tentar parsear
-                    val json = JSONObject(jsonText)
-                    
-                    // Verificar estrutura comum
-                    if (json.has("seasons") || json.has("episodes") || json.has("results")) {
-                        println("✅ [EPISODIOS] JSON parece conter dados de episódios!")
-                        // Processar aqui...
-                        break
-                    }
-                }
-                // Se for HTML
-                else if (contentType.contains("text/html")) {
+                // URL para obter dados da série (temporada 1 episódio 1)
+                val serieUrl = "$domain/serie/$tmdbId/1/1"
+                println("🔍 [EPISODIOS] URL da série: $serieUrl")
+                
+                val response = app.get(
+                    serieUrl,
+                    headers = superflixHeaders,
+                    timeout = 30
+                )
+                
+                println("✅ [EPISODIOS] Status: ${response.code}")
+                
+                if (response.code == 200) {
                     val html = response.text
-                    println("✅ [EPISODIOS] Recebeu HTML: ${html.length} chars")
+                    println("✅ [EPISODIOS] HTML recebido: ${html.length} chars")
                     
-                    // Procurar por dados embutidos
+                    // ANALISAR O HTML PARA ENCONTRAR DADOS
                     val document = Jsoup.parse(html)
+                    
+                    // MÉTODO 1: Procurar por scripts com dados
                     val scripts = document.select("script")
+                    println("🔍 [EPISODIOS] Encontrados ${scripts.size} scripts")
                     
                     for (script in scripts) {
                         val scriptText = script.html()
+                        
+                        // Procurar por dados de episódios/temporadas
                         if (scriptText.contains("ALL_EPISODES") || 
                             scriptText.contains("episodes") ||
-                            scriptText.contains("seasons")) {
-                            println("✅ [EPISODIOS] Encontrou dados em script!")
-                            // Extrair dados...
-                            break
+                            scriptText.contains("seasons") ||
+                            scriptText.contains("temporadas")) {
+                            
+                            println("✅ [EPISODIOS] Encontrou script com dados!")
+                            println("🔍 [EPISODIOS] Script preview: ${scriptText.take(500)}")
+                            
+                            // Extrair dados do script
+                            val episodeData = extractEpisodeDataFromScript(scriptText, tmdbId)
+                            episodes.addAll(episodeData)
+                            
+                            if (episodes.isNotEmpty()) {
+                                println("✅ [EPISODIOS] Extraiu ${episodes.size} episódios do script")
+                                return episodes
+                            }
+                        }
+                    }
+                    
+                    // MÉTODO 2: Procurar por elementos HTML com dados
+                    val dataElements = document.select("[data-episodes], [data-seasons], .episodes-list, .seasons-list")
+                    if (dataElements.isNotEmpty()) {
+                        println("✅ [EPISODIOS] Encontrou elementos com dados: ${dataElements.size}")
+                        // Extrair dados dos elementos...
+                    }
+                    
+                    // MÉTODO 3: Tentar API do SuperFlix (se existir)
+                    try {
+                        val apiUrl = "$domain/api/serie/$tmdbId"
+                        println("🔍 [EPISODIOS] Tentando API: $apiUrl")
+                        
+                        val apiResponse = app.get(apiUrl, headers = superflixHeaders, timeout = 30)
+                        if (apiResponse.code == 200) {
+                            val apiText = apiResponse.text
+                            println("✅ [EPISODIOS] API respondeu: ${apiText.length} chars")
+                            
+                            if (apiText.contains("{") && apiText.contains("}")) {
+                                try {
+                                    val json = JSONObject(apiText)
+                                    println("✅ [EPISODIOS] JSON parseado com sucesso!")
+                                    // Processar JSON...
+                                } catch (e: Exception) {
+                                    println("❌ [EPISODIOS] Não é JSON válido")
+                                }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        println("⚠️ [EPISODIOS] API não disponível: ${e.message}")
+                    }
+                }
+                
+            } catch (e: Exception) {
+                println("❌ [EPISODIOS] Erro no domínio $domain: ${e.message}")
+                continue
+            }
+        }
+        
+    } catch (e: Exception) {
+        println("❌ [EPISODIOS] Erro geral: ${e.message}")
+        e.printStackTrace()
+    }
+    
+    println("✅ [EPISODIOS] Total extraído: ${episodes.size} episódios")
+    return episodes
+}
+
+private fun extractEpisodeDataFromScript(scriptText: String, tmdbId: String): List<Episode> {
+    val episodes = mutableListOf<Episode>()
+    
+    try {
+        // PADRÃO 1: ALL_EPISODES = {...}
+        val pattern1 = Regex("""ALL_EPISODES\s*=\s*(\{.*?\});""", RegexOption.DOT_MATCHES_ALL)
+        val match1 = pattern1.find(scriptText)
+        
+        if (match1 != null) {
+            println("✅ [EPISODIOS] Encontrou ALL_EPISODES no script")
+            val jsonStr = match1.groupValues[1]
+            
+            try {
+                val json = JSONObject(jsonStr)
+                val keys = json.keys()
+                
+                while (keys.hasNext()) {
+                    val seasonKey = keys.next()
+                    val seasonNum = seasonKey.toIntOrNull() ?: 1
+                    
+                    val episodesArray = json.getJSONArray(seasonKey)
+                    for (i in 0 until episodesArray.length()) {
+                        try {
+                            val epObj = episodesArray.getJSONObject(i)
+                            
+                            val epNumber = epObj.optInt("epi_num", i + 1)
+                            val title = epObj.optString("title", "Episódio $epNumber")
+                            val description = epObj.optString("sinopse", "").takeIf { it.isNotBlank() }
+                            val thumbUrl = epObj.optString("thumb_url").takeIf { 
+                                it != "null" && it.isNotBlank() 
+                            }?.let {
+                                if (it.startsWith("/")) "https://image.tmdb.org/t/p/w300$it" else it
+                            }
+                            
+                            // Criar URL do episódio
+                            val episodeUrl = "https://superflixapi.buzz/serie/$tmdbId/$seasonNum/$epNumber"
+                            
+                            episodes.add(
+                                newEpisode(episodeUrl) {
+                                    this.name = title
+                                    this.season = seasonNum
+                                    this.episode = epNumber
+                                    this.description = description
+                                    this.posterUrl = thumbUrl
+                                }
+                            )
+                            
+                            println("📺 [EPISODIOS] Adicionado: S${seasonNum}E${epNumber} - $title")
+                            
+                        } catch (e: Exception) {
+                            println("❌ [EPISODIOS] Erro ao processar episódio $i: ${e.message}")
                         }
                     }
                 }
+                
+            } catch (e: Exception) {
+                println("❌ [EPISODIOS] Erro ao parsear JSON: ${e.message}")
             }
-            
-        } catch (e: Exception) {
-            println("❌ [EPISODIOS] Erro no endpoint $apiUrl: ${e.message}")
-            continue
         }
+        
+    } catch (e: Exception) {
+        println("❌ [EPISODIOS] Erro na extração do script: ${e.message}")
     }
     
     return episodes
