@@ -644,80 +644,78 @@ class BetterFlix : MainAPI() {
         return episodes
     }
 
-    // ========== LOAD LINKS (CORRIGIDO) ==========
+    // ========== LOAD LINKS (CORRIGIDO) =========
     override suspend fun loadLinks(
-        data: String,
-        isCasting: Boolean,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        return safeApiRequest(data) {
-            try {
-                println("🔗 [LINKS] Iniciando extração para: $data")
-                
-                val tmdbId = extractTmdbId(data)
-                if (tmdbId == null) {
-                    println("❌ [LINKS] TMDB ID não encontrado")
-                    return@safeApiRequest false
-                }
-                
-                println("✅ [LINKS] TMDB ID: $tmdbId")
-                
-                val type = when {
-                    data.contains("type=anime") -> "anime"
-                    data.contains("type=tv") -> "tv"
-                    else -> "movie"
-                }
-                
-                println("📋 [LINKS] Tipo: $type")
-                
-                var season: Int? = null
-                var episode: Int? = null
-                
-                if (type == "tv" || type == "anime") {
-                    season = extractSeason(data) ?: 1
-                    episode = extractEpisode(data) ?: 1
-                    
-                    println("📺 [LINKS] Episódio: Temporada $season, Episódio $episode")
-                }
-                
-                for (superflixDomain in superflixDomains) {
-                    try {
-                        println("🌐 [LINKS] Tentando domínio: $superflixDomain")
-                        
-                        val success = when (type) {
-                            "movie" -> extractMovieVideo(superflixDomain, tmdbId, callback)
-                            "tv", "anime" -> {
-                                extractSeriesVideo(superflixDomain, tmdbId, season ?: 1, episode ?: 1, callback)
-                            }
-                            else -> false
-                        }
-                        
-                        if (success) {
-                            try {
-                                addPortugueseSubtitle(tmdbId, subtitleCallback)
-                            } catch (e: Exception) {
-                                println("⚠️ [LINKS] Erro ao adicionar legenda: ${e.message}")
-                            }
-                            
-                            return@safeApiRequest true
-                        }
-                    } catch (e: Exception) {
-                        println("❌ [LINKS] Erro no domínio $superflixDomain: ${e.message}")
-                        continue
-                    }
-                }
-                
-                println("❌ [LINKS] Nenhum domínio funcionou")
+    data: String,
+    isCasting: Boolean,
+    subtitleCallback: (SubtitleFile) -> Unit,
+    callback: (ExtractorLink) -> Unit
+): Boolean {
+    return safeApiRequest(data) {
+        try {
+            println("🔗 [LINKS] Iniciando extração para: $data")
+            
+            // Extrair TMDB ID de diferentes formatos
+            val tmdbId = extractTmdbId(data)
+            if (tmdbId == null) {
+                println("❌ [LINKS] TMDB ID não encontrado na URL: $data")
                 return@safeApiRequest false
-                
-            } catch (e: Exception) {
-                println("❌ [LINKS] Erro geral: ${e.message}")
-                e.printStackTrace()
-                false
             }
+            
+            println("✅ [LINKS] TMDB ID: $tmdbId")
+            
+            // Determinar tipo baseado na URL
+            val type = extractTypeFromUrl(data)
+            println("📋 [LINKS] Tipo detectado: $type")
+            
+            // Extrair temporada e episódio (se for série)
+            var season: Int = 1
+            var episode: Int = 1
+            
+            if (type == "tv" || type == "anime") {
+                season = extractSeason(data) ?: 1
+                episode = extractEpisode(data) ?: 1
+                println("📺 [LINKS] Episódio: Temporada $season, Episódio $episode")
+            }
+            
+            // TENTAR TODOS OS DOMÍNIOS DO SUPERFLIX
+            for (superflixDomain in superflixDomains) {
+                try {
+                    println("🌐 [LINKS] Tentando domínio: $superflixDomain")
+                    
+                    val success = when (type) {
+                        "movie" -> extractMovieVideo(superflixDomain, tmdbId, callback)
+                        "tv", "anime" -> {
+                            extractSeriesVideo(superflixDomain, tmdbId, season, episode, callback)
+                        }
+                        else -> false
+                    }
+                    
+                    if (success) {
+                        try {
+                            addPortugueseSubtitle(tmdbId, subtitleCallback)
+                        } catch (e: Exception) {
+                            println("⚠️ [LINKS] Erro ao adicionar legenda: ${e.message}")
+                        }
+                        
+                        return@safeApiRequest true
+                    }
+                } catch (e: Exception) {
+                    println("❌ [LINKS] Erro no domínio $superflixDomain: ${e.message}")
+                    continue
+                }
+            }
+            
+            println("❌ [LINKS] Nenhum domínio funcionou")
+            return@safeApiRequest false
+            
+        } catch (e: Exception) {
+            println("❌ [LINKS] Erro geral: ${e.message}")
+            e.printStackTrace()
+            false
         }
     }
+}
 
     // ========== FUNÇÕES PARA FILMES ==========
     private suspend fun extractMovieVideo(
