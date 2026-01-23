@@ -182,78 +182,78 @@ class BetterFlix : MainAPI() {
         }
     }
 
-    // ========== FUNÇÃO PARA EXTRAIR SCORE DOS RESULTADOS DE BUSCA ==========
-    private fun extractScoreFromSearchElement(element: org.jsoup.nodes.Element): Score? {
-        return try {
-            // Método 1: Procurar pelo padrão específico do HTML (div com text-yellow-500 > span.font-bold)
-            val scoreContainer = element.selectFirst("""
-                div.flex.items-center.gap-1.text-yellow-500,
-                div.text-yellow-500,
-                [class*="text-yellow"]
-            """.trimIndent())
+     // ========== FUNÇÃO PARA EXTRAIR SCORE DOS RESULTADOS DE BUSCA ==========
+private fun extractScoreFromSearchElement(element: org.jsoup.nodes.Element): Score? {
+    return try {
+        // Método 1: Procurar pelo padrão específico do HTML (div com text-yellow-500 > span.font-bold)
+        val scoreContainer = element.selectFirst("""
+            div.flex.items-center.gap-1.text-yellow-500,
+            div.text-yellow-500,
+            [class*="text-yellow"]
+        """.trimIndent())
+        
+        if (scoreContainer != null) {
+            val scoreText = scoreContainer.selectFirst("span.font-bold")?.text()?.trim()
+                ?: scoreContainer.text().trim()
             
-            if (scoreContainer != null) {
-                val scoreText = scoreContainer.selectFirst("span.font-bold")?.text()?.trim()
-                    ?: scoreContainer.text().trim()
-                
-                if (scoreText.isNotBlank()) {
-                    // Extrair apenas números e ponto decimal
-                    val regex = Regex("""(\d+\.?\d*)""")
-                    val match = regex.find(scoreText)
-                    match?.let {
-                        val scoreValue = it.value.toFloatOrNull()
-                        if (scoreValue != null) {
-                            println("✅ [SEARCH-SCORE] Score encontrado: $scoreValue")
-                            return Score.from10(scoreValue)
-                        }
-                    }
-                }
-            }
-            
-            // Método 2: Procurar por estrelas (★) e extrair número
-            val starContainer = element.selectFirst("""
-                [class*="star"], 
-                [class*="rating"], 
-                [class*="score"],
-                svg + span.font-bold
-            """.trimIndent())
-            
-            if (starContainer != null) {
-                val parent = starContainer.parent()
-                val text = parent?.text() ?: starContainer.text()
+            if (scoreText.isNotBlank()) {
+                // Extrair apenas números e ponto decimal
                 val regex = Regex("""(\d+\.?\d*)""")
-                val match = regex.find(text)
+                val match = regex.find(scoreText)
                 match?.let {
                     val scoreValue = it.value.toFloatOrNull()
                     if (scoreValue != null) {
-                        println("✅ [SEARCH-SCORE] Score por estrelas: $scoreValue")
+                        println("✅ [SEARCH-SCORE] Score encontrado: $scoreValue")
                         return Score.from10(scoreValue)
                     }
                 }
             }
-            
-            // Método 3: Procurar em qualquer elemento com número de pontuação
-            val allElements = element.select("""
-                div, span, p, b, strong
-            """)
-            
-            for (el in allElements) {
-                val text = el.text().trim()
-                if (text.matches(Regex("""^\d+\.?\d*$"""))) {
-                    val scoreValue = text.toFloatOrNull()
-                    if (scoreValue != null && scoreValue >= 1 && scoreValue <= 10) {
-                        println("✅ [SEARCH-SCORE] Score genérico: $scoreValue")
-                        return Score.from10(scoreValue)
-                    }
-                }
-            }
-            
-            null
-        } catch (e: Exception) {
-            println("⚠️ [SEARCH-SCORE] Erro ao extrair score: ${e.message}")
-            null
         }
+        
+        // Método 2: Procurar por estrelas (★) e extrair número
+        val starContainer = element.selectFirst("""
+            [class*="star"], 
+            [class*="rating"], 
+            [class*="score"],
+            svg + span.font-bold
+        """.trimIndent())
+        
+        if (starContainer != null) {
+            val parent = starContainer.parent()
+            val text = parent?.text() ?: starContainer.text()
+            val regex = Regex("""(\d+\.?\d*)""")
+            val match = regex.find(text)
+            match?.let {
+                val scoreValue = it.value.toFloatOrNull()
+                if (scoreValue != null) {
+                    println("✅ [SEARCH-SCORE] Score por estrelas: $scoreValue")
+                    return Score.from10(scoreValue)
+                }
+            }
+        }
+        
+        // Método 3: Procurar em qualquer elemento com número de pontuação
+        val allElements = element.select("""
+            div, span, p, b, strong
+        """)
+        
+        for (el in allElements) {
+            val text = el.text().trim()
+            if (text.matches(Regex("""^\d+\.?\d*$"""))) {
+                val scoreValue = text.toFloatOrNull()
+                if (scoreValue != null && scoreValue >= 1 && scoreValue <= 10) {
+                    println("✅ [SEARCH-SCORE] Score genérico: $scoreValue")
+                    return Score.from10(scoreValue)
+                }
+            }
+        }
+        
+        null
+    } catch (e: Exception) {
+        println("⚠️ [SEARCH-SCORE] Erro ao extrair score: ${e.message}")
+        null
     }
+}
 
     // =============================================
     // FUNÇÕES DE RECOMENDAÇÕES
