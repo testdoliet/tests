@@ -2,13 +2,10 @@ package com.BetterFlix
 
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.cloudstream3.*
-import com.lagradost.cloudstream3.LoadResponse.Companion.addActors
-import com.lagradost.cloudstream3.LoadResponse.Companion.addTrailer
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import org.jsoup.Jsoup
 import org.json.JSONObject
-import java.util.concurrent.TimeUnit
 
 class BetterFlix : MainAPI() {
     override var mainUrl = "https://betterflix.vercel.app"
@@ -100,8 +97,7 @@ class BetterFlix : MainAPI() {
         "$mainUrl/genre/80" to "Crime",
         "$mainUrl/genre/10402" to "Musical",
         "$mainUrl/genre/10749" to "Romance",
-        "$mainUrl/animes" to "Animes",
-        "live_channels" to "Canais Ao Vivo"
+        "$mainUrl/animes" to "Animes"
     )
 
     // Modelos de dados
@@ -224,69 +220,6 @@ class BetterFlix : MainAPI() {
         }
     }
 
-    // =============================================
-    // FUNÇÕES DE CANAIS AO VIVO
-    // =============================================
-    private suspend fun fetchLiveChannels(): List<SearchResponse> {
-        return try {
-            val liveUrl = "$mainUrl/canais"
-            println("📺 [LIVE] Buscando canais ao vivo: $liveUrl")
-            
-            val response = app.get(liveUrl, headers = headers, cookies = cookies, timeout = 30)
-            
-            if (response.code != 200) {
-                println("❌ [LIVE] Falha: ${response.code}")
-                return emptyList()
-            }
-            
-            val document = response.document
-            
-            val channelElements = document.select("""
-                a[href*='canal'],
-                .channel-item,
-                .live-channel,
-                .canais-item,
-                .grid a[href*='?id=']
-            """.trimIndent())
-            
-            println("📺 [LIVE] ${channelElements.size} elementos encontrados")
-            
-            channelElements.mapIndexedNotNull { index, element ->
-                try {
-                    val href = element.attr("href") ?: return@mapIndexedNotNull null
-                    
-                    if (!href.contains("?id=") && !href.contains("canal")) {
-                        return@mapIndexedNotNull null
-                    }
-                    
-                    val fullUrl = fixUrl(href)
-                    
-                    val title = element.selectFirst("img")?.attr("alt") ?:
-                               element.selectFirst("h3, h4, .title, .channel-name")?.text() ?:
-                               element.text().trim().takeIf { it.isNotBlank() } ?:
-                               return@mapIndexedNotNull null
-                    
-                    val poster = element.selectFirst("img")?.attr("src")?.let { fixUrl(it) }
-                    
-                    println("📺 [LIVE-$index] $title - $fullUrl")
-                    
-                    newMovieSearchResponse(title, fullUrl, TvType.Movie) {
-                        this.posterUrl = poster
-                        this.year = null
-                    }
-                    
-                } catch (e: Exception) {
-                    println("❌ [LIVE] Erro ao extrair canal $index: ${e.message}")
-                    null
-                }
-            }.filterNotNull().take(20)
-            
-        } catch (e: Exception) {
-            println("❌ [LIVE] Erro: ${e.message}")
-            emptyList()
-        }
-    }
-
     // Helper para fazer requests com rate limiting
     private suspend fun <T> safeApiRequest(url: String, block: suspend () -> T): T {
         kotlinx.coroutines.delay(500)
@@ -314,10 +247,6 @@ class BetterFlix : MainAPI() {
                 request.name == "Animes" -> {
                     val animes = getAnimes()
                     items.addAll(animes)
-                }
-                request.name == "Canais Ao Vivo" -> {
-                    val liveChannels = fetchLiveChannels()
-                    items.addAll(liveChannels)
                 }
                 request.name in genreMap.values -> {
                     val genreId = genreMap.entries.find { it.value == request.name }?.key
@@ -1173,6 +1102,9 @@ class BetterFlix : MainAPI() {
             val year = getYearFromDate(item.releaseDate ?: item.firstAirDate)
             val poster = item.posterPath?.let { "https://image.tmdb.org/t/p/w500$it" }
             val id = item.id.toString()
+            
+            // Extrair rating do ContentItem
+            val rating = extractRatingFromContentItem(item)
 
             val type = when (item.mediaType) {
                 "movie" -> TvType.Movie
@@ -1198,14 +1130,17 @@ class BetterFlix : MainAPI() {
                 TvType.Movie -> newMovieSearchResponse(title, url, TvType.Movie) {
                     this.posterUrl = poster
                     this.year = year
+                    this.score = rating
                 }
                 TvType.TvSeries -> newTvSeriesSearchResponse(title, url, TvType.TvSeries) {
                     this.posterUrl = poster
                     this.year = year
+                    this.score = rating
                 }
                 TvType.Anime -> newAnimeSearchResponse(title, url, TvType.Anime) {
                     this.posterUrl = poster
                     this.year = year
+                    this.score = rating
                 }
                 else -> null
             }
