@@ -1162,20 +1162,58 @@ class BetterFlix : MainAPI() {
 
     // ========== FUNÇÕES AUXILIARES ==========
     private fun extractTmdbId(url: String): String? {
-        val idMatch = Regex("[?&]id=(\\d+)").find(url)
-        return idMatch?.groupValues?.get(1)
+    // Tentar padrão com parâmetro ?id=
+    val idMatch = Regex("[?&]id=(\\d+)").find(url)
+    if (idMatch != null) {
+        return idMatch.groupValues[1]
     }
-
-    private fun extractSeason(url: String): Int? {
-        val seasonMatch = Regex("[?&]season=(\\d+)").find(url)
-        return seasonMatch?.groupValues?.get(1)?.toIntOrNull()
+    
+    // Tentar padrão de série do SuperFlix: /serie/{tmdbId}/{season}/{episode}
+    val serieMatch = Regex("""/serie/(\d+)/\d+/\d+""").find(url)
+    if (serieMatch != null) {
+        return serieMatch.groupValues[1]
     }
-
-    private fun extractEpisode(url: String): Int? {
-        val episodeMatch = Regex("[?&]episode=(\\d+)").find(url)
-        return episodeMatch?.groupValues?.get(1)?.toIntOrNull()
+    
+    // Tentar padrão de filme do SuperFlix: /filme/{tmdbId}
+    val filmeMatch = Regex("""/filme/(\d+)""").find(url)
+    if (filmeMatch != null) {
+        return filmeMatch.groupValues[1]
     }
+    
+    return null
+}
+  private fun extractSeason(url: String): Int? {
+    // Tentar padrão com parâmetro ?season=
+    val seasonMatch = Regex("[?&]season=(\\d+)").find(url)
+    if (seasonMatch != null) {
+        return seasonMatch.groupValues[1].toIntOrNull()
+    }
+    
+    // Tentar padrão de série do SuperFlix: /serie/{tmdbId}/{season}/{episode}
+    val serieMatch = Regex("""/serie/\d+/(\d+)/(\d+)""").find(url)
+    if (serieMatch != null) {
+        return serieMatch.groupValues[1].toIntOrNull()
+    }
+    
+    return 1 // Default
+}
 
+private fun extractEpisode(url: String): Int? {
+    // Tentar padrão com parâmetro ?episode=
+    val episodeMatch = Regex("[?&]episode=(\\d+)").find(url)
+    if (episodeMatch != null) {
+        return episodeMatch.groupValues[1].toIntOrNull()
+    }
+    
+    // Tentar padrão de série do SuperFlix: /serie/{tmdbId}/{season}/{episode}
+    val serieMatch = Regex("""/serie/\d+/\d+/(\d+)""").find(url)
+    if (serieMatch != null) {
+        return serieMatch.groupValues[1].toIntOrNull()
+    }
+    
+    return 1 // Default
+}
+ 
     private fun getYearFromDate(dateString: String?): Int? {
         return try {
             dateString?.substring(0, 4)?.toIntOrNull()
