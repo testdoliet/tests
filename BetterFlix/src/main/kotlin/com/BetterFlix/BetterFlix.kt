@@ -527,9 +527,7 @@ class BetterFlix : MainAPI() {
                         this.backgroundPosterUrl = embeddedData.backdrop?.let { fixUrl(it) }
                         this.year = embeddedData.date?.substring(0, 4)?.toIntOrNull()
                         this.plot = embeddedData.bio
-                        this.rating = embeddedData.vote
                         this.tags = embeddedData.genres?.split(",")?.map { it.trim() } ?: emptyList()
-                        this.status = if (embeddedData.inProduction == true) "Em Produção" else "Lançado"
                         
                         // Extrair duração se disponível
                         val duration = extractDuration(document)
@@ -553,9 +551,7 @@ class BetterFlix : MainAPI() {
                         this.backgroundPosterUrl = embeddedData.backdrop?.let { fixUrl(it) }
                         this.year = embeddedData.date?.substring(0, 4)?.toIntOrNull()
                         this.plot = embeddedData.bio
-                        this.rating = embeddedData.vote
                         this.tags = embeddedData.genres?.split(",")?.map { it.trim() } ?: emptyList()
-                        this.status = if (embeddedData.inProduction == true) "Em Produção" else "Lançado"
                         
                         val duration = extractDuration(document)
                         this.duration = duration
