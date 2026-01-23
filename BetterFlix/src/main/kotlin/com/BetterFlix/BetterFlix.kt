@@ -1211,6 +1211,15 @@ private fun extractEpisode(url: String): Int? {
     
     return 1 // Default
 }
+private fun extractTypeFromUrl(url: String): String {
+    return when {
+        url.contains("/serie/") -> "tv"
+        url.contains("/filme/") -> "movie"
+        url.contains("type=anime") -> "anime"
+        url.contains("type=tv") -> "tv"
+        else -> "movie"
+    }
+}
  
     private fun getYearFromDate(dateString: String?): Int? {
         return try {
@@ -1220,6 +1229,8 @@ private fun extractEpisode(url: String): Int? {
         }
     }
 
+
+    
     private fun generateSlug(title: String): String {
         return title
             .lowercase()
