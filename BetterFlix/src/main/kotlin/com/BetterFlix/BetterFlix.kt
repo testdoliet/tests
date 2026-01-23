@@ -2,10 +2,7 @@ package com.BetterFlix
 
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.cloudstream3.*
-import com.lagradost.cloudstream3.LoadResponse.Companion.addActors
-import com.lagradost.cloudstream3.LoadResponse.Companion.addTrailer
 import com.lagradost.cloudstream3.utils.*
-import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import org.jsoup.Jsoup
 import org.json.JSONArray
 import org.json.JSONObject
@@ -20,35 +17,25 @@ class BetterFlix : MainAPI() {
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries, TvType.Anime)
     override val usesWebView = false
 
-    // Headers para evitar rate limiting
     private val headers = mapOf(
         "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
         "Accept" to "application/json, text/plain, */*",
         "Accept-Language" to "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
         "Referer" to "https://betterflix.vercel.app/",
-        "Origin" to "https://betterflix.vercel.app",
-        "Sec-Ch-Ua" to "\"Chromium\";v=\"127\", \"Not)A;Brand\";v=\"99\", \"Microsoft Edge Simulate\";v=\"127\", \"Lemur\";v=\"127\"",
-        "Sec-Ch-Ua-Mobile" to "?1",
-        "Sec-Ch-Ua-Platform" to "\"Android\"",
-        "Sec-Fetch-Dest" to "empty",
-        "Sec-Fetch-Mode" to "cors",
-        "Sec-Fetch-Site" to "same-origin"
+        "Origin" to "https://betterflix.vercel.app"
     )
 
-    // Cookies persistentes
     private val cookies = mapOf(
         "dom3ic8zudi28v8lr6fgphwffqoz0j6c" to "33de42d8-3e93-4249-b175-d6bf5346ae91%3A2%3A1",
         "pp_main_80d9775bdcedfb8fd29914d950374a08" to "1"
     )
 
-    // Domínios para extração de vídeo
     private val superflixDomains = listOf(
         "https://superflixapi.bond",
         "https://superflixapi.asia",
         "https://superflixapi.top"
     )
 
-    // Mapeamento de gêneros
     private val genreMap = mapOf(
         "28" to "Ação e Aventura",
         "35" to "Comédia",
@@ -73,18 +60,10 @@ class BetterFlix : MainAPI() {
         "$mainUrl/animes" to "Animes"
     )
 
-    // Modelos de dados para a API
-    data class TrendingResponse(
-        @JsonProperty("results") val results: List<ContentItem>
-    )
-
-    data class GenreResponse(
-        @JsonProperty("results") val results: List<ContentItem>
-    )
-
-    data class AnimeResponse(
-        @JsonProperty("results") val results: List<ContentItem>
-    )
+    data class TrendingResponse(@JsonProperty("results") val results: List<ContentItem>)
+    data class GenreResponse(@JsonProperty("results") val results: List<ContentItem>)
+    data class AnimeResponse(@JsonProperty("results") val results: List<ContentItem>)
+    data class SearchResponseData(@JsonProperty("results") val results: List<ContentItem>)
 
     data class ContentItem(
         @JsonProperty("id") val id: Int,
@@ -118,57 +97,45 @@ class BetterFlix : MainAPI() {
         val backdrop: String? = null
     )
 
-    // Helper para fazer requests com rate limiting
-    private suspend fun <T> safeApiRequest(url: String, block: suspend () -> T): T {
-        // Adicionar delay para evitar rate limiting
-        kotlinx.coroutines.delay(500)
-        
-        try {
-            return block()
-        } catch (e: Exception) {
-            if (e.message?.contains("429") == true) {
-                // Rate limit atingido, esperar mais tempo
-                kotlinx.coroutines.delay(2000)
-                return block()
-            }
-            throw e
-        }
-    }
+    data class EpisodeData(
+        val ID: Int,
+        val title: String,
+        val sinopse: String,
+        val item: Int,
+        val thumb_url: String?,
+        val air_date: String?,
+        val duration: Int,
+        val epi_num: Int,
+        val season: Int
+    )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val items = mutableListOf<SearchResponse>()
         
-        return safeApiRequest(request.name) {
-            when {
-                request.name == "Trending" -> {
-                    val trending = getTrending()
-                    items.addAll(trending)
-                }
-                request.name == "Animes" -> {
-                    val animes = getAnimes()
-                    items.addAll(animes)
-                }
-                request.name in genreMap.values -> {
-                    val genreId = genreMap.entries.find { it.value == request.name }?.key
-                    if (genreId != null) {
-                        val genreItems = getGenreContent(genreId)
-                        items.addAll(genreItems)
-                    }
+        when {
+            request.name == "Trending" -> {
+                val trending = getTrending()
+                items.addAll(trending)
+            }
+            request.name == "Animes" -> {
+                val animes = getAnimes()
+                items.addAll(animes)
+            }
+            request.name in genreMap.values -> {
+                val genreId = genreMap.entries.find { it.value == request.name }?.key
+                if (genreId != null) {
+                    val genreItems = getGenreContent(genreId)
+                    items.addAll(genreItems)
                 }
             }
-            
-            newHomePageResponse(request.name, items, hasNext = false)
         }
+        
+        return newHomePageResponse(request.name, items, hasNext = false)
     }
 
     private suspend fun getTrending(): List<SearchResponse> {
         val url = "$mainUrl/api/trending?type=all"
-        val response = app.get(
-            url,
-            headers = headers,
-            cookies = cookies,
-            timeout = 30
-        )
+        val response = app.get(url, headers = headers, cookies = cookies, timeout = 30)
         
         val data = response.parsedSafe<TrendingResponse>() ?: return emptyList()
         
@@ -179,7 +146,6 @@ class BetterFlix : MainAPI() {
                 val poster = item.posterPath?.let { "https://image.tmdb.org/t/p/w500$it" }
                 val id = item.id
                 
-                // Determinar tipo
                 val type = when (item.mediaType) {
                     "movie" -> TvType.Movie
                     "tv" -> TvType.TvSeries
@@ -192,7 +158,6 @@ class BetterFlix : MainAPI() {
                     }
                 }
                 
-                // Gerar URL no formato correto do site COM TYPE
                 val slug = generateSlug(title)
                 val url = when (type) {
                     TvType.Movie -> "$mainUrl/$slug?id=$id&type=movie"
@@ -227,12 +192,7 @@ class BetterFlix : MainAPI() {
 
     private suspend fun getAnimes(): List<SearchResponse> {
         val url = "$mainUrl/api/list-animes"
-        val response = app.get(
-            url,
-            headers = headers,
-            cookies = cookies,
-            timeout = 30
-        )
+        val response = app.get(url, headers = headers, cookies = cookies, timeout = 30)
         
         val data = response.parsedSafe<AnimeResponse>() ?: return emptyList()
         
@@ -243,7 +203,6 @@ class BetterFlix : MainAPI() {
                 val poster = item.posterPath?.let { "https://image.tmdb.org/t/p/w500$it" }
                 val id = item.id
                 
-                // Gerar URL no formato correto COM TYPE
                 val slug = generateSlug(title)
                 val url = "$mainUrl/$slug?id=$id&type=anime"
                 
@@ -259,12 +218,7 @@ class BetterFlix : MainAPI() {
 
     private suspend fun getGenreContent(genreId: String): List<SearchResponse> {
         val url = "$mainUrl/api/preview-genre?id=$genreId"
-        val response = app.get(
-            url,
-            headers = headers,
-            cookies = cookies,
-            timeout = 30
-        )
+        val response = app.get(url, headers = headers, cookies = cookies, timeout = 30)
         
         val data = response.parsedSafe<GenreResponse>() ?: return emptyList()
         
@@ -275,7 +229,6 @@ class BetterFlix : MainAPI() {
                 val poster = item.posterPath?.let { "https://image.tmdb.org/t/p/w500$it" }
                 val id = item.id
                 
-                // Determinar tipo
                 val type = when (item.mediaType) {
                     "movie" -> TvType.Movie
                     "tv" -> TvType.TvSeries
@@ -287,7 +240,6 @@ class BetterFlix : MainAPI() {
                     }
                 }
                 
-                // Gerar URL no formato correto COM TYPE
                 val slug = generateSlug(title)
                 val url = when (type) {
                     TvType.Movie -> "$mainUrl/$slug?id=$id&type=movie"
@@ -321,11 +273,7 @@ class BetterFlix : MainAPI() {
     }
 
     private fun getYearFromDate(dateString: String?): Int? {
-        return try {
-            dateString?.substring(0, 4)?.toIntOrNull()
-        } catch (e: Exception) {
-            null
-        }
+        return dateString?.substring(0, 4)?.toIntOrNull()
     }
 
     private fun generateSlug(title: String): String {
@@ -338,211 +286,118 @@ class BetterFlix : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        return safeApiRequest(query) {
-            // Primeiro tentar a API de busca do site
-            try {
-                val encodedQuery = URLEncoder.encode(query, "UTF-8")
-                val url = "$mainUrl/api/search?query=$encodedQuery"
-                
-                val response = app.get(
-                    url,
-                    headers = headers,
-                    cookies = cookies,
-                    timeout = 30
-                )
-                
-                val data = response.parsedSafe<SearchResponseData>() ?: return@safeApiRequest emptyList()
-                
-                return@safeApiRequest data.results.mapNotNull { item ->
-                    try {
-                        val title = item.title ?: item.name ?: item.originalTitle ?: item.originalName ?: return@mapNotNull null
-                        val year = getYearFromDate(item.releaseDate ?: item.firstAirDate)
-                        val poster = item.posterPath?.let { "https://image.tmdb.org/t/p/w500$it" }
-                        val id = item.id
-                        
-                        val type = when (item.mediaType) {
-                            "movie" -> TvType.Movie
-                            "tv" -> TvType.TvSeries
-                            "anime" -> TvType.Anime
-                            else -> when {
-                                title.contains("(Anime)", ignoreCase = true) -> TvType.Anime
-                                item.releaseDate != null -> TvType.Movie
-                                item.firstAirDate != null -> TvType.TvSeries
-                                else -> TvType.Movie
-                            }
+        try {
+            val encodedQuery = URLEncoder.encode(query, "UTF-8")
+            val url = "$mainUrl/api/search?query=$encodedQuery"
+            
+            val response = app.get(url, headers = headers, cookies = cookies, timeout = 30)
+            val data = response.parsedSafe<SearchResponseData>() ?: return emptyList()
+            
+            return data.results.mapNotNull { item ->
+                try {
+                    val title = item.title ?: item.name ?: item.originalTitle ?: item.originalName ?: return@mapNotNull null
+                    val year = getYearFromDate(item.releaseDate ?: item.firstAirDate)
+                    val poster = item.posterPath?.let { "https://image.tmdb.org/t/p/w500$it" }
+                    val id = item.id
+                    
+                    val type = when (item.mediaType) {
+                        "movie" -> TvType.Movie
+                        "tv" -> TvType.TvSeries
+                        "anime" -> TvType.Anime
+                        else -> when {
+                            title.contains("(Anime)", ignoreCase = true) -> TvType.Anime
+                            item.releaseDate != null -> TvType.Movie
+                            item.firstAirDate != null -> TvType.TvSeries
+                            else -> TvType.Movie
                         }
-                        
-                        // Gerar URL no formato correto COM TYPE
-                        val slug = generateSlug(title)
-                        val url = when (type) {
-                            TvType.Movie -> "$mainUrl/$slug?id=$id&type=movie"
-                            TvType.TvSeries -> "$mainUrl/$slug?id=$id&type=tv"
-                            TvType.Anime -> "$mainUrl/$slug?id=$id&type=anime"
-                            else -> "$mainUrl/$slug?id=$id&type=movie"
-                        }
-                        
-                        when (type) {
-                            TvType.Movie -> newMovieSearchResponse(title, url, TvType.Movie) {
-                                this.posterUrl = poster
-                                this.year = year
-                            }
-                            TvType.TvSeries -> newTvSeriesSearchResponse(title, url, TvType.TvSeries) {
-                                this.posterUrl = poster
-                                this.year = year
-                            }
-                            TvType.Anime -> newAnimeSearchResponse(title, url, TvType.Anime) {
-                                this.posterUrl = poster
-                                this.year = year
-                            }
-                            else -> newMovieSearchResponse(title, url, TvType.Movie) {
-                                this.posterUrl = poster
-                                this.year = year
-                            }
-                        }
-                    } catch (e: Exception) {
-                        null
                     }
+                    
+                    val slug = generateSlug(title)
+                    val url = when (type) {
+                        TvType.Movie -> "$mainUrl/$slug?id=$id&type=movie"
+                        TvType.TvSeries -> "$mainUrl/$slug?id=$id&type=tv"
+                        TvType.Anime -> "$mainUrl/$slug?id=$id&type=anime"
+                        else -> "$mainUrl/$slug?id=$id&type=movie"
+                    }
+                    
+                    when (type) {
+                        TvType.Movie -> newMovieSearchResponse(title, url, TvType.Movie) {
+                            this.posterUrl = poster
+                            this.year = year
+                        }
+                        TvType.TvSeries -> newTvSeriesSearchResponse(title, url, TvType.TvSeries) {
+                            this.posterUrl = poster
+                            this.year = year
+                        }
+                        TvType.Anime -> newAnimeSearchResponse(title, url, TvType.Anime) {
+                            this.posterUrl = poster
+                            this.year = year
+                        }
+                        else -> newMovieSearchResponse(title, url, TvType.Movie) {
+                            this.posterUrl = poster
+                            this.year = year
+                        }
+                    }
+                } catch (e: Exception) {
+                    null
                 }
-            } catch (e: Exception) {
-                // Fallback para busca HTML
-                fallbackSearch(query)
             }
+        } catch (e: Exception) {
+            return emptyList()
         }
     }
-
-    // Fallback caso a API de busca não esteja disponível
-    private suspend fun fallbackSearch(query: String): List<SearchResponse> {
-        val searchUrl = "$mainUrl/search?q=${URLEncoder.encode(query, "UTF-8")}"
-        val document = app.get(searchUrl, headers = headers, cookies = cookies).document
-        
-        return document.select("a[href*='?id=']").mapNotNull { element ->
-            try {
-                val href = element.attr("href") ?: return@mapNotNull null
-                if (href.startsWith("/canal")) return@mapNotNull null
-                
-                val imgElement = element.selectFirst("img")
-                val title = imgElement?.attr("alt") ?: 
-                           element.selectFirst(".text-white")?.text() ?:
-                           return@mapNotNull null
-                
-                val poster = imgElement?.attr("src")?.let { fixUrl(it) }
-                val cleanTitle = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
-                val year = Regex("\\((\\d{4})\\)").find(title)?.groupValues?.get(1)?.toIntOrNull()
-                
-                // Determinar tipo pela URL
-                val isSeries = href.contains("type=tv") || href.contains("/tv")
-                val isMovie = href.contains("type=movie") || href.contains("/movie")
-                val isAnime = title.contains("(Anime)", ignoreCase = true) || href.contains("type=anime")
-                
-                // Corrigir URL para incluir type se necessário
-                var finalUrl = fixUrl(href)
-                if (!finalUrl.contains("type=")) {
-                    when {
-                        isAnime -> finalUrl += "&type=anime"
-                        isSeries -> finalUrl += "&type=tv"
-                        isMovie -> finalUrl += "&type=movie"
-                    }
-                }
-                
-                when {
-                    isAnime -> newAnimeSearchResponse(cleanTitle, finalUrl, TvType.Anime) {
-                        this.posterUrl = poster
-                        this.year = year
-                    }
-                    isSeries -> newTvSeriesSearchResponse(cleanTitle, finalUrl, TvType.TvSeries) {
-                        this.posterUrl = poster
-                        this.year = year
-                    }
-                    isMovie -> newMovieSearchResponse(cleanTitle, finalUrl, TvType.Movie) {
-                        this.posterUrl = poster
-                        this.year = year
-                    }
-                    else -> null
-                }
-            } catch (e: Exception) {
-                null
-            }
-        }
-    }
-
-    data class SearchResponseData(
-        @JsonProperty("results") val results: List<ContentItem>
-    )
 
     // ========== LOAD() ==========
     override suspend fun load(url: String): LoadResponse? {
-        return safeApiRequest(url) {
-            try {
-                // 1. CARREGAR PÁGINA DE DETALHES DO BETTERFLIX
-                val response = app.get(url, headers = headers, cookies = cookies, timeout = 30)
-                if (response.code >= 400) return@safeApiRequest null
-                
-                val document = response.document
-                val html = response.text
-                
-                // 2. EXTRAIR DADOS DO OBJETO JSON EMBUTIDO (dadosMulti)
-                val embeddedData = extractEmbeddedData(html)
-                if (embeddedData == null) {
-                    return@safeApiRequest null
-                }
-                
-                // 3. DETERMINAR TIPO
-                val tmdbId = embeddedData.id ?: extractTmdbIdFromUrl(url)
-                val isSeries = url.contains("type=tv")
-                val isAnime = url.contains("type=anime")
-                val isMovie = !isSeries && !isAnime
-                
-                // 4. SE FOR SÉRIE/ANIME, EXTRAIR EPISÓDIOS DO SUPERFLIX
-                if (isSeries || isAnime) {
-                    val type = if (isAnime) TvType.Anime else TvType.TvSeries
-                    val episodes = extractEpisodesFromSuperflix(tmdbId, url)
-                    
-                    newTvSeriesLoadResponse(embeddedData.name ?: "Sem título", url, type, episodes) {
-                        this.posterUrl = embeddedData.poster?.let { fixUrl(it) }
-                        this.backgroundPosterUrl = embeddedData.backdrop?.let { fixUrl(it) }
-                        this.year = embeddedData.date?.substring(0, 4)?.toIntOrNull()
-                        this.plot = embeddedData.bio
-                        this.tags = embeddedData.genres?.split(",")?.map { it.trim() } ?: emptyList()
-                    }
-                } else {
-                    // PARA FILMES
-                    newMovieLoadResponse(embeddedData.name ?: "Sem título", url, TvType.Movie, url) {
-                        this.posterUrl = embeddedData.poster?.let { fixUrl(it) }
-                        this.backgroundPosterUrl = embeddedData.backdrop?.let { fixUrl(it) }
-                        this.year = embeddedData.date?.substring(0, 4)?.toIntOrNull()
-                        this.plot = embeddedData.bio
-                        this.tags = embeddedData.genres?.split(",")?.map { it.trim() } ?: emptyList()
-                    }
-                }
-            } catch (e: Exception) {
-                null
+        return try {
+            val response = app.get(url, headers = headers, cookies = cookies, timeout = 30)
+            if (response.code >= 400) return null
+            
+            val document = response.document
+            val html = response.text
+            
+            val embeddedData = extractEmbeddedData(html)
+            if (embeddedData == null) {
+                return null
             }
+            
+            val tmdbId = embeddedData.id ?: extractTmdbIdFromUrl(url)
+            val isSeries = url.contains("type=tv")
+            val isAnime = url.contains("type=anime")
+            val isMovie = !isSeries && !isAnime
+            
+            if (isSeries || isAnime) {
+                val type = if (isAnime) TvType.Anime else TvType.TvSeries
+                val episodes = extractEpisodesFromSuperflix(tmdbId, url)
+                
+                newTvSeriesLoadResponse(embeddedData.name ?: "Sem título", url, type, episodes) {
+                    this.posterUrl = embeddedData.poster?.let { fixUrl(it) }
+                    this.backgroundPosterUrl = embeddedData.backdrop?.let { fixUrl(it) }
+                    this.year = embeddedData.date?.substring(0, 4)?.toIntOrNull()
+                    this.plot = embeddedData.bio
+                    this.tags = embeddedData.genres?.split(",")?.map { it.trim() } ?: emptyList()
+                }
+            } else {
+                newMovieLoadResponse(embeddedData.name ?: "Sem título", url, TvType.Movie, url) {
+                    this.posterUrl = embeddedData.poster?.let { fixUrl(it) }
+                    this.backgroundPosterUrl = embeddedData.backdrop?.let { fixUrl(it) }
+                    this.year = embeddedData.date?.substring(0, 4)?.toIntOrNull()
+                    this.plot = embeddedData.bio
+                    this.tags = embeddedData.genres?.split(",")?.map { it.trim() } ?: emptyList()
+                }
+            }
+        } catch (e: Exception) {
+            null
         }
     }
 
-    // ========== FUNÇÕES AUXILIARES DO LOAD ==========
-
-    data class EpisodeData(
-        val ID: Int,
-        val title: String,
-        val sinopse: String,
-        val item: Int,
-        val thumb_url: String?,
-        val air_date: String?,
-        val duration: Int,
-        val epi_num: Int,
-        val season: Int
-    )
-
+    // ========== EXTRATOR DE EPISÓDIOS QUE FUNCIONA ==========
     private suspend fun extractEpisodesFromSuperflix(tmdbId: String?, baseUrl: String): List<Episode> {
         val episodes = mutableListOf<Episode>()
         
-        if (tmdbId == null) {
-            return episodes
-        }
+        if (tmdbId == null) return episodes
         
         try {
-            // Fazer requisição para o SuperFlix para obter lista de episódios
             val superflixUrl = "https://superflixapi.bond/serie/$tmdbId/1/1"
             
             val superflixHeaders = mapOf(
@@ -556,20 +411,13 @@ class BetterFlix : MainAPI() {
             )
             
             val response = app.get(superflixUrl, headers = superflixHeaders, timeout = 30)
-            
-            if (response.code >= 400) {
-                return episodes
-            }
+            if (response.code >= 400) return episodes
             
             val html = response.text
-            
-            // Extrair objeto ALL_EPISODES
             val allEpisodesData = extractAllEpisodesData(html)
-            if (allEpisodesData == null) {
-                return episodes
-            }
             
-            // Processar todas as temporadas e episódios
+            if (allEpisodesData == null) return episodes
+            
             allEpisodesData.forEach { (seasonNumber, seasonEpisodes) ->
                 val seasonNum = seasonNumber.toIntOrNull() ?: 1
                 
@@ -582,12 +430,7 @@ class BetterFlix : MainAPI() {
                             if (it.startsWith("/")) "https://image.tmdb.org/t/p/w300$it" else it 
                         }
                         
-                        // Construir URL do episódio
-                        val episodeUrl = if (tmdbId != null) {
-                            "$baseUrl&season=$seasonNum&episode=$epNumber"
-                        } else {
-                            "$baseUrl&season=$seasonNum&episode=$epNumber"
-                        }
+                        val episodeUrl = "$baseUrl&season=$seasonNum&episode=$epNumber"
                         
                         episodes.add(
                             newEpisode(episodeUrl) {
@@ -603,7 +446,6 @@ class BetterFlix : MainAPI() {
                     }
                 }
             }
-            
         } catch (e: Exception) {
             // Ignorar erro
         }
@@ -613,7 +455,6 @@ class BetterFlix : MainAPI() {
 
     private fun extractAllEpisodesData(html: String): Map<String, List<EpisodeData>>? {
         try {
-            // Procura pelo objeto ALL_EPISODES no script
             val pattern = Regex("""var\s+ALL_EPISODES\s*=\s*(\{.*?\});""", RegexOption.DOT_MATCHES_ALL)
             val match = pattern.find(html)
             
@@ -662,7 +503,6 @@ class BetterFlix : MainAPI() {
 
     private fun extractEmbeddedData(html: String): EmbeddedData? {
         try {
-            // Procura pelo objeto dadosMulti no script
             val pattern = Regex("""const dadosMulti\s*=\s*(\{.*?\});""", RegexOption.DOT_MATCHES_ALL)
             val match = pattern.find(html)
             
@@ -682,7 +522,7 @@ class BetterFlix : MainAPI() {
         return idMatch?.groupValues?.get(1)
     }
 
-    // ========== LOAD LINKS (MÉTODO QUE FUNCIONA) ==========
+    // ========== LOAD LINKS (MÉTODO ORIGINAL QUE FUNCIONA) ==========
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -690,375 +530,173 @@ class BetterFlix : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         return try {
-            // 1. EXTRAIR TMDB ID
             val tmdbId = extractTmdbId(data) ?: return false
             
-            // 2. DETERMINAR SE É SÉRIE
-            val isSeries = data.contains("type=tv") || data.contains("type=anime")
-            val season = if (isSeries) extractSeasonFromUrl(data) ?: 1 else 1
-            val episode = if (isSeries) extractEpisodeFromUrl(data) ?: 1 else 1
-            
-            // 3. OBTER O VIDEO ID DA API
-            val videoId = getVideoIdFromApi(tmdbId, isSeries, season, episode)
-            if (videoId == null) {
-                return false
+            for (superflixDomain in superflixDomains) {
+                try {
+                    val success = extractVideoFromSuperflix(superflixDomain, tmdbId, callback)
+                    if (success) {
+                        try {
+                            val subtitleUrl = "https://complicado.sbs/cdn/down/disk11/${tmdbId.substring(0, 32)}/Subtitle/subtitle_por.vtt"
+                            subtitleCallback(SubtitleFile("Português", subtitleUrl))
+                        } catch (e: Exception) {
+                            // Ignorar erro de legenda
+                        }
+                        
+                        return true
+                    }
+                } catch (e: Exception) {
+                    continue
+                }
             }
             
-            // 4. USAR A API DO SUPERFLIX PARA PEGAR O PLAYER
-            val playerResult = getSuperflixPlayer(videoId)
-            if (playerResult == null) {
-                return false
-            }
-            
-            // 5. EXTRAIR O M3U8 DO PLAYER
-            val m3u8Url = extractM3u8FromPlayer(playerResult)
-            if (m3u8Url == null) {
-                return false
-            }
-            
-            // 6. CRIAR O LINK FINAL
-            val quality = determineQuality(m3u8Url)
-            
-            // Adicionar legenda
-            try {
-                val subtitleUrl = "https://complicado.sbs/cdn/down/disk11/subtitle_por.vtt"
-                subtitleCallback(SubtitleFile("Português", subtitleUrl))
-            } catch (e: Exception) {
-                // Ignorar erro de legenda
-            }
-            
-            // Criar ExtractorLink
-            newExtractorLink(name, "SuperFlix ($quality)", m3u8Url, ExtractorLinkType.M3U8) {
-                referer = "https://superflixapi.bond/"
-                this.quality = quality
-            }.also { callback(it) }
-            
-            true
-            
+            false
         } catch (e: Exception) {
             false
         }
     }
 
-    // ========== FUNÇÕES AUXILIARES DO LOAD LINKS ==========
-
     private fun extractTmdbId(url: String): String? {
-        val match = Regex("[?&]id=(\\d+)").find(url)
-        return match?.groupValues?.get(1)
+        val idMatch = Regex("[?&]id=(\\d+)").find(url)
+        return idMatch?.groupValues?.get(1)
     }
 
-    private fun extractSeasonFromUrl(url: String): Int? {
-        val match = Regex("[?&]season=(\\d+)").find(url)
-        return match?.groupValues?.get(1)?.toIntOrNull()
-    }
-
-    private fun extractEpisodeFromUrl(url: String): Int? {
-        val match = Regex("[?&]episode=(\\d+)").find(url)
-        return match?.groupValues?.get(1)?.toIntOrNull()
-    }
-
-    // 1. OBTER VIDEO ID DA API
-    private suspend fun getVideoIdFromApi(tmdbId: String, isSeries: Boolean, season: Int = 1, episode: Int = 1): String? {
-        val apiUrl = "https://superflixapi.bond/api"
-        
-        val headers = mapOf(
-            "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
-            "Accept" to "application/json, text/plain, */*",
-            "Accept-Language" to "pt-BR",
-            "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8",
-            "Origin" to "https://superflixapi.bond",
-            "Referer" to "https://superflixapi.bond/",
-            "X-Requested-With" to "XMLHttpRequest"
-        )
-        
-        // Tentar diferentes métodos
-        val methods = listOf(
-            // Método 1: Para filmes
-            if (!isSeries) {
-                mapOf(
-                    "action" to "getMovie",
-                    "tmdb_id" to tmdbId
-                )
-            } else {
-                // Método 2: Para séries
-                mapOf(
-                    "action" to "getEpisode",
-                    "tmdb_id" to tmdbId,
-                    "season" to season.toString(),
-                    "episode" to episode.toString()
-                )
-            },
-            
-            // Método 3: Alternativo
-            mapOf(
-                "action" to "getVideo",
-                "id" to tmdbId,
-                "type" to if (isSeries) "tv" else "movie"
-            ),
-            
-            // Método 4: Mais direto
-            mapOf(
-                "action" to "getPlayer",
-                "tmdb_id" to tmdbId
-            )
-        )
-        
-        for (data in methods) {
-            try {
-                val response = app.post(apiUrl, data = data, headers = headers, timeout = 30)
-                
-                if (response.code == 200) {
-                    val json = JSONObject(response.text)
-                    
-                    // Verificar diferentes formatos de resposta
-                    val videoId = json.optString("video_id")
-                        .takeIf { it.isNotBlank() && it != "null" }
-                        ?: json.optJSONObject("data")?.optString("video_id")
-                        ?: json.optString("id")
-                        ?: json.optJSONObject("player")?.optString("video_id")
-                    
-                    if (videoId != null && videoId.isNotBlank() && videoId != "null") {
-                        return videoId
-                    }
-                }
-                
-            } catch (e: Exception) {
-                continue
-            }
-        }
-        
-        return null
-    }
-
-    // 2. OBTER PLAYER DO SUPERFLIX
-    private suspend fun getSuperflixPlayer(videoId: String): String? {
-        val apiUrl = "https://superflixapi.bond/api"
-        
-        val headers = mapOf(
-            "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
-            "Accept" to "application/json, text/plain, */*",
-            "Accept-Language" to "pt-BR",
-            "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8",
-            "Origin" to "https://superflixapi.bond",
-            "Referer" to "https://superflixapi.bond/",
-            "X-Requested-With" to "XMLHttpRequest"
-        )
-        
-        val data = mapOf(
-            "action" to "getPlayer",
-            "video_id" to videoId
-        )
-        
+    private suspend fun extractVideoFromSuperflix(
+        domain: String,
+        tmdbId: String,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
         try {
-            val response = app.post(apiUrl, data = data, headers = headers, timeout = 30)
+            val possibleVideoIds = listOf("303309", "351944")
             
-            if (response.code == 200) {
-                val json = JSONObject(response.text)
-                val errors = json.optString("errors", "1")
+            for (videoId in possibleVideoIds) {
+                val apiUrl = "$domain/api"
                 
-                if (errors == "0") {
-                    val playerData = json.optJSONObject("data")
-                    if (playerData != null) {
-                        // Extrair video_url ou embed_code
-                        val videoUrl = playerData.optString("video_url")
-                        val embedCode = playerData.optString("embed_code")
-                        
-                        return videoUrl.takeIf { it.isNotBlank() } ?: embedCode
+                val apiHeaders = mapOf(
+                    "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
+                    "Accept" to "application/json, text/plain, */*",
+                    "Accept-Language" to "pt-BR",
+                    "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8",
+                    "Origin" to domain,
+                    "Referer" to "$domain/filme/$tmdbId",
+                    "X-Requested-With" to "XMLHttpRequest"
+                )
+                
+                val apiData = mapOf(
+                    "action" to "getPlayer",
+                    "video_id" to videoId
+                )
+                
+                try {
+                    val apiResponse = app.post(apiUrl, data = apiData, headers = apiHeaders, timeout = 30)
+                    
+                    if (apiResponse.code >= 400) {
+                        continue
                     }
+                    
+                    val apiJson = JSONObject(apiResponse.text)
+                    val errors = apiJson.optString("errors", "1")
+                    val message = apiJson.optString("message", "")
+                    
+                    if (errors == "1" || message != "success") {
+                        continue
+                    }
+                    
+                    val videoUrl = apiJson.optJSONObject("data")?.optString("video_url")
+                    if (videoUrl.isNullOrEmpty()) {
+                        continue
+                    }
+                    
+                    val hash = extractHashFromVideoUrl(videoUrl)
+                    if (hash == null) {
+                        continue
+                    }
+                    
+                    val playerResult = requestPlayerHash(hash, callback)
+                    if (playerResult) {
+                        return true
+                    }
+                    
+                } catch (e: Exception) {
+                    continue
                 }
             }
+            
+            return false
             
         } catch (e: Exception) {
-            return null
+            return false
         }
-        
-        return null
     }
 
-    // 3. EXTRAIR M3U8 DO PLAYER
-    private suspend fun extractM3u8FromPlayer(playerData: String): String? {
-        // Se já for uma URL direta
-        if (playerData.startsWith("http") && (playerData.contains(".m3u8") || playerData.contains("video/"))) {
-            return extractM3u8FromVideoUrl(playerData)
-        }
-        
-        // Se for código embed, extrair URL do iframe
-        if (playerData.contains("<iframe")) {
-            val srcMatch = Regex("""src=["']([^"']+)["']""").find(playerData)
-            val iframeSrc = srcMatch?.groupValues?.get(1)
-            
-            if (iframeSrc != null) {
-                return extractM3u8FromIframe(iframeSrc)
+    private fun extractHashFromVideoUrl(videoUrl: String): String? {
+        return when {
+            videoUrl.contains("/video/") -> {
+                videoUrl.substringAfter("/video/").substringBefore("?")
             }
-        }
-        
-        // Procurar URL em qualquer formato
-        val urlPattern = Regex("""(https?://[^\s"']+)""")
-        val matches = urlPattern.findAll(playerData).toList()
-        
-        for (match in matches) {
-            val url = match.groupValues[1]
-            if (url.contains("superflixapi") || url.contains("llanfair") || url.contains("video/")) {
-                val m3u8 = extractM3u8FromVideoUrl(url)
-                if (m3u8 != null) return m3u8
+            videoUrl.contains("/m/") -> {
+                videoUrl.substringAfter("/m/").substringBefore("?")
             }
+            else -> null
         }
-        
-        return null
     }
 
-    // 4. EXTRAIR M3U8 DE VIDEO URL
-    private suspend fun extractM3u8FromVideoUrl(videoUrl: String): String? {
+    private suspend fun requestPlayerHash(
+        hash: String,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
         try {
-            // Se for uma URL direta do player
-            if (videoUrl.contains("/player/") || videoUrl.contains("do=getVideo")) {
-                return extractFromPlayerApi(videoUrl)
-            }
+            val playerDomain = "https://llanfairpwllgwyngy.com"
+            val playerUrl = "$playerDomain/player/index.php?data=$hash&do=getVideo"
             
-            // Se for uma URL de hash
-            if (videoUrl.contains("/video/") || videoUrl.contains("/m/")) {
-                return extractFromHashUrl(videoUrl)
-            }
-            
-            // Tentar acessar diretamente
-            val headers = mapOf(
+            val playerHeaders = mapOf(
                 "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
                 "Accept" to "*/*",
-                "Referer" to "https://superflixapi.bond/"
-            )
-            
-            val response = app.get(videoUrl, headers = headers, timeout = 30)
-            
-            if (response.code == 200) {
-                val html = response.text
-                
-                // Procurar m3u8 no HTML
-                val patterns = listOf(
-                    Regex("""["']file["']\s*:\s*["'](https?://[^"']+\.m3u8[^"']*)["']"""),
-                    Regex("""["']src["']\s*:\s*["'](https?://[^"']+\.m3u8[^"']*)["']"""),
-                    Regex("""(https?://[^"\s]+\.m3u8[^"\s]*)""")
-                )
-                
-                for (pattern in patterns) {
-                    val match = pattern.find(html)
-                    if (match != null) {
-                        return match.groupValues[1]
-                    }
-                }
-            }
-            
-        } catch (e: Exception) {
-            return null
-        }
-        
-        return null
-    }
-
-    // 5. EXTRAIR DE PLAYER API
-    private suspend fun extractFromPlayerApi(playerUrl: String): String? {
-        try {
-            val headers = mapOf(
-                "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
-                "Accept" to "application/json, text/plain, */*",
+                "Accept-Language" to "pt-BR",
                 "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8",
-                "Origin" to "https://llanfairpwllgwyngy.com",
-                "Referer" to "https://llanfairpwllgwyngy.com/",
+                "Origin" to playerDomain,
+                "Referer" to "$playerDomain/",
                 "X-Requested-With" to "XMLHttpRequest"
             )
             
-            // Extrair hash da URL
-            val hash = when {
-                playerUrl.contains("data=") -> Regex("data=([^&]+)").find(playerUrl)?.groupValues?.get(1)
-                playerUrl.contains("/video/") -> playerUrl.substringAfter("/video/").substringBefore("?")
-                else -> null
-            }
-            
-            if (hash == null) {
-                return null
-            }
-            
-            val apiUrl = "https://llanfairpwllgwyngy.com/player/index.php?data=$hash&do=getVideo"
-            val data = mapOf("hash" to hash, "r" to "")
-            
-            val response = app.post(apiUrl, data = data, headers = headers, timeout = 30)
-            
-            if (response.code == 200) {
-                val json = JSONObject(response.text)
-                val m3u8 = json.optString("securedLink")
-                    .takeIf { it.isNotBlank() }
-                    ?: json.optString("videoSource")
-                
-                if (m3u8.isNotBlank()) {
-                    return m3u8
-                }
-            }
-            
-        } catch (e: Exception) {
-            return null
-        }
-        
-        return null
-    }
-
-    // 6. EXTRAIR DE IFRAME
-    private suspend fun extractM3u8FromIframe(iframeSrc: String): String? {
-        try {
-            val headers = mapOf(
-                "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
-                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-                "Referer" to "https://superflixapi.bond/"
+            val playerData = mapOf(
+                "hash" to hash,
+                "r" to ""
             )
             
-            val response = app.get(iframeSrc, headers = headers, timeout = 30)
+            val playerResponse = app.post(playerUrl, data = playerData, headers = playerHeaders, timeout = 30)
             
-            if (response.code == 200) {
-                val html = response.text
-                
-                // Procurar m3u8
-                val patterns = listOf(
-                    Regex("""["']file["']\s*:\s*["'](https?://[^"']+\.m3u8[^"']*)["']"""),
-                    Regex("""(https?://[^"\s]+\.m3u8[^"\s]*)""")
-                )
-                
-                for (pattern in patterns) {
-                    val match = pattern.find(html)
-                    if (match != null) {
-                        return match.groupValues[1]
-                    }
-                }
+            if (playerResponse.code >= 400) {
+                return false
             }
             
+            val playerJson = JSONObject(playerResponse.text)
+            val m3u8Url = playerJson.optString("securedLink")
+                .takeIf { it.isNotBlank() }
+                ?: playerJson.optString("videoSource")
+                    .takeIf { it.isNotBlank() }
+            
+            if (m3u8Url.isNullOrBlank()) {
+                return false
+            }
+            
+            val quality = when {
+                m3u8Url.contains("1080") -> Qualities.P1080.value
+                m3u8Url.contains("720") -> Qualities.P720.value
+                m3u8Url.contains("480") -> Qualities.P480.value
+                m3u8Url.contains("360") -> Qualities.P360.value
+                else -> Qualities.P720.value
+            }
+            
+            newExtractorLink(name, "SuperFlix ($quality)", m3u8Url, ExtractorLinkType.M3U8) {
+                referer = "$playerDomain/"
+                this.quality = quality
+            }.also { callback(it) }
+            
+            return true
+            
         } catch (e: Exception) {
-            return null
-        }
-        
-        return null
-    }
-
-    // 7. EXTRAIR DE HASH URL
-    private suspend fun extractFromHashUrl(hashUrl: String): String? {
-        // Extrair hash
-        val hash = when {
-            hashUrl.contains("/video/") -> hashUrl.substringAfter("/video/").substringBefore("?")
-            hashUrl.contains("/m/") -> hashUrl.substringAfter("/m/").substringBefore("?")
-            else -> null
-        }
-        
-        if (hash != null) {
-            return extractFromPlayerApi("https://llanfairpwllgwyngy.com/player/index.php?data=$hash&do=getVideo")
-        }
-        
-        return null
-    }
-
-    // 8. DETERMINAR QUALIDADE
-    private fun determineQuality(m3u8Url: String): Int {
-        return when {
-            m3u8Url.contains("1080") -> Qualities.P1080.value
-            m3u8Url.contains("720") -> Qualities.P720.value
-            m3u8Url.contains("480") -> Qualities.P480.value
-            m3u8Url.contains("360") -> Qualities.P360.value
-            else -> Qualities.P720.value
+            return false
         }
     }
 }
