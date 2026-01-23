@@ -182,6 +182,79 @@ class BetterFlix : MainAPI() {
         }
     }
 
+    // ========== FUNÇÃO PARA EXTRAIR SCORE DOS RESULTADOS DE BUSCA ==========
+    private fun extractScoreFromSearchElement(element: org.jsoup.nodes.Element): Score? {
+        return try {
+            // Método 1: Procurar pelo padrão específico do HTML (div com text-yellow-500 > span.font-bold)
+            val scoreContainer = element.selectFirst("""
+                div.flex.items-center.gap-1.text-yellow-500,
+                div.text-yellow-500,
+                [class*="text-yellow"]
+            """.trimIndent())
+            
+            if (scoreContainer != null) {
+                val scoreText = scoreContainer.selectFirst("span.font-bold")?.text()?.trim()
+                    ?: scoreContainer.text().trim()
+                
+                if (scoreText.isNotBlank()) {
+                    // Extrair apenas números e ponto decimal
+                    val regex = Regex("""(\d+\.?\d*)""")
+                    val match = regex.find(scoreText)
+                    match?.let {
+                        val scoreValue = it.value.toFloatOrNull()
+                        if (scoreValue != null) {
+                            println("✅ [SEARCH-SCORE] Score encontrado: $scoreValue")
+                            return Score.from10(scoreValue)
+                        }
+                    }
+                }
+            }
+            
+            // Método 2: Procurar por estrelas (★) e extrair número
+            val starContainer = element.selectFirst("""
+                [class*="star"], 
+                [class*="rating"], 
+                [class*="score"],
+                svg + span.font-bold
+            """.trimIndent())
+            
+            if (starContainer != null) {
+                val parent = starContainer.parent()
+                val text = parent?.text() ?: starContainer.text()
+                val regex = Regex("""(\d+\.?\d*)""")
+                val match = regex.find(text)
+                match?.let {
+                    val scoreValue = it.value.toFloatOrNull()
+                    if (scoreValue != null) {
+                        println("✅ [SEARCH-SCORE] Score por estrelas: $scoreValue")
+                        return Score.from10(scoreValue)
+                    }
+                }
+            }
+            
+            // Método 3: Procurar em qualquer elemento com número de pontuação
+            val allElements = element.select("""
+                div, span, p, b, strong
+            """)
+            
+            for (el in allElements) {
+                val text = el.text().trim()
+                if (text.matches(Regex("""^\d+\.?\d*$"""))) {
+                    val scoreValue = text.toFloatOrNull()
+                    if (scoreValue != null && scoreValue >= 1 && scoreValue <= 10) {
+                        println("✅ [SEARCH-SCORE] Score genérico: $scoreValue")
+                        return Score.from10(scoreValue)
+                    }
+                }
+            }
+            
+            null
+        } catch (e: Exception) {
+            println("⚠️ [SEARCH-SCORE] Erro ao extrair score: ${e.message}")
+            null
+        }
+    }
+
     // =============================================
     // FUNÇÕES DE RECOMENDAÇÕES
     // =============================================
@@ -333,7 +406,13 @@ class BetterFlix : MainAPI() {
                 val document = response.document
                 println("✅ [SEARCH] HTML carregado")
                 
-                val resultLinks = document.select("a[href*='?id='][href*='type=']")
+                // Selecionar todos os links de resultados
+                val resultLinks = document.select("""
+                    a.group[href*='?id='],
+                    a[href*='?id='][href*='fromSearch=true'],
+                    a[href*='?id='][href*='type=']
+                """.trimIndent())
+                
                 println("🔍 [SEARCH] ${resultLinks.size} links encontrados")
                 
                 if (resultLinks.isEmpty()) {
@@ -346,43 +425,65 @@ class BetterFlix : MainAPI() {
                         val href = link.attr("href") ?: return@mapIndexedNotNull null
                         val fullUrl = fixUrl(href)
                         
+                        // Extrair ID da URL
                         val idMatch = Regex("[?&]id=(\\d+)").find(fullUrl)
                         val id = idMatch?.groupValues?.get(1) ?: return@mapIndexedNotNull null
                         
+                        // Determinar tipo
                         val type = when {
                             fullUrl.contains("type=tv") -> TvType.TvSeries
                             fullUrl.contains("type=anime") -> TvType.Anime
                             fullUrl.contains("type=movie") -> TvType.Movie
-                            else -> TvType.Movie
+                            else -> {
+                                // Verificar por elementos visuais
+                                val badge = link.selectFirst("span:contains(Série), span:contains(Filme), span:contains(Anime)")
+                                when {
+                                    badge?.text()?.contains("Série") == true -> TvType.TvSeries
+                                    badge?.text()?.contains("Anime") == true -> TvType.Anime
+                                    else -> TvType.Movie
+                                }
+                            }
                         }
                         
+                        // Extrair título
                         val title = link.selectFirst("img")?.attr("alt")?.trim() ?:
                                    link.selectFirst("h3")?.text()?.trim() ?:
+                                   link.selectFirst(".text-sm.font-bold")?.text()?.trim() ?:
                                    link.text().trim().takeIf { it.isNotBlank() } ?:
                                    return@mapIndexedNotNull null
                         
+                        // Extrair poster
                         val poster = link.selectFirst("img[src*='image.tmdb.org']")?.attr("src")?.let { fixUrl(it) }
                         
+                        // Limpar título (remover ano se houver)
                         val cleanTitle = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
                         
+                        // Extrair ano
                         var year: Int? = null
                         val yearMatch = Regex("\\((\\d{4})\\)").find(title)
                         year = yearMatch?.groupValues?.get(1)?.toIntOrNull()
                         
-                        println("✅ [SEARCH-$index] '$cleanTitle' - $type - ID: $id")
+                        // Extrair score do elemento HTML
+                        val score = extractScoreFromSearchElement(link)
                         
+                        println("✅ [SEARCH-$index] '$cleanTitle' - $type - ID: $id - Score: ${score?.value ?: "N/A"}")
+                        
+                        // Criar SearchResponse com score
                         when (type) {
                             TvType.Anime -> newAnimeSearchResponse(cleanTitle, fullUrl, TvType.Anime) {
                                 this.posterUrl = poster
                                 this.year = year
+                                this.score = score
                             }
                             TvType.TvSeries -> newTvSeriesSearchResponse(cleanTitle, fullUrl, TvType.TvSeries) {
                                 this.posterUrl = poster
                                 this.year = year
+                                this.score = score
                             }
                             TvType.Movie -> newMovieSearchResponse(cleanTitle, fullUrl, TvType.Movie) {
                                 this.posterUrl = poster
                                 this.year = year
+                                this.score = score
                             }
                             else -> null
                         }
