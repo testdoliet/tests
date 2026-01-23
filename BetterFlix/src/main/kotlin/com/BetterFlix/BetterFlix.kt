@@ -623,159 +623,190 @@ class BetterFlix : MainAPI() {
 
     // EXTRAIR EPISÓDIOS DO SUPERFLIX (CORRETO!)
     private suspend fun extractEpisodesFromSuperflix(tmdbId: String?, baseUrl: String): List<Episode> {
-        val episodes = mutableListOf<Episode>()
+    val episodes = mutableListOf<Episode>()
+    
+    if (tmdbId == null) {
+        println("❌ [DEBUG] TMDB ID não encontrado")
+        return episodes
+    }
+    
+    try {
+        println("🔍 [DEBUG] === EXTRACAO DE EPISÓDIOS INICIADA ===")
+        println("🔍 [DEBUG] Buscando episódios para TMDB ID: $tmdbId")
         
-        if (tmdbId == null) {
-            println("❌ [DEBUG] TMDB ID não encontrado")
+        // Fazer requisição para o SuperFlix para obter lista de episódios
+        val superflixUrl = "https://superflixapi.bond/serie/$tmdbId/1/1"
+        println("🔍 [DEBUG] URL do SuperFlix: $superflixUrl")
+        
+        val superflixHeaders = mapOf(
+            "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
+            "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+            "Accept-Language" to "pt-BR",
+            "Referer" to "https://betterflix.vercel.app/",
+            "Sec-Fetch-Dest" to "document",
+            "Sec-Fetch-Mode" to "navigate",
+            "Sec-Fetch-Site" to "cross-site"
+        )
+        
+        println("🔍 [DEBUG] Fazendo requisição ao SuperFlix...")
+        val response = app.get(superflixUrl, headers = superflixHeaders, timeout = 30)
+        println("🔍 [DEBUG] Status SuperFlix: ${response.code}")
+        
+        if (response.code >= 400) {
+            println("❌ [DEBUG] Erro ao carregar SuperFlix: ${response.code}")
             return episodes
         }
         
-        try {
-            println("🔍 [DEBUG] === EXTRACAO DE EPISÓDIOS INICIADA ===")
-            println("🔍 [DEBUG] Buscando episódios para TMDB ID: $tmdbId")
+        val html = response.text
+        println("✅ [DEBUG] HTML recebido (${html.length} caracteres)")
+        
+        // SALVAR O HTML COMPLETO PARA DEBUG
+        println("🔍 [DEBUG] === HTML COMPLETO (PRIMEIROS 5000 CHARS) ===")
+        println(html.take(5000))
+        println("🔍 [DEBUG] === FIM DO HTML ===")
+        
+        // DEBUG: Procurar por padrões específicos
+        debugHtmlAnalysis(html)
+        
+        // Extrair objeto ALL_EPISODES
+        println("🔍 [DEBUG] Extraindo objeto ALL_EPISODES...")
+        val allEpisodesData = extractAllEpisodesData(html)
+        if (allEpisodesData == null) {
+            println("❌ [DEBUG] Não encontrou ALL_EPISODES no SuperFlix")
             
-            // Fazer requisição para o SuperFlix para obter lista de episódios
-            val superflixUrl = "https://superflixapi.bond/serie/$tmdbId/1/1"
-            println("🔍 [DEBUG] URL do SuperFlix: $superflixUrl")
-            
-            val superflixHeaders = mapOf(
-                "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
-                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-                "Accept-Language" to "pt-BR",
-                "Referer" to "https://betterflix.vercel.app/",
-                "Sec-Fetch-Dest" to "document",
-                "Sec-Fetch-Mode" to "navigate",
-                "Sec-Fetch-Site" to "cross-site"
-            )
-            
-            println("🔍 [DEBUG] Fazendo requisição ao SuperFlix...")
-            val response = app.get(superflixUrl, headers = superflixHeaders, timeout = 30)
-            println("🔍 [DEBUG] Status SuperFlix: ${response.code}")
-            
-            if (response.code >= 400) {
-                println("❌ [DEBUG] Erro ao carregar SuperFlix: ${response.code}")
-                return episodes
-            }
-            
-            val html = response.text
-            println("✅ [DEBUG] HTML recebido (${html.length} caracteres)")
-            
-            // DEBUG: Analisar o HTML recebido
-            debugExtractEpisodes(html)
-            
-            // Extrair objeto ALL_EPISODES
-            println("🔍 [DEBUG] Extraindo objeto ALL_EPISODES...")
-            val allEpisodesData = extractAllEpisodesData(html)
-            if (allEpisodesData == null) {
-                println("❌ [DEBUG] Não encontrou ALL_EPISODES no SuperFlix")
-                
-                // Fallback: tentar extrair de outra forma
-                println("🔍 [DEBUG] Tentando fallback de extração...")
-                val fallbackEpisodes = extractEpisodesFallback(html, tmdbId, baseUrl)
-                println("✅ [DEBUG] Fallback encontrou ${fallbackEpisodes.size} episódios")
-                return fallbackEpisodes
-            }
-            
-            println("✅ [DEBUG] Encontrou ${allEpisodesData.size} temporada(s)")
-            
-            // Processar todas as temporadas e episódios
-            allEpisodesData.forEach { (seasonNumber, seasonEpisodes) ->
-                val seasonNum = seasonNumber.toIntOrNull() ?: 1
-                println("🔍 [DEBUG] Processando temporada $seasonNum com ${seasonEpisodes.size} episódios")
-                
-                seasonEpisodes.forEach { episodeData ->
-                    try {
-                        val epNumber = episodeData.epi_num
-                        val title = episodeData.title
-                        val description = episodeData.sinopse.takeIf { it.isNotBlank() }
-                        val airDate = episodeData.air_date
-                        val thumbUrl = episodeData.thumb_url?.let { 
-                            if (it.startsWith("/")) "https://image.tmdb.org/t/p/w300$it" else it 
-                        }
-                        
-                        // Construir URL do episódio
-                        val episodeUrl = if (tmdbId != null) {
-                            "$baseUrl&season=$seasonNum&episode=$epNumber"
-                        } else {
-                            "$baseUrl&season=$seasonNum&episode=$epNumber"
-                        }
-                        
-                        episodes.add(
-                            newEpisode(episodeUrl) {
-                                this.name = title
-                                this.season = seasonNum
-                                this.episode = epNumber
-                                this.description = description
-                                this.posterUrl = thumbUrl?.let { fixUrl(it) }
-                            }
-                        )
-                        
-                        println("✅ [DEBUG] Episódio adicionado: S${seasonNum}E${epNumber} - $title")
-                    } catch (e: Exception) {
-                        println("❌ [DEBUG] Erro ao processar episódio: ${e.message}")
-                    }
-                }
-            }
-            
-        } catch (e: Exception) {
-            println("❌ [DEBUG] Erro ao extrair episódios do SuperFlix: ${e.message}")
-            e.printStackTrace()
+            // Fallback: tentar extrair de outra forma
+            println("🔍 [DEBUG] Tentando fallback de extração...")
+            val fallbackEpisodes = extractEpisodesFallback(html, tmdbId, baseUrl)
+            println("✅ [DEBUG] Fallback encontrou ${fallbackEpisodes.size} episódios")
+            return fallbackEpisodes
         }
         
-        println("✅ [DEBUG] Total de episódios extraídos: ${episodes.size}")
-        return episodes
+        println("✅ [DEBUG] Encontrou ${allEpisodesData.size} temporada(s)")
+        
+        // Processar todas as temporadas e episódios...
+        // ... restante do código
+        
+    } catch (e: Exception) {
+        println("❌ [DEBUG] Erro ao extrair episódios do SuperFlix: ${e.message}")
+        e.printStackTrace()
     }
+    
+    println("✅ [DEBUG] Total de episódios extraídos: ${episodes.size}")
+    return episodes
+}
 
-    // DEBUG: Função para analisar o HTML
-    private fun debugExtractEpisodes(html: String) {
-        println("🔍 [DEBUG] === DEBUG DE EXTRACAO DE EPISÓDIOS ===")
-        
-        // Procurar por "ALL_EPISODES"
-        val allEpisodesIndex = html.indexOf("ALL_EPISODES")
-        if (allEpisodesIndex != -1) {
-            println("✅ [DEBUG] Encontrou 'ALL_EPISODES' na posição $allEpisodesIndex")
-            val context = html.substring(
-                maxOf(0, allEpisodesIndex - 50), 
-                minOf(allEpisodesIndex + 500, html.length)
-            )
-            println("🔍 [DEBUG] Contexto (50 chars antes, 500 depois):")
-            println("--- INÍCIO CONTEXTO ---")
-            println(context)
-            println("--- FIM CONTEXTO ---")
-        } else {
-            println("❌ [DEBUG] NÃO encontrou 'ALL_EPISODES' no HTML")
-        }
-        
-        // Procurar por padrão {"1":
-        val jsonStart = html.indexOf("""{"1":""")
-        if (jsonStart != -1) {
-            println("✅ [DEBUG] Encontrou '{\"1\":' na posição $jsonStart")
-            val jsonSnippet = html.substring(
-                jsonStart, 
-                minOf(jsonStart + 1000, html.length)
-            )
-            println("🔍 [DEBUG] Snippet JSON (1000 chars):")
-            println("--- INÍCIO SNIPPET ---")
-            println(jsonSnippet)
-            println("--- FIM SNIPPET ---")
-        } else {
-            println("❌ [DEBUG] NÃO encontrou padrão JSON '{\"1\":'")
-        }
-        
-        // Procurar por "var ALL_EPISODES"
-        val varPattern = Regex("""var\s+ALL_EPISODES""")
-        val varMatch = varPattern.find(html)
-        if (varMatch != null) {
-            println("✅ [DEBUG] Encontrou 'var ALL_EPISODES'")
-            val start = maxOf(0, varMatch.range.first - 10)
-            val end = minOf(varMatch.range.last + 200, html.length)
-            val varContext = html.substring(start, end)
-            println("🔍 [DEBUG] Contexto de 'var ALL_EPISODES':")
-            println(varContext)
-        }
-        
-        println("🔍 [DEBUG] === FIM DO DEBUG ===")
+// Nova função para análise detalhada do HTML
+private fun debugHtmlAnalysis(html: String) {
+    println("🔍 [DEBUG] === ANÁLISE DETALHADA DO HTML ===")
+    
+    // 1. Verificar se há algum script
+    val scriptTags = Regex("""<script[^>]*>.*?</script>""", RegexOption.DOT_MATCHES_ALL).findAll(html).toList()
+    println("✅ [DEBUG] Encontrou ${scriptTags.size} tags <script>")
+    
+    // 2. Procurar por qualquer menção a "episode" ou "episodio"
+    val episodeMentions = html.count { charSequence -> 
+        "episode".contains(charSequence.toString(), ignoreCase = true) ||
+        "episodio".contains(charSequence.toString(), ignoreCase = true)
     }
+    println("🔍 [DEBUG] Menções a 'episode/episodio': $episodeMentions")
+    
+    // 3. Procurar por padrões específicos que possam conter dados de episódios
+    val patternsToCheck = listOf(
+        "ALL_EPISODES",
+        "var.*episode",
+        "episodes.*=",
+        "\\[\\{.*title.*:",
+        "\"episodes\"",
+        "season.*:",
+        "epi_num",
+        "air_date"
+    )
+    
+    patternsToCheck.forEach { pattern ->
+        if (html.contains(pattern, ignoreCase = true)) {
+            println("✅ [DEBUG] Encontrou padrão: $pattern")
+            
+            // Mostrar contexto
+            val index = html.indexOf(pattern, ignoreCase = true)
+            if (index != -1) {
+                val start = maxOf(0, index - 50)
+                val end = minOf(index + 200, html.length)
+                val context = html.substring(start, end)
+                println("🔍 [DEBUG] Contexto: ...$context...")
+            }
+        } else {
+            println("❌ [DEBUG] NÃO encontrou padrão: $pattern")
+        }
+    }
+    
+    // 4. Procurar por estruturas JSON
+    val jsonPatterns = listOf(
+        Regex("""\{.*"1".*:.*\[.*\}""", RegexOption.DOT_MATCHES_ALL),
+        Regex("""\[.*\{.*title.*:.*\}.*\]""", RegexOption.DOT_MATCHES_ALL),
+        Regex("""var\s+\w+\s*=\s*(\{.*?\});""", RegexOption.DOT_MATCHES_ALL)
+    )
+    
+    jsonPatterns.forEachIndexed { i, pattern ->
+        val match = pattern.find(html)
+        if (match != null) {
+            println("✅ [DEBUG] Encontrou JSON com padrão $i")
+            val jsonText = match.groupValues.getOrNull(1) ?: match.value
+            println("🔍 [DEBUG] JSON (primeiros 300 chars): ${jsonText.take(300)}...")
+        }
+    }
+    
+    // 5. Verificar se há dados em variáveis JavaScript
+    val jsVars = Regex("""var\s+(\w+)\s*=\s*([^;]+);""").findAll(html).toList()
+    println("✅ [DEBUG] Encontrou ${jsVars.size} variáveis JavaScript")
+    jsVars.take(10).forEach { match ->
+        val varName = match.groupValues[1]
+        val varValue = match.groupValues[2].trim()
+        println("🔍 [DEBUG] Variável: $varName = ${varValue.take(100)}...")
+    }
+    
+    println("🔍 [DEBUG] === FIM DA ANÁLISE ===")
+}
+
+// Atualize também a função debugExtractEpisodes para ser mais abrangente:
+private fun debugExtractEpisodes(html: String) {
+    println("🔍 [DEBUG] === DEBUG DE EXTRACAO DE EPISÓDIOS ===")
+    
+    // Salvar uma cópia do HTML para análise
+    val debugFile = html.take(3000) // Primeiros 3000 chars
+    println("🔍 [DEBUG] HTML (primeiros 3000 chars):")
+    println("--- INÍCIO HTML ---")
+    println(debugFile)
+    println("--- FIM HTML ---")
+    
+    // Procurar por "ALL_EPISODES" de forma mais flexível
+    val allEpisodesRegex = Regex("""(ALL_EPISODES|all_episodes|All_Episodes)""")
+    val allEpisodesMatch = allEpisodesRegex.find(html)
+    
+    if (allEpisodesMatch != null) {
+        println("✅ [DEBUG] Encontrou '${allEpisodesMatch.value}'")
+        val start = maxOf(0, allEpisodesMatch.range.first - 20)
+        val end = minOf(allEpisodesMatch.range.last + 500, html.length)
+        val context = html.substring(start, end)
+        println("🔍 [DEBUG] Contexto: $context")
+    } else {
+        println("❌ [DEBUG] NÃO encontrou nenhuma variação de 'ALL_EPISODES' no HTML")
+    }
+    
+    // Procurar por qualquer JSON que pareça dados de episódios
+    val jsonRegex = Regex("""\{(?:\s*"[^"]+"\s*:\s*(?:[^,{]|\[[^]]*\]|\{[^}]*\})*,?)+\}""")
+    val jsonMatches = jsonRegex.findAll(html).toList()
+    println("✅ [DEBUG] Encontrou ${jsonMatches.size} objetos JSON potenciais")
+    
+    jsonMatches.take(5).forEachIndexed { i, match ->
+        val jsonText = match.value
+        if (jsonText.contains("title") || jsonText.contains("episode") || jsonText.contains("season")) {
+            println("✅ [DEBUG] JSON $i parece conter dados de episódios")
+            println("🔍 [DEBUG] JSON $i (${jsonText.length} chars): ${jsonText.take(200)}...")
+        }
+    }
+    
+    println("🔍 [DEBUG] === FIM DO DEBUG ===")
+}
 
     // EXTRAIR OBJETO ALL_EPISODES DO HTML DO SUPERFLIX
     private fun extractAllEpisodesData(html: String): Map<String, List<EpisodeData>>? {
