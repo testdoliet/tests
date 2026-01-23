@@ -638,22 +638,43 @@ class BetterFlix : MainAPI() {
         val superflixUrl = "https://superflixapi.bond/serie/$tmdbId/1/1"
         println("🔍 [DEBUG] URL do SuperFlix: $superflixUrl")
         
+        // HEADERS COMPLETOS IGUAL AO CURL
         val superflixHeaders = mapOf(
             "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
             "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
             "Accept-Language" to "pt-BR",
-            "Referer" to "https://betterflix.vercel.app/",
+            "Accept-Encoding" to "gzip, deflate, br",
+            "Referer" to "https://superflixapi.bond/serie/$tmdbId?temporada=1&episodio=1#noLink",
+            "Upgrade-Insecure-Requests" to "1",
             "Sec-Fetch-Dest" to "document",
             "Sec-Fetch-Mode" to "navigate",
-            "Sec-Fetch-Site" to "cross-site"
+            "Sec-Fetch-Site" to "same-origin",
+            "Sec-Fetch-User" to "?1",
+            "sec-ch-ua" to "\"Chromium\";v=\"127\", \"Not)A;Brand\";v=\"99\", \"Microsoft Edge Simulate\";v=\"127\", \"Lemur\";v=\"127\"",
+            "sec-ch-ua-mobile" to "?1",
+            "sec-ch-ua-platform" to "\"Android\"",
+            "Cache-Control" to "no-cache",
+            "Pragma" to "no-cache"
         )
+        
+        println("🔍 [DEBUG] Headers sendo enviados:")
+        superflixHeaders.forEach { (key, value) ->
+            println("  - $key: $value")
+        }
         
         println("🔍 [DEBUG] Fazendo requisição ao SuperFlix...")
         val response = app.get(superflixUrl, headers = superflixHeaders, timeout = 30)
         println("🔍 [DEBUG] Status SuperFlix: ${response.code}")
         
+        // Verificar headers da resposta
+        println("🔍 [DEBUG] Headers da resposta:")
+        response.headers.forEach { (key, value) ->
+            println("  - $key: $value")
+        }
+        
         if (response.code >= 400) {
             println("❌ [DEBUG] Erro ao carregar SuperFlix: ${response.code}")
+            println("🔍 [DEBUG] Mensagem: ${response.message}")
             return episodes
         }
         
@@ -661,8 +682,8 @@ class BetterFlix : MainAPI() {
         println("✅ [DEBUG] HTML recebido (${html.length} caracteres)")
         
         // SALVAR O HTML COMPLETO PARA DEBUG
-        println("🔍 [DEBUG] === HTML COMPLETO (PRIMEIROS 5000 CHARS) ===")
-        println(html.take(5000))
+        println("🔍 [DEBUG] === HTML COMPLETO (PRIMEIROS 2000 CHARS) ===")
+        println(html.take(2000))
         println("🔍 [DEBUG] === FIM DO HTML ===")
         
         // DEBUG: Procurar por padrões específicos
@@ -674,6 +695,14 @@ class BetterFlix : MainAPI() {
         if (allEpisodesData == null) {
             println("❌ [DEBUG] Não encontrou ALL_EPISODES no SuperFlix")
             
+            // Tentar buscar diretamente da API do BetterFlix
+            println("🔍 [DEBUG] Tentando buscar episódios diretamente da API...")
+            val apiEpisodes = fetchEpisodesFromBetterFlixAPI(tmdbId, baseUrl)
+            if (apiEpisodes.isNotEmpty()) {
+                println("✅ [DEBUG] API encontrou ${apiEpisodes.size} episódios")
+                return apiEpisodes
+            }
+            
             // Fallback: tentar extrair de outra forma
             println("🔍 [DEBUG] Tentando fallback de extração...")
             val fallbackEpisodes = extractEpisodesFallback(html, tmdbId, baseUrl)
@@ -683,8 +712,44 @@ class BetterFlix : MainAPI() {
         
         println("✅ [DEBUG] Encontrou ${allEpisodesData.size} temporada(s)")
         
-        // Processar todas as temporadas e episódios...
-        // ... restante do código
+        // Processar todas as temporadas e episódios
+        allEpisodesData.forEach { (seasonNumber, seasonEpisodes) ->
+            val seasonNum = seasonNumber.toIntOrNull() ?: 1
+            println("🔍 [DEBUG] Processando temporada $seasonNum com ${seasonEpisodes.size} episódios")
+            
+            seasonEpisodes.forEach { episodeData ->
+                try {
+                    val epNumber = episodeData.epi_num
+                    val title = episodeData.title
+                    val description = episodeData.sinopse.takeIf { it.isNotBlank() }
+                    val airDate = episodeData.air_date
+                    val thumbUrl = episodeData.thumb_url?.let { 
+                        if (it.startsWith("/")) "https://image.tmdb.org/t/p/w300$it" else it 
+                    }
+                    
+                    // Construir URL do episódio
+                    val episodeUrl = if (tmdbId != null) {
+                        "$baseUrl&season=$seasonNum&episode=$epNumber"
+                    } else {
+                        "$baseUrl&season=$seasonNum&episode=$epNumber"
+                    }
+                    
+                    episodes.add(
+                        newEpisode(episodeUrl) {
+                            this.name = title
+                            this.season = seasonNum
+                            this.episode = epNumber
+                            this.description = description
+                            this.posterUrl = thumbUrl?.let { fixUrl(it) }
+                        }
+                    )
+                    
+                    println("✅ [DEBUG] Episódio adicionado: S${seasonNum}E${epNumber} - $title")
+                } catch (e: Exception) {
+                    println("❌ [DEBUG] Erro ao processar episódio: ${e.message}")
+                }
+            }
+        }
         
     } catch (e: Exception) {
         println("❌ [DEBUG] Erro ao extrair episódios do SuperFlix: ${e.message}")
@@ -695,117 +760,178 @@ class BetterFlix : MainAPI() {
     return episodes
 }
 
-// Nova função para análise detalhada do HTML
+// Nova função para buscar episódios da API do BetterFlix como fallback
+private suspend fun fetchEpisodesFromBetterFlixAPI(tmdbId: String, baseUrl: String): List<Episode> {
+    val episodes = mutableListOf<Episode>()
+    
+    try {
+        println("🔍 [DEBUG] Tentando API do BetterFlix para episódios...")
+        
+        // URL da API do BetterFlix para episódios
+        val apiUrl = "https://betterflix.vercel.app/api/serie-episodes?id=$tmdbId"
+        println("🔍 [DEBUG] API URL: $apiUrl")
+        
+        val apiHeaders = mapOf(
+            "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
+            "Accept" to "application/json, text/plain, */*",
+            "Accept-Language" to "pt-BR",
+            "Referer" to "https://betterflix.vercel.app/",
+            "Origin" to "https://betterflix.vercel.app"
+        )
+        
+        val response = app.get(apiUrl, headers = apiHeaders, timeout = 30)
+        println("🔍 [DEBUG] Status da API: ${response.code}")
+        
+        if (response.code >= 400) {
+            println("❌ [DEBUG] Erro na API: ${response.code}")
+            return episodes
+        }
+        
+        val jsonText = response.text
+        println("🔍 [DEBUG] Resposta da API (primeiros 500 chars): ${jsonText.take(500)}...")
+        
+        // Tentar parsear como JSON
+        try {
+            val jsonObject = JSONObject(jsonText)
+            
+            // Tentar diferentes estruturas possíveis
+            if (jsonObject.has("episodes")) {
+                val episodesArray = jsonObject.getJSONArray("episodes")
+                println("✅ [DEBUG] Encontrou ${episodesArray.length()} episódios na API")
+                
+                for (i in 0 until episodesArray.length()) {
+                    try {
+                        val episodeObj = episodesArray.getJSONObject(i)
+                        val epNumber = episodeObj.optInt("episode_number", i + 1)
+                        val title = episodeObj.optString("title", "Episódio $epNumber")
+                        val airDate = episodeObj.optString("air_date")
+                        val overview = episodeObj.optString("overview")
+                        
+                        val episodeUrl = "$baseUrl&season=1&episode=$epNumber"
+                        
+                        episodes.add(
+                            newEpisode(episodeUrl) {
+                                this.name = title
+                                this.season = 1
+                                this.episode = epNumber
+                                this.description = overview
+                            }
+                        )
+                        
+                        println("✅ [DEBUG] API - Episódio adicionado: E$epNumber - $title")
+                    } catch (e: Exception) {
+                        println("❌ [DEBUG] Erro ao processar episódio da API: ${e.message}")
+                    }
+                }
+            }
+            
+        } catch (e: Exception) {
+            println("❌ [DEBUG] Erro ao parsear JSON da API: ${e.message}")
+        }
+        
+    } catch (e: Exception) {
+        println("❌ [DEBUG] Erro na API do BetterFlix: ${e.message}")
+    }
+    
+    return episodes
+}
+
+// Função auxiliar para debug melhorado
 private fun debugHtmlAnalysis(html: String) {
     println("🔍 [DEBUG] === ANÁLISE DETALHADA DO HTML ===")
     
-    // 1. Verificar se há algum script
-    val scriptTags = Regex("""<script[^>]*>.*?</script>""", RegexOption.DOT_MATCHES_ALL).findAll(html).toList()
-    println("✅ [DEBUG] Encontrou ${scriptTags.size} tags <script>")
+    // Salvar HTML completo em arquivo de log (apenas primeiros 3000 chars)
+    val htmlPreview = html.take(3000)
+    println("🔍 [DEBUG] HTML Preview (3000 chars):")
+    println("=".repeat(50))
+    println(htmlPreview)
+    println("=".repeat(50))
     
-    // 2. Procurar por qualquer menção a "episode" ou "episodio"
-    val episodeMentions = html.count { charSequence -> 
-        "episode".contains(charSequence.toString(), ignoreCase = true) ||
-        "episodio".contains(charSequence.toString(), ignoreCase = true)
-    }
-    println("🔍 [DEBUG] Menções a 'episode/episodio': $episodeMentions")
+    // Procurar por scripts específicos
+    val scriptPattern = Regex("""<script[^>]*>.*?</script>""", RegexOption.DOT_MATCHES_ALL)
+    val scripts = scriptPattern.findAll(html).toList()
+    println("✅ [DEBUG] Total de scripts encontrados: ${scripts.size}")
     
-    // 3. Procurar por padrões específicos que possam conter dados de episódios
-    val patternsToCheck = listOf(
-        "ALL_EPISODES",
-        "var.*episode",
-        "episodes.*=",
-        "\\[\\{.*title.*:",
-        "\"episodes\"",
-        "season.*:",
-        "epi_num",
-        "air_date"
-    )
-    
-    patternsToCheck.forEach { pattern ->
-        if (html.contains(pattern, ignoreCase = true)) {
-            println("✅ [DEBUG] Encontrou padrão: $pattern")
+    scripts.forEachIndexed { index, match ->
+        val scriptContent = match.value
+        if (scriptContent.contains("ALL_EPISODES") || 
+            scriptContent.contains("episode") || 
+            scriptContent.contains("Episódio")) {
             
-            // Mostrar contexto
-            val index = html.indexOf(pattern, ignoreCase = true)
-            if (index != -1) {
-                val start = maxOf(0, index - 50)
-                val end = minOf(index + 200, html.length)
-                val context = html.substring(start, end)
-                println("🔍 [DEBUG] Contexto: ...$context...")
-            }
-        } else {
-            println("❌ [DEBUG] NÃO encontrou padrão: $pattern")
+            println("✅ [DEBUG] Script $index parece conter dados de episódios")
+            println("🔍 [DEBUG] Script $index (primeiros 500 chars):")
+            println(scriptContent.take(500))
+            println("---")
         }
     }
     
-    // 4. Procurar por estruturas JSON
-    val jsonPatterns = listOf(
-        Regex("""\{.*"1".*:.*\[.*\}""", RegexOption.DOT_MATCHES_ALL),
-        Regex("""\[.*\{.*title.*:.*\}.*\]""", RegexOption.DOT_MATCHES_ALL),
-        Regex("""var\s+\w+\s*=\s*(\{.*?\});""", RegexOption.DOT_MATCHES_ALL)
-    )
+    // Procurar por variáveis JavaScript
+    val varPattern = Regex("""var\s+(\w+)\s*=\s*(\{.*?\});""", RegexOption.DOT_MATCHES_ALL)
+    val varMatches = varPattern.findAll(html).toList()
+    println("✅ [DEBUG] Variáveis JavaScript encontradas: ${varMatches.size}")
     
-    jsonPatterns.forEachIndexed { i, pattern ->
-        val match = pattern.find(html)
-        if (match != null) {
-            println("✅ [DEBUG] Encontrou JSON com padrão $i")
-            val jsonText = match.groupValues.getOrNull(1) ?: match.value
-            println("🔍 [DEBUG] JSON (primeiros 300 chars): ${jsonText.take(300)}...")
-        }
-    }
-    
-    // 5. Verificar se há dados em variáveis JavaScript
-    val jsVars = Regex("""var\s+(\w+)\s*=\s*([^;]+);""").findAll(html).toList()
-    println("✅ [DEBUG] Encontrou ${jsVars.size} variáveis JavaScript")
-    jsVars.take(10).forEach { match ->
+    varMatches.forEachIndexed { index, match ->
         val varName = match.groupValues[1]
-        val varValue = match.groupValues[2].trim()
-        println("🔍 [DEBUG] Variável: $varName = ${varValue.take(100)}...")
+        val varValue = match.groupValues[2]
+        println("✅ [DEBUG] Variável $index: $varName")
+        if (varValue.length < 500) {
+            println("🔍 [DEBUG] Valor: $varValue")
+        } else {
+            println("🔍 [DEBUG] Valor (primeiros 500 chars): ${varValue.take(500)}...")
+        }
+    }
+    
+    // Procurar especificamente por ALL_EPISODES
+    val allEpisodesIndex = html.indexOf("ALL_EPISODES")
+    if (allEpisodesIndex != -1) {
+        println("✅ [DEBUG] ENCONTROU 'ALL_EPISODES' na posição $allEpisodesIndex")
+        
+        // Mostrar contexto maior
+        val start = maxOf(0, allEpisodesIndex - 50)
+        val end = minOf(allEpisodesIndex + 1000, html.length)
+        val context = html.substring(start, end)
+        println("🔍 [DEBUG] Contexto de ALL_EPISODES:")
+        println(context)
+        
+        // Tentar extrair o JSON completo
+        val afterAllEpisodes = html.substring(allEpisodesIndex)
+        val equalIndex = afterAllEpisodes.indexOf('=')
+        if (equalIndex != -1) {
+            val afterEqual = afterAllEpisodes.substring(equalIndex + 1).trim()
+            // Procurar por ;
+            val semicolonIndex = afterEqual.indexOf(';')
+            if (semicolonIndex != -1) {
+                val jsonCandidate = afterEqual.substring(0, semicolonIndex).trim()
+                println("🔍 [DEBUG] Candidato a JSON ALL_EPISODES:")
+                println(jsonCandidate.take(500))
+                
+                // Verificar se é um JSON válido
+                if (jsonCandidate.startsWith("{") && jsonCandidate.endsWith("}")) {
+                    println("✅ [DEBUG] Parece ser um JSON válido!")
+                    try {
+                        val jsonObject = JSONObject(jsonCandidate)
+                        println("✅ [DEBUG] JSON parseado com sucesso!")
+                        println("🔍 [DEBUG] Chaves: ${jsonObject.keys().joinToString(", ")}")
+                    } catch (e: Exception) {
+                        println("❌ [DEBUG] Erro ao parsear JSON: ${e.message}")
+                    }
+                }
+            }
+        }
+    } else {
+        println("❌ [DEBUG] NÃO encontrou 'ALL_EPISODES' no HTML")
+        
+        // Procurar por variações
+        val variations = listOf("all_episodes", "All_Episodes", "Episodes", "episodes")
+        variations.forEach { variation ->
+            val index = html.indexOf(variation, ignoreCase = true)
+            if (index != -1) {
+                println("✅ [DEBUG] Encontrou variação '$variation' na posição $index")
+            }
+        }
     }
     
     println("🔍 [DEBUG] === FIM DA ANÁLISE ===")
-}
-
-// Atualize também a função debugExtractEpisodes para ser mais abrangente:
-private fun debugExtractEpisodes(html: String) {
-    println("🔍 [DEBUG] === DEBUG DE EXTRACAO DE EPISÓDIOS ===")
-    
-    // Salvar uma cópia do HTML para análise
-    val debugFile = html.take(3000) // Primeiros 3000 chars
-    println("🔍 [DEBUG] HTML (primeiros 3000 chars):")
-    println("--- INÍCIO HTML ---")
-    println(debugFile)
-    println("--- FIM HTML ---")
-    
-    // Procurar por "ALL_EPISODES" de forma mais flexível
-    val allEpisodesRegex = Regex("""(ALL_EPISODES|all_episodes|All_Episodes)""")
-    val allEpisodesMatch = allEpisodesRegex.find(html)
-    
-    if (allEpisodesMatch != null) {
-        println("✅ [DEBUG] Encontrou '${allEpisodesMatch.value}'")
-        val start = maxOf(0, allEpisodesMatch.range.first - 20)
-        val end = minOf(allEpisodesMatch.range.last + 500, html.length)
-        val context = html.substring(start, end)
-        println("🔍 [DEBUG] Contexto: $context")
-    } else {
-        println("❌ [DEBUG] NÃO encontrou nenhuma variação de 'ALL_EPISODES' no HTML")
-    }
-    
-    // Procurar por qualquer JSON que pareça dados de episódios
-    val jsonRegex = Regex("""\{(?:\s*"[^"]+"\s*:\s*(?:[^,{]|\[[^]]*\]|\{[^}]*\})*,?)+\}""")
-    val jsonMatches = jsonRegex.findAll(html).toList()
-    println("✅ [DEBUG] Encontrou ${jsonMatches.size} objetos JSON potenciais")
-    
-    jsonMatches.take(5).forEachIndexed { i, match ->
-        val jsonText = match.value
-        if (jsonText.contains("title") || jsonText.contains("episode") || jsonText.contains("season")) {
-            println("✅ [DEBUG] JSON $i parece conter dados de episódios")
-            println("🔍 [DEBUG] JSON $i (${jsonText.length} chars): ${jsonText.take(200)}...")
-        }
-    }
-    
-    println("🔍 [DEBUG] === FIM DO DEBUG ===")
 }
 
     // EXTRAIR OBJETO ALL_EPISODES DO HTML DO SUPERFLIX
