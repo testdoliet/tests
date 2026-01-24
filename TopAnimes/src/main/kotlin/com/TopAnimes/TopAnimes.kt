@@ -70,173 +70,172 @@ class TopAnimes : MainAPI() {
     )
 
     private fun extractPoster(element: Element): String? {
-    return try {
-        println("DEBUG: Iniciando extractPoster")
-        println("DEBUG: Element HTML: ${element.outerHtml().take(300)}")
-        
-        // Método 1: Procura imagem dentro de .poster
-        val posterDiv = element.selectFirst(".poster")
-        println("DEBUG: posterDiv encontrado? ${posterDiv != null}")
-        
-        if (posterDiv != null) {
-            println("DEBUG: posterDiv HTML: ${posterDiv.outerHtml()}")
+        return try {
+            println("DEBUG: Iniciando extractPoster")
+            println("DEBUG: Element HTML: ${element.outerHtml().take(300)}")
             
-            val img = posterDiv.selectFirst("img")
-            println("DEBUG: Imagem dentro de posterDiv encontrada? ${img != null}")
+            // Método 1: Procura imagem dentro de .poster
+            val posterDiv = element.selectFirst(".poster")
+            println("DEBUG: posterDiv encontrado? ${posterDiv != null}")
+            
+            if (posterDiv != null) {
+                println("DEBUG: posterDiv HTML: ${posterDiv.outerHtml()}")
+                
+                val img = posterDiv.selectFirst("img")
+                println("DEBUG: Imagem dentro de posterDiv encontrada? ${img != null}")
+                
+                img?.let {
+                    var src = it.attr("src")
+                    println("DEBUG: src atributo: '$src'")
+                    
+                    if (src.isBlank()) {
+                        src = it.attr("data-src")
+                        println("DEBUG: data-src atributo: '$src'")
+                    }
+                    
+                    if (src.isNotBlank()) {
+                        println("DEBUG: Retornando src: $src")
+                        return src
+                    }
+                }
+                
+                // Tenta extrair de background image
+                val style = posterDiv.attr("style")
+                println("DEBUG: style atributo: '$style'")
+                
+                if (style.contains("background-image")) {
+                    val regex = Regex("""url\(['"]?(.*?)['"]?\)""")
+                    val match = regex.find(style)
+                    match?.groupValues?.get(1)?.let { url ->
+                        if (url.isNotBlank()) {
+                            println("DEBUG: Retornando URL do background: $url")
+                            return url
+                        }
+                    }
+                }
+            }
+            
+            // Método 2: Procura qualquer imagem no elemento
+            val img = element.selectFirst("img")
+            println("DEBUG: Imagem direta no elemento encontrada? ${img != null}")
             
             img?.let {
                 var src = it.attr("src")
-                println("DEBUG: src atributo: '$src'")
+                println("DEBUG: src direto: '$src'")
                 
                 if (src.isBlank()) {
                     src = it.attr("data-src")
-                    println("DEBUG: data-src atributo: '$src'")
+                    println("DEBUG: data-src direto: '$src'")
                 }
                 
                 if (src.isNotBlank()) {
-                    println("DEBUG: Retornando src: $src")
+                    println("DEBUG: Retornando src direto: $src")
                     return src
                 }
             }
             
-            // Tenta extrair de background image
-            val style = posterDiv.attr("style")
-            println("DEBUG: style atributo: '$style'")
-            
-            if (style.contains("background-image")) {
-                val regex = Regex("""url\(['"]?(.*?)['"]?\)""")
-                val match = regex.find(style)
-                match?.groupValues?.get(1)?.let { url ->
-                    if (url.isNotBlank()) {
-                        println("DEBUG: Retornando URL do background: $url")
-                        return url
-                    }
-                }
+            println("DEBUG: Nenhuma imagem encontrada")
+            null
+        } catch (e: Exception) {
+            println("DEBUG: Erro em extractPoster: ${e.message}")
+            null
+        }
+    }
+
+    private fun Element.toSearchResponse(): AnimeSearchResponse? {
+        println("DEBUG: Iniciando toSearchResponse")
+        println("DEBUG: Element classes: ${this.classNames()}")
+        
+        // Verifica se é um elemento article com classe .item
+        val isItem = hasClass("item") || hasClass("tvshows") || hasClass("movies") || tagName() == "article"
+        println("DEBUG: isItem? $isItem")
+        
+        if (!isItem) {
+            return null
+        }
+
+        // Tenta encontrar o link dentro do elemento
+        val linkElement = selectFirst("a[href]")
+        println("DEBUG: linkElement encontrado? ${linkElement != null}")
+        
+        if (linkElement == null) return null
+        
+        val href = linkElement.attr("href")
+        println("DEBUG: href: '$href'")
+        
+        if (href.isBlank() || (!href.contains("/animes/") && !href.contains("/filmes/"))) {
+            println("DEBUG: href inválido ou não contém /animes/ ou /filmes/")
+            return null
+        }
+
+        // Extrai título
+        val titleElement = selectFirst(".data h3, h3, .serie")
+        println("DEBUG: titleElement encontrado? ${titleElement != null}")
+        
+        if (titleElement == null) return null
+        
+        val rawTitle = titleElement.text().trim()
+        println("DEBUG: rawTitle: '$rawTitle'")
+
+        if (rawTitle.isBlank()) return null
+
+        // Extrai ano (apenas)
+        val yearElement = selectFirst(".data span:last-child, span:last-child, .year")
+        val yearText = yearElement?.text()?.trim()
+        val year = extractYear(yearText)
+        println("DEBUG: year: $year")
+
+        // Determina se é dublado ou legendado
+        val hasExplicitDub = rawTitle.contains("dublado", ignoreCase = true) || 
+                            href.contains("dublado", ignoreCase = true)
+        val hasExplicitLeg = rawTitle.contains("legendado", ignoreCase = true) || 
+                            href.contains("legendado", ignoreCase = true)
+
+        val finalHasDub: Boolean
+        val finalHasLeg: Boolean
+
+        when {
+            hasExplicitDub && !hasExplicitLeg -> {
+                finalHasDub = true
+                finalHasLeg = false
+            }
+            !hasExplicitDub && hasExplicitLeg -> {
+                finalHasDub = false
+                finalHasLeg = true
+            }
+            hasExplicitDub && hasExplicitLeg -> {
+                finalHasDub = true
+                finalHasLeg = true
+            }
+            else -> {
+                finalHasDub = false
+                finalHasLeg = true
             }
         }
         
-        // Método 2: Procura qualquer imagem no elemento
-        val img = element.selectFirst("img")
-        println("DEBUG: Imagem direta no elemento encontrada? ${img != null}")
+        println("DEBUG: finalHasDub: $finalHasDub, finalHasLeg: $finalHasLeg")
+
+        val cleanName = extractAnimeName(rawTitle)
+        val isMovie = href.contains("/filmes/") || 
+                     rawTitle.contains("filme", ignoreCase = true) ||
+                     rawTitle.contains("movie", ignoreCase = true)
         
-        img?.let {
-            var src = it.attr("src")
-            println("DEBUG: src direto: '$src'")
-            
-            if (src.isBlank()) {
-                src = it.attr("data-src")
-                println("DEBUG: data-src direto: '$src'")
-            }
-            
-            if (src.isNotBlank()) {
-                println("DEBUG: Retornando src direto: $src")
-                return src
-            }
-        }
+        println("DEBUG: isMovie: $isMovie")
         
-        println("DEBUG: Nenhuma imagem encontrada")
-        null
-    } catch (e: Exception) {
-        println("DEBUG: Erro em extractPoster: ${e.message}")
-        null
-    }
-}
+        // Extrai poster
+        val sitePoster = extractPoster(this)
+        println("DEBUG: sitePoster extraído: '$sitePoster'")
 
-private fun Element.toSearchResponse(): AnimeSearchResponse? {
-    println("DEBUG: Iniciando toSearchResponse")
-    println("DEBUG: Element classes: ${element.classNames()}")
-    
-    // Verifica se é um elemento article com classe .item
-    val isItem = hasClass("item") || hasClass("tvshows") || hasClass("movies") || tagName() == "article"
-    println("DEBUG: isItem? $isItem")
-    
-    if (!isItem) {
-        return null
-    }
+        return newAnimeSearchResponse(cleanName, fixUrl(href)) {
+            this.posterUrl = sitePoster
+            this.type = if (isMovie) TvType.Movie else TvType.Anime
+            this.year = year
 
-    // Tenta encontrar o link dentro do elemento
-    val linkElement = selectFirst("a[href]")
-    println("DEBUG: linkElement encontrado? ${linkElement != null}")
-    
-    if (linkElement == null) return null
-    
-    val href = linkElement.attr("href")
-    println("DEBUG: href: '$href'")
-    
-    if (href.isBlank() || (!href.contains("/animes/") && !href.contains("/filmes/"))) {
-        println("DEBUG: href inválido ou não contém /animes/ ou /filmes/")
-        return null
-    }
-
-    // Extrai título
-    val titleElement = selectFirst(".data h3, h3, .serie")
-    println("DEBUG: titleElement encontrado? ${titleElement != null}")
-    
-    if (titleElement == null) return null
-    
-    val rawTitle = titleElement.text().trim()
-    println("DEBUG: rawTitle: '$rawTitle'")
-
-    if (rawTitle.isBlank()) return null
-
-    // Extrai ano (apenas)
-    val yearElement = selectFirst(".data span:last-child, span:last-child, .year")
-    val yearText = yearElement?.text()?.trim()
-    val year = extractYear(yearText)
-    println("DEBUG: year: $year")
-
-    // Determina se é dublado ou legendado
-    val hasExplicitDub = rawTitle.contains("dublado", ignoreCase = true) || 
-                        href.contains("dublado", ignoreCase = true)
-    val hasExplicitLeg = rawTitle.contains("legendado", ignoreCase = true) || 
-                        href.contains("legendado", ignoreCase = true)
-
-    val finalHasDub: Boolean
-    val finalHasLeg: Boolean
-
-    when {
-        hasExplicitDub && !hasExplicitLeg -> {
-            finalHasDub = true
-            finalHasLeg = false
-        }
-        !hasExplicitDub && hasExplicitLeg -> {
-            finalHasDub = false
-            finalHasLeg = true
-        }
-        hasExplicitDub && hasExplicitLeg -> {
-            finalHasDub = true
-            finalHasLeg = true
-        }
-        else -> {
-            finalHasDub = false
-            finalHasLeg = true
+            if (finalHasDub || finalHasLeg) {
+                addDubStatus(dubExist = finalHasDub, subExist = finalHasLeg)
+            }
         }
     }
-    
-    println("DEBUG: finalHasDub: $finalHasDub, finalHasLeg: $finalHasLeg")
-
-    val cleanName = extractAnimeName(rawTitle)
-    val isMovie = href.contains("/filmes/") || 
-                 rawTitle.contains("filme", ignoreCase = true) ||
-                 rawTitle.contains("movie", ignoreCase = true)
-    
-    println("DEBUG: isMovie: $isMovie")
-    
-    // Extrai poster
-    val sitePoster = extractPoster(this)
-    println("DEBUG: sitePoster extraído: '$sitePoster'")
-
-    return newAnimeSearchResponse(cleanName, fixUrl(href)) {
-        this.posterUrl = sitePoster
-        this.type = if (isMovie) TvType.Movie else TvType.Anime
-        this.year = year
-
-        if (finalHasDub || finalHasLeg) {
-            addDubStatus(dubExist = finalHasDub, subExist = finalHasLeg)
-        }
-    }
-}
-    
 
     private fun extractAnimeName(fullText: String): String {
         var cleanName = fullText
@@ -296,21 +295,28 @@ private fun Element.toSearchResponse(): AnimeSearchResponse? {
                 "$mainUrl$basePath/page/$sitePageNumber"
             }
 
+            println("DEBUG: Carregando página: $pageUrl")
             val document = app.get(pageUrl, timeout = 20).document
             
             // Seletores para os itens
             val elements = document.select("article.item, .items article, article.tvshows, article.movies")
+            println("DEBUG: Número de elementos encontrados: ${elements.size}")
+            
+            if (elements.isEmpty()) {
+                println("DEBUG: HTML da página (primeiros 1000 chars): ${document.html().take(1000)}")
+            }
 
             val homeItems = mutableListOf<SearchResponse>()
 
-            elements.forEach { element ->
+            elements.forEachIndexed { index, element ->
                 try {
+                    println("DEBUG: Processando elemento $index")
                     val item = element.toSearchResponse()
                     if (item != null) {
                         homeItems.add(item)
                     }
                 } catch (e: Exception) {
-                    // Ignora erros
+                    println("DEBUG: Erro processando elemento $index: ${e.message}")
                 }
             }
 
@@ -323,6 +329,7 @@ private fun Element.toSearchResponse(): AnimeSearchResponse? {
             )
 
         } catch (e: Exception) {
+            println("DEBUG: Erro em getMainPage: ${e.message}")
             return newHomePageResponse(request.name, emptyList(), false)
         }
     }
