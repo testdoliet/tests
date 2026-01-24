@@ -2,11 +2,21 @@ package com.TopAnimes
 
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
-import com.lagradost.cloudstream3.LoadResponse.Companion.addTrailer
 import com.lagradost.cloudstream3.app
+import android.content.Context
+import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
+import com.lagradost.cloudstream3.plugins.Plugin
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.jsoup.nodes.Element
+
+@CloudstreamPlugin
+class TopAnimesPlugin: Plugin() {
+    override fun load(context: Context) {
+        // All providers should be added in this manner. Please don't edit the providers list directly.
+        registerMainAPI(TopAnimes())
+    }
+}
 
 class TopAnimes : MainAPI() {
     override var mainUrl = "https://topanimes.net"
@@ -22,7 +32,7 @@ class TopAnimes : MainAPI() {
         private val loadingMutex = Mutex()
 
         // Função para mapear status
-        private fun mapStatus(statusText: String): ShowStatus {
+        private fun getStatus(statusText: String): ShowStatus {
             return when {
                 statusText.contains("em andamento", ignoreCase = true) ||
                 statusText.contains("lançando", ignoreCase = true) ||
@@ -516,7 +526,7 @@ class TopAnimes : MainAPI() {
 
             val statusElement = document.selectFirst(".custom_fields:contains(Status) span.valor")
             val statusText = statusElement?.text()?.trim() ?: "Desconhecido"
-            val showStatus = mapStatus(statusText)
+            val showStatus = getStatus(statusText)
 
             val genres = extractGenres(document)
 
@@ -543,7 +553,7 @@ class TopAnimes : MainAPI() {
                 this.plot = synopsis
                 this.tags = genres
                 this.score = score
-                this.showStatus = showStatus // Corrigido: status -> showStatus
+                this.showStatus = showStatus
 
                 studio?.let { 
                     try {
@@ -554,19 +564,22 @@ class TopAnimes : MainAPI() {
                 }
 
                 if (episodes.isNotEmpty()) {
-                    // Maneira alternativa de adicionar episódios sem usar SubbedAndDubbed
+                    // Verifica se tem dublado e legendado
                     if (hasDub && hasSub) {
-                        // Adiciona tanto versões dubladas quanto legendadas
-                        episodes.forEach { episode ->
-                            // Adiciona versão legendada
-                            addEpisode(episode.apply {
-                                this.name = "${episode.name} (Legendado)"
-                            })
-                            // Adiciona versão dublada
-                            addEpisode(episode.copy(
-                                name = "${episode.name} (Dublado)"
-                            ))
+                        // Primeiro adiciona os episódios legendados
+                        addEpisodes(DubStatus.Subbed, episodes)
+                        
+                        // Depois duplica para dublado se necessário
+                        val dubbedEpisodes = episodes.map { episode ->
+                            Episode(
+                                data = episode.data,
+                                name = "${episode.name} (Dublado)",
+                                season = episode.season,
+                                episode = episode.episode,
+                                posterUrl = episode.posterUrl
+                            )
                         }
+                        addEpisodes(DubStatus.Dubbed, dubbedEpisodes)
                     } else if (hasDub) {
                         // Apenas dublado
                         addEpisodes(DubStatus.Dubbed, episodes)
