@@ -71,19 +71,45 @@ class TopAnimes : MainAPI() {
 
     private fun extractPoster(element: Element): String? {
         return try {
-            // Método direto: pega a primeira imagem dentro de .poster
-            val img = element.selectFirst(".poster img")
-            img?.let {
-                var src = it.attr("src").ifBlank { it.attr("data-src") }
-                if (src.isNotBlank()) {
-                    return when {
-                        src.startsWith("//") -> "https:$src"
-                        src.startsWith("/") -> "$mainUrl$src"
-                        src.startsWith("http") -> src
-                        else -> fixUrl(src)
+            // Método 1: Procura imagem dentro de .poster
+            val posterDiv = element.selectFirst(".poster")
+            if (posterDiv != null) {
+                val img = posterDiv.selectFirst("img")
+                img?.let {
+                    var src = it.attr("src")
+                    if (src.isBlank()) {
+                        src = it.attr("data-src")
+                    }
+                    if (src.isNotBlank()) {
+                        return src
+                    }
+                }
+                
+                // Tenta extrair de background image
+                val style = posterDiv.attr("style")
+                if (style.contains("background-image")) {
+                    val regex = Regex("""url\(['"]?(.*?)['"]?\)""")
+                    val match = regex.find(style)
+                    match?.groupValues?.get(1)?.let { url ->
+                        if (url.isNotBlank()) {
+                            return url
+                        }
                     }
                 }
             }
+            
+            // Método 2: Procura qualquer imagem no elemento
+            val img = element.selectFirst("img")
+            img?.let {
+                var src = it.attr("src")
+                if (src.isBlank()) {
+                    src = it.attr("data-src")
+                }
+                if (src.isNotBlank()) {
+                    return src
+                }
+            }
+            
             null
         } catch (e: Exception) {
             null
@@ -92,29 +118,29 @@ class TopAnimes : MainAPI() {
 
     private fun Element.toSearchResponse(): AnimeSearchResponse? {
         // Verifica se é um elemento article com classe .item
-        if (!(hasClass("item") || tagName() == "article")) {
+        val isItem = hasClass("item") || hasClass("tvshows") || hasClass("movies") || tagName() == "article"
+        if (!isItem) {
             return null
         }
 
         // Tenta encontrar o link dentro do elemento
-        val linkElement = selectFirst("a[href*='/animes/'], a[href*='/filmes/']") ?: return null
+        val linkElement = selectFirst("a[href]") ?: return null
         val href = linkElement.attr("href") ?: return null
         
-        if (href.isBlank()) return null
+        if (href.isBlank() || (!href.contains("/animes/") && !href.contains("/filmes/"))) {
+            return null
+        }
 
         // Extrai título
-        val titleElement = selectFirst(".data h3, h3") ?: return null
+        val titleElement = selectFirst(".data h3, h3, .serie") ?: return null
         val rawTitle = titleElement.text().trim()
 
         if (rawTitle.isBlank()) return null
 
         // Extrai ano (apenas)
-        val yearElement = selectFirst(".data span:last-child, span:last-child")
+        val yearElement = selectFirst(".data span:last-child, span:last-child, .year")
         val yearText = yearElement?.text()?.trim()
         val year = extractYear(yearText)
-
-        // REMOVIDO: badges de score
-        // Não extrai mais score
 
         // Determina se é dublado ou legendado
         val hasExplicitDub = rawTitle.contains("dublado", ignoreCase = true) || 
@@ -148,13 +174,14 @@ class TopAnimes : MainAPI() {
         val isMovie = href.contains("/filmes/") || 
                      rawTitle.contains("filme", ignoreCase = true) ||
                      rawTitle.contains("movie", ignoreCase = true)
+    
+        // Extrai poster
         val sitePoster = extractPoster(this)
 
         return newAnimeSearchResponse(cleanName, fixUrl(href)) {
             this.posterUrl = sitePoster
             this.type = if (isMovie) TvType.Movie else TvType.Anime
             this.year = year
-            // REMOVIDO: não seta mais score
 
             if (finalHasDub || finalHasLeg) {
                 addDubStatus(dubExist = finalHasDub, subExist = finalHasLeg)
@@ -222,8 +249,8 @@ class TopAnimes : MainAPI() {
 
             val document = app.get(pageUrl, timeout = 20).document
             
-            // Seletores simplificados
-            val elements = document.select("article.item.tvshows, article.item.movies")
+            // Seletores para os itens
+            val elements = document.select("article.item, .items article, article.tvshows, article.movies")
 
             val homeItems = mutableListOf<SearchResponse>()
 
@@ -259,7 +286,7 @@ class TopAnimes : MainAPI() {
         return try {
             val document = app.get(searchUrl, timeout = 10).document
 
-            document.select("article.item.tvshows, article.item.movies")
+            document.select("article.item, article.tvshows, article.movies")
                 .mapNotNull { it.toSearchResponse() }
                 .distinctBy { it.url }
                 .take(30)
@@ -306,8 +333,6 @@ class TopAnimes : MainAPI() {
         return Pair(hasDub, hasSub)
     }
 
-    // REMOVIDO: função extractScoreFromDocument não é mais usada
-
     override suspend fun load(url: String): LoadResponse {
         return try {
             val document = app.get(url, timeout = 30).document
@@ -317,18 +342,16 @@ class TopAnimes : MainAPI() {
                 ?: document.selectFirst(".sheader h1")?.text()?.trim()
                 ?: "Sem Título"
 
-            // Poster simplificado
+            // Poster na página de detalhes
             val poster = document.selectFirst(".sheader .poster img, .poster img")?.let { img ->
-                var src = img.attr("src").ifBlank { img.attr("data-src") }
+                var src = img.attr("src")
+                if (src.isBlank()) {
+                    src = img.attr("data-src")
+                }
                 if (src.isNotBlank()) {
-                    when {
-                        src.startsWith("//") -> "https:$src"
-                        src.startsWith("/") -> "$mainUrl$src"
-                        src.startsWith("http") -> src
-                        else -> fixUrl(src)
-                    }
+                    src
                 } else null
-            }
+            } ?: document.selectFirst("meta[property='og:image']")?.attr("content")?.let { fixUrl(it) }
 
             val background = document.selectFirst("meta[property='og:image']")?.attr("content")
                 ?.takeIf { it.isNotBlank() }
@@ -351,8 +374,6 @@ class TopAnimes : MainAPI() {
 
             val (hasDub, hasSub) = extractAudioType(document)
 
-            // REMOVIDO: não extrai mais score
-
             val isMovie = url.contains("/filmes/") || 
                          title.contains("filme", ignoreCase = true) ||
                          document.selectFirst(".custom_fields:contains(Tipo)")?.text()?.contains("Filme", ignoreCase = true) == true
@@ -369,7 +390,6 @@ class TopAnimes : MainAPI() {
                 this.year = year
                 this.plot = synopsis
                 this.tags = genres
-                // REMOVIDO: não seta mais score
                 this.showStatus = showStatus
 
                 if (episodes.isNotEmpty()) {
