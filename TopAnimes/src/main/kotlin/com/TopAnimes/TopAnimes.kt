@@ -490,103 +490,102 @@ class TopAnimes : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse {
-        return try {
-            val document = app.get(url, timeout = 40).document
+    return try {
+        val document = app.get(url, timeout = 40).document
 
-            val title = document.selectFirst("h1")?.text()?.trim() 
-                ?: document.selectFirst(".data h1")?.text()?.trim() 
-                ?: document.selectFirst(".sheader h1")?.text()?.trim()
-                ?: "Sem Título"
+        val title = document.selectFirst("h1")?.text()?.trim() 
+            ?: document.selectFirst(".data h1")?.text()?.trim() 
+            ?: document.selectFirst(".sheader h1")?.text()?.trim()
+            ?: "Sem Título"
 
-            val poster = extractDetailPoster(document)
-            val background = document.selectFirst("meta[property='og:image']")?.attr("content")
-                ?.takeIf { it.isNotBlank() }
-                ?.let { fixUrl(it) }
+        val poster = extractDetailPoster(document)
+        val background = document.selectFirst("meta[property='og:image']")?.attr("content")
+            ?.takeIf { it.isNotBlank() }
+            ?.let { fixUrl(it) }
 
-            val synopsis = document.selectFirst(".wp-content p")?.text()?.trim()
-                ?: document.selectFirst(".sbox .wp-content")?.text()?.trim()
-                ?: document.selectFirst(".synopsis")?.text()?.trim()
-                ?: document.selectFirst("[itemprop='description']")?.text()?.trim()
-                ?: "Sinopse não disponível."
+        val synopsis = document.selectFirst(".wp-content p")?.text()?.trim()
+            ?: document.selectFirst(".sbox .wp-content")?.text()?.trim()
+            ?: document.selectFirst(".synopsis")?.text()?.trim()
+            ?: document.selectFirst("[itemprop='description']")?.text()?.trim()
+            ?: "Sinopse não disponível."
 
-            val yearText = document.selectFirst(".extra .date")?.text()?.trim()
-                ?: document.selectFirst(".custom_fields:contains(Ano) span.valor")?.text()?.trim()
-            val year = extractYear(yearText)
+        val yearText = document.selectFirst(".extra .date")?.text()?.trim()
+            ?: document.selectFirst(".custom_fields:contains(Ano) span.valor")?.text()?.trim()
+        val year = extractYear(yearText)
 
-            val statusElement = document.selectFirst(".custom_fields:contains(Status) span.valor")
-            val statusText = statusElement?.text()?.trim() ?: "Desconhecido"
-            val showStatus = getStatus(statusText)
+        val statusElement = document.selectFirst(".custom_fields:contains(Status) span.valor")
+        val statusText = statusElement?.text()?.trim() ?: "Desconhecido"
+        val showStatus = getStatus(statusText)
 
-            val genres = extractGenres(document)
+        val genres = extractGenres(document)
 
-            val (hasDub, hasSub) = extractAudioType(document)
+        val (hasDub, hasSub) = extractAudioType(document)
 
-            val studio = document.selectFirst(".custom_fields:contains(Estúdio) span.valor")?.text()?.trim()
+        val studio = document.selectFirst(".custom_fields:contains(Estúdio) span.valor")?.text()?.trim()
 
-            val score = extractScoreFromDocument(document)?.let { Score.from10(it) }
+        val score = extractScoreFromDocument(document)?.let { Score.from10(it) }
 
-            val isMovie = url.contains("/filmes/") || 
-                         title.contains("filme", ignoreCase = true) ||
-                         document.selectFirst(".custom_fields:contains(Tipo)")?.text()?.contains("Filme", ignoreCase = true) == true
+        val isMovie = url.contains("/filmes/") || 
+                     title.contains("filme", ignoreCase = true) ||
+                     document.selectFirst(".custom_fields:contains(Tipo)")?.text()?.contains("Filme", ignoreCase = true) == true
 
-            val episodes = extractEpisodesFromDocument(document, url)
+        val episodes = extractEpisodesFromDocument(document, url)
 
-            val response = newAnimeLoadResponse(
-                extractAnimeName(title), 
-                url, 
-                if (isMovie) TvType.Movie else TvType.Anime
-            ) {
-                this.posterUrl = poster
-                this.backgroundPosterUrl = background
-                this.year = year
-                this.plot = synopsis
-                this.tags = genres
-                this.score = score
-                this.showStatus = showStatus
+        val response = newAnimeLoadResponse(
+            extractAnimeName(title), 
+            url, 
+            if (isMovie) TvType.Movie else TvType.Anime
+        ) {
+            this.posterUrl = poster
+            this.backgroundPosterUrl = background
+            this.year = year
+            this.plot = synopsis
+            this.tags = genres
+            this.score = score
+            this.showStatus = showStatus
 
-                studio?.let { 
-                    try {
-                        val studioField = this::class.members.find { it.name == "studio" }
-                        studioField?.call(this, it)
-                    } catch (e: Exception) {
-                    }
-                }
-
-                if (episodes.isNotEmpty()) {
-                    // Verifica se tem dublado e legendado
-                    if (hasDub && hasSub) {
-                        // Primeiro adiciona os episódios legendados
-                        addEpisodes(DubStatus.Subbed, episodes)
-                        
-                        // Depois duplica para dublado
-                        val dubbedEpisodes = episodes.map { episode ->
-                            Episode(
-                                data = episode.data,
-                                name = "${episode.name} (Dublado)",
-                                season = episode.season,
-                                episode = episode.episode,
-                                posterUrl = episode.posterUrl
-                            )
-                        }
-                        addEpisodes(DubStatus.Dubbed, dubbedEpisodes)
-                    } else if (hasDub) {
-                        // Apenas dublado
-                        addEpisodes(DubStatus.Dubbed, episodes)
-                    } else {
-                        // Apenas legendado (padrão)
-                        addEpisodes(DubStatus.Subbed, episodes)
-                    }
+            studio?.let { 
+                try {
+                    val studioField = this::class.members.find { it.name == "studio" }
+                    studioField?.call(this, it)
+                } catch (e: Exception) {
                 }
             }
 
-            response
-
-        } catch (e: Exception) {
-            newAnimeLoadResponse("Erro ao carregar", url, TvType.Anime) {
-                this.plot = "Não foi possível carregar esta página: ${e.message}"
+            if (episodes.isNotEmpty()) {
+                // Verifica se tem dublado e legendado
+                if (hasDub && hasSub) {
+                    // Primeiro adiciona os episódios legendados
+                    addEpisodes(DubStatus.Subbed, episodes)
+                    
+                    // Depois duplica para dublado usando newEpisode
+                    val dubbedEpisodes = episodes.map { episode ->
+                        newEpisode(episode.data) {
+                            this.name = "${episode.name} (Dublado)"
+                            this.season = episode.season
+                            this.episode = episode.episode
+                            this.posterUrl = episode.posterUrl
+                        }
+                    }
+                    addEpisodes(DubStatus.Dubbed, dubbedEpisodes)
+                } else if (hasDub) {
+                    // Apenas dublado
+                    addEpisodes(DubStatus.Dubbed, episodes)
+                } else {
+                    // Apenas legendado (padrão)
+                    addEpisodes(DubStatus.Subbed, episodes)
+                }
             }
         }
+
+        response
+
+    } catch (e: Exception) {
+        newAnimeLoadResponse("Erro ao carregar", url, TvType.Anime) {
+            this.plot = "Não foi possível carregar esta página: ${e.message}"
+        }
     }
+}
 
     private fun extractEpisodesFromDocument(document: org.jsoup.nodes.Document, baseUrl: String): List<Episode> {
         val episodes = mutableListOf<Episode>()
