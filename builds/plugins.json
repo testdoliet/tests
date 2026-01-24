@@ -1,10 +1,10 @@
 [
     {
         "iconUrl": "https://animefire.io/img/icons/favicon-192x192.png",
-        "jarFileSize": 116860,
+        "jarFileSize": 121561,
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/lawlietbt/lietrepo",
-        "fileSize": 30846,
+        "fileSize": 34713,
         "status": 1,
         "language": "pt-br",
         "authors": [
@@ -22,10 +22,10 @@
     },
     {
         "iconUrl": "https://www.anitube.news/wp-content/uploads/cropped-Favicon6-192x192.png",
-        "jarFileSize": 109828,
+        "jarFileSize": 111715,
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/lawlietbt/lietrepo",
-        "fileSize": 30195,
+        "fileSize": 33594,
         "status": 1,
         "language": "pt-br",
         "authors": [
@@ -43,10 +43,10 @@
     },
     {
         "iconUrl": "https://betterflix.vercel.app/favicon.svg",
-        "jarFileSize": 195584,
+        "jarFileSize": 201307,
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/lawlietbt/lietrepo",
-        "fileSize": 45345,
+        "fileSize": 48818,
         "status": 1,
         "language": "pt-br",
         "authors": [
@@ -68,10 +68,10 @@
     },
     {
         "iconUrl": "https://cineagora.net/templates/cineagora/images/touch-icon-180x180.png",
-        "jarFileSize": 284841,
+        "jarFileSize": 284682,
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/lawlietbt/lietrepo",
-        "fileSize": 68902,
+        "fileSize": 74834,
         "status": 1,
         "language": "pt-br",
         "authors": [
@@ -91,10 +91,10 @@
     },
     {
         "iconUrl": "https://www.doramogo.net/assets/doramogo/images/apple-touch-icon.webp?version=200.50.10",
-        "jarFileSize": 225129,
+        "jarFileSize": 229853,
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/lawlietbt/lietrepo",
-        "fileSize": 53147,
+        "fileSize": 58395,
         "status": 1,
         "language": "pt-br",
         "authors": [
@@ -112,10 +112,10 @@
     },
     {
         "iconUrl": "https://goyabu.io/wp-content/uploads/2025/12/cropped-goyabu-favicon-192x192.png",
-        "jarFileSize": 129587,
+        "jarFileSize": 137237,
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/lawlietbt/lietrepo",
-        "fileSize": 34519,
+        "fileSize": 40253,
         "status": 1,
         "language": "pt-br",
         "authors": [
@@ -133,10 +133,10 @@
     },
     {
         "iconUrl": "https://nexflix.vip/uploads/favicon.png",
-        "jarFileSize": 172918,
+        "jarFileSize": 173377,
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/lawlietbt/lietrepo",
-        "fileSize": 41667,
+        "fileSize": 43308,
         "status": 1,
         "language": "pt-br",
         "authors": [
@@ -157,10 +157,10 @@
     },
     {
         "iconUrl": "https://icons.duckduckgo.com/ip2/superflix22.lol.ico",
-        "jarFileSize": 257752,
+        "jarFileSize": 264848,
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/lawlietbt/lietrepo",
-        "fileSize": 58894,
+        "fileSize": 64523,
         "status": 1,
         "language": "pt-br",
         "authors": [
@@ -177,5 +177,26 @@
         "description": "SuperFlix - Filmes e S\u00e9ries em Portugu\u00eas",
         "url": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/SuperFlix.cs3",
         "name": "SuperFlix"
+    },
+    {
+        "iconUrl": "https://topanimes.net/wp-content/uploads/2025/11/1009988.png",
+        "jarFileSize": 74586,
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/lawlietbt/lietrepo",
+        "fileSize": 25748,
+        "status": 1,
+        "language": "pt-br",
+        "authors": [
+            "lawlietbr"
+        ],
+        "tvTypes": [
+            "Animes"
+        ],
+        "version": 1,
+        "internalName": "TopAnimes",
+        "jarUrl": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/TopAnimes.jar",
+        "description": "TOPANIMES.NET - Animes Online Gr\u00e1tis em FHD!",
+        "url": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/TopAnimes.cs3",
+        "name": "TopAnimes"
     }
 ]
