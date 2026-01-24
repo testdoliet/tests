@@ -48,18 +48,18 @@ class TopAnimes : MainAPI() {
             }
         }
 
-        // Categorias ajustadas - removi calendário e filmes
-        private val ALL_CATEGORIES = listOf(
-            // Categorias Principais
+        // Categorias fixas
+        private val FIXED_CATEGORIES = listOf(
             "/animes" to "Todos os Animes",
             "/episodio" to "Episódios Recentes",
-            
-            // Tipos de Áudio
             "/tipo/legendado" to "Legendados",
             "/tipo/dublado" to "Dublados",
-            "/tipo/donghua" to "Donghua",
-            
-            // Gêneros Populares (primeiro grupo)
+            "/tipo/donghua" to "Donghua"
+        )
+
+        // Todas as categorias para escolha aleatória
+        private val ALL_RANDOM_CATEGORIES = listOf(
+            // Gêneros Populares
             "/genero/acao" to "Ação",
             "/genero/aventura" to "Aventura",
             "/genero/comedia" to "Comédia",
@@ -111,10 +111,37 @@ class TopAnimes : MainAPI() {
             "/genero/trabalho" to "Trabalho",
             "/genero/adult-cast" to "Elenco Adulto"
         )
+
+        // Cache para categorias aleatórias
+        private var cachedRandomCategories: List<Pair<String, String>>? = null
+        private var cacheTime: Long = 0
+        private const val CACHE_DURATION = 300000L // 5 minutos
+
+        // Função para obter categorias combinadas
+        fun getCombinedCategories(): List<Pair<String, String>> {
+            val currentTime = System.currentTimeMillis()
+            
+            // Retorna cache se ainda estiver válido
+            if (cachedRandomCategories != null && (currentTime - cacheTime) < CACHE_DURATION) {
+                return FIXED_CATEGORIES + cachedRandomCategories!!
+            }
+            
+            // Seleciona 10 categorias aleatórias únicas
+            val randomCategories = ALL_RANDOM_CATEGORIES
+                .shuffled()
+                .take(10)
+                .distinctBy { it.first }
+            
+            // Atualiza cache
+            cachedRandomCategories = randomCategories
+            cacheTime = currentTime
+            
+            return FIXED_CATEGORIES + randomCategories
+        }
     }
 
     override val mainPage = mainPageOf(
-        *ALL_CATEGORIES.map { (path, name) -> 
+        *getCombinedCategories().map { (path, name) -> 
             "$mainUrl$path" to name 
         }.toTypedArray()
     )
@@ -374,6 +401,7 @@ class TopAnimes : MainAPI() {
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         return loadingMutex.withLock {
             try {
+                val isFixedTab = FIXED_CATEGORIES.any { it.second == request.name }
                 val basePath = request.data.removePrefix(mainUrl)
                 val sitePageNumber = page + 1
 
