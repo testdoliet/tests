@@ -13,7 +13,6 @@ import org.jsoup.nodes.Element
 @CloudstreamPlugin
 class TopAnimesPlugin: Plugin() {
     override fun load(context: Context) {
-        // All providers should be added in this manner. Please don't edit the providers list directly.
         registerMainAPI(TopAnimes())
     }
 }
@@ -23,15 +22,15 @@ class TopAnimes : MainAPI() {
     override var name = "TopAnimes"
     override val hasMainPage = true
     override var lang = "pt-br"
-    override val hasDownloadSupport = false // Desativado por enquanto
-    override val supportedTypes = setOf(TvType.Anime, TvType.Anime, TvType.OVA)
+    override val hasDownloadSupport = false
+    override val supportedTypes = setOf(TvType.Anime, TvType.AnimeMovie)
     override val usesWebView = false
 
     companion object {
         private const val SEARCH_PATH = "/?s="
+
         private val loadingMutex = Mutex()
 
-        // Função para mapear status
         private fun getStatus(statusText: String): ShowStatus {
             return when {
                 statusText.contains("em andamento", ignoreCase = true) ||
@@ -48,7 +47,6 @@ class TopAnimes : MainAPI() {
             }
         }
 
-        // Categorias fixas
         private val FIXED_CATEGORIES = listOf(
             "/animes" to "Todos os Animes",
             "/episodio" to "Episódios Recentes",
@@ -57,7 +55,6 @@ class TopAnimes : MainAPI() {
             "/tipo/donghua" to "Donghua"
         )
 
-        // Todas as categorias para escolha aleatória
         private val ALL_RANDOM_CATEGORIES = listOf(
             // Gêneros Populares
             "/genero/acao" to "Ação",
@@ -89,42 +86,25 @@ class TopAnimes : MainAPI() {
             "/genero/historico" to "Histórico",
             "/genero/mitologia" to "Mitologia",
             "/genero/musica" to "Música",
-            "/genero/gourmet" to "Gourmet",
-            
-            // Gêneros Específicos
-            "/genero/parodia" to "Paródia",
-            "/genero/mecha" to "Mecha",
-            "/genero/vampiro" to "Vampiros",
-            "/genero/super-poder" to "Super Poderes",
-            "/genero/isekai" to "Isekai",
-            "/genero/reencarnacao" to "Reencarnação",
-            "/genero/urban-fantasia" to "Fantasia Urbana",
-            "/genero/viagem-no-tempo" to "Viagem no Tempo",
-            "/genero/video-game" to "Video Game",
-            "/genero/samurai" to "Samurai"
+            "/genero/gourmet" to "Gourmet"
         )
 
-        // Cache para categorias aleatórias
         private var cachedRandomCategories: List<Pair<String, String>>? = null
         private var cacheTime: Long = 0
-        private const val CACHE_DURATION = 300000L // 5 minutos
+        private const val CACHE_DURATION = 300000L
 
-        // Função para obter categorias combinadas
         fun getCombinedCategories(): List<Pair<String, String>> {
             val currentTime = System.currentTimeMillis()
             
-            // Retorna cache se ainda estiver válido
             if (cachedRandomCategories != null && (currentTime - cacheTime) < CACHE_DURATION) {
                 return FIXED_CATEGORIES + cachedRandomCategories!!
             }
             
-            // Seleciona 10 categorias aleatórias únicas
             val randomCategories = ALL_RANDOM_CATEGORIES
                 .shuffled()
                 .take(10)
                 .distinctBy { it.first }
             
-            // Atualiza cache
             cachedRandomCategories = randomCategories
             cacheTime = currentTime
             
@@ -140,26 +120,33 @@ class TopAnimes : MainAPI() {
 
     private fun extractPoster(element: Element): String? {
         return try {
-            // Primeiro tenta extrair da imagem dentro do poster
-            val img = element.selectFirst(".poster img")
-            if (img != null) {
-                val src = img.attr("src")?.takeIf { it.isNotBlank() } ?: img.attr("data-src")
-                if (!src.isNullOrBlank()) {
-                    return fixUrl(src)
-                }
-            }
+            // Tenta meta tag primeiro
+            val metaImage = element.selectFirst("meta[property='og:image']")?.attr("content")
+                ?.takeIf { it.isNotBlank() }
+                ?.let { fixUrl(it) }
+            if (metaImage != null) return metaImage
 
-            // Tenta extrair do atributo data-src
+            // Tenta img com data-src
             val dataSrc = element.selectFirst("img[data-src]")?.attr("data-src")
                 ?.takeIf { it.isNotBlank() }
                 ?.let { fixUrl(it) }
             if (dataSrc != null) return dataSrc
 
-            // Tenta extrair do atributo src
+            // Tenta img com src
             val srcImage = element.selectFirst("img[src]")?.attr("src")
                 ?.takeIf { it.isNotBlank() }
                 ?.let { fixUrl(it) }
             if (srcImage != null) return srcImage
+
+            // Tenta background image do style
+            val style = element.attr("style")
+            if (style.contains("background-image")) {
+                val bgRegex = Regex("""url\(['"]?([^'"()]+)['"]?\)""")
+                val match = bgRegex.find(style)
+                match?.groupValues?.get(1)?.let { bgUrl ->
+                    return fixUrl(bgUrl)
+                }
+            }
 
             null
         } catch (e: Exception) {
@@ -169,19 +156,20 @@ class TopAnimes : MainAPI() {
 
     private fun extractDetailPoster(document: org.jsoup.nodes.Document): String? {
         return try {
+            // Meta tag primeiro
             val metaImage = document.selectFirst("meta[property='og:image']")?.attr("content")
                 ?.takeIf { it.isNotBlank() }
                 ?.let { fixUrl(it) }
             if (metaImage != null) return metaImage
 
+            // Seletores específicos do TopAnimes
             val posterSelectors = listOf(
                 ".poster img",
                 ".sheader .poster img",
+                ".cover img",
+                "img.poster",
                 ".anime-poster img",
-                "img[src*='tmdb.org']",
-                ".image img",
-                "img[alt*='poster']",
-                "img[src*='/w500/']"
+                ".sbox img"
             )
 
             for (selector in posterSelectors) {
@@ -198,105 +186,148 @@ class TopAnimes : MainAPI() {
                 }
             }
 
+            // Tenta qualquer img que possa ser poster
+            document.selectFirst("img[src*='/animes/'], img[src*='/covers/'], img[src*='tmdb']")
+                ?.attr("src")
+                ?.takeIf { it.isNotBlank() }
+                ?.let { return fixUrl(it) }
+
             null
         } catch (e: Exception) {
             null
         }
     }
 
-    private fun Element.toSearchResponse(): AnimeSearchResponse? {
-        // Primeiro verifica se é um elemento article com classe .item
-        if (!(hasClass("item") || tagName() == "article")) {
-            return null
-        }
-
-        // Tenta encontrar o link dentro do elemento
-        val linkElement = selectFirst("a[href*='/animes/'], a[href*='/filmes/']") ?: return null
-        val href = linkElement.attr("href") ?: return null
-        
-        if (href.isBlank()) return null
-
-        // Extrai título do elemento .data h3
-        val titleElement = selectFirst(".data h3, h3, .serie, strong span") ?: return null
-        val rawTitle = titleElement.text().trim()
-
-        if (rawTitle.isBlank()) return null
-
-        // Extrai ano
-        val yearElement = selectFirst(".data span:last-child, span:last-child, .year")
-        val yearText = yearElement?.text()?.trim()
-        val year = extractYear(yearText)
-
-        // Extrai score
-        val scoreResult = extractScoreAdvanced(this)
-        val scoreText = scoreResult.first
-        val score = when {
-            scoreText == null || scoreText == "N/A" -> null
-            else -> scoreText.toFloatOrNull()?.let { Score.from10(it) }
-        }
-
-        // Determina se é dublado ou legendado
-        val hasExplicitDub = rawTitle.contains("dublado", ignoreCase = true) || 
-                            href.contains("dublado", ignoreCase = true)
-        val hasExplicitLeg = rawTitle.contains("legendado", ignoreCase = true) || 
-                            href.contains("legendado", ignoreCase = true)
-
-        val finalHasDub: Boolean
-        val finalHasLeg: Boolean
-
-        when {
-            hasExplicitDub && !hasExplicitLeg -> {
-                finalHasDub = true
-                finalHasLeg = false
+    private fun Element.toSearchResponse(): SearchResponse? {
+        return try {
+            // Primeiro tenta a tag <a> dentro do elemento
+            val linkElement = selectFirst("a")
+            val href = linkElement?.attr("href") ?: return null
+            
+            if (href.isBlank() || (!href.contains("/animes/") && !href.contains("/filmes/"))) {
+                return null
             }
-            !hasExplicitDub && hasExplicitLeg -> {
-                finalHasDub = false
-                finalHasLeg = true
-            }
-            hasExplicitDub && hasExplicitLeg -> {
-                finalHasDub = true
-                finalHasLeg = true
-            }
-            else -> {
-                finalHasDub = false
-                finalHasLeg = true
-            }
-        }
 
-        val cleanName = extractAnimeName(rawTitle)
-        val isMovie = href.contains("/filmes/") || 
-                     rawTitle.contains("filme", ignoreCase = true) ||
-                     rawTitle.contains("movie", ignoreCase = true)
-        val sitePoster = extractPoster(this)
-
-        return newAnimeSearchResponse(cleanName, fixUrl(href)) {
-            this.posterUrl = sitePoster
-            this.type = if (isMovie) TvType.Movie else TvType.Anime
-            this.score = score
-            this.year = year
-
-            if (finalHasDub || finalHasLeg) {
-                addDubStatus(dubExist = finalHasDub, subExist = finalHasLeg)
+            // Extrai título
+            val titleElement = selectFirst("h3, .title, .serie, .data h3, .entry-title") 
+                ?: linkElement.selectFirst("h3, .title")
+                ?: return null
+            
+            var rawTitle = titleElement.text().trim()
+            if (rawTitle.isBlank()) {
+                rawTitle = linkElement.attr("title")?.trim() ?: ""
             }
+            if (rawTitle.isBlank()) {
+                rawTitle = attr("title")?.trim() ?: ""
+            }
+
+            if (rawTitle.isBlank()) return null
+
+            // Extrai score
+            val scoreResult = extractScoreAdvanced(this)
+            val scoreText = scoreResult.first
+            val score = when {
+                scoreText == null || scoreText == "N/A" -> null
+                else -> scoreText.toFloatOrNull()?.let { Score.from10(it) }
+            }
+
+            // Determina se é dublado ou legendado
+            val hasExplicitDub = rawTitle.contains("dublado", ignoreCase = true) || 
+                                href.contains("dublado", ignoreCase = true)
+            val hasExplicitLeg = rawTitle.contains("legendado", ignoreCase = true) || 
+                                href.contains("legendado", ignoreCase = true)
+
+            val finalHasDub: Boolean
+            val finalHasLeg: Boolean
+
+            when {
+                hasExplicitDub && !hasExplicitLeg -> {
+                    finalHasDub = true
+                    finalHasLeg = false
+                }
+                !hasExplicitDub && hasExplicitLeg -> {
+                    finalHasDub = false
+                    finalHasLeg = true
+                }
+                hasExplicitDub && hasExplicitLeg -> {
+                    finalHasDub = true
+                    finalHasLeg = true
+                }
+                else -> {
+                    finalHasDub = false
+                    finalHasLeg = true
+                }
+            }
+
+            val cleanName = extractAnimeName(rawTitle)
+            val isMovie = href.contains("/filmes/") || 
+                         rawTitle.contains("filme", ignoreCase = true) ||
+                         rawTitle.contains("movie", ignoreCase = true)
+            val sitePoster = extractPoster(this)
+
+            // Extrai ano
+            val yearElement = selectFirst(".year, .date, span:last-child")
+            val yearText = yearElement?.text()?.trim()
+            val year = extractYear(yearText)
+
+            return newAnimeSearchResponse(cleanName, fixUrl(href)) {
+                this.posterUrl = sitePoster
+                this.type = if (isMovie) TvType.AnimeMovie else TvType.Anime
+                this.score = score
+                this.year = year
+
+                if (finalHasDub || finalHasLeg) {
+                    addDubStatus(dubExist = finalHasDub, subExist = finalHasLeg)
+                }
+            }
+
+        } catch (e: Exception) {
+            null
         }
     }
 
     private fun extractScoreAdvanced(element: Element): Pair<String?, String?> {
-        // Primeiro tenta do elemento .rating
-        val ratingElement = element.selectFirst(".rating")
-        if (ratingElement != null) {
-            val text = ratingElement.text().trim()
-            if (text.isNotBlank() && isScoreLike(text)) {
-                return text to ".rating"
+        val selectors = listOf(
+            ".rating",
+            ".score",
+            ".data .rating",
+            ".data .score",
+            "span:contains(★)",
+            "span:contains(/10)",
+            "[class*='rating']",
+            "[class*='score']",
+            ".dt_rating_vgs"
+        )
+
+        for (selector in selectors) {
+            val found = element.selectFirst(selector)?.text()?.trim()
+            if (!found.isNullOrBlank() && isScoreLike(found)) {
+                return found to selector
             }
         }
 
-        // Tenta do elemento .data .rating
-        val dataRating = element.selectFirst(".data .rating")
-        if (dataRating != null) {
-            val text = dataRating.text().trim()
-            if (text.isNotBlank() && isScoreLike(text)) {
-                return text to ".data .rating"
+        element.parent()?.let { parent ->
+            for (selector in selectors) {
+                val found = parent.selectFirst(selector)?.text()?.trim()
+                if (!found.isNullOrBlank() && isScoreLike(found)) {
+                    return found to "parent.$selector"
+                }
+            }
+        }
+
+        val html = element.outerHtml()
+        val scoreRegexes = listOf(
+            Regex("""(\d+\.\d+|\d+)\s*(?:★|/10)"""),
+            Regex("""class="[^"]*(?:rating|score)[^"]*">([^<]+)""")
+        )
+
+        for (regex in scoreRegexes) {
+            val match = regex.find(html)
+            if (match != null) {
+                val found = match.groupValues[1].trim()
+                if (isScoreLike(found)) {
+                    return found to "regex"
+                }
             }
         }
 
@@ -346,18 +377,10 @@ class TopAnimes : MainAPI() {
 
     private suspend fun detectHasNextPage(document: org.jsoup.nodes.Document, currentPageNum: Int): Boolean {
         return try {
-            // Verifica se há paginação
-            val pagination = document.select(".pagination")
+            val pagination = document.select(".pagination, .page-numbers, .resppages")
             if (pagination.isNotEmpty()) {
-                // Verifica se há link para próxima página
-                val hasNextLink = pagination.select("a[href*='page/${currentPageNum + 1}'], a:contains(Próxima), .arrow_pag").isNotEmpty()
-                return hasNextLink
-            }
-            
-            // Verifica se há botões de resppages
-            val respPages = document.select(".resppages a")
-            if (respPages.isNotEmpty()) {
-                return true
+                val nextPageLink = pagination.select("a[href*='page/${currentPageNum + 1}'], a:contains('Próxima'), a:contains('›'), .next")
+                return nextPageLink.isNotEmpty()
             }
             
             false
@@ -378,21 +401,23 @@ class TopAnimes : MainAPI() {
                     "$mainUrl$basePath/page/$sitePageNumber"
                 }
 
-                val document = app.get(pageUrl, timeout = 30).document
+                val document = app.get(pageUrl, timeout = 20).document
                 
-                // Seletores corrigidos baseados no HTML
+                // Seletores otimizados para TopAnimes
                 val elements = document.select("""
-                    article.item.tvshows,
-                    article.item.movies,
-                    .items.full article.item
-                """)
+                    a[href*="/animes/"],
+                    a[href*="/filmes/"],
+                    article a,
+                    .items a,
+                    .episodes a
+                """).take(40) // Limita a 40 itens para performance
 
                 val homeItems = mutableListOf<SearchResponse>()
 
                 elements.forEach { element ->
                     try {
                         val item = element.toSearchResponse()
-                        if (item != null) {
+                        if (item != null && !homeItems.any { it.url == item.url }) {
                             homeItems.add(item)
                         }
                     } catch (e: Exception) {
@@ -422,7 +447,7 @@ class TopAnimes : MainAPI() {
         return try {
             val document = app.get(searchUrl, timeout = 15).document
 
-            document.select("article.item.tvshows, article.item.movies")
+            document.select("a[href*='/animes/'], a[href*='/filmes/']")
                 .mapNotNull { it.toSearchResponse() }
                 .distinctBy { it.url }
                 .take(30)
@@ -435,7 +460,7 @@ class TopAnimes : MainAPI() {
     private fun extractGenres(document: org.jsoup.nodes.Document): List<String> {
         val genres = mutableListOf<String>()
         
-        document.select(".sgeneros a").forEach { element ->
+        document.select(".sgeneros a, .generos a, .animeInfo a[href*='/genero/']").forEach { element ->
             element.text().trim().takeIf { it.isNotBlank() }?.let { 
                 genres.add(it) 
             }
@@ -462,9 +487,11 @@ class TopAnimes : MainAPI() {
         val title = document.selectFirst("h1")?.text() ?: ""
         
         val hasDub = url.contains("dublado", ignoreCase = true) || 
-                    title.contains("dublado", ignoreCase = true)
+                    title.contains("dublado", ignoreCase = true) ||
+                    document.selectFirst(".sgeneros")?.text()?.contains("dublado", ignoreCase = true) == true
         val hasSub = !hasDub || url.contains("legendado", ignoreCase = true) || 
-                    title.contains("legendado", ignoreCase = true)
+                    title.contains("legendado", ignoreCase = true) ||
+                    document.selectFirst(".sgeneros")?.text()?.contains("legendado", ignoreCase = true) == true
         
         return Pair(hasDub, hasSub)
     }
@@ -472,10 +499,9 @@ class TopAnimes : MainAPI() {
     private fun extractScoreFromDocument(document: org.jsoup.nodes.Document): Float? {
         val selectors = listOf(
             ".rating-value",
-            ".starstruck .rating-value",
-            ".mtipo .rating-value",
+            ".dt_rating_vgs strong",
             "#repimdb strong",
-            ".dt_rating_vgs",
+            ".mtipo .rating-value",
             "meta[itemprop='ratingValue']"
         )
         
@@ -486,7 +512,6 @@ class TopAnimes : MainAPI() {
             }
         }
         
-        // Tenta extrair do atributo content
         document.selectFirst("meta[itemprop='ratingValue']")?.attr("content")?.let {
             return it.toFloatOrNull()
         }
@@ -496,7 +521,7 @@ class TopAnimes : MainAPI() {
 
     override suspend fun load(url: String): LoadResponse {
         return try {
-            val document = app.get(url, timeout = 40).document
+            val document = app.get(url, timeout = 30).document
 
             val title = document.selectFirst("h1")?.text()?.trim() 
                 ?: document.selectFirst(".data h1")?.text()?.trim() 
@@ -504,9 +529,7 @@ class TopAnimes : MainAPI() {
                 ?: "Sem Título"
 
             val poster = extractDetailPoster(document)
-            val background = document.selectFirst("meta[property='og:image']")?.attr("content")
-                ?.takeIf { it.isNotBlank() }
-                ?.let { fixUrl(it) }
+            val background = poster
 
             val synopsis = document.selectFirst(".wp-content p")?.text()?.trim()
                 ?: document.selectFirst(".sbox .wp-content")?.text()?.trim()
@@ -537,7 +560,7 @@ class TopAnimes : MainAPI() {
             val response = newAnimeLoadResponse(
                 extractAnimeName(title), 
                 url, 
-                if (isMovie) TvType.Movie else TvType.Anime
+                if (isMovie) TvType.AnimeMovie else TvType.Anime
             ) {
                 this.posterUrl = poster
                 this.backgroundPosterUrl = background
@@ -577,7 +600,7 @@ class TopAnimes : MainAPI() {
 
         } catch (e: Exception) {
             newAnimeLoadResponse("Erro ao carregar", url, TvType.Anime) {
-                this.plot = "Não foi possível carregar esta página: ${e.message}"
+                this.plot = "Não foi possível carregar esta página."
             }
         }
     }
@@ -585,15 +608,15 @@ class TopAnimes : MainAPI() {
     private fun extractEpisodesFromDocument(document: org.jsoup.nodes.Document, baseUrl: String): List<Episode> {
         val episodes = mutableListOf<Episode>()
 
-        // Seletores para episódios
+        // Seletores otimizados para TopAnimes
         val episodeElements = document.select("""
             .episodios li,
-            .se-a ul.episodios li,
-            [class*='episodios'] li,
-            .mark-,
+            .se-a ul li,
             .episode-item,
-            li[data-id]
-        """)
+            [class*='episodios'] li,
+            li[data-id],
+            .mark-
+        """).take(100) // Limita a 100 episódios
 
         if (episodeElements.isEmpty()) {
             return emptyList()
@@ -633,15 +656,16 @@ class TopAnimes : MainAPI() {
                 episodes.add(episode)
 
             } catch (e: Exception) {
+                // Ignora episódios com erro
             }
         }
 
-        return episodes.sortedBy { it.episode }
+        return episodes.sortedBy { it.episode }.take(100) // Garante máximo 100 episódios
     }
 
     private fun extractEpisodeNumberFromElement(element: Element, href: String): Int? {
         // Tenta extrair do elemento .numerando
-        val numberElement = element.selectFirst(".numerando, .epnumber")
+        val numberElement = element.selectFirst(".numerando, .epnumber, .num")
         
         numberElement?.text()?.let { text ->
             val patterns = listOf(
@@ -682,13 +706,12 @@ class TopAnimes : MainAPI() {
         return null
     }
 
-    // LoadLinks desativado por enquanto
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        return false // Retorna false para indicar que não há links disponíveis
+        return false
     }
 }
