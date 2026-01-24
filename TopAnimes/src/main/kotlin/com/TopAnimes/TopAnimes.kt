@@ -21,6 +21,23 @@ class TopAnimes : MainAPI() {
         private const val SEARCH_PATH = "/?s="
         private val loadingMutex = Mutex()
 
+        // Função para mapear status
+        private fun mapStatus(statusText: String): ShowStatus {
+            return when {
+                statusText.contains("em andamento", ignoreCase = true) ||
+                statusText.contains("lançando", ignoreCase = true) ||
+                statusText.contains("lançamento", ignoreCase = true) ||
+                statusText.contains("ongoing", ignoreCase = true) -> ShowStatus.Ongoing
+                
+                statusText.contains("concluído", ignoreCase = true) ||
+                statusText.contains("completo", ignoreCase = true) ||
+                statusText.contains("finalizado", ignoreCase = true) ||
+                statusText.contains("completed", ignoreCase = true) -> ShowStatus.Completed
+                
+                else -> ShowStatus.Completed
+            }
+        }
+
         // Todas as categorias organizadas em grupos
         private val ALL_CATEGORIES = listOf(
             // Categorias Principais
@@ -499,7 +516,7 @@ class TopAnimes : MainAPI() {
 
             val statusElement = document.selectFirst(".custom_fields:contains(Status) span.valor")
             val statusText = statusElement?.text()?.trim() ?: "Desconhecido"
-            val showStatus = getStatus(statusText)
+            val showStatus = mapStatus(statusText)
 
             val genres = extractGenres(document)
 
@@ -526,7 +543,7 @@ class TopAnimes : MainAPI() {
                 this.plot = synopsis
                 this.tags = genres
                 this.score = score
-                this.status = showStatus
+                this.showStatus = showStatus // Corrigido: status -> showStatus
 
                 studio?.let { 
                     try {
@@ -537,11 +554,24 @@ class TopAnimes : MainAPI() {
                 }
 
                 if (episodes.isNotEmpty()) {
+                    // Maneira alternativa de adicionar episódios sem usar SubbedAndDubbed
                     if (hasDub && hasSub) {
-                        addEpisodes(DubStatus.SubbedAndDubbed, episodes)
+                        // Adiciona tanto versões dubladas quanto legendadas
+                        episodes.forEach { episode ->
+                            // Adiciona versão legendada
+                            addEpisode(episode.apply {
+                                this.name = "${episode.name} (Legendado)"
+                            })
+                            // Adiciona versão dublada
+                            addEpisode(episode.copy(
+                                name = "${episode.name} (Dublado)"
+                            ))
+                        }
                     } else if (hasDub) {
+                        // Apenas dublado
                         addEpisodes(DubStatus.Dubbed, episodes)
                     } else {
+                        // Apenas legendado (padrão)
                         addEpisodes(DubStatus.Subbed, episodes)
                     }
                 }
