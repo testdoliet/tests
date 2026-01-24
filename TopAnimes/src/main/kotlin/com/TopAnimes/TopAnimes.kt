@@ -3,20 +3,9 @@ package com.TopAnimes
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.app
-import android.content.Context
-import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
-import com.lagradost.cloudstream3.plugins.Plugin
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.jsoup.nodes.Element
-
-@CloudstreamPlugin
-class TopAnimesPlugin: Plugin() {
-    override fun load(context: Context) {
-        // All providers should be added in this manner. Please don't edit the providers list directly.
-        registerMainAPI(TopAnimes())
-    }
-}
 
 class TopAnimes : MainAPI() {
     override var mainUrl = "https://topanimes.net"
@@ -569,7 +558,7 @@ class TopAnimes : MainAPI() {
                         // Primeiro adiciona os episódios legendados
                         addEpisodes(DubStatus.Subbed, episodes)
                         
-                        // Depois duplica para dublado se necessário
+                        // Depois duplica para dublado
                         val dubbedEpisodes = episodes.map { episode ->
                             Episode(
                                 data = episode.data,
