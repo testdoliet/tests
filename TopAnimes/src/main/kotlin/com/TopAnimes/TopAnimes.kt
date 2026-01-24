@@ -6,8 +6,6 @@ import com.lagradost.cloudstream3.app
 import android.content.Context
 import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
 import com.lagradost.cloudstream3.plugins.Plugin
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import org.jsoup.nodes.Element
 
 @CloudstreamPlugin
@@ -28,36 +26,30 @@ class TopAnimes : MainAPI() {
 
     companion object {
         private const val SEARCH_PATH = "/?s="
-        private val loadingMutex = Mutex()
 
         // Função para mapear status
         private fun getStatus(statusText: String): ShowStatus {
             return when {
                 statusText.contains("em andamento", ignoreCase = true) ||
-                statusText.contains("lançando", ignoreCase = true) ||
-                statusText.contains("lançamento", ignoreCase = true) ||
-                statusText.contains("ongoing", ignoreCase = true) -> ShowStatus.Ongoing
+                statusText.contains("lançando", ignoreCase = true) -> ShowStatus.Ongoing
                 
                 statusText.contains("concluído", ignoreCase = true) ||
-                statusText.contains("completo", ignoreCase = true) ||
-                statusText.contains("finalizado", ignoreCase = true) ||
-                statusText.contains("completed", ignoreCase = true) -> ShowStatus.Completed
+                statusText.contains("completo", ignoreCase = true) -> ShowStatus.Completed
                 
                 else -> ShowStatus.Completed
             }
         }
 
-        // Categorias fixas (5 abas fixas + 15 gêneros mais comuns)
-        private val FIXED_CATEGORIES = listOf(
+        // Categorias fixas (5 abas fixas + 10 gêneros populares = 15 total)
+        private val ALL_CATEGORIES = listOf(
+            // 5 abas fixas
             "/animes" to "Todos os Animes",
             "/episodio" to "Episódios Recentes",
             "/tipo/legendado" to "Legendados",
             "/tipo/dublado" to "Dublados",
-            "/tipo/donghua" to "Donghua"
-        )
-
-        // 15 gêneros mais comuns (baseado em sites de anime)
-        private val POPULAR_GENRES = listOf(
+            "/tipo/donghua" to "Donghua",
+            
+            // 10 gêneros populares
             "/genero/acao" to "Ação",
             "/genero/aventura" to "Aventura",
             "/genero/comedia" to "Comédia",
@@ -67,16 +59,8 @@ class TopAnimes : MainAPI() {
             "/genero/ficcao-cientifica" to "Ficção Científica",
             "/genero/misterio" to "Mistério",
             "/genero/terror" to "Terror",
-            "/genero/sobrenatural" to "Sobrenatural",
-            "/genero/slice-of-life" to "Slice of Life",
-            "/genero/escolar" to "Escolar",
-            "/genero/esportes" to "Esportes",
-            "/genero/seinen" to "Seinen",
-            "/genero/shounen" to "Shounen"
+            "/genero/sobrenatural" to "Sobrenatural"
         )
-
-        // Todas as categorias combinadas
-        private val ALL_CATEGORIES = FIXED_CATEGORIES + POPULAR_GENRES
     }
 
     override val mainPage = mainPageOf(
@@ -87,19 +71,11 @@ class TopAnimes : MainAPI() {
 
     private fun extractPoster(element: Element): String? {
         return try {
-            // No HTML, os posters estão em .poster img com src do TMDB
+            // Método direto: pega a primeira imagem dentro de .poster
             val img = element.selectFirst(".poster img")
-            if (img != null) {
-                // Primeiro tenta src normal
-                var src = img.attr("src")
-                if (src.isNullOrBlank()) {
-                    // Tenta data-src
-                    src = img.attr("data-src")
-                }
-                
-                if (!src.isNullOrBlank()) {
-                    // O site usa imagens do TMDB como "https://image.tmdb.org/t/p/w185/..."
-                    // Vamos garantir que a URL esteja completa
+            img?.let {
+                var src = it.attr("src").ifBlank { it.attr("data-src") }
+                if (src.isNotBlank()) {
                     return when {
                         src.startsWith("//") -> "https:$src"
                         src.startsWith("/") -> "$mainUrl$src"
@@ -108,69 +84,6 @@ class TopAnimes : MainAPI() {
                     }
                 }
             }
-
-            // Fallback: tenta qualquer imagem dentro do elemento
-            element.selectFirst("img")?.let { imgElement ->
-                var src = imgElement.attr("src") ?: imgElement.attr("data-src")
-                if (!src.isNullOrBlank()) {
-                    return when {
-                        src.startsWith("//") -> "https:$src"
-                        src.startsWith("/") -> "$mainUrl$src"
-                        src.startsWith("http") -> src
-                        else -> fixUrl(src)
-                    }
-                }
-            }
-
-            null
-        } catch (e: Exception) {
-            null
-        }
-    }
-
-    private fun extractDetailPoster(document: org.jsoup.nodes.Document): String? {
-        return try {
-            // Primeiro tenta meta tag og:image
-            val metaImage = document.selectFirst("meta[property='og:image']")?.attr("content")
-                ?.takeIf { it.isNotBlank() }
-                ?.let { fixUrl(it) }
-            if (metaImage != null) return metaImage
-
-            // Tenta o poster na página de detalhes
-            val posterElement = document.selectFirst(".sheader .poster img, .poster img, .anime-poster img")
-            posterElement?.let { img ->
-                var src = img.attr("src")
-                if (src.isNullOrBlank()) {
-                    src = img.attr("data-src")
-                }
-                
-                if (!src.isNullOrBlank()) {
-                    return when {
-                        src.startsWith("//") -> "https:$src"
-                        src.startsWith("/") -> "$mainUrl$src"
-                        src.startsWith("http") -> src
-                        else -> fixUrl(src)
-                    }
-                }
-            }
-
-            // Fallback para qualquer imagem relevante
-            document.selectFirst("img[src*='tmdb.org'], img[src*='/w'], img[alt*='poster'], img[alt*='Poster']")?.let { img ->
-                var src = img.attr("src")
-                if (src.isNullOrBlank()) {
-                    src = img.attr("data-src")
-                }
-                
-                if (!src.isNullOrBlank()) {
-                    return when {
-                        src.startsWith("//") -> "https:$src"
-                        src.startsWith("/") -> "$mainUrl$src"
-                        src.startsWith("http") -> src
-                        else -> fixUrl(src)
-                    }
-                }
-            }
-
             null
         } catch (e: Exception) {
             null
@@ -189,24 +102,19 @@ class TopAnimes : MainAPI() {
         
         if (href.isBlank()) return null
 
-        // Extrai título do elemento .data h3
+        // Extrai título
         val titleElement = selectFirst(".data h3, h3") ?: return null
         val rawTitle = titleElement.text().trim()
 
         if (rawTitle.isBlank()) return null
 
-        // Extrai ano
+        // Extrai ano (apenas)
         val yearElement = selectFirst(".data span:last-child, span:last-child")
         val yearText = yearElement?.text()?.trim()
         val year = extractYear(yearText)
 
-        // Extrai score (remove a badge)
-        val scoreElement = selectFirst(".rating")
-        val scoreText = scoreElement?.text()?.trim()
-        val score = when {
-            scoreText == null || scoreText == "N/A" -> null
-            else -> scoreText.toFloatOrNull()?.let { Score.from10(it) }
-        }
+        // REMOVIDO: badges de score
+        // Não extrai mais score
 
         // Determina se é dublado ou legendado
         val hasExplicitDub = rawTitle.contains("dublado", ignoreCase = true) || 
@@ -245,8 +153,8 @@ class TopAnimes : MainAPI() {
         return newAnimeSearchResponse(cleanName, fixUrl(href)) {
             this.posterUrl = sitePoster
             this.type = if (isMovie) TvType.Movie else TvType.Anime
-            this.score = score
             this.year = year
+            // REMOVIDO: não seta mais score
 
             if (finalHasDub || finalHasLeg) {
                 addDubStatus(dubExist = finalHasDub, subExist = finalHasLeg)
@@ -265,10 +173,7 @@ class TopAnimes : MainAPI() {
             Regex("(?i)todos os episódios"),
             Regex("\\s*-\\s*$"),
             Regex("\\(\\d{4}\\)"),
-            Regex("Episódio \\d+"),
-            Regex("\\s*\\[.*?\\]"),
-            Regex("Filme"),
-            Regex("Movie")
+            Regex("\\s*\\[.*?\\]")
         )
 
         patterns.forEach { pattern ->
@@ -287,15 +192,12 @@ class TopAnimes : MainAPI() {
 
     private suspend fun detectHasNextPage(document: org.jsoup.nodes.Document, currentPageNum: Int): Boolean {
         return try {
-            // Verifica se há paginação
             val pagination = document.select(".pagination")
             if (pagination.isNotEmpty()) {
-                // Verifica se há link para próxima página
                 val hasNextLink = pagination.select("a[href*='page/${currentPageNum + 1}'], a:contains(Próxima), .arrow_pag").isNotEmpty()
                 return hasNextLink
             }
             
-            // Verifica se há botões de resppages
             val respPages = document.select(".resppages a")
             if (respPages.isNotEmpty()) {
                 return true
@@ -308,50 +210,44 @@ class TopAnimes : MainAPI() {
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        return loadingMutex.withLock {
-            try {
-                val basePath = request.data.removePrefix(mainUrl)
-                val sitePageNumber = page + 1
+        try {
+            val basePath = request.data.removePrefix(mainUrl)
+            val sitePageNumber = page + 1
 
-                val pageUrl = if (sitePageNumber == 1) {
-                    "$mainUrl$basePath"
-                } else {
-                    "$mainUrl$basePath/page/$sitePageNumber"
-                }
-
-                val document = app.get(pageUrl, timeout = 30).document
-                
-                // Seletores baseados no HTML
-                val elements = document.select("""
-                    article.item.tvshows,
-                    article.item.movies,
-                    .items.full article.item
-                """)
-
-                val homeItems = mutableListOf<SearchResponse>()
-
-                elements.forEach { element ->
-                    try {
-                        val item = element.toSearchResponse()
-                        if (item != null) {
-                            homeItems.add(item)
-                        }
-                    } catch (e: Exception) {
-                        // Ignora erros individuais
-                    }
-                }
-
-                val hasNextPage = detectHasNextPage(document, sitePageNumber)
-
-                newHomePageResponse(
-                    request.name,
-                    homeItems.distinctBy { it.url },
-                    hasNext = hasNextPage
-                )
-
-            } catch (e: Exception) {
-                newHomePageResponse(request.name, emptyList(), false)
+            val pageUrl = if (sitePageNumber == 1) {
+                "$mainUrl$basePath"
+            } else {
+                "$mainUrl$basePath/page/$sitePageNumber"
             }
+
+            val document = app.get(pageUrl, timeout = 20).document
+            
+            // Seletores simplificados
+            val elements = document.select("article.item.tvshows, article.item.movies")
+
+            val homeItems = mutableListOf<SearchResponse>()
+
+            elements.forEach { element ->
+                try {
+                    val item = element.toSearchResponse()
+                    if (item != null) {
+                        homeItems.add(item)
+                    }
+                } catch (e: Exception) {
+                    // Ignora erros
+                }
+            }
+
+            val hasNextPage = detectHasNextPage(document, sitePageNumber)
+
+            return newHomePageResponse(
+                request.name,
+                homeItems.distinctBy { it.url },
+                hasNext = hasNextPage
+            )
+
+        } catch (e: Exception) {
+            return newHomePageResponse(request.name, emptyList(), false)
         }
     }
 
@@ -361,7 +257,7 @@ class TopAnimes : MainAPI() {
         val searchUrl = "$mainUrl$SEARCH_PATH${query.trim().replace(" ", "+")}"
 
         return try {
-            val document = app.get(searchUrl, timeout = 15).document
+            val document = app.get(searchUrl, timeout = 10).document
 
             document.select("article.item.tvshows, article.item.movies")
                 .mapNotNull { it.toSearchResponse() }
@@ -410,41 +306,30 @@ class TopAnimes : MainAPI() {
         return Pair(hasDub, hasSub)
     }
 
-    private fun extractScoreFromDocument(document: org.jsoup.nodes.Document): Float? {
-        val selectors = listOf(
-            ".rating-value",
-            ".starstruck .rating-value",
-            ".mtipo .rating-value",
-            "#repimdb strong",
-            ".dt_rating_vgs",
-            "meta[itemprop='ratingValue']"
-        )
-        
-        for (selector in selectors) {
-            val text = document.selectFirst(selector)?.text()?.trim()
-            if (!text.isNullOrBlank()) {
-                return text.toFloatOrNull()
-            }
-        }
-        
-        // Tenta extrair do atributo content
-        document.selectFirst("meta[itemprop='ratingValue']")?.attr("content")?.let {
-            return it.toFloatOrNull()
-        }
-        
-        return null
-    }
+    // REMOVIDO: função extractScoreFromDocument não é mais usada
 
     override suspend fun load(url: String): LoadResponse {
         return try {
-            val document = app.get(url, timeout = 40).document
+            val document = app.get(url, timeout = 30).document
 
             val title = document.selectFirst("h1")?.text()?.trim() 
                 ?: document.selectFirst(".data h1")?.text()?.trim() 
                 ?: document.selectFirst(".sheader h1")?.text()?.trim()
                 ?: "Sem Título"
 
-            val poster = extractDetailPoster(document)
+            // Poster simplificado
+            val poster = document.selectFirst(".sheader .poster img, .poster img")?.let { img ->
+                var src = img.attr("src").ifBlank { img.attr("data-src") }
+                if (src.isNotBlank()) {
+                    when {
+                        src.startsWith("//") -> "https:$src"
+                        src.startsWith("/") -> "$mainUrl$src"
+                        src.startsWith("http") -> src
+                        else -> fixUrl(src)
+                    }
+                } else null
+            }
+
             val background = document.selectFirst("meta[property='og:image']")?.attr("content")
                 ?.takeIf { it.isNotBlank() }
                 ?.let { fixUrl(it) }
@@ -452,7 +337,6 @@ class TopAnimes : MainAPI() {
             val synopsis = document.selectFirst(".wp-content p")?.text()?.trim()
                 ?: document.selectFirst(".sbox .wp-content")?.text()?.trim()
                 ?: document.selectFirst(".synopsis")?.text()?.trim()
-                ?: document.selectFirst("[itemprop='description']")?.text()?.trim()
                 ?: "Sinopse não disponível."
 
             val yearText = document.selectFirst(".extra .date")?.text()?.trim()
@@ -467,7 +351,7 @@ class TopAnimes : MainAPI() {
 
             val (hasDub, hasSub) = extractAudioType(document)
 
-            val score = extractScoreFromDocument(document)?.let { Score.from10(it) }
+            // REMOVIDO: não extrai mais score
 
             val isMovie = url.contains("/filmes/") || 
                          title.contains("filme", ignoreCase = true) ||
@@ -485,15 +369,13 @@ class TopAnimes : MainAPI() {
                 this.year = year
                 this.plot = synopsis
                 this.tags = genres
-                this.score = score
+                // REMOVIDO: não seta mais score
                 this.showStatus = showStatus
 
                 if (episodes.isNotEmpty()) {
                     if (hasDub && hasSub) {
-                        // Primeiro adiciona os episódios legendados
                         addEpisodes(DubStatus.Subbed, episodes)
                         
-                        // Depois duplica para dublado
                         val dubbedEpisodes = episodes.map { episode ->
                             newEpisode(episode.data) {
                                 this.name = "${episode.name} (Dublado)"
@@ -504,10 +386,8 @@ class TopAnimes : MainAPI() {
                         }
                         addEpisodes(DubStatus.Dubbed, dubbedEpisodes)
                     } else if (hasDub) {
-                        // Apenas dublado
                         addEpisodes(DubStatus.Dubbed, episodes)
                     } else {
-                        // Apenas legendado (padrão)
                         addEpisodes(DubStatus.Subbed, episodes)
                     }
                 }
@@ -525,19 +405,7 @@ class TopAnimes : MainAPI() {
     private fun extractEpisodesFromDocument(document: org.jsoup.nodes.Document, baseUrl: String): List<Episode> {
         val episodes = mutableListOf<Episode>()
 
-        // Seletores para episódios
-        val episodeElements = document.select("""
-            .episodios li,
-            .se-a ul.episodios li,
-            [class*='episodios'] li,
-            .mark-,
-            .episode-item,
-            li[data-id]
-        """)
-
-        if (episodeElements.isEmpty()) {
-            return emptyList()
-        }
+        val episodeElements = document.select(".episodios li, .se-a ul.episodios li")
 
         episodeElements.forEachIndexed { index, element ->
             try {
@@ -581,42 +449,24 @@ class TopAnimes : MainAPI() {
     }
 
     private fun extractEpisodeNumberFromElement(element: Element, href: String): Int? {
-        // Tenta extrair do elemento .numerando
         val numberElement = element.selectFirst(".numerando, .epnumber")
         
         numberElement?.text()?.let { text ->
-            val patterns = listOf(
-                Regex("""(\d+)\s*-\s*\d+"""),
-                Regex("""\b(\d+)\b"""),
-                Regex("""Epis[oó]dio\s*(\d+)""", RegexOption.IGNORE_CASE)
-            )
-            
-            for (pattern in patterns) {
-                val match = pattern.find(text)
-                if (match != null) {
-                    return match.groupValues[1].toIntOrNull()
-                }
-            }
-        }
-
-        // Tenta extrair da URL
-        val urlPatterns = listOf(
-            Regex("""/episodio/.+?-episodio-(\d+)"""),
-            Regex("""episodio-(\d+)"""),
-            Regex("""/episodio/(\d+)""")
-        )
-        
-        for (pattern in urlPatterns) {
-            val match = pattern.find(href)
+            val match = Regex("""(\d+)\s*-\s*\d+""").find(text)
             if (match != null) {
                 return match.groupValues[1].toIntOrNull()
             }
         }
 
+        val match = Regex("""episodio-(\d+)""").find(href)
+        if (match != null) {
+            return match.groupValues[1].toIntOrNull()
+        }
+
         return null
     }
 
-    // LoadLinks desativado por enquanto
+    // LoadLinks desativado
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
