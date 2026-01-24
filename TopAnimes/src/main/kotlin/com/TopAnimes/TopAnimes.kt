@@ -101,15 +101,7 @@ class TopAnimes : MainAPI() {
             "/genero/urban-fantasia" to "Fantasia Urbana",
             "/genero/viagem-no-tempo" to "Viagem no Tempo",
             "/genero/video-game" to "Video Game",
-            "/genero/samurai" to "Samurai",
-            
-            // Gêneros Adicionais
-            "/genero/delinquents" to "Delinquentes",
-            "/genero/familia" to "Família",
-            "/genero/gore" to "Gore",
-            "/genero/survival" to "Sobrevivência",
-            "/genero/trabalho" to "Trabalho",
-            "/genero/adult-cast" to "Elenco Adulto"
+            "/genero/samurai" to "Samurai"
         )
 
         // Cache para categorias aleatórias
@@ -148,29 +140,26 @@ class TopAnimes : MainAPI() {
 
     private fun extractPoster(element: Element): String? {
         return try {
-            val metaImage = element.selectFirst("meta[property='og:image']")?.attr("content")
-                ?.takeIf { it.isNotBlank() }
-                ?.let { fixUrl(it) }
-            if (metaImage != null) return metaImage
+            // Primeiro tenta extrair da imagem dentro do poster
+            val img = element.selectFirst(".poster img")
+            if (img != null) {
+                val src = img.attr("src")?.takeIf { it.isNotBlank() } ?: img.attr("data-src")
+                if (!src.isNullOrBlank()) {
+                    return fixUrl(src)
+                }
+            }
 
+            // Tenta extrair do atributo data-src
             val dataSrc = element.selectFirst("img[data-src]")?.attr("data-src")
                 ?.takeIf { it.isNotBlank() }
                 ?.let { fixUrl(it) }
             if (dataSrc != null) return dataSrc
 
+            // Tenta extrair do atributo src
             val srcImage = element.selectFirst("img[src]")?.attr("src")
                 ?.takeIf { it.isNotBlank() }
                 ?.let { fixUrl(it) }
             if (srcImage != null) return srcImage
-
-            val style = element.attr("style")
-            if (style.contains("background-image")) {
-                val bgRegex = Regex("""url\(['"]?([^'"()]+)['"]?\)""")
-                val match = bgRegex.find(style)
-                match?.groupValues?.get(1)?.let { bgUrl ->
-                    return fixUrl(bgUrl)
-                }
-            }
 
             null
         } catch (e: Exception) {
@@ -216,21 +205,29 @@ class TopAnimes : MainAPI() {
     }
 
     private fun Element.toSearchResponse(): AnimeSearchResponse? {
-        val href = attr("href") ?: return null
-        if (href.isBlank() || (!href.contains("/animes/") && !href.contains("/filmes/"))) return null
+        // Primeiro verifica se é um elemento article com classe .item
+        if (!(hasClass("item") || tagName() == "article")) {
+            return null
+        }
 
-        val titleElement = selectFirst("h3, .data h3, h3 a, .serie, strong span") ?: return null
+        // Tenta encontrar o link dentro do elemento
+        val linkElement = selectFirst("a[href*='/animes/'], a[href*='/filmes/']") ?: return null
+        val href = linkElement.attr("href") ?: return null
+        
+        if (href.isBlank()) return null
+
+        // Extrai título do elemento .data h3
+        val titleElement = selectFirst(".data h3, h3, .serie, strong span") ?: return null
         val rawTitle = titleElement.text().trim()
 
-        val titleAttr = attr("title")?.trim() ?: ""
-        val combinedTitle = if (titleAttr.isNotBlank() && titleAttr.length > 3) titleAttr else rawTitle
+        if (rawTitle.isBlank()) return null
 
-        if (combinedTitle.isBlank()) return null
-
-        val yearElement = selectFirst("span:last-child, .year, .data span")
+        // Extrai ano
+        val yearElement = selectFirst(".data span:last-child, span:last-child, .year")
         val yearText = yearElement?.text()?.trim()
         val year = extractYear(yearText)
 
+        // Extrai score
         val scoreResult = extractScoreAdvanced(this)
         val scoreText = scoreResult.first
         val score = when {
@@ -238,9 +235,10 @@ class TopAnimes : MainAPI() {
             else -> scoreText.toFloatOrNull()?.let { Score.from10(it) }
         }
 
-        val hasExplicitDub = combinedTitle.contains("dublado", ignoreCase = true) || 
+        // Determina se é dublado ou legendado
+        val hasExplicitDub = rawTitle.contains("dublado", ignoreCase = true) || 
                             href.contains("dublado", ignoreCase = true)
-        val hasExplicitLeg = combinedTitle.contains("legendado", ignoreCase = true) || 
+        val hasExplicitLeg = rawTitle.contains("legendado", ignoreCase = true) || 
                             href.contains("legendado", ignoreCase = true)
 
         val finalHasDub: Boolean
@@ -265,10 +263,10 @@ class TopAnimes : MainAPI() {
             }
         }
 
-        val cleanName = extractAnimeName(combinedTitle)
+        val cleanName = extractAnimeName(rawTitle)
         val isMovie = href.contains("/filmes/") || 
-                     combinedTitle.contains("filme", ignoreCase = true) ||
-                     combinedTitle.contains("movie", ignoreCase = true)
+                     rawTitle.contains("filme", ignoreCase = true) ||
+                     rawTitle.contains("movie", ignoreCase = true)
         val sitePoster = extractPoster(this)
 
         return newAnimeSearchResponse(cleanName, fixUrl(href)) {
@@ -284,50 +282,21 @@ class TopAnimes : MainAPI() {
     }
 
     private fun extractScoreAdvanced(element: Element): Pair<String?, String?> {
-        val selectors = listOf(
-            ".rating",
-            ".score",
-            ".wextra b",
-            ".starstruck span",
-            ".rating-value",
-            ".dt_rating_data span",
-            "b:contains(★)",
-            "span:contains(/10)",
-            ".rating .fas",
-            ".numerando + div span"
-        )
-
-        for (selector in selectors) {
-            val found = element.selectFirst(selector)?.text()?.trim()
-            if (!found.isNullOrBlank() && isScoreLike(found)) {
-                return found to selector
+        // Primeiro tenta do elemento .rating
+        val ratingElement = element.selectFirst(".rating")
+        if (ratingElement != null) {
+            val text = ratingElement.text().trim()
+            if (text.isNotBlank() && isScoreLike(text)) {
+                return text to ".rating"
             }
         }
 
-        element.parent()?.let { parent ->
-            for (selector in selectors) {
-                val found = parent.selectFirst(selector)?.text()?.trim()
-                if (!found.isNullOrBlank() && isScoreLike(found)) {
-                    return found to "parent.$selector"
-                }
-            }
-        }
-
-        val html = element.outerHtml()
-        val scoreRegexes = listOf(
-            Regex("""(\d+\.\d+|\d+)\s*(?:★|/10|pontos)"""),
-            Regex("""class="[^"]*(?:rating|score)[^"]*">([^<]+)"""),
-            Regex("""rating-value[^>]*>([^<]+)"""),
-            Regex("""<b>(\d+\.\d+)</b>""")
-        )
-
-        for (regex in scoreRegexes) {
-            val match = regex.find(html)
-            if (match != null) {
-                val found = match.groupValues[1].trim()
-                if (isScoreLike(found)) {
-                    return found to "regex"
-                }
+        // Tenta do elemento .data .rating
+        val dataRating = element.selectFirst(".data .rating")
+        if (dataRating != null) {
+            val text = dataRating.text().trim()
+            if (text.isNotBlank() && isScoreLike(text)) {
+                return text to ".data .rating"
             }
         }
 
@@ -340,7 +309,6 @@ class TopAnimes : MainAPI() {
             text.matches(Regex("""^\d+(\.\d+)?$""")) -> true
             text.matches(Regex("""^\d+(\.\d+)?/10$""")) -> true
             text.contains("★") -> true
-            text.contains("pontos", ignoreCase = true) -> true
             else -> false
         }
     }
@@ -378,21 +346,21 @@ class TopAnimes : MainAPI() {
 
     private suspend fun detectHasNextPage(document: org.jsoup.nodes.Document, currentPageNum: Int): Boolean {
         return try {
-            // Verifica se há elementos na página
-            val hasElements = document.select("article.item, .item.tvshows, article").isNotEmpty()
-            if (!hasElements) return false
-
             // Verifica se há paginação
-            val pagination = document.select(".pagination, .page-numbers, .paginacao")
+            val pagination = document.select(".pagination")
             if (pagination.isNotEmpty()) {
-                // Verifica se há próximo link
-                val nextLink = pagination.select("a[href*='page/${currentPageNum + 1}'], a:contains(Próxima), a:contains(›)")
-                return nextLink.isNotEmpty()
+                // Verifica se há link para próxima página
+                val hasNextLink = pagination.select("a[href*='page/${currentPageNum + 1}'], a:contains(Próxima), .arrow_pag").isNotEmpty()
+                return hasNextLink
             }
-
-            // Verifica se há botão de próxima página
-            val nextButton = document.select("a[href*='/page/${currentPageNum + 1}/'], .arrow_pag, .resppages a")
-            return nextButton.isNotEmpty()
+            
+            // Verifica se há botões de resppages
+            val respPages = document.select(".resppages a")
+            if (respPages.isNotEmpty()) {
+                return true
+            }
+            
+            false
         } catch (e: Exception) {
             false
         }
@@ -401,33 +369,23 @@ class TopAnimes : MainAPI() {
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         return loadingMutex.withLock {
             try {
-                val isFixedTab = FIXED_CATEGORIES.any { it.second == request.name }
                 val basePath = request.data.removePrefix(mainUrl)
                 val sitePageNumber = page + 1
 
                 val pageUrl = if (sitePageNumber == 1) {
                     "$mainUrl$basePath"
                 } else {
-                    // Verifica se a URL já contém /page/
-                    if (basePath.contains("/page/")) {
-                        // Substitui o número da página
-                        val pathWithoutPage = basePath.replace(Regex("/page/\\d+/?$"), "")
-                        "$mainUrl$pathWithoutPage/page/$sitePageNumber"
-                    } else {
-                        "$mainUrl$basePath/page/$sitePageNumber"
-                    }
+                    "$mainUrl$basePath/page/$sitePageNumber"
                 }
 
                 val document = app.get(pageUrl, timeout = 30).document
                 
-                // Seletores melhorados baseados no HTML fornecido
+                // Seletores corrigidos baseados no HTML
                 val elements = document.select("""
-                    article.item a,
-                    .item.tvshows a,
-                    a[href*='/animes/'],
-                    article.tvshows a,
-                    .poster a
-                """).take(50)
+                    article.item.tvshows,
+                    article.item.movies,
+                    .items.full article.item
+                """)
 
                 val homeItems = mutableListOf<SearchResponse>()
 
@@ -464,7 +422,7 @@ class TopAnimes : MainAPI() {
         return try {
             val document = app.get(searchUrl, timeout = 15).document
 
-            document.select("a[href*='/animes/'], a[href*='/filmes/']")
+            document.select("article.item.tvshows, article.item.movies")
                 .mapNotNull { it.toSearchResponse() }
                 .distinctBy { it.url }
                 .take(30)
@@ -472,10 +430,6 @@ class TopAnimes : MainAPI() {
         } catch (e: Exception) {
             emptyList()
         }
-    }
-
-    private fun extractTextFromSelector(document: org.jsoup.nodes.Document, selector: String): String? {
-        return document.selectFirst(selector)?.text()?.trim()
     }
 
     private fun extractGenres(document: org.jsoup.nodes.Document): List<String> {
@@ -709,12 +663,6 @@ class TopAnimes : MainAPI() {
         val markMatch = Regex("""mark-(\d+)""").find(classAttr)
         if (markMatch != null) {
             return markMatch.groupValues[1].toIntOrNull()
-        }
-
-        // Tenta extrair do atributo data-id
-        val dataId = element.attr("data-id")
-        if (dataId.isNotBlank() && dataId.matches(Regex("""\d+"""))) {
-            return dataId.toIntOrNull()
         }
 
         // Tenta extrair da URL
