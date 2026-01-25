@@ -592,8 +592,9 @@ class TopAnimes : MainAPI() {
         println("DEBUG: TENTATIVA 1 - Seletor '.episodios li': ${episodeElements1.size} elementos encontrados")
         
         if (episodeElements1.isNotEmpty()) {
+            val firstElement = episodeElements1.first()
             println("DEBUG: Exemplo do primeiro elemento HTML (estrutura 1):")
-            println(episodeElements1.first()?.html()?.take(500) ?: "N/A")
+            println(firstElement?.html()?.take(500) ?: "N/A")
             
             episodeElements1.forEachIndexed { index, element ->
                 try {
@@ -653,8 +654,9 @@ class TopAnimes : MainAPI() {
             println("DEBUG: TENTATIVA 2 - Seletor '.se-a ul.episodios li': ${episodeElements2.size} elementos")
             
             if (episodeElements2.isNotEmpty()) {
+                val firstElement = episodeElements2.first()
                 println("DEBUG: Exemplo do primeiro elemento HTML (estrutura 2):")
-                println(episodeElements2.first()?.html()?.take(500) ?: "N/A")
+                println(firstElement?.html()?.take(500) ?: "N/A")
                 
                 episodeElements2.forEachIndexed { index, element ->
                     try {
@@ -708,8 +710,9 @@ class TopAnimes : MainAPI() {
             println("DEBUG: TENTATIVA 3 - Seletor 'a[href*=/episodio/]': ${episodeLinks.size} links encontrados")
             
             if (episodeLinks.isNotEmpty()) {
+                val firstLink = episodeLinks.first()
                 println("DEBUG: Exemplo do primeiro link HTML (estrutura 3):")
-                println(episodeLinks.first()?.html() ?: "N/A")
+                println(firstLink?.html() ?: "N/A")
                 
                 episodeLinks.forEachIndexed { index, element ->
                     try {
@@ -825,8 +828,9 @@ class TopAnimes : MainAPI() {
                 val elements = document.select(selector)
                 if (elements.isNotEmpty()) {
                     println("DEBUG: Seletor '$selector' encontrou ${elements.size} elementos")
+                    val firstElement = elements.first()
                     println("DEBUG: Exemplo HTML do seletor '$selector':")
-                    println(elements.first()?.html()?.take(300) ?: "N/A")
+                    println(firstElement?.html()?.take(300) ?: "N/A")
                 }
             }
         }
