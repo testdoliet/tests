@@ -541,7 +541,7 @@ class TopAnimes : MainAPI() {
         }
     }
 
-    // FUNÇÃO MELHORADA PARA EXTRAIR EPISÓDIOS COM DEBUGS
+    // FUNÇÃO MELHORADA PARA EXTRAIR EPISÓDIOS COM DEBUGS - VERSÃO CORRIGIDA
     private fun extractEpisodesFromDocument(document: org.jsoup.nodes.Document, baseUrl: String): List<Episode> {
         val episodes = mutableListOf<Episode>()
         
@@ -558,8 +558,9 @@ class TopAnimes : MainAPI() {
         
         if (episodeElements1.isNotEmpty()) {
             println("DEBUG EXTRACT: ✅ Estrutura encontrada! Processando ${episodeElements1.size} elementos")
-            episodeElements1.firstOrNull()?.let { 
-                println("DEBUG EXTRACT: HTML (primeiros 200 chars): ${it.html().take(200)}")
+            val firstElement = episodeElements1.firstOrNull()
+            if (firstElement != null) {
+                println("DEBUG EXTRACT: HTML (primeiros 200 chars): ${firstElement.html().take(200)}")
             }
             
             episodeElements1.forEachIndexed { index, element ->
@@ -620,8 +621,9 @@ class TopAnimes : MainAPI() {
             
             if (episodeElements2.isNotEmpty()) {
                 println("DEBUG EXTRACT: ✅ Estrutura 2 encontrada!")
-                episodeElements2.firstOrNull()?.let { 
-                    println("DEBUG EXTRACT: HTML (primeiros 200 chars): ${it.html().take(200)}")
+                val firstElement = episodeElements2.firstOrNull()
+                if (firstElement != null) {
+                    println("DEBUG EXTRACT: HTML (primeiros 200 chars): ${firstElement.html().take(200)}")
                 }
                 
                 episodeElements2.forEachIndexed { index, element ->
@@ -677,8 +679,9 @@ class TopAnimes : MainAPI() {
             
             if (episodeLinks.isNotEmpty()) {
                 println("DEBUG EXTRACT: ✅ Links encontrados!")
-                episodeLinks.firstOrNull()?.let { 
-                    println("DEBUG EXTRACT: HTML do primeiro link: ${it.html()}")
+                val firstLink = episodeLinks.firstOrNull()
+                if (firstLink != null) {
+                    println("DEBUG EXTRACT: HTML do primeiro link: ${firstLink.html()}")
                 }
                 
                 episodeLinks.forEachIndexed { index, element ->
