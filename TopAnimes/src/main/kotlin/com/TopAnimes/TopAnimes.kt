@@ -72,69 +72,53 @@ class TopAnimes : MainAPI() {
     private fun extractPoster(element: Element): String? {
         return try {
             println("DEBUG: Iniciando extractPoster")
-            println("DEBUG: Element HTML: ${element.outerHtml().take(300)}")
             
             // Método 1: Procura imagem dentro de .poster
             val posterDiv = element.selectFirst(".poster")
-            println("DEBUG: posterDiv encontrado? ${posterDiv != null}")
             
             if (posterDiv != null) {
-                println("DEBUG: posterDiv HTML: ${posterDiv.outerHtml()}")
-                
                 val img = posterDiv.selectFirst("img")
-                println("DEBUG: Imagem dentro de posterDiv encontrada? ${img != null}")
-                
                 img?.let {
-                    var src = it.attr("src")
-                    println("DEBUG: src atributo: '$src'")
+                    // PRIMEIRO tenta data-src (lazy loading)
+                    var src = it.attr("data-src")
+                    println("DEBUG: data-src atributo: '$src'")
                     
+                    // Se data-src estiver vazio, tenta src normal
                     if (src.isBlank()) {
-                        src = it.attr("data-src")
-                        println("DEBUG: data-src atributo: '$src'")
+                        src = it.attr("src")
+                        println("DEBUG: src atributo: '$src'")
                     }
                     
-                    if (src.isNotBlank()) {
+                    // Se for data URI (base64), ignora
+                    if (src.startsWith("data:image")) {
+                        println("DEBUG: Ignorando data URI (placeholder)")
+                        return null
+                    }
+                    
+                    if (src.isNotBlank() && !src.startsWith("data:")) {
                         println("DEBUG: Retornando src: $src")
                         return src
-                    }
-                }
-                
-                // Tenta extrair de background image
-                val style = posterDiv.attr("style")
-                println("DEBUG: style atributo: '$style'")
-                
-                if (style.contains("background-image")) {
-                    val regex = Regex("""url\(['"]?(.*?)['"]?\)""")
-                    val match = regex.find(style)
-                    match?.groupValues?.get(1)?.let { url ->
-                        if (url.isNotBlank()) {
-                            println("DEBUG: Retornando URL do background: $url")
-                            return url
-                        }
                     }
                 }
             }
             
             // Método 2: Procura qualquer imagem no elemento
             val img = element.selectFirst("img")
-            println("DEBUG: Imagem direta no elemento encontrada? ${img != null}")
             
             img?.let {
-                var src = it.attr("src")
-                println("DEBUG: src direto: '$src'")
-                
+                // PRIMEIRO tenta data-src
+                var src = it.attr("data-src")
                 if (src.isBlank()) {
-                    src = it.attr("data-src")
-                    println("DEBUG: data-src direto: '$src'")
+                    src = it.attr("src")
                 }
                 
-                if (src.isNotBlank()) {
-                    println("DEBUG: Retornando src direto: $src")
+                // Ignora data URIs
+                if (src.isNotBlank() && !src.startsWith("data:")) {
                     return src
                 }
             }
             
-            println("DEBUG: Nenhuma imagem encontrada")
+            println("DEBUG: Nenhuma imagem válida encontrada")
             null
         } catch (e: Exception) {
             println("DEBUG: Erro em extractPoster: ${e.message}")
@@ -398,13 +382,15 @@ class TopAnimes : MainAPI() {
                 ?: document.selectFirst(".sheader h1")?.text()?.trim()
                 ?: "Sem Título"
 
-            // Poster na página de detalhes
+            // Poster na página de detalhes - CORRIGIDO para lazy loading
             val poster = document.selectFirst(".sheader .poster img, .poster img")?.let { img ->
-                var src = img.attr("src")
+                // PRIMEIRO tenta data-src
+                var src = img.attr("data-src")
                 if (src.isBlank()) {
-                    src = img.attr("data-src")
+                    src = img.attr("src")
                 }
-                if (src.isNotBlank()) {
+                // Ignora data URIs
+                if (src.isNotBlank() && !src.startsWith("data:")) {
                     src
                 } else null
             } ?: document.selectFirst("meta[property='og:image']")?.attr("content")?.let { fixUrl(it) }
