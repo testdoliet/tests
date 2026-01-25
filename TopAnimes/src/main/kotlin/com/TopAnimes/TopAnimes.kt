@@ -580,7 +580,7 @@ class TopAnimes : MainAPI() {
         }
     }
 
-    // FUNÇÃO MELHORADA PARA EXTRAIR EPISÓDIOS (COM LOGS MELHORADOS)
+    // FUNÇÃO MELHORADA PARA EXTRAIR EPISÓDIOS (COM LOGS MELHORADOS) - VERSÃO CORRIGIDA
     private fun extractEpisodesFromDocument(document: org.jsoup.nodes.Document, baseUrl: String): List<Episode> {
         val episodes = mutableListOf<Episode>()
         
@@ -592,7 +592,7 @@ class TopAnimes : MainAPI() {
         println("DEBUG: TENTATIVA 1 - Seletor '.episodios li': ${episodeElements1.size} elementos encontrados")
         
         if (episodeElements1.isNotEmpty()) {
-            val firstElement = episodeElements1.first()
+            val firstElement = episodeElements1.firstOrNull()
             println("DEBUG: Exemplo do primeiro elemento HTML (estrutura 1):")
             println(firstElement?.html()?.take(500) ?: "N/A")
             
@@ -654,7 +654,7 @@ class TopAnimes : MainAPI() {
             println("DEBUG: TENTATIVA 2 - Seletor '.se-a ul.episodios li': ${episodeElements2.size} elementos")
             
             if (episodeElements2.isNotEmpty()) {
-                val firstElement = episodeElements2.first()
+                val firstElement = episodeElements2.firstOrNull()
                 println("DEBUG: Exemplo do primeiro elemento HTML (estrutura 2):")
                 println(firstElement?.html()?.take(500) ?: "N/A")
                 
@@ -710,7 +710,7 @@ class TopAnimes : MainAPI() {
             println("DEBUG: TENTATIVA 3 - Seletor 'a[href*=/episodio/]': ${episodeLinks.size} links encontrados")
             
             if (episodeLinks.isNotEmpty()) {
-                val firstLink = episodeLinks.first()
+                val firstLink = episodeLinks.firstOrNull()
                 println("DEBUG: Exemplo do primeiro link HTML (estrutura 3):")
                 println(firstLink?.html() ?: "N/A")
                 
@@ -828,7 +828,7 @@ class TopAnimes : MainAPI() {
                 val elements = document.select(selector)
                 if (elements.isNotEmpty()) {
                     println("DEBUG: Seletor '$selector' encontrou ${elements.size} elementos")
-                    val firstElement = elements.first()
+                    val firstElement = elements.firstOrNull()
                     println("DEBUG: Exemplo HTML do seletor '$selector':")
                     println(firstElement?.html()?.take(300) ?: "N/A")
                 }
