@@ -530,68 +530,257 @@ class TopAnimes : MainAPI() {
         }
     }
 
+    // FUNÇÃO MELHORADA PARA EXTRAIR EPISÓDIOS
     private fun extractEpisodesFromDocument(document: org.jsoup.nodes.Document, baseUrl: String): List<Episode> {
         val episodes = mutableListOf<Episode>()
 
-        val episodeElements = document.select(".episodios li, .se-a ul.episodios li")
+        // TENTATIVA 1: Estrutura principal com .episodios > li
+        val episodeElements1 = document.select(".episodios li")
+        
+        if (episodeElements1.isNotEmpty()) {
+            println("DEBUG: Encontrada estrutura 1 (.episodios li): ${episodeElements1.size} elementos")
+            
+            episodeElements1.forEachIndexed { index, element ->
+                try {
+                    val linkElement = element.selectFirst("a")
+                    val href = linkElement?.attr("href") ?: return@forEachIndexed
+                    
+                    if (href.isBlank()) return@forEachIndexed
 
-        episodeElements.forEachIndexed { index, element ->
-            try {
-                val linkElement = element.selectFirst("a")
-                val href = linkElement?.attr("href") ?: return@forEachIndexed
-                
-                if (href.isBlank()) return@forEachIndexed
+                    var episodeTitle = linkElement.text().trim()
+                    if (episodeTitle.isBlank()) {
+                        episodeTitle = element.selectFirst(".episodiotitle a")?.text()?.trim() ?: ""
+                    }
+                    
+                    if (episodeTitle.isBlank()) {
+                        episodeTitle = "Episódio ${index + 1}"
+                    }
 
-                var episodeTitle = linkElement.text().trim()
-                if (episodeTitle.isBlank()) {
-                    episodeTitle = element.selectFirst(".episodiotitle a")?.text()?.trim() ?: ""
+                    // Extrai número do episódio de várias fontes possíveis
+                    val episodeNumber = extractEpisodeNumberFromMultipleSources(element, href) ?: (index + 1)
+
+                    val fixedHref = fixEpisodeUrl(href)
+
+                    val episode = newEpisode(fixedHref) {
+                        this.name = episodeTitle
+                        this.episode = episodeNumber
+                        this.season = 1
+                    }
+
+                    episodes.add(episode)
+                    println("DEBUG: Episódio extraído: $episodeTitle (#$episodeNumber)")
+
+                } catch (e: Exception) {
+                    println("DEBUG: Erro extraindo episódio (estrutura 1): ${e.message}")
                 }
-                
-                if (episodeTitle.isBlank()) {
-                    episodeTitle = "Episódio ${index + 1}"
-                }
-
-                val episodeNumber = extractEpisodeNumberFromElement(element, href) ?: (index + 1)
-
-                val fixedHref = when {
-                    href.startsWith("//") -> "https:$href"
-                    href.startsWith("/") -> "$mainUrl$href"
-                    !href.startsWith("http") -> "$mainUrl/$href"
-                    else -> href
-                }
-
-                val episode = newEpisode(fixedHref) {
-                    this.name = episodeTitle
-                    this.episode = episodeNumber
-                    this.season = 1
-                }
-
-                episodes.add(episode)
-
-            } catch (e: Exception) {
-                // Ignora erros
             }
         }
 
+        // TENTATIVA 2: Estrutura alternativa com .se-a .episodios li
+        if (episodes.isEmpty()) {
+            val episodeElements2 = document.select(".se-a ul.episodios li")
+            
+            if (episodeElements2.isNotEmpty()) {
+                println("DEBUG: Encontrada estrutura 2 (.se-a .episodios li): ${episodeElements2.size} elementos")
+                
+                episodeElements2.forEachIndexed { index, element ->
+                    try {
+                        val linkElement = element.selectFirst("a")
+                        val href = linkElement?.attr("href") ?: return@forEachIndexed
+                        
+                        if (href.isBlank()) return@forEachIndexed
+
+                        var episodeTitle = linkElement.text().trim()
+                        if (episodeTitle.isBlank()) {
+                            episodeTitle = element.selectFirst(".episodiotitle a")?.text()?.trim() ?: ""
+                        }
+                        
+                        if (episodeTitle.isBlank()) {
+                            episodeTitle = "Episódio ${index + 1}"
+                        }
+
+                        val episodeNumber = extractEpisodeNumberFromMultipleSources(element, href) ?: (index + 1)
+
+                        val fixedHref = fixEpisodeUrl(href)
+
+                        val episode = newEpisode(fixedHref) {
+                            this.name = episodeTitle
+                            this.episode = episodeNumber
+                            this.season = 1
+                        }
+
+                        episodes.add(episode)
+                        println("DEBUG: Episódio extraído (estrutura 2): $episodeTitle (#$episodeNumber)")
+
+                    } catch (e: Exception) {
+                        println("DEBUG: Erro extraindo episódio (estrutura 2): ${e.message}")
+                    }
+                }
+            }
+        }
+
+        // TENTATIVA 3: Buscar qualquer link que contenha /episodio/
+        if (episodes.isEmpty()) {
+            val episodeLinks = document.select("a[href*='/episodio/']")
+            
+            if (episodeLinks.isNotEmpty()) {
+                println("DEBUG: Encontrados ${episodeLinks.size} links com /episodio/")
+                
+                episodeLinks.forEachIndexed { index, element ->
+                    try {
+                        val href = element.attr("href")
+                        if (href.isBlank()) return@forEachIndexed
+
+                        var episodeTitle = element.text().trim()
+                        if (episodeTitle.isBlank()) {
+                            episodeTitle = element.attr("title")?.trim() ?: "Episódio ${index + 1}"
+                        }
+
+                        val episodeNumber = extractEpisodeNumberFromTitle(episodeTitle) ?: 
+                                          extractEpisodeNumberFromUrl(href) ?: (index + 1)
+
+                        val fixedHref = fixEpisodeUrl(href)
+
+                        // Verifica se já não foi adicionado
+                        if (!episodes.any { it.data == fixedHref }) {
+                            val episode = newEpisode(fixedHref) {
+                                this.name = episodeTitle
+                                this.episode = episodeNumber
+                                this.season = 1
+                            }
+
+                            episodes.add(episode)
+                            println("DEBUG: Episódio extraído (links): $episodeTitle (#$episodeNumber)")
+                        }
+
+                    } catch (e: Exception) {
+                        println("DEBUG: Erro extraindo episódio (links): ${e.message}")
+                    }
+                }
+            }
+        }
+
+        // TENTATIVA 4: Buscar dentro de #serie_contenido (para casos especiais)
+        if (episodes.isEmpty()) {
+            val serieContenido = document.selectFirst("#serie_contenido")
+            
+            serieContenido?.let { container ->
+                val containerLinks = container.select("a[href]")
+                
+                containerLinks.forEachIndexed { index, element ->
+                    try {
+                        val href = element.attr("href")
+                        if (href.isBlank() || !href.contains("/episodio/")) return@forEachIndexed
+
+                        var episodeTitle = element.text().trim()
+                        if (episodeTitle.isBlank()) {
+                            episodeTitle = element.parent()?.selectFirst(".episodiotitle")?.text()?.trim() ?: 
+                                           element.parent()?.parent()?.selectFirst(".episodiotitle")?.text()?.trim() ?: 
+                                           "Episódio ${index + 1}"
+                        }
+
+                        val episodeNumber = extractEpisodeNumberFromTitle(episodeTitle) ?: 
+                                          extractEpisodeNumberFromUrl(href) ?: (index + 1)
+
+                        val fixedHref = fixEpisodeUrl(href)
+
+                        if (!episodes.any { it.data == fixedHref }) {
+                            val episode = newEpisode(fixedHref) {
+                                this.name = episodeTitle
+                                this.episode = episodeNumber
+                                this.season = 1
+                            }
+
+                            episodes.add(episode)
+                            println("DEBUG: Episódio extraído (serie_contenido): $episodeTitle (#$episodeNumber)")
+                        }
+
+                    } catch (e: Exception) {
+                        println("DEBUG: Erro extraindo episódio (serie_contenido): ${e.message}")
+                    }
+                }
+            }
+        }
+
+        println("DEBUG: Total de episódios extraídos: ${episodes.size}")
+        
         return episodes.sortedBy { it.episode }
     }
 
-    private fun extractEpisodeNumberFromElement(element: Element, href: String): Int? {
-        val numberElement = element.selectFirst(".numerando, .epnumber")
-        
+    // Função auxiliar para extrair número do episódio de múltiplas fontes
+    private fun extractEpisodeNumberFromMultipleSources(element: Element, href: String): Int? {
+        // Tenta do elemento .numerando
+        val numberElement = element.selectFirst(".numerando, .epnumber, .numerando")
         numberElement?.text()?.let { text ->
-            val match = Regex("""(\d+)\s*-\s*\d+""").find(text)
+            // Padrão: "1 - 1" ou "1-1"
+            val match = Regex("""(\d+)\s*[-–]\s*\d+""").find(text)
+            if (match != null) {
+                return match.groupValues[1].toIntOrNull()
+            }
+            // Tenta apenas números
+            val simpleMatch = Regex("""\b(\d+)\b""").find(text)
+            if (simpleMatch != null) {
+                return simpleMatch.groupValues[1].toIntOrNull()
+            }
+        }
+
+        // Tenta do atributo data-id (se existir)
+        val dataId = element.attr("data-id")
+        if (dataId.isNotBlank()) {
+            val match = Regex("""\b(\d+)\b""").find(dataId)
             if (match != null) {
                 return match.groupValues[1].toIntOrNull()
             }
         }
 
-        val match = Regex("""episodio-(\d+)""").find(href)
-        if (match != null) {
-            return match.groupValues[1].toIntOrNull()
-        }
+        // Tenta da URL
+        return extractEpisodeNumberFromUrl(href)
+    }
 
+    // Função auxiliar para extrair número da URL
+    private fun extractEpisodeNumberFromUrl(url: String): Int? {
+        val patterns = listOf(
+            Regex("""episodio-(\d+)""", RegexOption.IGNORE_CASE),
+            Regex("""/episodio/(\d+)/?""", RegexOption.IGNORE_CASE),
+            Regex("""episode-(\d+)""", RegexOption.IGNORE_CASE),
+            Regex("""e(\d+)""", RegexOption.IGNORE_CASE),
+            Regex("""\bep\.?(\d+)\b""", RegexOption.IGNORE_CASE),
+            Regex("""\b(\d{1,3})\b(?!.*\d)""") // Últimos 1-3 dígitos
+        )
+        
+        for (pattern in patterns) {
+            pattern.find(url)?.groupValues?.get(1)?.toIntOrNull()?.let {
+                return it
+            }
+        }
         return null
+    }
+
+    // Função auxiliar para extrair número do título
+    private fun extractEpisodeNumberFromTitle(title: String): Int? {
+        val patterns = listOf(
+            Regex("""Epis[oó]dio\s*(\d+)""", RegexOption.IGNORE_CASE),
+            Regex("""Ep\.?\s*(\d+)""", RegexOption.IGNORE_CASE),
+            Regex("""E(\d+)""", RegexOption.IGNORE_CASE),
+            Regex("""\b(\d{1,3})\b(?!.*\d)""") // Últimos 1-3 dígitos
+        )
+        
+        for (pattern in patterns) {
+            pattern.find(title)?.groupValues?.get(1)?.toIntOrNull()?.let {
+                return it
+            }
+        }
+        return null
+    }
+
+    // Função auxiliar para corrigir URLs
+    private fun fixEpisodeUrl(href: String): String {
+        return when {
+            href.startsWith("//") -> "https:$href"
+            href.startsWith("/") -> "$mainUrl$href"
+            !href.startsWith("http") -> "$mainUrl/$href"
+            else -> href
+        }
     }
 
     // LoadLinks desativado
