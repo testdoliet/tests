@@ -137,8 +137,8 @@ class TopAnimes : MainAPI() {
             val episodeElement = selectFirst("h3")
             val episodeTitle = episodeElement?.text()?.trim() ?: "Episódio"
 
-            // Título final: "Série - Episódio X"
-            val finalTitle = "$serieName - $episodeTitle"
+            // Extrai número do episódio do título
+            val episodeNumber = extractEpisodeNumber(episodeTitle) ?: 1
 
             // Determina se é DUB ou LEG pela badge
             val hasDubBadge = selectFirst(".buttonextra.dub-ep") != null
@@ -157,15 +157,8 @@ class TopAnimes : MainAPI() {
             // Extrai poster
             val posterUrl = extractPoster(this)
 
-            // Extrai número do episódio do título
-            val episodeNumber = extractEpisodeNumber(episodeTitle) ?: 1
-
             // Para episódios, usamos um título mais descritivo
-            val displayTitle = if (quality.isNotBlank()) {
-                "$finalTitle [$quality • $audioType]"
-            } else {
-                "$finalTitle [$audioType]"
-            }
+            val displayTitle = "$serieName - Ep $episodeNumber"
 
             // Cria o item de busca
             return newAnimeSearchResponse(displayTitle, fixUrl(href)) {
@@ -174,9 +167,13 @@ class TopAnimes : MainAPI() {
                 // Define tipo como Anime
                 this.type = TvType.Anime
                 
-                // Adiciona status de dublagem
+                // Adiciona status de dublagem COM número do episódio
                 val hasDub = audioType == "DUB"
-                addDubStatus(dubExist = hasDub, subExist = !hasDub)
+                if (hasDub) {
+                    addDubStatus(DubStatus.Dubbed, episodeNumber)
+                } else {
+                    addDubStatus(DubStatus.Subbed, episodeNumber)
+                }
             }
         } catch (e: Exception) {
             null
@@ -370,11 +367,19 @@ class TopAnimes : MainAPI() {
 
             val hasNextPage = detectHasNextPage(document, sitePageNumber)
 
-            return newHomePageResponse(
-                request.name,
-                homeItems.distinctBy { it.url },
-                hasNext = hasNextPage
-            )
+            // CORREÇÃO: Para a aba "Últimos Episódios", usamos isHorizontalImages = true
+            return if (request.name == "Últimos Episódios") {
+                newHomePageResponse(
+                    list = HomePageList(request.name, homeItems.distinctBy { it.url }, isHorizontalImages = true),
+                    hasNext = hasNextPage
+                )
+            } else {
+                newHomePageResponse(
+                    request.name,
+                    homeItems.distinctBy { it.url },
+                    hasNext = hasNextPage
+                )
+            }
 
         } catch (e: Exception) {
             return newHomePageResponse(request.name, emptyList(), false)
