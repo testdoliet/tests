@@ -7,6 +7,7 @@ import android.content.Context
 import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
 import com.lagradost.cloudstream3.plugins.Plugin
 import org.jsoup.nodes.Element
+import java.net.URLEncoder
 
 @CloudstreamPlugin
 class TopAnimesPlugin: Plugin() {
@@ -44,7 +45,7 @@ class TopAnimes : MainAPI() {
         private val ALL_CATEGORIES = listOf(
             // 5 abas fixas
             "/animes" to "Todos os Animes",
-            "/episodio" to "Episódios Recentes",
+            "/episodio" to "Últimos Episódios",
             "/tipo/legendado" to "Legendados",
             "/tipo/dublado" to "Dublados",
             "/tipo/donghua" to "Donghua",
@@ -71,8 +72,6 @@ class TopAnimes : MainAPI() {
 
     private fun extractPoster(element: Element): String? {
         return try {
-            println("DEBUG: Iniciando extractPoster")
-            
             // Método 1: Procura imagem dentro de .poster
             val posterDiv = element.selectFirst(".poster")
             
@@ -81,22 +80,18 @@ class TopAnimes : MainAPI() {
                 img?.let {
                     // PRIMEIRO tenta data-src (lazy loading)
                     var src = it.attr("data-src")
-                    println("DEBUG: data-src atributo: '$src'")
                     
                     // Se data-src estiver vazio, tenta src normal
                     if (src.isBlank()) {
                         src = it.attr("src")
-                        println("DEBUG: src atributo: '$src'")
                     }
                     
                     // Se for data URI (base64), ignora
                     if (src.startsWith("data:image")) {
-                        println("DEBUG: Ignorando data URI (placeholder)")
                         return null
                     }
                     
                     if (src.isNotBlank() && !src.startsWith("data:")) {
-                        println("DEBUG: Retornando src: $src")
                         return src
                     }
                 }
@@ -118,106 +113,170 @@ class TopAnimes : MainAPI() {
                 }
             }
             
-            println("DEBUG: Nenhuma imagem válida encontrada")
             null
         } catch (e: Exception) {
-            println("DEBUG: Erro em extractPoster: ${e.message}")
             null
         }
     }
 
+    // Função específica para extrair episódios
+    private fun Element.toEpisodeItem(): AnimeSearchResponse? {
+        return try {
+            // Encontra o link principal
+            val linkElement = selectFirst("a[href]") ?: return null
+            val href = linkElement.attr("href")
+            if (href.isBlank()) return null
+
+            // Verifica se é um episódio (contém /episodio/ na URL)
+            if (!href.contains("/episodio/")) return null
+
+            // Extrai o nome da série do elemento <span class="serie">
+            val serieElement = selectFirst(".serie")
+            val serieName = serieElement?.text()?.trim() ?: return null
+
+            // Extrai o número/título do episódio do elemento <h3>
+            val episodeElement = selectFirst("h3")
+            val episodeTitle = episodeElement?.text()?.trim() ?: "Episódio"
+
+            // Título final: "Série - Episódio X"
+            val finalTitle = "$serieName - $episodeTitle"
+
+            // Determina se é DUB ou LEG pela badge
+            val hasDubBadge = selectFirst(".buttonextra.dub-ep") != null
+            val hasLegBadge = selectFirst(".buttonextra.leg-ep") != null
+            
+            val audioType = when {
+                hasDubBadge -> "DUB"
+                hasLegBadge -> "LEG"
+                else -> "LEG" // padrão
+            }
+
+            // Extrai qualidade (se disponível)
+            val qualityElement = selectFirst(".quality")
+            val quality = qualityElement?.text()?.trim() ?: ""
+
+            // Extrai poster
+            val posterUrl = extractPoster(this)
+
+            // Extrai número do episódio do título
+            val episodeNumber = extractEpisodeNumber(episodeTitle) ?: 1
+
+            // Cria o item de busca
+            return newAnimeSearchResponse(finalTitle, fixUrl(href)) {
+                this.posterUrl = posterUrl
+                
+                // Adiciona informações extras na descrição
+                val extraInfo = listOfNotNull(
+                    audioType,
+                    if (quality.isNotBlank()) "Qualidade: $quality" else null
+                ).joinToString(" • ")
+                
+                if (extraInfo.isNotBlank()) {
+                    addDescription(extraInfo)
+                }
+                
+                // Define tipo como Anime
+                this.type = TvType.Anime
+                
+                // Adiciona status de dublagem
+                val hasDub = audioType == "DUB"
+                addDubStatus(dubExist = hasDub, subExist = !hasDub, episode = episodeNumber)
+            }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    // Função para itens normais (animes)
+    private fun Element.toAnimeItem(): AnimeSearchResponse? {
+        return try {
+            // Verifica se é um elemento article com classe .item
+            val isItem = hasClass("item") || hasClass("tvshows") || hasClass("movies") || tagName() == "article"
+            
+            if (!isItem) {
+                return null
+            }
+
+            // Tenta encontrar o link dentro do elemento
+            val linkElement = selectFirst("a[href]")
+            if (linkElement == null) return null
+            
+            val href = linkElement.attr("href")
+            if (href.isBlank() || (!href.contains("/animes/") && !href.contains("/filmes/"))) {
+                return null
+            }
+
+            // Extrai título
+            val titleElement = selectFirst(".data h3, h3, .serie")
+            if (titleElement == null) return null
+            
+            val rawTitle = titleElement.text().trim()
+            if (rawTitle.isBlank()) return null
+
+            // Extrai ano (apenas)
+            val yearElement = selectFirst(".data span:last-child, span:last-child, .year")
+            val yearText = yearElement?.text()?.trim()
+            val year = extractYear(yearText)
+
+            // Determina se é dublado ou legendado
+            val hasExplicitDub = rawTitle.contains("dublado", ignoreCase = true) || 
+                                href.contains("dublado", ignoreCase = true)
+            val hasExplicitLeg = rawTitle.contains("legendado", ignoreCase = true) || 
+                                href.contains("legendado", ignoreCase = true)
+
+            val finalHasDub: Boolean
+            val finalHasLeg: Boolean
+
+            when {
+                hasExplicitDub && !hasExplicitLeg -> {
+                    finalHasDub = true
+                    finalHasLeg = false
+                }
+                !hasExplicitDub && hasExplicitLeg -> {
+                    finalHasDub = false
+                    finalHasLeg = true
+                }
+                hasExplicitDub && hasExplicitLeg -> {
+                    finalHasDub = true
+                    finalHasLeg = true
+                }
+                else -> {
+                    finalHasDub = false
+                    finalHasLeg = true
+                }
+            }
+
+            val cleanName = extractAnimeName(rawTitle)
+            val isMovie = href.contains("/filmes/") || 
+                         rawTitle.contains("filme", ignoreCase = true) ||
+                         rawTitle.contains("movie", ignoreCase = true)
+            
+            // Extrai poster
+            val sitePoster = extractPoster(this)
+
+            return newAnimeSearchResponse(cleanName, fixUrl(href)) {
+                this.posterUrl = sitePoster
+                this.type = if (isMovie) TvType.Movie else TvType.Anime
+                this.year = year
+
+                if (finalHasDub || finalHasLeg) {
+                    addDubStatus(dubExist = finalHasDub, subExist = finalHasLeg)
+                }
+            }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    // Função unificada que decide qual tipo de item extrair
     private fun Element.toSearchResponse(): AnimeSearchResponse? {
-        println("DEBUG: Iniciando toSearchResponse")
-        println("DEBUG: Element classes: ${this.classNames()}")
+        // Verifica se é um episódio primeiro
+        val isEpisode = hasClass("se") && hasClass("episodes")
         
-        // Verifica se é um elemento article com classe .item
-        val isItem = hasClass("item") || hasClass("tvshows") || hasClass("movies") || tagName() == "article"
-        println("DEBUG: isItem? $isItem")
-        
-        if (!isItem) {
-            return null
-        }
-
-        // Tenta encontrar o link dentro do elemento
-        val linkElement = selectFirst("a[href]")
-        println("DEBUG: linkElement encontrado? ${linkElement != null}")
-        
-        if (linkElement == null) return null
-        
-        val href = linkElement.attr("href")
-        println("DEBUG: href: '$href'")
-        
-        if (href.isBlank() || (!href.contains("/animes/") && !href.contains("/filmes/"))) {
-            println("DEBUG: href inválido ou não contém /animes/ ou /filmes/")
-            return null
-        }
-
-        // Extrai título
-        val titleElement = selectFirst(".data h3, h3, .serie")
-        println("DEBUG: titleElement encontrado? ${titleElement != null}")
-        
-        if (titleElement == null) return null
-        
-        val rawTitle = titleElement.text().trim()
-        println("DEBUG: rawTitle: '$rawTitle'")
-
-        if (rawTitle.isBlank()) return null
-
-        // Extrai ano (apenas)
-        val yearElement = selectFirst(".data span:last-child, span:last-child, .year")
-        val yearText = yearElement?.text()?.trim()
-        val year = extractYear(yearText)
-        println("DEBUG: year: $year")
-
-        // Determina se é dublado ou legendado
-        val hasExplicitDub = rawTitle.contains("dublado", ignoreCase = true) || 
-                            href.contains("dublado", ignoreCase = true)
-        val hasExplicitLeg = rawTitle.contains("legendado", ignoreCase = true) || 
-                            href.contains("legendado", ignoreCase = true)
-
-        val finalHasDub: Boolean
-        val finalHasLeg: Boolean
-
-        when {
-            hasExplicitDub && !hasExplicitLeg -> {
-                finalHasDub = true
-                finalHasLeg = false
-            }
-            !hasExplicitDub && hasExplicitLeg -> {
-                finalHasDub = false
-                finalHasLeg = true
-            }
-            hasExplicitDub && hasExplicitLeg -> {
-                finalHasDub = true
-                finalHasLeg = true
-            }
-            else -> {
-                finalHasDub = false
-                finalHasLeg = true
-            }
-        }
-        
-        println("DEBUG: finalHasDub: $finalHasDub, finalHasLeg: $finalHasLeg")
-
-        val cleanName = extractAnimeName(rawTitle)
-        val isMovie = href.contains("/filmes/") || 
-                     rawTitle.contains("filme", ignoreCase = true) ||
-                     rawTitle.contains("movie", ignoreCase = true)
-        
-        println("DEBUG: isMovie: $isMovie")
-        
-        // Extrai poster
-        val sitePoster = extractPoster(this)
-        println("DEBUG: sitePoster extraído: '$sitePoster'")
-
-        return newAnimeSearchResponse(cleanName, fixUrl(href)) {
-            this.posterUrl = sitePoster
-            this.type = if (isMovie) TvType.Movie else TvType.Anime
-            this.year = year
-
-            if (finalHasDub || finalHasLeg) {
-                addDubStatus(dubExist = finalHasDub, subExist = finalHasLeg)
-            }
+        return if (isEpisode) {
+            toEpisodeItem()
+        } else {
+            toAnimeItem()
         }
     }
 
@@ -247,6 +306,22 @@ class TopAnimes : MainAPI() {
         val yearRegex = Regex("""(\d{4})""")
         val match = yearRegex.find(text)
         return match?.groupValues?.get(1)?.toIntOrNull()
+    }
+
+    private fun extractEpisodeNumber(title: String): Int? {
+        val patterns = listOf(
+            Regex("""Epis[oó]dio\s*(\d+)""", RegexOption.IGNORE_CASE),
+            Regex("""Ep\.?\s*(\d+)""", RegexOption.IGNORE_CASE),
+            Regex("""E(\d+)""", RegexOption.IGNORE_CASE),
+            Regex("""\b(\d{1,3})\b""")
+        )
+        
+        for (pattern in patterns) {
+            pattern.find(title)?.groupValues?.get(1)?.toIntOrNull()?.let {
+                return it
+            }
+        }
+        return null
     }
 
     private suspend fun detectHasNextPage(document: org.jsoup.nodes.Document, currentPageNum: Int): Boolean {
@@ -279,28 +354,21 @@ class TopAnimes : MainAPI() {
                 "$mainUrl$basePath/page/$sitePageNumber"
             }
 
-            println("DEBUG: Carregando página: $pageUrl")
             val document = app.get(pageUrl, timeout = 20).document
             
-            // Seletores para os itens
-            val elements = document.select("article.item, .items article, article.tvshows, article.movies")
-            println("DEBUG: Número de elementos encontrados: ${elements.size}")
+            // Seletores para TODOS os tipos de itens
+            val elements = document.select("article.item, article.se.episodes, .items article, article.tvshows, article.movies")
             
-            if (elements.isEmpty()) {
-                println("DEBUG: HTML da página (primeiros 1000 chars): ${document.html().take(1000)}")
-            }
-
             val homeItems = mutableListOf<SearchResponse>()
 
             elements.forEachIndexed { index, element ->
                 try {
-                    println("DEBUG: Processando elemento $index")
                     val item = element.toSearchResponse()
                     if (item != null) {
                         homeItems.add(item)
                     }
                 } catch (e: Exception) {
-                    println("DEBUG: Erro processando elemento $index: ${e.message}")
+                    // Ignora erros
                 }
             }
 
@@ -313,7 +381,6 @@ class TopAnimes : MainAPI() {
             )
 
         } catch (e: Exception) {
-            println("DEBUG: Erro em getMainPage: ${e.message}")
             return newHomePageResponse(request.name, emptyList(), false)
         }
     }
@@ -326,7 +393,7 @@ class TopAnimes : MainAPI() {
         return try {
             val document = app.get(searchUrl, timeout = 10).document
 
-            document.select("article.item, article.tvshows, article.movies")
+            document.select("article.item, article.se.episodes, article.tvshows, article.movies")
                 .mapNotNull { it.toSearchResponse() }
                 .distinctBy { it.url }
                 .take(30)
@@ -382,14 +449,12 @@ class TopAnimes : MainAPI() {
                 ?: document.selectFirst(".sheader h1")?.text()?.trim()
                 ?: "Sem Título"
 
-            // Poster na página de detalhes - CORRIGIDO para lazy loading
+            // Poster na página de detalhes
             val poster = document.selectFirst(".sheader .poster img, .poster img")?.let { img ->
-                // PRIMEIRO tenta data-src
                 var src = img.attr("data-src")
                 if (src.isBlank()) {
                     src = img.attr("src")
                 }
-                // Ignora data URIs
                 if (src.isNotBlank() && !src.startsWith("data:")) {
                     src
                 } else null
