@@ -7,7 +7,6 @@ import android.content.Context
 import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
 import com.lagradost.cloudstream3.plugins.Plugin
 import org.jsoup.nodes.Element
-import java.net.URLEncoder
 
 @CloudstreamPlugin
 class TopAnimesPlugin: Plugin() {
@@ -161,26 +160,23 @@ class TopAnimes : MainAPI() {
             // Extrai número do episódio do título
             val episodeNumber = extractEpisodeNumber(episodeTitle) ?: 1
 
+            // Para episódios, usamos um título mais descritivo
+            val displayTitle = if (quality.isNotBlank()) {
+                "$finalTitle [$quality • $audioType]"
+            } else {
+                "$finalTitle [$audioType]"
+            }
+
             // Cria o item de busca
-            return newAnimeSearchResponse(finalTitle, fixUrl(href)) {
+            return newAnimeSearchResponse(displayTitle, fixUrl(href)) {
                 this.posterUrl = posterUrl
-                
-                // Adiciona informações extras na descrição
-                val extraInfo = listOfNotNull(
-                    audioType,
-                    if (quality.isNotBlank()) "Qualidade: $quality" else null
-                ).joinToString(" • ")
-                
-                if (extraInfo.isNotBlank()) {
-                    addDescription(extraInfo)
-                }
                 
                 // Define tipo como Anime
                 this.type = TvType.Anime
                 
                 // Adiciona status de dublagem
                 val hasDub = audioType == "DUB"
-                addDubStatus(dubExist = hasDub, subExist = !hasDub, episode = episodeNumber)
+                addDubStatus(dubExist = hasDub, subExist = !hasDub)
             }
         } catch (e: Exception) {
             null
