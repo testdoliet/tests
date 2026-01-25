@@ -443,16 +443,13 @@ class TopAnimes : MainAPI() {
 
     override suspend fun load(url: String): LoadResponse {
         return try {
-            println("DEBUG LOAD: Carregando URL: $url")
+            println("DEBUG: Carregando URL: $url")
             val document = app.get(url, timeout = 30).document
-            println("DEBUG LOAD: Documento carregado com sucesso")
 
             val title = document.selectFirst("h1")?.text()?.trim() 
                 ?: document.selectFirst(".data h1")?.text()?.trim() 
                 ?: document.selectFirst(".sheader h1")?.text()?.trim()
                 ?: "Sem Título"
-            
-            println("DEBUG LOAD: Título extraído: $title")
 
             // Poster na página de detalhes
             val poster = document.selectFirst(".sheader .poster img, .poster img")?.let { img ->
@@ -491,7 +488,7 @@ class TopAnimes : MainAPI() {
                          document.selectFirst(".custom_fields:contains(Tipo)")?.text()?.contains("Filme", ignoreCase = true) == true
 
             val episodes = extractEpisodesFromDocument(document, url)
-            println("DEBUG LOAD: Total de episódios após extração: ${episodes.size}")
+            println("DEBUG: Total de episódios encontrados: ${episodes.size}")
 
             val response = newAnimeLoadResponse(
                 extractAnimeName(title), 
@@ -506,7 +503,6 @@ class TopAnimes : MainAPI() {
                 this.showStatus = showStatus
 
                 if (episodes.isNotEmpty()) {
-                    println("DEBUG LOAD: Adicionando ${episodes.size} episódios ao response")
                     if (hasDub && hasSub) {
                         addEpisodes(DubStatus.Subbed, episodes)
                         
@@ -524,77 +520,47 @@ class TopAnimes : MainAPI() {
                     } else {
                         addEpisodes(DubStatus.Subbed, episodes)
                     }
-                } else {
-                    println("DEBUG LOAD: ⚠️ Nenhum episódio para adicionar!")
                 }
             }
 
-            println("DEBUG LOAD: Response criado com sucesso")
             response
 
         } catch (e: Exception) {
-            println("DEBUG LOAD: ❌ ERRO CRÍTICO: ${e.message}")
-            e.printStackTrace()
+            println("DEBUG: ERRO ao carregar: ${e.message}")
             newAnimeLoadResponse("Erro ao carregar", url, TvType.Anime) {
                 this.plot = "Não foi possível carregar esta página: ${e.message}"
             }
         }
     }
 
-    // FUNÇÃO MELHORADA PARA EXTRAIR EPISÓDIOS COM DEBUGS - VERSÃO CORRIGIDA
+    // FUNÇÃO SIMPLIFICADA PARA EXTRAIR EPISÓDIOS (sem debugs problemáticos)
     private fun extractEpisodesFromDocument(document: org.jsoup.nodes.Document, baseUrl: String): List<Episode> {
         val episodes = mutableListOf<Episode>()
-        
-        println("DEBUG EXTRACT: Iniciando extração de episódios de: $baseUrl")
-        
-        // Mostra título da página para debug
-        val title = document.selectFirst("h1")?.text()?.trim()
-        println("DEBUG EXTRACT: Título da página: $title")
 
         // TENTATIVA 1: Estrutura principal com .episodios > li
-        println("DEBUG EXTRACT: TENTATIVA 1 - Procurando '.episodios li'")
         val episodeElements1 = document.select(".episodios li")
-        println("DEBUG EXTRACT: Encontrados ${episodeElements1.size} elementos com '.episodios li'")
+        println("DEBUG: Tentativa 1 - .episodios li: ${episodeElements1.size} elementos")
         
         if (episodeElements1.isNotEmpty()) {
-            println("DEBUG EXTRACT: ✅ Estrutura encontrada! Processando ${episodeElements1.size} elementos")
-            val firstElement = episodeElements1.firstOrNull()
-            if (firstElement != null) {
-                println("DEBUG EXTRACT: HTML (primeiros 200 chars): ${firstElement.html().take(200)}")
-            }
-            
             episodeElements1.forEachIndexed { index, element ->
                 try {
-                    println("DEBUG EXTRACT: Processando elemento $index")
-                    
                     val linkElement = element.selectFirst("a")
-                    val href = linkElement?.attr("href") ?: ""
-                    println("DEBUG EXTRACT: href encontrado: $href")
+                    val href = linkElement?.attr("href") ?: return@forEachIndexed
                     
-                    if (href.isBlank()) {
-                        println("DEBUG EXTRACT: ❌ href vazio, pulando")
-                        return@forEachIndexed
-                    }
+                    if (href.isBlank()) return@forEachIndexed
 
                     var episodeTitle = linkElement.text().trim()
-                    println("DEBUG EXTRACT: Título do link: '$episodeTitle'")
-                    
                     if (episodeTitle.isBlank()) {
                         episodeTitle = element.selectFirst(".episodiotitle a")?.text()?.trim() ?: ""
-                        println("DEBUG EXTRACT: Título de .episodiotitle: '$episodeTitle'")
                     }
                     
                     if (episodeTitle.isBlank()) {
                         episodeTitle = "Episódio ${index + 1}"
-                        println("DEBUG EXTRACT: Usando título padrão: '$episodeTitle'")
                     }
 
-                    // Extrai número do episódio de várias fontes possíveis
                     val episodeNumber = extractEpisodeNumberFromMultipleSources(element, href) ?: (index + 1)
-                    println("DEBUG EXTRACT: Número do episódio: $episodeNumber")
 
                     val fixedHref = fixEpisodeUrl(href)
-                    println("DEBUG EXTRACT: URL final: $fixedHref")
 
                     val episode = newEpisode(fixedHref) {
                         this.name = episodeTitle
@@ -603,45 +569,28 @@ class TopAnimes : MainAPI() {
                     }
 
                     episodes.add(episode)
-                    println("DEBUG EXTRACT: ✅ Episódio $index adicionado: '$episodeTitle' (#$episodeNumber)")
+                    println("DEBUG: Episódio encontrado: $episodeTitle (#$episodeNumber)")
 
                 } catch (e: Exception) {
-                    println("DEBUG EXTRACT: ❌ Erro no elemento $index: ${e.message}")
+                    // Ignora erro
                 }
             }
-        } else {
-            println("DEBUG EXTRACT: ❌ Nenhum elemento encontrado com '.episodios li'")
         }
 
         // TENTATIVA 2: Estrutura alternativa com .se-a .episodios li
         if (episodes.isEmpty()) {
-            println("\nDEBUG EXTRACT: TENTATIVA 2 - Procurando '.se-a ul.episodios li'")
             val episodeElements2 = document.select(".se-a ul.episodios li")
-            println("DEBUG EXTRACT: Encontrados ${episodeElements2.size} elementos")
+            println("DEBUG: Tentativa 2 - .se-a ul.episodios li: ${episodeElements2.size} elementos")
             
             if (episodeElements2.isNotEmpty()) {
-                println("DEBUG EXTRACT: ✅ Estrutura 2 encontrada!")
-                val firstElement = episodeElements2.firstOrNull()
-                if (firstElement != null) {
-                    println("DEBUG EXTRACT: HTML (primeiros 200 chars): ${firstElement.html().take(200)}")
-                }
-                
                 episodeElements2.forEachIndexed { index, element ->
                     try {
-                        println("DEBUG EXTRACT: Processando elemento $index (estrutura 2)")
-                        
                         val linkElement = element.selectFirst("a")
-                        val href = linkElement?.attr("href") ?: ""
-                        println("DEBUG EXTRACT: href: $href")
+                        val href = linkElement?.attr("href") ?: return@forEachIndexed
                         
-                        if (href.isBlank()) {
-                            println("DEBUG EXTRACT: ❌ href vazio, pulando")
-                            return@forEachIndexed
-                        }
+                        if (href.isBlank()) return@forEachIndexed
 
                         var episodeTitle = linkElement.text().trim()
-                        println("DEBUG EXTRACT: Título: '$episodeTitle'")
-                        
                         if (episodeTitle.isBlank()) {
                             episodeTitle = element.selectFirst(".episodiotitle a")?.text()?.trim() ?: ""
                         }
@@ -651,7 +600,6 @@ class TopAnimes : MainAPI() {
                         }
 
                         val episodeNumber = extractEpisodeNumberFromMultipleSources(element, href) ?: (index + 1)
-                        println("DEBUG EXTRACT: Número: $episodeNumber")
 
                         val fixedHref = fixEpisodeUrl(href)
 
@@ -662,10 +610,10 @@ class TopAnimes : MainAPI() {
                         }
 
                         episodes.add(episode)
-                        println("DEBUG EXTRACT: ✅ Episódio adicionado (estrutura 2): '$episodeTitle' (#$episodeNumber)")
+                        println("DEBUG: Episódio encontrado (estrutura 2): $episodeTitle (#$episodeNumber)")
 
                     } catch (e: Exception) {
-                        println("DEBUG EXTRACT: ❌ Erro (estrutura 2): ${e.message}")
+                        // Ignora erro
                     }
                 }
             }
@@ -673,42 +621,25 @@ class TopAnimes : MainAPI() {
 
         // TENTATIVA 3: Buscar qualquer link que contenha /episodio/
         if (episodes.isEmpty()) {
-            println("\nDEBUG EXTRACT: TENTATIVA 3 - Procurando 'a[href*=\"/episodio/\"]'")
             val episodeLinks = document.select("a[href*='/episodio/']")
-            println("DEBUG EXTRACT: Encontrados ${episodeLinks.size} links com /episodio/")
+            println("DEBUG: Tentativa 3 - Links com /episodio/: ${episodeLinks.size} links")
             
             if (episodeLinks.isNotEmpty()) {
-                println("DEBUG EXTRACT: ✅ Links encontrados!")
-                val firstLink = episodeLinks.firstOrNull()
-                if (firstLink != null) {
-                    println("DEBUG EXTRACT: HTML do primeiro link: ${firstLink.html()}")
-                }
-                
                 episodeLinks.forEachIndexed { index, element ->
                     try {
                         val href = element.attr("href")
-                        println("DEBUG EXTRACT: Link $index: $href")
-                        
-                        if (href.isBlank()) {
-                            println("DEBUG EXTRACT: ❌ href vazio, pulando")
-                            return@forEachIndexed
-                        }
+                        if (href.isBlank()) return@forEachIndexed
 
                         var episodeTitle = element.text().trim()
-                        println("DEBUG EXTRACT: Texto do link: '$episodeTitle'")
-                        
                         if (episodeTitle.isBlank()) {
                             episodeTitle = element.attr("title")?.trim() ?: "Episódio ${index + 1}"
-                            println("DEBUG EXTRACT: Título do atributo: '$episodeTitle'")
                         }
 
                         val episodeNumber = extractEpisodeNumberFromTitle(episodeTitle) ?: 
                                           extractEpisodeNumberFromUrl(href) ?: (index + 1)
-                        println("DEBUG EXTRACT: Número determinado: $episodeNumber")
 
                         val fixedHref = fixEpisodeUrl(href)
 
-                        // Verifica se já não foi adicionado
                         if (!episodes.any { it.data == fixedHref }) {
                             val episode = newEpisode(fixedHref) {
                                 this.name = episodeTitle
@@ -717,52 +648,38 @@ class TopAnimes : MainAPI() {
                             }
 
                             episodes.add(episode)
-                            println("DEBUG EXTRACT: ✅ Episódio adicionado (links): '$episodeTitle' (#$episodeNumber)")
+                            println("DEBUG: Episódio encontrado (links): $episodeTitle (#$episodeNumber)")
                         }
 
                     } catch (e: Exception) {
-                        println("DEBUG EXTRACT: ❌ Erro no link $index: ${e.message}")
+                        // Ignora erro
                     }
                 }
             }
         }
 
-        // TENTATIVA 4: Buscar dentro de #serie_contenido (para casos especiais)
+        // TENTATIVA 4: Buscar dentro de #serie_contenido
         if (episodes.isEmpty()) {
-            println("\nDEBUG EXTRACT: TENTATIVA 4 - Procurando '#serie_contenido'")
             val serieContenido = document.selectFirst("#serie_contenido")
-            println("DEBUG EXTRACT: #serie_contenido encontrado: ${serieContenido != null}")
             
             serieContenido?.let { container ->
-                println("DEBUG EXTRACT: Conteúdo de #serie_contenido (primeiros 500 chars):")
-                println(container.html().take(500))
-                
                 val containerLinks = container.select("a[href]")
-                println("DEBUG EXTRACT: Links dentro de #serie_contenido: ${containerLinks.size}")
+                println("DEBUG: Tentativa 4 - #serie_contenido: ${containerLinks.size} links")
                 
                 containerLinks.forEachIndexed { index, element ->
                     try {
                         val href = element.attr("href")
-                        println("DEBUG EXTRACT: Link $index em #serie_contenido: $href")
-                        
-                        if (href.isBlank() || !href.contains("/episodio/")) {
-                            println("DEBUG EXTRACT: ❌ Não é um link de episódio, pulando")
-                            return@forEachIndexed
-                        }
+                        if (href.isBlank() || !href.contains("/episodio/")) return@forEachIndexed
 
                         var episodeTitle = element.text().trim()
-                        println("DEBUG EXTRACT: Texto do link: '$episodeTitle'")
-                        
                         if (episodeTitle.isBlank()) {
                             episodeTitle = element.parent()?.selectFirst(".episodiotitle")?.text()?.trim() ?: 
                                        element.parent()?.parent()?.selectFirst(".episodiotitle")?.text()?.trim() ?: 
                                        "Episódio ${index + 1}"
-                            println("DEBUG EXTRACT: Título dos pais: '$episodeTitle'")
                         }
 
                         val episodeNumber = extractEpisodeNumberFromTitle(episodeTitle) ?: 
                                           extractEpisodeNumberFromUrl(href) ?: (index + 1)
-                        println("DEBUG EXTRACT: Número: $episodeNumber")
 
                         val fixedHref = fixEpisodeUrl(href)
 
@@ -774,71 +691,17 @@ class TopAnimes : MainAPI() {
                             }
 
                             episodes.add(episode)
-                            println("DEBUG EXTRACT: ✅ Episódio adicionado (serie_contenido): '$episodeTitle' (#$episodeNumber)")
+                            println("DEBUG: Episódio encontrado (serie_contenido): $episodeTitle (#$episodeNumber)")
                         }
 
                     } catch (e: Exception) {
-                        println("DEBUG EXTRACT: ❌ Erro em #serie_contenido: ${e.message}")
+                        // Ignora erro
                     }
                 }
             }
         }
 
-        // DEBUG: Procurar por outras estruturas possíveis
-        if (episodes.isEmpty()) {
-            println("\nDEBUG EXTRACT: Procurando outras estruturas possíveis...")
-            
-            val possibleSelectors = listOf(
-                ".season",
-                ".temporada",
-                ".episode-list",
-                ".lista-episodios",
-                ".episodes",
-                ".episodios-container",
-                ".list-episodes",
-                ".all-episodes"
-            )
-            
-            for (selector in possibleSelectors) {
-                val elements = document.select(selector)
-                if (elements.isNotEmpty()) {
-                    println("DEBUG EXTRACT: Seletor '$selector' encontrou ${elements.size} elementos")
-                    elements.firstOrNull()?.let {
-                        println("DEBUG EXTRACT: HTML (primeiros 200 chars): ${it.html().take(200)}")
-                    }
-                }
-            }
-            
-            // Verificar se há scripts carregando episódios
-            val scripts = document.select("script")
-            var hasEpisodeScript = false
-            scripts.forEach { script ->
-                val content = script.html()
-                if (content.contains("episodio", ignoreCase = true) || 
-                    content.contains("episode", ignoreCase = true)) {
-                    hasEpisodeScript = true
-                    println("DEBUG EXTRACT: ⚠️ Script encontrado com referência a episódios")
-                    println("DEBUG EXTRACT: Script content (primeiros 300 chars): ${content.take(300)}")
-                }
-            }
-            
-            if (hasEpisodeScript) {
-                println("DEBUG EXTRACT: ⚠️ A página pode usar JavaScript para carregar episódios")
-            }
-        }
-
-        println("\nDEBUG EXTRACT: RESULTADO FINAL: ${episodes.size} episódios extraídos")
-        
-        if (episodes.isEmpty()) {
-            println("DEBUG EXTRACT: ❌❌❌ NENHUM EPISÓDIO ENCONTRADO!")
-            println("DEBUG EXTRACT: ❌ Verifique se a página realmente tem episódios disponíveis")
-            println("DEBUG EXTRACT: ❌ URL: $baseUrl")
-        } else {
-            println("DEBUG EXTRACT: ✅ Episódios encontrados:")
-            episodes.forEachIndexed { i, episode ->
-                println("DEBUG EXTRACT:   $i. ${episode.name} (Ep ${episode.episode}) -> ${episode.data}")
-            }
-        }
+        println("DEBUG: Total de episódios extraídos: ${episodes.size}")
         
         return episodes.sortedBy { it.episode }
     }
