@@ -4,8 +4,6 @@ import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.network.WebViewResolver
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.M3u8Helper
-import com.lagradost.cloudstream3.utils.newExtractorLink
-import com.lagradost.cloudstream3.utils.ExtractorLinkType
 
 object ChPlayExtractor {
 
@@ -14,7 +12,7 @@ object ChPlayExtractor {
         name: String,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        println("🔍 CHPLAY EXTRACTOR")
+        println("🔍 CHPLAY EXTRACTOR - DEBUG DE REQUISIÇÕES")
         
         return try {
             // 1. PEGA O HTML DA PÁGINA DO EPISÓDIO
@@ -58,154 +56,190 @@ object ChPlayExtractor {
                 else -> "https://$iframeUrl"
             }
             
-            println("🎯 URL final: ${finalUrl.take(100)}...")
+            println("🎯 URL final para WebViewResolver: ${finalUrl.take(100)}...")
             
-            // 6. USA WEBVIEWRESOLVER COM TIMEOUT MAIOR
+            // 6. LISTA PARA ARMAZENAR TODAS AS REQUISIÇÕES INTERCEPTADAS
+            val allRequests = mutableListOf<String>()
+            
+            // 7. WEBVIEWRESOLVER QUE REGISTRA TODAS AS REQUISIÇÕES
             val m3u8Resolver = WebViewResolver(
-                interceptUrl = Regex("""cf-master\.\d+\.txt|\.m3u8|master\.m3u8|\.mp4|video|stream"""),
+                // Intercepta quase tudo para debug
+                interceptUrl = Regex(""".*"""),
                 additionalUrls = listOf(
-                    Regex("""cf-master"""),
-                    Regex("""\.m3u8"""),
-                    Regex("""\.mp4"""),
-                    Regex("""video"""),
-                    Regex("""stream""")
+                    Regex(""".*""") // Captura tudo
                 ),
                 useOkhttp = false,
-                timeout = 30_000L // 30 segundos para carregar
+                timeout = 15_000L,
+                onRequestIntercepted = { interceptedUrl ->
+                    // Log de TODAS as requisições interceptadas
+                    println("📡 REQUISIÇÃO INTERCEPTADA: $interceptedUrl")
+                    allRequests.add(interceptedUrl)
+                    
+                    // Verifica se é vídeo
+                    val isVideo = interceptedUrl.contains(".m3u8") || 
+                                  interceptedUrl.contains(".mp4") ||
+                                  interceptedUrl.contains("video") ||
+                                  interceptedUrl.contains("stream") ||
+                                  interceptedUrl.contains("master") ||
+                                  interceptedUrl.contains("cf-master") ||
+                                  interceptedUrl.contains("/9a/") || // Padrão do poster
+                                  interceptedUrl.contains(".ts") ||
+                                  interceptedUrl.contains("manifest")
+                    
+                    if (isVideo) {
+                        println("🎬 POSSÍVEL VÍDEO ENCONTRADO!")
+                    }
+                }
             )
             
-            println("🔄 Acessando com WebViewResolver (30s timeout)...")
-            val interceptedResponse = app.get(finalUrl, interceptor = m3u8Resolver)
-            val interceptedUrl = interceptedResponse.url
+            println("🔄 Iniciando WebViewResolver para capturar TODAS as requisições...")
+            println("⏱️ Timeout: 15 segundos")
             
-            println("🔗 URL interceptada: $interceptedUrl")
+            val intercepted = app.get(finalUrl, interceptor = m3u8Resolver).url
             
-            // 7. TAMBÉM VERIFICA O CORPO DA RESPOSTA POSSÍVEL M3U8
-            val responseText = interceptedResponse.text
-            var foundVideoUrl: String? = null
+            println("\n📊 RESUMO DAS REQUISIÇÕES CAPTURADAS:")
+            println("========================================")
+            println("Total de requisições: ${allRequests.size}")
             
-            if (interceptedUrl.isNotEmpty() && (interceptedUrl.contains("cf-master") || interceptedUrl.contains(".m3u8") || interceptedUrl.contains(".mp4"))) {
-                foundVideoUrl = interceptedUrl
-                println("✅ Link encontrado na URL interceptada")
-            } else if (responseText.contains(".m3u8") || responseText.contains(".mp4")) {
-                // Tenta extrair do texto da resposta
-                val videoPatterns = listOf(
-                    Regex("""https?://[^"\s]*\.m3u8[^"\s]*"""),
-                    Regex("""https?://[^"\s]*\.mp4[^"\s]*"""),
-                    Regex("""["'](https?://[^"']*\.m3u8[^"']*)["']"""),
-                    Regex("""["'](https?://[^"']*\.mp4[^"']*)["']""")
-                )
-                
-                for (pattern in videoPatterns) {
-                    val match = pattern.find(responseText)
-                    if (match != null) {
-                        foundVideoUrl = match.groupValues.getOrNull(1) ?: match.value
-                        println("✅ Link encontrado no corpo da resposta")
-                        break
+            // Agrupa por tipo
+            val videoRequests = allRequests.filter { 
+                it.contains(".m3u8") || it.contains(".mp4") || 
+                it.contains("video") || it.contains("stream") ||
+                it.contains("master") || it.contains("cf-master") ||
+                it.contains(".ts") || it.contains("manifest")
+            }
+            
+            val jsRequests = allRequests.filter { it.contains(".js") }
+            val cssRequests = allRequests.filter { it.contains(".css") }
+            val imageRequests = allRequests.filter { it.contains(".png") || it.contains(".jpg") || it.contains(".jpeg") || it.contains(".webp") }
+            val apiRequests = allRequests.filter { it.contains("/api/") || it.contains("/v1/") || it.contains("/v2/") }
+            val otherRequests = allRequests.filter { 
+                !it.contains(".js") && !it.contains(".css") && 
+                !it.contains(".png") && !it.contains(".jpg") && 
+                !it.contains(".jpeg") && !it.contains(".webp") &&
+                !it.contains(".m3u8") && !it.contains(".mp4") &&
+                !it.contains("/api/") && !it.contains("/v1/") &&
+                !it.contains("/v2/") && !it.contains("video") &&
+                !it.contains("stream")
+            }
+            
+            println("🎬 Requisições de vídeo (${videoRequests.size}):")
+            videoRequests.forEachIndexed { index, req ->
+                println("  ${index + 1}. ${req.take(150)}...")
+            }
+            
+            println("\n📜 Requisições de JS (${jsRequests.size}):")
+            jsRequests.take(5).forEachIndexed { index, req ->
+                println("  ${index + 1}. ${req.take(100)}...")
+            }
+            if (jsRequests.size > 5) println("  ... e mais ${jsRequests.size - 5} JS")
+            
+            println("\n🎨 Requisições de CSS (${cssRequests.size}):")
+            cssRequests.take(3).forEachIndexed { index, req ->
+                println("  ${index + 1}. ${req.take(100)}...")
+            }
+            
+            println("\n🖼️ Requisições de imagem (${imageRequests.size}):")
+            imageRequests.take(3).forEachIndexed { index, req ->
+                println("  ${index + 1}. ${req.take(100)}...")
+            }
+            
+            println("\n🔌 Requisições de API (${apiRequests.size}):")
+            apiRequests.forEachIndexed { index, req ->
+                println("  ${index + 1}. ${req.take(150)}...")
+            }
+            
+            println("\n❓ Outras requisições (${otherRequests.size}):")
+            otherRequests.take(10).forEachIndexed { index, req ->
+                println("  ${index + 1}. ${req.take(100)}...")
+            }
+            if (otherRequests.size > 10) println("  ... e mais ${otherRequests.size - 10}")
+            
+            println("\n🔗 URL final interceptada: $intercepted")
+            
+            // 8. TENTA PROCESSAR QUALQUER URL DE VÍDEO ENCONTRADA
+            val videoUrls = videoRequests + listOf(intercepted)
+            
+            for (videoUrl in videoUrls) {
+                if (videoUrl.isNotEmpty() && 
+                    (videoUrl.contains(".m3u8") || videoUrl.contains(".mp4") || 
+                     videoUrl.contains("cf-master") || videoUrl.contains("master"))) {
+                    
+                    println("\n🎯 TENTANDO PROCESSAR: ${videoUrl.take(150)}...")
+                    
+                    val headers = mapOf(
+                        "Accept" to "*/*",
+                        "Connection" to "keep-alive",
+                        "Sec-Fetch-Dest" to "empty",
+                        "Sec-Fetch-Mode" to "cors",
+                        "Sec-Fetch-Site" to "cross-site",
+                        "Referer" to finalUrl,
+                        "Origin" to "https://png.strp2p.com",
+                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                    )
+                    
+                    try {
+                        if (videoUrl.contains(".m3u8") || videoUrl.contains("cf-master") || videoUrl.contains("master")) {
+                            M3u8Helper.generateM3u8(
+                                name,
+                                videoUrl,
+                                "https://topanimes.net",
+                                headers = headers
+                            ).forEach(callback)
+                            println("✅ M3U8 PROCESSADO COM SUCESSO!")
+                            return true
+                        }
+                    } catch (e: Exception) {
+                        println("⚠️ Erro ao processar M3U8: ${e.message}")
                     }
                 }
             }
             
-            if (foundVideoUrl == null) {
-                println("❌ Nenhum link de vídeo encontrado")
-                println("📄 Primeiros 500 chars da resposta: ${responseText.take(500)}...")
-                return false
-            }
+            println("\n❌ Nenhum vídeo válido encontrado nas requisições")
             
-            println("🎬 URL do vídeo: ${foundVideoUrl.take(100)}...")
-            
-            // 8. HEADERS
-            val headers = mapOf(
-                "Accept" to "*/*",
-                "Connection" to "keep-alive",
-                "Sec-Fetch-Dest" to "empty",
-                "Sec-Fetch-Mode" to "cors",
-                "Sec-Fetch-Site" to "cross-site",
-                "Referer" to finalUrl,
-                "Origin" to "https://png.strp2p.com",
-                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-            )
-            
-            // 9. PROCESSAR O LINK
-            if (foundVideoUrl.contains(".m3u8") || foundVideoUrl.contains("cf-master")) {
-                // M3U8
-                M3u8Helper.generateM3u8(
-                    name,
-                    foundVideoUrl,
-                    "https://topanimes.net",
-                    headers = headers
-                ).forEach(callback)
-                println("✅ M3U8 processado")
-                return true
-            } else if (foundVideoUrl.contains(".mp4")) {
-                // MP4 direto - AGORA É SUSPEND!
-                createMp4Link(foundVideoUrl, name, finalUrl, callback, headers)
-                println("✅ MP4 processado")
-                return true
+            // 9. TENTA ANALISAR O HTML DA RESPOSTA PARA ENCONTRAR URLs ESCONDIDAS
+            println("\n🔍 Analisando HTML da resposta para URLs ocultas...")
+            try {
+                val response = app.get(finalUrl)
+                val responseText = response.text
+                
+                // Procura por padrões comuns de URLs de vídeo
+                val videoPatterns = listOf(
+                    Regex("""["'](https?://[^"']*\.m3u8[^"']*)["']"""),
+                    Regex("""["'](https?://[^"']*\.mp4[^"']*)["']"""),
+                    Regex("""file\s*:\s*["'](https?://[^"']+)["']"""),
+                    Regex("""src\s*:\s*["'](https?://[^"']+)["']"""),
+                    Regex("""sources\s*:\s*\[.*?\{\s*file\s*:\s*["']([^"']+)["']""", RegexOption.DOT_MATCHES_ALL),
+                    Regex("""playlist\s*:\s*\[.*?\{\s*file\s*:\s*["']([^"']+)["']""", RegexOption.DOT_MATCHES_ALL),
+                    Regex("""["'](https?://[^"']*/9a/[^"']*)["']""") // Padrão /9a/
+                )
+                
+                for (pattern in videoPatterns) {
+                    val matches = pattern.findAll(responseText)
+                    for (match in matches) {
+                        val foundUrl = match.groupValues.getOrNull(1) ?: continue
+                        if (foundUrl.contains(".m3u8") || foundUrl.contains(".mp4") || foundUrl.contains("/9a/")) {
+                            println("🔍 URL encontrada no HTML: ${foundUrl.take(150)}...")
+                            
+                            // Tenta acessar
+                            val fullUrl = if (foundUrl.startsWith("//")) "https:$foundUrl"
+                                          else if (foundUrl.startsWith("/")) "https://png.strp2p.com$foundUrl"
+                                          else foundUrl
+                            
+                            println("🔗 Tentando acessar: ${fullUrl.take(100)}...")
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                println("⚠️ Erro ao analisar HTML: ${e.message}")
             }
             
             false
             
         } catch (e: Exception) {
-            println("💥 Erro: ${e.message}")
+            println("💥 ERRO GERAL: ${e.message}")
             e.printStackTrace()
             false
-        }
-    }
-    
-    /**
-     * Cria link MP4 - AGORA É SUSPEND!
-     */
-    private suspend fun createMp4Link(
-        videoUrl: String,
-        name: String,
-        referer: String,
-        callback: (ExtractorLink) -> Unit,
-        headers: Map<String, String>
-    ) {
-        val quality = determineQuality(videoUrl)
-        val qualityLabel = getQualityLabel(quality)
-        
-        // newExtractorLink É SUSPEND!
-        val extractorLink = newExtractorLink(
-            source = "CHPLAY",
-            name = "$name ($qualityLabel) [MP4]",
-            url = videoUrl,
-            type = ExtractorLinkType.VIDEO
-        ) {
-            this.referer = referer
-            this.quality = quality
-            this.headers = headers
-        }
-        
-        callback(extractorLink)
-    }
-    
-    /**
-     * Determina a qualidade baseada na URL
-     */
-    private fun determineQuality(url: String): Int {
-        return when {
-            url.contains("1080") || url.contains("fullhd") || url.contains("fhd") -> 1080
-            url.contains("720") || url.contains("hd") -> 720
-            url.contains("480") || url.contains("sd") -> 480
-            url.contains("360") -> 360
-            url.contains("240") -> 240
-            else -> 720 // Qualidade padrão
-        }
-    }
-    
-    /**
-     * Retorna o label da qualidade
-     */
-    private fun getQualityLabel(quality: Int): String {
-        return when (quality) {
-            1080 -> "1080p"
-            720 -> "720p"
-            480 -> "480p"
-            360 -> "360p"
-            240 -> "240p"
-            else -> "SD"
         }
     }
 }
