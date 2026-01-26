@@ -95,7 +95,13 @@ object FileMoonExtractor {
             }
             """.trimIndent()
             
-            val apiResponse = app.post(apiUrl, headers = headers, data = requestBody)
+            // CORREÇÃO: Converte string para map
+            val apiResponse = app.post(
+                apiUrl, 
+                headers = headers, 
+                data = mapOf("body" to requestBody), // CONVERTE PARA MAP
+                timeout = 30
+            )
             
             if (apiResponse.code != 200) {
                 println("❌ API respondeu com status ${apiResponse.code}")
