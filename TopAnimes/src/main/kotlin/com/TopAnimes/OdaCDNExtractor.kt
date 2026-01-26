@@ -4,12 +4,12 @@ import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
-import org.jsoup.Jsoup
 
 object OdaCDNExtractor {
     
     /**
      * Extrai links de vídeo do player OdaCDN (/antivirus2/)
+     * AGORA com suporte a JavaScript
      */
     suspend fun extractVideoLinks(
         url: String,
@@ -20,71 +20,82 @@ object OdaCDNExtractor {
         println("📄 URL do episódio: $url")
         
         return try {
-            // 1. CARREGA PÁGINA DO EPISÓDIO
-            println("📥 Baixando página do episódio...")
-            val episodeResponse = app.get(url)
-            val doc = episodeResponse.document
-            println("✅ Página carregada (${episodeResponse.text.length} chars)")
+            // 1. CARREGA PÁGINA COM HEADERS DE NAVEGADOR
+            println("📥 Baixando página...")
+            val headers = mapOf(
+                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+                "Accept-Language" to "pt-BR,pt;q=0.9,en;q=0.8",
+                "Referer" to "https://topanimes.net/",
+                "Sec-Fetch-Dest" to "document",
+                "Sec-Fetch-Mode" to "navigate",
+                "Sec-Fetch-Site" to "same-origin",
+                "Upgrade-Insecure-Requests" to "1"
+            )
             
-            // 2. PROCURA IFRAME COM /antivirus2/
-            println("🔎 Procurando iframe /antivirus2/...")
+            val episodeResponse = app.get(url, headers = headers, timeout = 30)
+            val html = episodeResponse.text
+            println("✅ Página carregada (${html.length} chars)")
             
-            var odaIframeSrc: String? = null
+            // 2. PROCURA URL DO PLAYER ODACDN NO HTML (incluindo JavaScript)
+            println("🔎 Procurando URL do player OdaCDN...")
             
-            // Procura todos os iframes
-            val allIframes = doc.select("iframe")
-            println("📊 Total de iframes na página: ${allIframes.size}")
+            var playerUrl: String? = null
             
-            for ((index, iframe) in allIframes.withIndex()) {
-                val src = iframe.attr("src")
-                println("🔗 Iframe #${index + 1}: $src")
-                
-                if (src.contains("/antivirus2/")) {
-                    println("🎯 ENCONTRADO IFRAME ODACDN! (/antivirus2/)")
-                    odaIframeSrc = src
-                    break
+            // Padrão 1: URL direta em JavaScript
+            val jsPattern = """['"](https?://[^'"]*/antivirus2/[^'"]*)['"]""".toRegex()
+            val jsMatches = jsPattern.findAll(html)
+            
+            jsMatches.forEach { match ->
+                val foundUrl = match.groupValues[1]
+                println("🔗 URL encontrada em JS: $foundUrl")
+                if (foundUrl.contains("antivirus2")) {
+                    playerUrl = foundUrl
                 }
             }
             
-            // Se não encontrou diretamente, procura em source-box
-            if (odaIframeSrc == null) {
-                println("🔍 Procurando em source-box...")
-                val sourceBoxes = doc.select(".source-box")
+            // Padrão 2: Atributo data-src
+            if (playerUrl == null) {
+                val dataSrcPattern = """data-src=['"]([^'"]*/antivirus2/[^'"]*)['"]""".toRegex()
+                val dataSrcMatch = dataSrcPattern.find(html)
+                if (dataSrcMatch != null) {
+                    playerUrl = dataSrcMatch.groupValues[1]
+                    println("🔗 URL encontrada em data-src: $playerUrl")
+                }
+            }
+            
+            // Padrão 3: Iframe src (mesmo que about:blank)
+            if (playerUrl == null) {
+                val iframePattern = """<iframe[^>]*src=['"]([^'"]*)['"][^>]*>""".toRegex(RegexOption.DOT_MATCHES_ALL)
+                val iframeMatches = iframePattern.findAll(html)
                 
-                for ((index, box) in sourceBoxes.withIndex()) {
-                    val iframeInBox = box.selectFirst("iframe")
-                    val src = iframeInBox?.attr("src") ?: continue
-                    
-                    println("📦 Source-box #${index + 1} iframe: $src")
-                    
-                    if (src.contains("/antivirus2/")) {
-                        println("🎯 ENCONTRADO ODACDN NO SOURCE-BOX!")
-                        odaIframeSrc = src
-                        break
+                iframeMatches.forEach { match ->
+                    val src = match.groupValues[1]
+                    if (src.contains("antivirus2")) {
+                        playerUrl = src
+                        println("🔗 URL encontrada em iframe src: $playerUrl")
                     }
                 }
             }
             
-            if (odaIframeSrc == null) {
-                println("❌ NENHUM IFRAME /antivirus2/ ENCONTRADO!")
+            if (playerUrl == null) {
+                println("❌ Nenhuma URL do player OdaCDN encontrada")
                 return false
             }
             
-            println("✅ IFRAME ODACDN ENCONTRADO: $odaIframeSrc")
-            
-            // 3. MONTA URL DO PLAYER (já está completa)
-            val playerUrl = when {
-                odaIframeSrc.startsWith("http") -> odaIframeSrc
-                odaIframeSrc.startsWith("//") -> "https:$odaIframeSrc"
-                odaIframeSrc.startsWith("/") -> "https://topanimes.net$odaIframeSrc"
-                else -> "https://topanimes.net/$odaIframeSrc"
+            // 3. CORRIGE URL SE NECESSÁRIO
+            val finalPlayerUrl = when {
+                playerUrl.startsWith("http") -> playerUrl
+                playerUrl.startsWith("//") -> "https:$playerUrl"
+                playerUrl.startsWith("/") -> "https://topanimes.net$playerUrl"
+                else -> "https://topanimes.net/$playerUrl"
             }
             
-            println("🎮 URL do player: $playerUrl")
+            println("🎮 URL final do player: $finalPlayerUrl")
             
-            // 4. FAZ REQUEST PRO PLAYER
-            println("📤 Fazendo request para o player OdaCDN...")
-            val headers = mapOf(
+            // 4. ACESSA O PLAYER
+            println("📤 Acessando player OdaCDN...")
+            val playerHeaders = mapOf(
                 "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
                 "Referer" to url,
                 "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
@@ -94,38 +105,38 @@ object OdaCDNExtractor {
                 "Sec-Fetch-Site" to "same-origin"
             )
             
-            val playerResponse = app.get(playerUrl, headers = headers, timeout = 30)
-            println("✅ Resposta do player recebida (${playerResponse.text.length} chars)")
+            val playerResponse = app.get(finalPlayerUrl, headers = playerHeaders, timeout = 30)
+            val playerHtml = playerResponse.text
+            println("✅ Player acessado (${playerHtml.length} chars)")
             
-            // 5. PROCURA LINK DO VÍDEO (M3U8 no JWPlayer)
-            println("🔎 Procurando link M3U8 na resposta...")
-            val videoLink = findM3U8LinkInResponse(playerResponse.text)
+            // 5. PROCURA M3U8 NO PLAYER
+            println("🔎 Procurando M3U8 no player...")
+            val m3u8Link = extractM3U8FromPlayer(playerHtml)
             
-            if (videoLink == null) {
-                println("❌ Nenhum link M3U8 encontrado")
+            if (m3u8Link == null) {
+                println("❌ Nenhum link M3U8 encontrado no player")
                 return false
             }
             
-            println("🎬 LINK M3U8 ENCONTRADO: $videoLink")
+            println("🎬 LINK M3U8 ENCONTRADO: ${m3u8Link.take(100)}...")
             
-            // 6. CRIA EXTRACTORLINK (M3U8)
-            val quality = determineQuality(videoLink)
+            // 6. CRIA EXTRACTORLINK
+            val quality = determineQuality(m3u8Link)
             val qualityLabel = getQualityLabel(quality)
             
             println("📏 Qualidade: $quality ($qualityLabel)")
             
-            // Para M3U8
             val extractorLink = newExtractorLink(
                 source = "OdaCDN",
                 name = "$name ($qualityLabel) [HLS]",
-                url = videoLink,
+                url = m3u8Link,
                 type = ExtractorLinkType.M3U8
             ) {
-                this.referer = playerUrl
+                this.referer = finalPlayerUrl
                 this.quality = quality
                 this.headers = mapOf(
                     "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                    "Referer" to playerUrl,
+                    "Referer" to finalPlayerUrl,
                     "Origin" to "https://topanimes.net"
                 )
             }
@@ -136,74 +147,52 @@ object OdaCDNExtractor {
             
         } catch (e: Exception) {
             println("💥 ERRO NO ODACDN: ${e.message}")
-            e.printStackTrace()
             false
         }
     }
     
     /**
-     * Procura link M3U8 na resposta do player
+     * Extrai link M3U8 do HTML do player
      */
-    private fun findM3U8LinkInResponse(html: String): String? {
-        println("🔬 Analisando resposta para M3U8...")
+    private fun extractM3U8FromPlayer(html: String): String? {
+        println("🔬 Analisando player para M3U8...")
         
-        // PADRÃO 1: JWPlayer com M3U8
-        val jwPattern = """"file"\s*:\s*"([^"]+)"""".toRegex()
-        val jwMatch = jwPattern.find(html)
+        // Padrões comuns em players
+        val patterns = listOf(
+            // JWPlayer: "file": "URL"
+            """"file"\s*:\s*"([^"]+)"""".toRegex(),
+            
+            // JWPlayer: sources: [{file: "URL"}]
+            """sources\s*:\s*\[\{[^}]*"file"\s*:\s*"([^"]+)"""".toRegex(RegexOption.DOT_MATCHES_ALL),
+            
+            // URL direta .m3u8
+            """https?://[^"\s]*\.m3u8[^"\s]*""".toRegex(),
+            
+            // data-file attribute
+            """data-file=["']([^"']+)["']""".toRegex(),
+            
+            // player.setup({ file: "URL" })
+            """player\.setup\([^}]*file\s*:\s*["']([^"']+)["']""".toRegex(RegexOption.DOT_MATCHES_ALL)
+        )
         
-        if (jwMatch != null) {
-            var url = jwMatch.groupValues[1]
-            println("🔗 URL encontrada no JWPlayer: $url")
-            
-            url = url.replace("\\/", "/")
-            url = url.replace("&amp;", "&")
-            
-            if (url.contains(".m3u8")) {
-                println("✅ É um link M3U8 válido!")
-                return url
-            }
-        }
-        
-        // PADRÃO 2: sources: [{file: "URL"}]
-        val sourcesPattern = """sources\s*:\s*\[([^\]]+)\]""".toRegex(RegexOption.DOT_MATCHES_ALL)
-        val sourcesMatch = sourcesPattern.find(html)
-        
-        if (sourcesMatch != null) {
-            val sourcesContent = sourcesMatch.groupValues[1]
-            println("📦 Conteúdo do sources: ${sourcesContent.take(200)}...")
-            
-            val filePattern = """"file"\s*:\s*"([^"]+)"""".toRegex()
-            val fileMatch = filePattern.find(sourcesContent)
-            
-            if (fileMatch != null) {
-                var url = fileMatch.groupValues[1]
-                println("🔗 URL no sources: $url")
-                
-                url = url.replace("\\/", "/")
-                url = url.replace("&amp;", "&")
+        patterns.forEachIndexed { index, pattern ->
+            val matches = pattern.findAll(html)
+            matches.forEach { match ->
+                var url = match.groupValues.getOrNull(1) ?: match.value
                 
                 if (url.contains(".m3u8")) {
-                    println("✅ M3U8 encontrado no sources!")
+                    // Limpa a URL
+                    url = url.replace("\\/", "/")
+                    url = url.replace("&amp;", "&")
+                    url = url.replace("\\\\u002F", "/")
+                    
+                    println("✅ M3U8 encontrado (padrão $index): ${url.take(100)}...")
                     return url
                 }
             }
         }
         
-        // PADRÃO 3: Links .m3u8 diretos
-        val m3u8Pattern = """https?://[^"\s]*\.m3u8[^"\s]*""".toRegex()
-        val m3u8Matches = m3u8Pattern.findAll(html)
-        
-        for (match in m3u8Matches) {
-            val url = match.value
-            println("🔗 Link .m3u8 encontrado: $url")
-            
-            if (url.contains("token=") && url.contains("expires=")) {
-                println("✅ M3U8 com token encontrado!")
-                return url
-            }
-        }
-        
-        println("❌ Nenhum link M3U8 encontrado")
+        println("❌ Nenhum padrão M3U8 encontrado")
         return null
     }
     
