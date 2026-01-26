@@ -953,3 +953,4 @@ class TopAnimes : MainAPI() {
         false
     }
 }
+}
