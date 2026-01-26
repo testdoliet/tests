@@ -891,10 +891,15 @@ override suspend fun loadLinks(
         println("✅ OdaCDN funcionou!")
         return true
     }
-    
+
     // Se não, tenta FileMoon
     if (FileMoonExtractor.extractVideoLinks(data, "FileMoon", callback)) {
         println("✅ FileMoon funcionou!")
+        return true
+    }
+
+    if (ChPlayExtractor.extractVideoLinks(data, "ChPlay", callback)) {
+        println("✅ ChPlay funcionou!")
         return true
     }
     
