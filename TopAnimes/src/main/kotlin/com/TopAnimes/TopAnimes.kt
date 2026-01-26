@@ -706,81 +706,100 @@ class TopAnimes : MainAPI() {
         return episodes.sortedBy { it.episode }
     }
 
-    // Função auxiliar para extrair número do episódio de múltiplas fontes
-    private fun extractEpisodeNumberFromMultipleSources(element: Element, href: String): Int? {
-        // Tenta do elemento .numerando
-        val numberElement = element.selectFirst(".numerando, .epnumber, .numerando")
-        numberElement?.text()?.let { text ->
-            // Padrão: "1 - 1" ou "1-1"
-            val match = Regex("""(\d+)\s*[-–]\s*\d+""").find(text)
-            if (match != null) {
-                return match.groupValues[1].toIntOrNull()
-            }
-            // Tenta apenas números
-            val simpleMatch = Regex("""\b(\d+)\b""").find(text)
-            if (simpleMatch != null) {
-                return simpleMatch.groupValues[1].toIntOrNull()
-            }
-        }
-
-        // Tenta do atributo data-id (se existir)
-        val dataId = element.attr("data-id")
-        if (dataId.isNotBlank()) {
-            val match = Regex("""\b(\d+)\b""").find(dataId)
-            if (match != null) {
-                return match.groupValues[1].toIntOrNull()
-            }
-        }
-
-        // Tenta da URL
-        return extractEpisodeNumberFromUrl(href)
-    }
-
-    // Função auxiliar para extrair número da URL
-    private fun extractEpisodeNumberFromUrl(url: String): Int? {
-        val patterns = listOf(
-            Regex("""episodio-(\d+)""", RegexOption.IGNORE_CASE),
-            Regex("""/episodio/(\d+)/?""", RegexOption.IGNORE_CASE),
-            Regex("""episode-(\d+)""", RegexOption.IGNORE_CASE),
-            Regex("""e(\d+)""", RegexOption.IGNORE_CASE),
-            Regex("""\bep\.?(\d+)\b""", RegexOption.IGNORE_CASE),
-            Regex("""\b(\d{1,3})\b(?!.*\d)""") // Últimos 1-3 dígitos
-        )
+    // Função auxiliar para extrair número do episódio de múltiplas fontes - VERSÃO MELHORADA
+private fun extractEpisodeNumberFromMultipleSources(element: Element, href: String): Int? {
+    println("DEBUG: Extraindo número do episódio...")
+    
+    // Tenta do elemento .numerando (estrutura comum: "1 - 1")
+    val numberElement = element.selectFirst(".numerando")
+    numberElement?.text()?.let { text ->
+        println("DEBUG: Texto de .numerando: '$text'")
         
-        for (pattern in patterns) {
-            pattern.find(url)?.groupValues?.get(1)?.toIntOrNull()?.let {
-                return it
-            }
+        // Padrão: "1 - 1" ou "1-1" (primeiro número é temporada, segundo é episódio)
+        val match = Regex("""(\d+)\s*[-–]\s*(\d+)""").find(text)
+        if (match != null) {
+            val episodeNum = match.groupValues[2].toIntOrNull()
+            println("DEBUG: Número extraído de .numerando: $episodeNum (padrão: temporada-episódio)")
+            return episodeNum
         }
-        return null
-    }
-
-    // Função auxiliar para extrair número do título
-    private fun extractEpisodeNumberFromTitle(title: String): Int? {
-        val patterns = listOf(
-            Regex("""Epis[oó]dio\s*(\d+)""", RegexOption.IGNORE_CASE),
-            Regex("""Ep\.?\s*(\d+)""", RegexOption.IGNORE_CASE),
-            Regex("""E(\d+)""", RegexOption.IGNORE_CASE),
-            Regex("""\b(\d{1,3})\b(?!.*\d)""") // Últimos 1-3 dígitos
-        )
         
-        for (pattern in patterns) {
-            pattern.find(title)?.groupValues?.get(1)?.toIntOrNull()?.let {
-                return it
-            }
+        // Tenta apenas números (pode ser só o número do episódio)
+        val simpleMatch = Regex("""\b(\d+)\b""").find(text)
+        if (simpleMatch != null) {
+            val num = simpleMatch.groupValues[1].toIntOrNull()
+            println("DEBUG: Número extraído de .numerando: $num (número único)")
+            return num
         }
-        return null
     }
 
-    // Função auxiliar para corrigir URLs
-    private fun fixEpisodeUrl(href: String): String {
-        return when {
-            href.startsWith("//") -> "https:$href"
-            href.startsWith("/") -> "$mainUrl$href"
-            !href.startsWith("http") -> "$mainUrl/$href"
-            else -> href
+    // Tenta do elemento .epnumber (se existir)
+    val epNumberElement = element.selectFirst(".epnumber")
+    epNumberElement?.text()?.let { text ->
+        println("DEBUG: Texto de .epnumber: '$text'")
+        val match = Regex("""\b(\d+)\b""").find(text)
+        if (match != null) {
+            val num = match.groupValues[1].toIntOrNull()
+            println("DEBUG: Número extraído de .epnumber: $num")
+            return num
         }
     }
+
+    // Tenta do elemento com classe que contenha "ep" (ex: "ep1", "ep-1")
+    val epElements = element.select("[class*='ep']")
+    epElements.forEach { epElement ->
+        epElement.classNames().forEach { className ->
+            println("DEBUG: Classe encontrada: $className")
+            val match = Regex("""ep[-\s]?(\d+)""", RegexOption.IGNORE_CASE).find(className)
+            if (match != null) {
+                val num = match.groupValues[1].toIntOrNull()
+                println("DEBUG: Número extraído da classe '$className': $num")
+                return num
+            }
+        }
+    }
+
+    // Tenta do texto do link ou elemento
+    val linkText = element.selectFirst("a")?.text()?.trim()
+    linkText?.let { text ->
+        println("DEBUG: Texto do link: '$text'")
+        if (text.contains("Episódio", ignoreCase = true) || text.contains("Ep.", ignoreCase = true)) {
+            val match = Regex("""Epis[oó]dio\s*(\d+)""", RegexOption.IGNORE_CASE).find(text)
+                ?: Regex("""Ep\.?\s*(\d+)""", RegexOption.IGNORE_CASE).find(text)
+                ?: Regex("""E(\d+)""", RegexOption.IGNORE_CASE).find(text)
+            
+            if (match != null) {
+                val num = match.groupValues[1].toIntOrNull()
+                println("DEBUG: Número extraído do texto do link: $num")
+                return num
+            }
+        }
+    }
+
+    // Tenta do atributo data-id (se existir)
+    val dataId = element.attr("data-id")
+    if (dataId.isNotBlank()) {
+        println("DEBUG: data-id: '$dataId'")
+        val match = Regex("""\b(\d+)\b""").find(dataId)
+        if (match != null) {
+            val num = match.groupValues[1].toIntOrNull()
+            println("DEBUG: Número extraído do data-id: $num")
+            return num
+        }
+    }
+
+    // Tenta do atributo data-episode (se existir)
+    val dataEpisode = element.attr("data-episode")
+    if (dataEpisode.isNotBlank()) {
+        println("DEBUG: data-episode: '$dataEpisode'")
+        val num = dataEpisode.toIntOrNull()
+        println("DEBUG: Número extraído do data-episode: $num")
+        return num
+    }
+
+    // Tenta da URL como último recurso
+    println("DEBUG: Tentando extrair da URL: $href")
+    return extractEpisodeNumberFromUrl(href)
+}
 
     // LoadLinks desativado
     override suspend fun loadLinks(
