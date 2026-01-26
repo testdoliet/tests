@@ -888,69 +888,276 @@ class TopAnimes : MainAPI() {
     println("🔗 LOADLINKS INICIADO: $data")
     
     return try {
-        // Carrega a página do episódio uma vez
+        // Carrega a página do episódio
         val episodeResponse = app.get(data)
         val doc = episodeResponse.document
+        val html = episodeResponse.text
         
-        // Lista para armazenar todos os links encontrados
+        println("📄 HTML carregado (${html.length} chars)")
+        
+        // 1. IDENTIFICA OS PLAYERS PRESENTES
+        val availablePlayers = detectAvailablePlayers(doc, html)
+        
+        if (availablePlayers.isEmpty()) {
+            println("❌ Nenhum player identificado na página")
+            return false
+        }
+        
+        println("🎮 PLAYERS IDENTIFICADOS (${availablePlayers.size}):")
+        availablePlayers.forEachIndexed { index, player ->
+            println("  ${index + 1}. ${player.name} (${player.type}) - ${player.url}")
+        }
+        
+        // 2. CHAMA OS EXTRACTORS COM BASE NOS PLAYERS IDENTIFICADOS
         var foundAny = false
         
-        // 1. PROCURA TODOS OS PLAYERS DISPONÍVEIS
-        println("🔍 Procurando todos os players disponíveis...")
-        
-        // Primeiro, pega todas as opções de player (botões)
-        val playerOptions = doc.select("#playeroptionsul li")
-        println("🎮 Players disponíveis na página: ${playerOptions.size}")
-        
-        playerOptions.forEachIndexed { index, option ->
-            val playerName = option.selectFirst(".title")?.text() ?: "Player ${index + 1}"
-            println("  📌 $playerName")
-        }
-        
-        // 2. TENTA ZUPLAY PRIMEIRO (/antivirus3/)
-        println("\n🎯 Tentando ZUPLAY...")
-        val zuplayFound = ZuPlayExtractor.extractVideoLinks(data, "ZUPLAY", callback)
-        if (zuplayFound) {
-            println("✅ ZUPLAY encontrou links!")
-            foundAny = true
-        } else {
-            println("❌ ZUPLAY não encontrou links")
-        }
-        
-        // 3. TENTA ODACDN (/antivirus2/)
-        println("\n🎯 Tentando OdaCDN...")
-        val odaFound = OdaCDNExtractor.extractVideoLinks(data, "OdaCDN", callback)
-        if (odaFound) {
-            println("✅ OdaCDN encontrou links!")
-            foundAny = true
-        } else {
-            println("❌ OdaCDN não encontrou links")
-        }
-        
-        // 4. SE QUISER, PODE TENTAR OUTROS PLAYERS FUTURAMENTE
-        // Ex: ChPlayExtractor, RuPlayExtractor, AnyPlayExtractor
-        
-        // Debug final
-        if (foundAny) {
-            println("🎉 LOADLINKS: Pelo menos um player funcionou!")
-        } else {
-            println("💔 LOADLINKS: Nenhum player funcionou")
-            
-            // DEBUG: Mostra os iframes encontrados para ajudar
-            println("\n🔍 DEBUG - Iframes encontrados na página:")
-            val allIframes = doc.select("iframe")
-            allIframes.forEachIndexed { i, iframe ->
-                val src = iframe.attr("src")
-                println("  Iframe #${i + 1}: $src")
+        availablePlayers.forEach { player ->
+            try {
+                println("\n🎯 Processando player: ${player.name}")
+                println("📌 Tipo: ${player.type}")
+                println("🔗 URL: ${player.url}")
+                
+                when (player.type) {
+                    PlayerType.ODACDN -> {
+                        println("⚡ Chamando OdaCDNExtractor...")
+                        val odaFound = OdaCDNExtractor.extractVideoLinks(data, player.name, callback)
+                        if (odaFound) {
+                            println("✅ OdaCDN: Links extraídos com sucesso!")
+                            foundAny = true
+                        } else {
+                            println("❌ OdaCDN: Falha na extração")
+                        }
+                    }
+                    
+                    PlayerType.ZUPLAY -> {
+                        println("⚡ Chamando ZuPlayExtractor...")
+                        val zuplayFound = ZuPlayExtractor.extractVideoLinks(data, player.name, callback)
+                        if (zuplayFound) {
+                            println("✅ ZUPLAY: Links extraídos com sucesso!")
+                            foundAny = true
+                        } else {
+                            println("❌ ZUPLAY: Falha na extração")
+                        }
+                    }
+                    
+                    PlayerType.M3U8_DIRECT -> {
+                        println("🎬 Link M3U8 direto encontrado!")
+                        // Cria o ExtractorLink diretamente
+                        val extractorLink = newExtractorLink(
+                            source = "TopAnimes",
+                            name = player.name,
+                            url = player.url,
+                            type = ExtractorLinkType.M3U8
+                        ) {
+                            this.referer = data
+                            this.quality = determineQualityFromUrl(player.url)
+                            this.headers = mapOf(
+                                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                                "Referer" to data
+                            )
+                        }
+                        callback(extractorLink)
+                        foundAny = true
+                        println("✅ M3U8 direto adicionado!")
+                    }
+                    
+                    else -> {
+                        println("⚠️ Tipo de player não suportado: ${player.type}")
+                    }
+                }
+            } catch (e: Exception) {
+                println("⚠️ Erro ao processar player ${player.name}: ${e.message}")
             }
         }
+        
+        // 3. RESULTADO FINAL
+        println("\n" + "=".repeat(50))
+        println("📊 RESUMO DA EXTRAÇÃO:")
+        println("✅ Players identificados: ${availablePlayers.size}")
+        println("✅ Links extraídos: ${if (foundAny) "SIM" else "NÃO"}")
+        println("🔗 URL original: $data")
+        println("=".repeat(50))
         
         foundAny
         
     } catch (e: Exception) {
-        println("💥 ERRO NO LOADLINKS: ${e.message}")
-        e.printStackTrace()
+        println("💥 ERRO FATAL NO LOADLINKS: ${e.message}")
         false
     }
+}
+
+/**
+ * Detector de players disponíveis na página
+ */
+private suspend fun detectAvailablePlayers(doc: org.jsoup.nodes.Document, html: String): List<PlayerInfo> {
+    val players = mutableListOf<PlayerInfo>()
+    
+    println("🔍 Analisando página para encontrar players...")
+    
+    // 1. Procura pelos botões de player (interface visível)
+    println("🎯 Buscando botões de player...")
+    val playerButtons = doc.select("#playeroptionsul li, .player-option, .source-tab, .btn-player")
+    
+    if (playerButtons.isNotEmpty()) {
+        println("📊 Encontrados ${playerButtons.size} botões de player")
+        
+        playerButtons.forEachIndexed { index, button ->
+            try {
+                val playerName = button.text().trim()
+                if (playerName.isNotBlank()) {
+                    println("  📌 Botão #${index + 1}: '$playerName'")
+                    
+                    // Extrai tipo do player do nome
+                    val playerType = when {
+                        playerName.contains("OdaCDN", ignoreCase = true) || 
+                        playerName.contains("antivirus2", ignoreCase = true) -> PlayerType.ODACDN
+                        
+                        playerName.contains("ZUPLAY", ignoreCase = true) || 
+                        playerName.contains("antivirus3", ignoreCase = true) -> PlayerType.ZUPLAY
+                        
+                        playerName.contains("Chplay", ignoreCase = true) -> PlayerType.CHPLAY
+                        playerName.contains("Ruplay", ignoreCase = true) -> PlayerType.RUPLAY
+                        else -> PlayerType.UNKNOWN
+                    }
+                    
+                    // Tenta extrair URL do botão
+                    val playerUrl = extractPlayerUrlFromButton(button, doc, html)
+                    
+                    players.add(PlayerInfo(playerName, playerType, playerUrl))
+                }
+            } catch (e: Exception) {
+                // Ignora erros em botões individuais
+            }
+        }
+    }
+    
+    // 2. Se não encontrou botões, procura diretamente no HTML
+    if (players.isEmpty()) {
+        println("🔍 Procurando players diretamente no HTML...")
+        
+        // Procura por URLs específicas de players
+        val foundUrls = mutableListOf<String>()
+        
+        // Padrões de URLs de players
+        val urlPatterns = listOf(
+            "antivirus2" to PlayerType.ODACDN,
+            "antivirus3" to PlayerType.ZUPLAY,
+            "oda" to PlayerType.ODACDN,
+            "zuplay" to PlayerType.ZUPLAY
+        )
+        
+        urlPatterns.forEach { (pattern, type) ->
+            val regex = """https?://[^"\s]*$pattern[^"\s]*""".toRegex()
+            val matches = regex.findAll(html)
+            
+            matches.forEach { match ->
+                val url = match.value
+                if (!foundUrls.contains(url)) {
+                    foundUrls.add(url)
+                    players.add(PlayerInfo("Player $pattern", type, url))
+                    println("  🔗 URL encontrada ($pattern): $url")
+                }
+            }
+        }
+    }
+    
+    // 3. Procura por M3U8 diretos
+    println("🔍 Buscando links M3U8 diretos...")
+    val m3u8Pattern = """https?://[^"\s]*\.m3u8[^"\s]*""".toRegex()
+    val m3u8Matches = m3u8Pattern.findAll(html)
+    
+    m3u8Matches.forEach { match ->
+        val url = match.value
+        // Verifica se não é um comentário ou texto irrelevante
+        if (!url.contains("example.com") && !url.contains("placeholder")) {
+            players.add(PlayerInfo("M3U8 Direto", PlayerType.M3U8_DIRECT, url))
+            println("  🎬 M3U8 encontrado: ${url.take(80)}...")
+        }
+    }
+    
+    // Remove duplicados
+    return players.distinctBy { it.url }
+}
+
+/**
+ * Extrai URL do player de um botão
+ */
+private fun extractPlayerUrlFromButton(button: Element, doc: org.jsoup.nodes.Document, html: String): String? {
+    return try {
+        // Método 1: Atributo data-src (muito comum)
+        var url = button.attr("data-src")
+        if (url.isNotBlank()) {
+            println("    📍 Encontrado data-src: $url")
+            return url
+        }
+        
+        // Método 2: Atributo data-player
+        url = button.attr("data-player")
+        if (url.isNotBlank()) {
+            println("    📍 Encontrado data-player: $url")
+            return url
+        }
+        
+        // Método 3: Atributo onclick (com URL em JavaScript)
+        val onclick = button.attr("onclick")
+        if (onclick.isNotBlank()) {
+            val urlRegex = """['"](https?://[^'"]+)['"]""".toRegex()
+            val match = urlRegex.find(onclick)
+            if (match != null) {
+                val foundUrl = match.groupValues[1]
+                println("    📍 Encontrado em onclick: $foundUrl")
+                return foundUrl
+            }
+        }
+        
+        // Método 4: ID do player para encontrar o iframe correspondente
+        val playerId = button.attr("data-tab") ?: button.attr("id") ?: ""
+        if (playerId.isNotBlank()) {
+            // Procura iframe com esse ID
+            val iframe = doc.select("iframe#$playerId, [data-id='$playerId']").first()
+            if (iframe != null) {
+                val src = iframe.attr("src")
+                if (src.isNotBlank()) {
+                    println("    📍 Iframe encontrado pelo ID: $src")
+                    return src
+                }
+            }
+        }
+        
+        null
+    } catch (e: Exception) {
+        null
+    }
+}
+
+/**
+ * Determina a qualidade baseado na URL
+ */
+private fun determineQualityFromUrl(url: String): Int {
+    return when {
+        url.contains("1080") || url.contains("fhd") -> 1080
+        url.contains("720") || url.contains("hd") -> 720
+        url.contains("480") -> 480
+        url.contains("360") -> 360
+        else -> 720 // padrão
+    }
+}
+
+/**
+ * Classes auxiliares para identificar players
+ */
+private data class PlayerInfo(
+    val name: String,
+    val type: PlayerType,
+    val url: String?
+)
+
+private enum class PlayerType {
+    ODACDN,      // antivirus2
+    ZUPLAY,      // antivirus3  
+    CHPLAY,      // Chplay
+    RUPLAY,      // Ruplay
+    M3U8_DIRECT, // Link M3U8 direto
+    UNKNOWN      // Outros
 }
 }
