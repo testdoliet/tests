@@ -884,26 +884,31 @@ override suspend fun loadLinks(
     subtitleCallback: (SubtitleFile) -> Unit,
     callback: (ExtractorLink) -> Unit
 ): Boolean {
-    println("🎯 LOADLINKS: OdaCDN → FileMoon → ZUPLAY")
+    println("🎯 LOADLINKS: OdaCDN → FileMoon → ChPlay → ZUPLAY")
     
     // Tenta OdaCDN primeiro
+    println("🔍 Tentando OdaCDN...")
     if (OdaCDNExtractor.extractVideoLinks(data, "OdaCDN", callback)) {
         println("✅ OdaCDN funcionou!")
         return true
     }
 
     // Se não, tenta FileMoon
+    println("🔍 Tentando FileMoon...")
     if (FileMoonExtractor.extractVideoLinks(data, "FileMoon", callback)) {
         println("✅ FileMoon funcionou!")
         return true
     }
 
+    // Tenta ChPlay
+    println("🔍 Tentando ChPlay...")
     if (ChPlayExtractor.extractVideoLinks(data, "ChPlay", callback)) {
         println("✅ ChPlay funcionou!")
         return true
     }
     
     // Por último, tenta ZUPLAY
+    println("🔍 Tentando ZUPLAY...")
     if (ZuPlayExtractor.extractVideoLinks(data, "ZUPLAY", callback)) {
         println("✅ ZUPLAY funcionou!")
         return true
