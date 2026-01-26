@@ -8,97 +8,72 @@ import com.lagradost.cloudstream3.utils.M3u8Helper
 object ChPlayExtractor {
 
     suspend fun extractVideoLinks(
-        url: String,
-        mainUrl: String,
-        name: String,
+        url: String,  // URL da página do episódio
+        name: String, // Nome do player (ex: "ChPlay")
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         println("🔍 CHPLAY EXTRACTOR INICIADO")
         println("📄 URL do episódio: $url")
+        println("🏷️ Nome: $name")
+        
+        // URL base fixa do site
+        val mainUrl = "https://topanimes.net"
         
         return try {
-            // 1. PROCURA A URL DO PNG NO HTML DA PÁGINA
-            println("📥 Baixando página do episódio para encontrar URL PNG...")
-            val episodeResponse = app.get(url)
-            val html = episodeResponse.text
-            println("✅ Página carregada (${html.length} chars)")
+            // 1. ENCONTRA A URL DO PNG NO HTML
+            println("🔎 Buscando URL do player PNG...")
+            val htmlResponse = app.get(url)
+            val html = htmlResponse.text
             
-            // 2. PROCURA URL EXATA DO PNG (https://png.strp2p.com/#wdlhc...)
-            println("🔎 Procurando URL do PNG (strp2p.com)...")
-            
+            // Procura a URL do iframe PNG
             var pngUrl: String? = null
             
-            // Padrões para encontrar a URL do player PNG
-            val pngPatterns = listOf(
-                // Procura pela URL exata no src do iframe
-                """src=["'](https?://png\.strp2p\.com/[^"']*)["']""".toRegex(),
-                // Procura no iframe do player CHPLAY
-                """id=["']source-player-1["'][^>]*>.*?<iframe[^>]*src=["'](https?://[^"']*)["']""".toRegex(RegexOption.DOT_MATCHES_ALL),
-                // Procura por qualquer iframe que contenha strp2p
-                """<iframe[^>]*src=["']([^"']*strp2p[^"']*)["']""".toRegex(),
-                // Procura por URL com #wdlhc
-                """src=["'](https?://[^"']*#wdlhc[^"']*)["']""".toRegex()
+            // Padrões para encontrar a URL
+            val patterns = listOf(
+                Regex("""src=["'](https?://png\.strp2p\.com/[^"']*)["']"""),
+                Regex("""<iframe[^>]*src=["'](https?://[^"']*strp2p[^"']*)["']"""),
+                Regex("""id=["']source-player-1["'][^>]*>.*?<iframe[^>]*src=["'](https?://[^"']*)["']""", RegexOption.DOT_MATCHES_ALL)
             )
             
-            for (pattern in pngPatterns) {
-                val matches = pattern.findAll(html)
-                for (match in matches) {
-                    val foundUrl = match.groupValues.getOrNull(1)
-                    if (foundUrl != null && foundUrl.contains("strp2p.com")) {
-                        println("🎯 URL PNG ENCONTRADA: ${foundUrl.take(100)}...")
-                        pngUrl = foundUrl
-                        break
-                    }
+            for (pattern in patterns) {
+                val match = pattern.find(html)
+                if (match != null) {
+                    pngUrl = match.groupValues[1]
+                    break
                 }
-                if (pngUrl != null) break
             }
             
             if (pngUrl == null) {
-                println("❌ Nenhuma URL strp2p.com encontrada")
+                println("❌ URL PNG não encontrada")
                 return false
             }
             
-            // 3. USA WEBVIEWRESOLVER PARA INTERCEPTAR REQUISIÇÕES M3U8
-            println("🎮 Usando WebViewResolver para interceptar requisições...")
+            println("✅ URL PNG encontrada: ${pngUrl.take(100)}...")
+            
+            // 2. USA WEBVIEWRESOLVER PARA INTERCEPTAR M3U8
+            println("🎮 Iniciando WebViewResolver...")
             
             val m3u8Resolver = WebViewResolver(
-                interceptUrl = Regex("""cf-master\.\d+\.txt|master\.m3u8|\.m3u8"""),
+                interceptUrl = Regex("""cf-master\.\d+\.txt|\.m3u8"""),
                 additionalUrls = listOf(
-                    Regex("""cf-master\.\d+\.txt"""),
-                    Regex("""master\.m3u8"""),
-                    Regex(""".*\.m3u8.*""")
+                    Regex("""cf-master"""),
+                    Regex("""\.m3u8""")
                 ),
                 useOkhttp = false,
                 timeout = 15_000L
             )
             
-            // 4. ACESSA A URL DO PNG COM O RESOLVER PARA INTERCEPTAR M3U8
-            println("🔄 Acessando URL PNG com WebViewResolver: ${pngUrl.take(100)}...")
+            // 3. ACESSA O PNG
+            println("🔄 Acessando player PNG...")
+            val intercepted = app.get(pngUrl, interceptor = m3u8Resolver).url
             
-            val interceptedResponse = app.get(pngUrl, interceptor = m3u8Resolver)
-            val interceptedUrl = interceptedResponse.url
+            println("🔗 URL interceptada: $intercepted")
             
-            println("🔗 URL interceptada: $interceptedUrl")
-            
-            // 5. VERIFICA SE INTERCEPTOU UM M3U8
-            if (interceptedUrl.isNotEmpty() && (interceptedUrl.contains("cf-master") || interceptedUrl.contains(".m3u8"))) {
-                println("✅ M3U8 INTERCEPTADO!")
+            // 4. VERIFICA SE TEM M3U8
+            if (intercepted.isNotEmpty() && (intercepted.contains("cf-master") || intercepted.contains(".m3u8"))) {
+                println("✅ M3U8 interceptado!")
                 
-                val m3u8Url = if (interceptedUrl.contains("cf-master")) {
-                    // Se for o cf-master, usa diretamente
-                    interceptedUrl
-                } else if (interceptedUrl.contains(".m3u8")) {
-                    // Se já for m3u8, usa diretamente
-                    interceptedUrl
-                } else {
-                    // Tenta extrair de parâmetros
-                    val m3u8Match = Regex("""(https?://[^&\s]+\.m3u8[^\s]*)""").find(interceptedUrl)
-                    m3u8Match?.groupValues?.get(1) ?: interceptedUrl
-                }
-                
-                println("🎬 URL M3U8 final: ${m3u8Url.take(100)}...")
-                
-                // 6. HEADERS PARA O M3U8 (baseado no código exemplo)
+                // Headers
                 val headers = mapOf(
                     "Accept" to "*/*",
                     "Connection" to "keep-alive",
@@ -110,28 +85,22 @@ object ChPlayExtractor {
                     "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
                 )
                 
-                // 7. GERA OS LINKS M3U8
-                println("🔄 Gerando links M3U8...")
-                
+                // Gera links M3U8
                 M3u8Helper.generateM3u8(
-                    name,
-                    m3u8Url,
+                    "$name Player",
+                    intercepted,
                     mainUrl,
                     headers = headers
                 ).forEach(callback)
                 
-                println("✅ CHPLAY EXTRACTOR FINALIZADO COM SUCESSO!")
                 return true
-                
-            } else {
-                println("❌ Nenhum M3U8 foi interceptado")
-                println("📄 Conteúdo da resposta: ${interceptedResponse.text.take(500)}...")
-                return false
             }
             
+            println("❌ Nenhum M3U8 interceptado")
+            false
+            
         } catch (e: Exception) {
-            println("💥 ERRO NO CHPLAY EXTRACTOR: ${e.message}")
-            e.printStackTrace()
+            println("💥 Erro no ChPlay: ${e.message}")
             false
         }
     }
