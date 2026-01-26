@@ -19,142 +19,224 @@ object ZuPlayExtractor {
             // 1. CARREGA PÁGINA DO EPISÓDIO
             println("📥 Baixando página do episódio...")
             val episodeResponse = app.get(url)
-            val doc = episodeResponse.document
-            println("✅ Página carregada (${episodeResponse.text.length} chars)")
+            val html = episodeResponse.text
+            println("✅ Página carregada (${html.length} chars)")
             
-            // 2. PROCURA TODOS OS IFRAMES
-            println("🔎 Procurando todos os iframes...")
-            val allIframes = doc.select("iframe")
-            println("📊 Total de iframes na página: ${allIframes.size}")
+            // 2. PROCURA URL DO PLAYER ZUPLAY (/antivirus3/) EM TODO O HTML
+            println("🔎 Procurando URL /antivirus3/ em todo o HTML...")
             
-            // 3. PROCURA ESPECIFICAMENTE O IFRAME COM /antivirus3/
-            var zuplayIframeSrc: String? = null
+            var playerUrl: String? = null
             
-            for ((index, iframe) in allIframes.withIndex()) {
-                val src = iframe.attr("src")
-                println("🔗 Iframe #${index + 1}: $src")
-                
-                if (src.contains("/antivirus3/")) {
-                    println("🎯 ENCONTRADO IFRAME ZUPLAY! (antivirus3)")
-                    zuplayIframeSrc = src
-                    break
-                }
-            }
+            // Padrões para encontrar URLs ZUPLAY
+            val zuplayPatterns = listOf(
+                """https?://[^"\s']*/antivirus3/[^"\s']*""".toRegex(),
+                """['"]https?://[^'"]*/antivirus3/[^'"]*['"]""".toRegex(),
+                """src=['"][^'"]*/antivirus3/[^'"]*['"]""".toRegex(),
+                """data-src=['"][^'"]*/antivirus3/[^'"]*['"]""".toRegex()
+            )
             
-            // 4. SE NÃO ENCONTROU DIRETO, PROCURA EM source-box
-            if (zuplayIframeSrc == null) {
-                println("🔍 Não encontrou iframe diretamente, procurando em source-box...")
-                
-                val sourceBoxes = doc.select(".source-box")
-                println("📦 Total de source-box encontrados: ${sourceBoxes.size}")
-                
-                for ((index, box) in sourceBoxes.withIndex()) {
-                    val iframeInBox = box.selectFirst("iframe")
-                    val src = iframeInBox?.attr("src") ?: continue
+            for (pattern in zuplayPatterns) {
+                val matches = pattern.findAll(html)
+                for (match in matches) {
+                    var foundUrl = match.value
                     
-                    println("📦 Source-box #${index + 1} iframe src: $src")
+                    // Limpa aspas e outros caracteres
+                    foundUrl = foundUrl.replace("'", "").replace("\"", "").replace("src=", "").replace("data-src=", "")
                     
-                    if (src.contains("/antivirus3/")) {
-                        println("🎯 ENCONTRADO ZUPLAY NO SOURCE-BOX!")
-                        zuplayIframeSrc = src
+                    if (foundUrl.contains("/antivirus3/")) {
+                        println("🎯 URL ZUPLAY ENCONTRADA: $foundUrl")
+                        playerUrl = foundUrl
                         break
                     }
                 }
+                if (playerUrl != null) break
             }
             
-            // 5. SE AINDA NÃO ENCONTROU, PROCURA EM TODOS OS ELEMENTOS
-            if (zuplayIframeSrc == null) {
-                println("🔍 Procurando em todo o HTML por URLs com /antivirus3/...")
-                
-                val html = episodeResponse.text
-                val antivirusPattern = """https?://[^"\s]*/antivirus3/[^"\s]*""".toRegex()
-                val matches = antivirusPattern.findAll(html)
-                
-                matches.forEach { match ->
-                    println("🔗 URL /antivirus3/ encontrada no HTML: ${match.value}")
-                    if (match.value.contains("/antivirus3/")) {
-                        zuplayIframeSrc = match.value
+            if (playerUrl == null) {
+                println("❌ Nenhuma URL /antivirus3/ encontrada")
+                return false
+            }
+            
+            // 3. CORRIGE A URL SE NECESSÁRIO
+            val finalPlayerUrl = when {
+                playerUrl.startsWith("http") -> playerUrl
+                playerUrl.startsWith("//") -> "https:$playerUrl"
+                playerUrl.startsWith("/") -> "https://topanimes.net$playerUrl"
+                else -> {
+                    // Se começa com antivirus3 diretamente
+                    if (playerUrl.startsWith("antivirus3")) {
+                        "https://topanimes.net/$playerUrl"
+                    } else {
+                        playerUrl
                     }
                 }
             }
             
-            if (zuplayIframeSrc == null) {
-                println("❌ NENHUM IFRAME COM /antivirus3/ ENCONTRADO!")
-                return false
-            }
+            println("🎮 URL final do player: $finalPlayerUrl")
             
-            println("✅ IFRAME ZUPLAY ENCONTRADO: $zuplayIframeSrc")
-            
-            // 6. MONTA URL DO PLAYER
-            val playerUrl = when {
-                zuplayIframeSrc.startsWith("http") -> zuplayIframeSrc
-                zuplayIframeSrc.startsWith("//") -> "https:$zuplayIframeSrc"
-                zuplayIframeSrc.startsWith("/") -> "https://topanimes.net$zuplayIframeSrc"
-                else -> {
-                    // Se não começa com nada, assume que é relativo
-                    val baseUrl = url.substringBeforeLast("/")
-                    "$baseUrl/$zuplayIframeSrc"
-                }
-            }
-            
-            println("🎮 URL do player final: $playerUrl")
-            
-            // 7. FAZ REQUEST PRO PLAYER
-            println("📤 Fazendo request para o player...")
+            // 4. ACESSA O PLAYER
+            println("📤 Acessando player ZUPLAY...")
             val headers = mapOf(
                 "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
                 "Referer" to url,
                 "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-                "Accept-Language" to "pt-BR,pt;q=0.9,en;q=0.8",
-                "Sec-Fetch-Dest" to "iframe",
-                "Sec-Fetch-Mode" to "navigate",
-                "Sec-Fetch-Site" to "same-origin"
+                "Accept-Language" to "pt-BR,pt;q=0.9,en;q=0.8"
             )
             
-            val playerResponse = app.get(playerUrl, headers = headers, timeout = 30)
-            println("✅ Resposta do player recebida (${playerResponse.text.length} chars)")
+            val playerResponse = app.get(finalPlayerUrl, headers = headers, timeout = 30)
+            val playerHtml = playerResponse.text
+            println("✅ Player acessado (${playerHtml.length} chars)")
             
-            // 8. PROCURA LINK M3U8 (usando a função pública do OdaCDNExtractor)
-            println("🔎 Procurando link M3U8 na resposta...")
-            val videoLink = OdaCDNExtractor.extractM3U8FromPlayer(playerResponse.text)
+            // 5. PROCURA LINKS DE VÍDEO (MP4 OU M3U8)
+            println("🔎 Procurando links de vídeo na resposta...")
             
-            if (videoLink == null) {
-                println("❌ Nenhum link M3U8 encontrado")
-                return false
+            // Primeiro tenta M3U8 usando o método do OdaCDN
+            val m3u8Link = OdaCDNExtractor.extractM3U8FromPlayer(playerHtml)
+            if (m3u8Link != null) {
+                println("🎬 LINK M3U8 ENCONTRADO: ${m3u8Link.take(100)}...")
+                createExtractorLink(m3u8Link, name, finalPlayerUrl, callback, true)
+                return true
             }
             
-            println("🎬 LINK M3U8 ENCONTRADO: $videoLink")
-            
-            // 9. CRIA EXTRACTORLINK
-            val quality = OdaCDNExtractor.determineQuality(videoLink)
-            val qualityLabel = OdaCDNExtractor.getQualityLabel(quality)
-            
-            println("📏 Qualidade: $quality ($qualityLabel)")
-            
-            // Para M3U8
-            val extractorLink = newExtractorLink(
-                source = "ZUPLAY",
-                name = "$name ($qualityLabel) [HLS]",
-                url = videoLink,
-                type = ExtractorLinkType.M3U8
-            ) {
-                this.referer = playerUrl
-                this.quality = quality
-                this.headers = mapOf(
-                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                    "Referer" to playerUrl,
-                    "Origin" to "https://topanimes.net"
-                )
+            // Se não encontrou M3U8, procura MP4
+            val mp4Link = extractMP4FromPlayer(playerHtml)
+            if (mp4Link != null) {
+                println("🎬 LINK MP4 ENCONTRADO: ${mp4Link.take(100)}...")
+                createExtractorLink(mp4Link, name, finalPlayerUrl, callback, false)
+                return true
             }
             
-            println("✅ ExtractorLink criado com sucesso!")
-            callback(extractorLink)
-            true
+            // Tenta procurar qualquer link de vídeo
+            val anyVideoLink = extractAnyVideoLink(playerHtml)
+            if (anyVideoLink != null) {
+                println("🎬 LINK DE VÍDEO ENCONTRADO: ${anyVideoLink.take(100)}...")
+                createExtractorLink(anyVideoLink, name, finalPlayerUrl, callback, anyVideoLink.contains(".m3u8"))
+                return true
+            }
+            
+            println("❌ Nenhum link de vídeo encontrado no player")
+            false
             
         } catch (e: Exception) {
             println("💥 ERRO NO ZUPLAY: ${e.message}")
-            e.printStackTrace()
             false
         }
+    }
+    
+    /**
+     * Extrai link MP4 do HTML do player
+     */
+    private fun extractMP4FromPlayer(html: String): String? {
+        println("🔬 Analisando player para MP4...")
+        
+        // Padrões para MP4
+        val patterns = listOf(
+            // JWPlayer: "file": "URL"
+            """"file"\s*:\s*"([^"]+)"""".toRegex(),
+            
+            // URL direta .mp4
+            """https?://[^"\s]*\.mp4[^"\s]*""".toRegex(),
+            
+            // sources: [{file: "URL"}]
+            """sources\s*:\s*\[\{[^}]*"file"\s*:\s*"([^"]+)"""".toRegex(RegexOption.DOT_MATCHES_ALL),
+            
+            // data-file attribute
+            """data-file=["']([^"']+)["']""".toRegex(),
+            
+            // Video tag src
+            """<source[^>]*src=["']([^"']+)["'][^>]*>""".toRegex(),
+            
+            // player.setup({ file: "URL" })
+            """player\.setup\([^}]*file\s*:\s*["']([^"']+)["']""".toRegex(RegexOption.DOT_MATCHES_ALL)
+        )
+        
+        patterns.forEachIndexed { index, pattern ->
+            val matches = pattern.findAll(html)
+            matches.forEach { match ->
+                var url = match.groupValues.getOrNull(1) ?: match.value
+                
+                // Limpa a URL
+                url = url.replace("\\/", "/")
+                url = url.replace("&amp;", "&")
+                url = url.replace("\\\\u002F", "/")
+                
+                if (url.contains(".mp4") || url.contains("googlevideo") || url.contains("video")) {
+                    println("✅ Vídeo encontrado (padrão $index): ${url.take(100)}...")
+                    return url
+                }
+            }
+        }
+        
+        println("❌ Nenhum padrão MP4 encontrado")
+        return null
+    }
+    
+    /**
+     * Extrai qualquer link de vídeo
+     */
+    private fun extractAnyVideoLink(html: String): String? {
+        println("🔍 Procurando qualquer link de vídeo...")
+        
+        // Procura por URLs que parecem ser de vídeo
+        val videoPattern = """https?://[^"\s]*(?:\.mp4|\.m3u8|video|stream)[^"\s]*""".toRegex(RegexOption.IGNORE_CASE)
+        val matches = videoPattern.findAll(html)
+        
+        for (match in matches) {
+            val url = match.value
+            println("🔗 URL de vídeo possível: ${url.take(100)}...")
+            
+            // Verifica se parece ser um link de vídeo válido
+            if (isValidVideoUrl(url)) {
+                println("✅ Link de vídeo válido encontrado!")
+                return url
+            }
+        }
+        
+        return null
+    }
+    
+    /**
+     * Verifica se é uma URL de vídeo válida
+     */
+    private fun isValidVideoUrl(url: String): Boolean {
+        return url.contains(".mp4") || 
+               url.contains(".m3u8") ||
+               url.contains("googlevideo.com") ||
+               url.contains("video") ||
+               url.contains("stream") ||
+               url.contains("secvideo")
+    }
+    
+    /**
+     * Cria o ExtractorLink
+     */
+    private fun createExtractorLink(
+        videoUrl: String,
+        name: String,
+        referer: String,
+        callback: (ExtractorLink) -> Unit,
+        isM3U8: Boolean
+    ) {
+        val quality = OdaCDNExtractor.determineQuality(videoUrl)
+        val qualityLabel = OdaCDNExtractor.getQualityLabel(quality)
+        val type = if (isM3U8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+        
+        val extractorLink = newExtractorLink(
+            source = "ZUPLAY",
+            name = "$name ($qualityLabel) [${if (isM3U8) "HLS" else "MP4"}]",
+            url = videoUrl,
+            type = type
+        ) {
+            this.referer = referer
+            this.quality = quality
+            this.headers = mapOf(
+                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Referer" to referer,
+                "Origin" to "https://topanimes.net"
+            )
+        }
+        
+        println("✅ ExtractorLink criado com sucesso!")
+        callback(extractorLink)
     }
 }
