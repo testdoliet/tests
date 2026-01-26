@@ -8,129 +8,191 @@ import com.lagradost.cloudstream3.utils.M3u8Helper
 object ChPlayExtractor {
 
     suspend fun extractVideoLinks(
-        url: String,  // URL da página do episódio
-        name: String, // Nome do player (ex: "ChPlay")
+        url: String,
+        name: String,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        println("🔍 CHPLAY EXTRACTOR INICIADO")
-        println("📄 URL do episódio: $url")
+        println("🔍 CHPLAY EXTRACTOR - VERSÃO COM CLICK")
         
         return try {
-            // 1. ENCONTRA A URL DO PNG NO HTML
-            println("🔎 Buscando URL do player PNG...")
-            val htmlResponse = app.get(url)
-            val html = htmlResponse.text
+            // 1. PEGA O HTML DA PÁGINA DO EPISÓDIO
+            val html = app.get(url).text
             
-            // Procura a URL do iframe PNG - vários padrões possíveis
-            var pngUrl: String? = null
+            // 2. PROCURA O IFRAME DO PLAYER 1 (CHPLAY)
+            val iframePattern = Regex("""id=["']source-player-1["'][^>]*>.*?<iframe[^>]*src=["']([^"']*)["']""", RegexOption.DOT_MATCHES_ALL)
+            val iframeMatch = iframePattern.find(html)
             
-            // Padrão 1: src="https://topanimes.net/aviso/?url=URL_ENCODED"
-            val avisoPattern = Regex("""src=["']https?://[^"']*/aviso/\?url=([^"']*)["']""")
-            val avisoMatch = avisoPattern.find(html)
-            
-            if (avisoMatch != null) {
-                val encodedUrl = avisoMatch.groupValues[1]
-                println("✅ URL codificada encontrada: ${encodedUrl.take(50)}...")
-                
-                // Decodifica a URL
-                val decodedUrl = java.net.URLDecoder.decode(encodedUrl, "UTF-8")
-                println("🔗 URL decodificada: ${decodedUrl.take(100)}...")
-                
-                if (decodedUrl.contains("strp2p.com")) {
-                    pngUrl = decodedUrl
-                }
-            }
-            
-            // Se não encontrou pelo padrão acima, tenta outros padrões
-            if (pngUrl == null) {
-                val otherPatterns = listOf(
-                    Regex("""src=["'](https?://png\.strp2p\.com/[^"']*)["']"""),
-                    Regex("""<iframe[^>]*src=["']([^"']*strp2p[^"']*)["']"""),
-                    Regex("""id=["']source-player-1["'][^>]*>.*?<iframe[^>]*src=["'](https?://[^"']*)["']""", RegexOption.DOT_MATCHES_ALL)
-                )
-                
-                for (pattern in otherPatterns) {
-                    val match = pattern.find(html)
-                    if (match != null && match.groupValues[1].contains("strp2p")) {
-                        pngUrl = match.groupValues[1]
-                        break
-                    }
-                }
-            }
-            
-            if (pngUrl == null) {
-                println("❌ URL PNG não encontrada")
+            if (iframeMatch == null) {
+                println("❌ Iframe do player 1 não encontrado")
                 return false
             }
             
-            println("✅ URL PNG final: ${pngUrl.take(100)}...")
+            var iframeUrl = iframeMatch.groupValues[1]
+            println("✅ Iframe encontrado: ${iframeUrl.take(100)}...")
             
-            // Verifica se a URL precisa ser corrigida
-            val finalPngUrl = when {
-                pngUrl.startsWith("//") -> "https:$pngUrl"
-                pngUrl.startsWith("/") -> "https://topanimes.net$pngUrl"
-                pngUrl.startsWith("http") -> pngUrl
-                else -> "https://$pngUrl"
+            // 3. SE FOR AVISO, PEGA O URL PARÂMETRO
+            if (iframeUrl.contains("/aviso/?url=")) {
+                val urlParamPattern = Regex("""url=([^&]*)""")
+                val urlParamMatch = urlParamPattern.find(iframeUrl)
+                
+                if (urlParamMatch != null) {
+                    val encodedUrl = urlParamMatch.groupValues[1]
+                    iframeUrl = java.net.URLDecoder.decode(encodedUrl, "UTF-8")
+                    println("🔗 URL decodificada: ${iframeUrl.take(100)}...")
+                }
             }
             
-            println("🎯 URL final para WebViewResolver: ${finalPngUrl.take(100)}...")
+            // 4. VERIFICA SE É A URL DO PNG
+            if (!iframeUrl.contains("strp2p.com")) {
+                println("❌ Não é URL do PNG: $iframeUrl")
+                return false
+            }
             
-            // 2. USA WEBVIEWRESOLVER PARA INTERCEPTAR M3U8
-            println("🎮 Iniciando WebViewResolver...")
+            // 5. CORRIGE A URL SE NECESSÁRIO
+            val finalUrl = when {
+                iframeUrl.startsWith("//") -> "https:$iframeUrl"
+                iframeUrl.startsWith("/") -> "https://topanimes.net$iframeUrl"
+                iframeUrl.startsWith("http") -> iframeUrl
+                else -> "https://$iframeUrl"
+            }
             
+            println("🎯 URL final: ${finalUrl.take(100)}...")
+            
+            // 6. USA WEBVIEWRESOLVER COM JAVASCRIPT PARA CLICAR NO BOTÃO
             val m3u8Resolver = WebViewResolver(
-                // Procura por cf-master.XXXXXXXXXX.txt ou master.m3u8
-                interceptUrl = Regex("""cf-master\.\d+\.txt|\.m3u8"""),
+                interceptUrl = Regex("""cf-master\.\d+\.txt|\.m3u8|master\.m3u8|\.mp4"""),
                 additionalUrls = listOf(
                     Regex("""cf-master"""),
                     Regex("""\.m3u8"""),
-                    Regex("""master\.m3u8""")
+                    Regex("""\.mp4""")
                 ),
                 useOkhttp = false,
-                timeout = 30_000L
+                timeout = 20_000L, // Aumenta o timeout para dar tempo do vídeo carregar
+                onPageLoaded = { webView ->
+                    // Aguarda um pouco para a página carregar completamente
+                    Thread.sleep(2000)
+                    
+                    // Executa JavaScript para clicar no botão de play
+                    val clickScript = """
+                        // Tenta encontrar e clicar no botão de play
+                        function clickPlayButton() {
+                            console.log("Procurando botão de play...");
+                            
+                            // Tenta pelo ID
+                            var button = document.getElementById('player-button');
+                            if (button) {
+                                console.log("Botão encontrado pelo ID");
+                                button.click();
+                                return true;
+                            }
+                            
+                            // Tenta pelo container
+                            var container = document.getElementById('player-button-container');
+                            if (container) {
+                                console.log("Container encontrado, clicando...");
+                                container.click();
+                                return true;
+                            }
+                            
+                            // Tenta por qualquer elemento que pareça botão de play
+                            var divs = document.getElementsByTagName('div');
+                            for (var i = 0; i < divs.length; i++) {
+                                var div = divs[i];
+                                var style = window.getComputedStyle(div);
+                                if (style.display === 'flex' && style.justifyContent === 'center' && 
+                                    style.alignItems === 'center' && style.cursor === 'pointer') {
+                                    console.log("Botão por estilo encontrado");
+                                    div.click();
+                                    return true;
+                                }
+                            }
+                            
+                            console.log("Nenhum botão encontrado");
+                            return false;
+                        }
+                        
+                        // Tenta clicar
+                        var clicked = clickPlayButton();
+                        
+                        // Se não encontrou, tenta encontrar elementos de vídeo
+                        if (!clicked) {
+                            console.log("Procurando elementos de vídeo...");
+                            var videos = document.getElementsByTagName('video');
+                            if (videos.length > 0) {
+                                console.log("Vídeo encontrado, tentando play...");
+                                videos[0].play();
+                                return true;
+                            }
+                            
+                            // Procura por JWPlayer
+                            if (typeof jwplayer !== 'undefined') {
+                                console.log("JWPlayer encontrado, iniciando...");
+                                jwplayer().play();
+                                return true;
+                            }
+                        }
+                        
+                        return clicked;
+                    """
+                    
+                    webView.evaluateJavascript(clickScript) { result ->
+                        println("📱 JavaScript executado: $result")
+                    }
+                    
+                    // Aguarda mais um pouco para o vídeo começar a carregar
+                    Thread.sleep(3000)
+                }
             )
             
-            // 3. ACESSA O PNG PARA INTERCEPTAR O M3U8
-            println("🔄 Acessando player PNG com WebViewResolver...")
-            val intercepted = app.get(finalPngUrl, interceptor = m3u8Resolver).url
+            println("🔄 Acessando com WebViewResolver + JavaScript...")
+            val intercepted = app.get(finalUrl, interceptor = m3u8Resolver).url
             
-            println("🔗 URL interceptada: $intercepted")
+            println("🔗 Interceptado: $intercepted")
             
-            // 4. VERIFICA SE TEM M3U8
-            if (intercepted.isNotEmpty() && (intercepted.contains("cf-master") || intercepted.contains(".m3u8"))) {
-                println("✅ M3U8 interceptado!")
+            if (intercepted.isNotEmpty() && (intercepted.contains(".m3u8") || intercepted.contains(".mp4") || intercepted.contains("cf-master"))) {
+                println("✅ Link de vídeo encontrado!")
                 
-                // Headers baseados no exemplo
                 val headers = mapOf(
                     "Accept" to "*/*",
                     "Connection" to "keep-alive",
                     "Sec-Fetch-Dest" to "empty",
                     "Sec-Fetch-Mode" to "cors",
                     "Sec-Fetch-Site" to "cross-site",
-                    "Referer" to finalPngUrl,
+                    "Referer" to finalUrl,
                     "Origin" to "https://png.strp2p.com",
                     "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
                 )
                 
-                // URL base do site
-                val mainUrl = "https://topanimes.net"
-                
-                // Gera links M3U8
-                M3u8Helper.generateM3u8(
-                    "$name Player",
-                    intercepted,
-                    mainUrl,
-                    headers = headers
-                ).forEach(callback)
+                // Se for m3u8, usa M3u8Helper
+                if (intercepted.contains(".m3u8") || intercepted.contains("cf-master")) {
+                    M3u8Helper.generateM3u8(
+                        "$name Player",
+                        intercepted,
+                        "https://topanimes.net",
+                        headers = headers
+                    ).forEach(callback)
+                } else if (intercepted.contains(".mp4")) {
+                    // Se for MP4 direto, cria link simples
+                    callback(
+                        ExtractorLink(
+                            source = name,
+                            name = "$name Player",
+                            url = intercepted,
+                            referer = finalUrl,
+                            quality = 720,
+                            headers = headers
+                        )
+                    )
+                }
                 
                 return true
             }
             
-            println("❌ Nenhum M3U8 interceptado")
+            println("❌ Nenhum link de vídeo interceptado após clique")
             false
             
         } catch (e: Exception) {
-            println("💥 Erro no ChPlay: ${e.message}")
+            println("💥 Erro: ${e.message}")
             e.printStackTrace()
             false
         }
