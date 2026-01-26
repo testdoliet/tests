@@ -104,6 +104,7 @@ object OdaCDNExtractor {
             val quality = determineQuality(videoLink)
             val qualityLabel = getQualityLabel(quality)
             
+            // AGORA É SUSPEND!
             val extractorLink = newExtractorLink(
                 source = "OdaCDN",
                 name = "$name ($qualityLabel) [HLS]",
@@ -129,16 +130,73 @@ object OdaCDNExtractor {
         }
     }
     
-    // Mantém as funções públicas existentes...
+    /**
+     * Extrai link M3U8 do HTML do player
+     */
     fun extractM3U8FromPlayer(html: String): String? {
-        // ... mantém o mesmo código
+        println("🔬 Analisando player para M3U8...")
+        
+        // Padrões comuns em players
+        val patterns = listOf(
+            // JWPlayer: "file": "URL"
+            """"file"\s*:\s*"([^"]+)"""".toRegex(),
+            
+            // JWPlayer: sources: [{file: "URL"}]
+            """sources\s*:\s*\[\{[^}]*"file"\s*:\s*"([^"]+)"""".toRegex(RegexOption.DOT_MATCHES_ALL),
+            
+            // URL direta .m3u8
+            """https?://[^"\s]*\.m3u8[^"\s]*""".toRegex(),
+            
+            // data-file attribute
+            """data-file=["']([^"']+)["']""".toRegex(),
+            
+            // player.setup({ file: "URL" })
+            """player\.setup\([^}]*file\s*:\s*["']([^"']+)["']""".toRegex(RegexOption.DOT_MATCHES_ALL)
+        )
+        
+        patterns.forEachIndexed { index, pattern ->
+            val matches = pattern.findAll(html)
+            matches.forEach { match ->
+                var url = match.groupValues.getOrNull(1) ?: match.value
+                
+                if (url.contains(".m3u8")) {
+                    // Limpa a URL
+                    url = url.replace("\\/", "/")
+                    url = url.replace("&amp;", "&")
+                    url = url.replace("\\\\u002F", "/")
+                    
+                    println("✅ M3U8 encontrado (padrão $index): ${url.take(100)}...")
+                    return url
+                }
+            }
+        }
+        
+        println("❌ Nenhum padrão M3U8 encontrado")
+        return null
     }
     
+    /**
+     * Determina qualidade da URL
+     */
     fun determineQuality(url: String): Int {
-        // ... mantém o mesmo código
+        return when {
+            url.contains("1080") || url.contains("fhd") -> 1080
+            url.contains("720") || url.contains("hd") -> 720
+            url.contains("480") -> 480
+            url.contains("360") -> 360
+            else -> 720 // padrão
+        }
     }
     
+    /**
+     * Rótulo da qualidade
+     */
     fun getQualityLabel(quality: Int): String {
-        // ... mantém o mesmo código
+        return when {
+            quality >= 1080 -> "FHD"
+            quality >= 720 -> "HD"
+            quality >= 480 -> "SD"
+            else -> "SD"
+        }
     }
 }
