@@ -12,7 +12,7 @@ object ChPlayExtractor {
         name: String,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        println("🔍 CHPLAY EXTRACTOR - DEBUG DE REQUISIÇÕES")
+        println("🔍 CHPLAY EXTRACTOR - VERSÃO DEBUG")
         
         return try {
             // 1. PEGA O HTML DA PÁGINA DO EPISÓDIO
@@ -56,184 +56,187 @@ object ChPlayExtractor {
                 else -> "https://$iframeUrl"
             }
             
-            println("🎯 URL final para WebViewResolver: ${finalUrl.take(100)}...")
+            println("🎯 URL final: ${finalUrl.take(100)}...")
+            println("\n🔍 TESTANDO DIFERENTES PADRÕES DE INTERCEPTAÇÃO:")
+            println("==============================================")
             
-            // 6. LISTA PARA ARMAZENAR TODAS AS REQUISIÇÕES INTERCEPTADAS
-            val allRequests = mutableListOf<String>()
-            
-            // 7. WEBVIEWRESOLVER QUE REGISTRA TODAS AS REQUISIÇÕES
-            val m3u8Resolver = WebViewResolver(
-                // Intercepta quase tudo para debug
-                interceptUrl = Regex(""".*"""),
-                additionalUrls = listOf(
-                    Regex(""".*""") // Captura tudo
-                ),
-                useOkhttp = false,
-                timeout = 15_000L,
-                onRequestIntercepted = { interceptedUrl ->
-                    // Log de TODAS as requisições interceptadas
-                    println("📡 REQUISIÇÃO INTERCEPTADA: $interceptedUrl")
-                    allRequests.add(interceptedUrl)
-                    
-                    // Verifica se é vídeo
-                    val isVideo = interceptedUrl.contains(".m3u8") || 
-                                  interceptedUrl.contains(".mp4") ||
-                                  interceptedUrl.contains("video") ||
-                                  interceptedUrl.contains("stream") ||
-                                  interceptedUrl.contains("master") ||
-                                  interceptedUrl.contains("cf-master") ||
-                                  interceptedUrl.contains("/9a/") || // Padrão do poster
-                                  interceptedUrl.contains(".ts") ||
-                                  interceptedUrl.contains("manifest")
-                    
-                    if (isVideo) {
-                        println("🎬 POSSÍVEL VÍDEO ENCONTRADO!")
-                    }
-                }
+            // 6. TESTA VÁRIOS PADRÕES DIFERENTES
+            val patternsToTest = listOf(
+                "cf-master" to Regex("""cf-master\.\d+\.txt"""),
+                "master.m3u8" to Regex("""master\.m3u8"""),
+                "qualquer .m3u8" to Regex(""".*\.m3u8.*"""),
+                "qualquer .mp4" to Regex(""".*\.mp4.*"""),
+                "padrão /9a/" to Regex(""".*/9a/.*"""),
+                "padrão /v/" to Regex(""".*/v/.*"""),
+                "video" to Regex(""".*video.*"""),
+                "stream" to Regex(""".*stream.*"""),
+                "manifest" to Regex(""".*manifest.*"""),
+                "qualquer coisa" to Regex(""".*""")  // Captura TUDO
             )
             
-            println("🔄 Iniciando WebViewResolver para capturar TODAS as requisições...")
-            println("⏱️ Timeout: 15 segundos")
+            var lastSuccessfulPattern = ""
+            var interceptedUrl = ""
             
-            val intercepted = app.get(finalUrl, interceptor = m3u8Resolver).url
-            
-            println("\n📊 RESUMO DAS REQUISIÇÕES CAPTURADAS:")
-            println("========================================")
-            println("Total de requisições: ${allRequests.size}")
-            
-            // Agrupa por tipo
-            val videoRequests = allRequests.filter { 
-                it.contains(".m3u8") || it.contains(".mp4") || 
-                it.contains("video") || it.contains("stream") ||
-                it.contains("master") || it.contains("cf-master") ||
-                it.contains(".ts") || it.contains("manifest")
-            }
-            
-            val jsRequests = allRequests.filter { it.contains(".js") }
-            val cssRequests = allRequests.filter { it.contains(".css") }
-            val imageRequests = allRequests.filter { it.contains(".png") || it.contains(".jpg") || it.contains(".jpeg") || it.contains(".webp") }
-            val apiRequests = allRequests.filter { it.contains("/api/") || it.contains("/v1/") || it.contains("/v2/") }
-            val otherRequests = allRequests.filter { 
-                !it.contains(".js") && !it.contains(".css") && 
-                !it.contains(".png") && !it.contains(".jpg") && 
-                !it.contains(".jpeg") && !it.contains(".webp") &&
-                !it.contains(".m3u8") && !it.contains(".mp4") &&
-                !it.contains("/api/") && !it.contains("/v1/") &&
-                !it.contains("/v2/") && !it.contains("video") &&
-                !it.contains("stream")
-            }
-            
-            println("🎬 Requisições de vídeo (${videoRequests.size}):")
-            videoRequests.forEachIndexed { index, req ->
-                println("  ${index + 1}. ${req.take(150)}...")
-            }
-            
-            println("\n📜 Requisições de JS (${jsRequests.size}):")
-            jsRequests.take(5).forEachIndexed { index, req ->
-                println("  ${index + 1}. ${req.take(100)}...")
-            }
-            if (jsRequests.size > 5) println("  ... e mais ${jsRequests.size - 5} JS")
-            
-            println("\n🎨 Requisições de CSS (${cssRequests.size}):")
-            cssRequests.take(3).forEachIndexed { index, req ->
-                println("  ${index + 1}. ${req.take(100)}...")
-            }
-            
-            println("\n🖼️ Requisições de imagem (${imageRequests.size}):")
-            imageRequests.take(3).forEachIndexed { index, req ->
-                println("  ${index + 1}. ${req.take(100)}...")
-            }
-            
-            println("\n🔌 Requisições de API (${apiRequests.size}):")
-            apiRequests.forEachIndexed { index, req ->
-                println("  ${index + 1}. ${req.take(150)}...")
-            }
-            
-            println("\n❓ Outras requisições (${otherRequests.size}):")
-            otherRequests.take(10).forEachIndexed { index, req ->
-                println("  ${index + 1}. ${req.take(100)}...")
-            }
-            if (otherRequests.size > 10) println("  ... e mais ${otherRequests.size - 10}")
-            
-            println("\n🔗 URL final interceptada: $intercepted")
-            
-            // 8. TENTA PROCESSAR QUALQUER URL DE VÍDEO ENCONTRADA
-            val videoUrls = videoRequests + listOf(intercepted)
-            
-            for (videoUrl in videoUrls) {
-                if (videoUrl.isNotEmpty() && 
-                    (videoUrl.contains(".m3u8") || videoUrl.contains(".mp4") || 
-                     videoUrl.contains("cf-master") || videoUrl.contains("master"))) {
-                    
-                    println("\n🎯 TENTANDO PROCESSAR: ${videoUrl.take(150)}...")
-                    
-                    val headers = mapOf(
-                        "Accept" to "*/*",
-                        "Connection" to "keep-alive",
-                        "Sec-Fetch-Dest" to "empty",
-                        "Sec-Fetch-Mode" to "cors",
-                        "Sec-Fetch-Site" to "cross-site",
-                        "Referer" to finalUrl,
-                        "Origin" to "https://png.strp2p.com",
-                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            for ((patternName, pattern) in patternsToTest) {
+                println("\n🧪 Testando padrão: $patternName")
+                println("   Regex: ${pattern.pattern}")
+                
+                try {
+                    val m3u8Resolver = WebViewResolver(
+                        interceptUrl = pattern,
+                        additionalUrls = listOf(pattern),
+                        useOkhttp = false,
+                        timeout = 5_000L // 5 segundos por teste
                     )
                     
-                    try {
-                        if (videoUrl.contains(".m3u8") || videoUrl.contains("cf-master") || videoUrl.contains("master")) {
-                            M3u8Helper.generateM3u8(
-                                name,
-                                videoUrl,
-                                "https://topanimes.net",
-                                headers = headers
-                            ).forEach(callback)
-                            println("✅ M3U8 PROCESSADO COM SUCESSO!")
-                            return true
+                    println("   🔄 Acessando com este padrão...")
+                    val intercepted = app.get(finalUrl, interceptor = m3u8Resolver).url
+                    
+                    println("   🔗 Resultado: ${intercepted.take(150)}...")
+                    
+                    if (intercepted.isNotEmpty() && intercepted != finalUrl) {
+                        lastSuccessfulPattern = patternName
+                        interceptedUrl = intercepted
+                        println("   ✅ Padrão FUNCIONOU!")
+                        
+                        // Analisa o que foi interceptado
+                        println("   📊 Análise da URL interceptada:")
+                        println("   - Tamanho: ${intercepted.length} chars")
+                        println("   - Contém .m3u8? ${intercepted.contains(".m3u8")}")
+                        println("   - Contém .mp4? ${intercepted.contains(".mp4")}")
+                        println("   - Contém cf-master? ${intercepted.contains("cf-master")}")
+                        println("   - Contém master? ${intercepted.contains("master")}")
+                        println("   - Contém /9a/? ${intercepted.contains("/9a/")}")
+                        
+                        // Se parece vídeo, tenta processar
+                        if (intercepted.contains(".m3u8") || intercepted.contains("cf-master") || 
+                            intercepted.contains("master") || intercepted.contains(".mp4")) {
+                            
+                            println("\n🎬 TENTANDO PROCESSAR COMO VÍDEO...")
+                            
+                            val headers = mapOf(
+                                "Accept" to "*/*",
+                                "Connection" to "keep-alive",
+                                "Sec-Fetch-Dest" to "empty",
+                                "Sec-Fetch-Mode" to "cors",
+                                "Sec-Fetch-Site" to "cross-site",
+                                "Referer" to finalUrl,
+                                "Origin" to "https://png.strp2p.com",
+                                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                            )
+                            
+                            try {
+                                if (intercepted.contains(".m3u8") || intercepted.contains("cf-master") || intercepted.contains("master")) {
+                                    M3u8Helper.generateM3u8(
+                                        "$name ($patternName)",
+                                        intercepted,
+                                        "https://topanimes.net",
+                                        headers = headers
+                                    ).forEach(callback)
+                                    println("   ✅ VÍDEO PROCESSADO COM SUCESSO!")
+                                    return true
+                                }
+                            } catch (e: Exception) {
+                                println("   ⚠️ Erro ao processar: ${e.message}")
+                            }
                         }
-                    } catch (e: Exception) {
-                        println("⚠️ Erro ao processar M3U8: ${e.message}")
+                    } else {
+                        println("   ⚠️ Nada interceptado ou mesma URL")
                     }
+                    
+                } catch (e: Exception) {
+                    println("   ❌ Erro: ${e.message}")
                 }
             }
             
-            println("\n❌ Nenhum vídeo válido encontrado nas requisições")
+            println("\n📊 RESUMO DOS TESTES:")
+            println("======================")
+            if (lastSuccessfulPattern.isNotEmpty()) {
+                println("✅ Último padrão que funcionou: $lastSuccessfulPattern")
+                println("🔗 URL interceptada: ${interceptedUrl.take(200)}...")
+            } else {
+                println("❌ Nenhum padrão interceptou nada útil")
+            }
             
-            // 9. TENTA ANALISAR O HTML DA RESPOSTA PARA ENCONTRAR URLs ESCONDIDAS
-            println("\n🔍 Analisando HTML da resposta para URLs ocultas...")
+            // 7. TENTA ANALISAR DIRETAMENTE O HTML
+            println("\n🔍 ANALISANDO HTML DIRETAMENTE...")
             try {
                 val response = app.get(finalUrl)
                 val responseText = response.text
+                println("✅ HTML obtido: ${responseText.length} chars")
                 
-                // Procura por padrões comuns de URLs de vídeo
-                val videoPatterns = listOf(
-                    Regex("""["'](https?://[^"']*\.m3u8[^"']*)["']"""),
-                    Regex("""["'](https?://[^"']*\.mp4[^"']*)["']"""),
-                    Regex("""file\s*:\s*["'](https?://[^"']+)["']"""),
-                    Regex("""src\s*:\s*["'](https?://[^"']+)["']"""),
-                    Regex("""sources\s*:\s*\[.*?\{\s*file\s*:\s*["']([^"']+)["']""", RegexOption.DOT_MATCHES_ALL),
-                    Regex("""playlist\s*:\s*\[.*?\{\s*file\s*:\s*["']([^"']+)["']""", RegexOption.DOT_MATCHES_ALL),
-                    Regex("""["'](https?://[^"']*/9a/[^"']*)["']""") // Padrão /9a/
+                // Procura padrões específicos no HTML
+                val searchPatterns = listOf(
+                    """["'](https?://[^"']*\.m3u8[^"']*)["']""",
+                    """["'](https?://[^"']*\.mp4[^"']*)["']""",
+                    """file\s*:\s*["'](https?://[^"']+)["']""",
+                    """src\s*:\s*["'](https?://[^"']+)["']""",
+                    """["'](/[^"']*\.m3u8[^"']*)["']""",
+                    """["'](/[^"']*\.mp4[^"']*)["']""",
+                    """["'](/[^"']*/9a/[^"']*)["']""",
+                    """["'](/\w+/\w+/\w+/\w+\.\w+)["']""" // Padrão: /xxx/xxx/xxx/xxx.xxx
                 )
                 
-                for (pattern in videoPatterns) {
+                println("🔎 Procurando URLs no HTML...")
+                for (patternStr in searchPatterns) {
+                    val pattern = Regex(patternStr)
                     val matches = pattern.findAll(responseText)
+                    var count = 0
+                    
                     for (match in matches) {
+                        count++
                         val foundUrl = match.groupValues.getOrNull(1) ?: continue
-                        if (foundUrl.contains(".m3u8") || foundUrl.contains(".mp4") || foundUrl.contains("/9a/")) {
-                            println("🔍 URL encontrada no HTML: ${foundUrl.take(150)}...")
+                        println("   🔍 Encontrado ($patternStr): ${foundUrl.take(100)}...")
+                        
+                        // Tenta completar a URL se for relativa
+                        val fullUrl = when {
+                            foundUrl.startsWith("//") -> "https:$foundUrl"
+                            foundUrl.startsWith("/") -> "https://png.strp2p.com$foundUrl"
+                            foundUrl.startsWith("http") -> foundUrl
+                            else -> null
+                        }
+                        
+                        if (fullUrl != null && (fullUrl.contains(".m3u8") || fullUrl.contains(".mp4"))) {
+                            println("   🎬 TENTANDO URL COMPLETA: ${fullUrl.take(150)}...")
                             
-                            // Tenta acessar
-                            val fullUrl = if (foundUrl.startsWith("//")) "https:$foundUrl"
-                                          else if (foundUrl.startsWith("/")) "https://png.strp2p.com$foundUrl"
-                                          else foundUrl
+                            val headers = mapOf(
+                                "Accept" to "*/*",
+                                "Connection" to "keep-alive",
+                                "Sec-Fetch-Dest" to "empty",
+                                "Sec-Fetch-Mode" to "cors",
+                                "Sec-Fetch-Site" to "cross-site",
+                                "Referer" to finalUrl,
+                                "Origin" to "https://png.strp2p.com",
+                                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                            )
                             
-                            println("🔗 Tentando acessar: ${fullUrl.take(100)}...")
+                            try {
+                                if (fullUrl.contains(".m3u8")) {
+                                    M3u8Helper.generateM3u8(
+                                        name,
+                                        fullUrl,
+                                        "https://topanimes.net",
+                                        headers = headers
+                                    ).forEach(callback)
+                                    println("   ✅ VÍDEO DO HTML FUNCIONOU!")
+                                    return true
+                                }
+                            } catch (e: Exception) {
+                                println("   ⚠️ Erro ao processar URL do HTML: ${e.message}")
+                            }
                         }
                     }
+                    
+                    if (count > 0) {
+                        println("   📈 Encontrou $count matches com padrão: $patternStr")
+                    }
                 }
+                
             } catch (e: Exception) {
                 println("⚠️ Erro ao analisar HTML: ${e.message}")
             }
             
+            println("\n❌ Nenhuma abordagem funcionou")
             false
             
         } catch (e: Exception) {
