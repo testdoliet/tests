@@ -94,6 +94,7 @@ object ZuPlayExtractor {
             val m3u8Link = OdaCDNExtractor.extractM3U8FromPlayer(playerHtml)
             if (m3u8Link != null) {
                 println("🎬 LINK M3U8 ENCONTRADO: ${m3u8Link.take(100)}...")
+                // AGORA É SUSPEND!
                 createExtractorLink(m3u8Link, name, finalPlayerUrl, callback, true)
                 return true
             }
@@ -102,6 +103,7 @@ object ZuPlayExtractor {
             val mp4Link = extractMP4FromPlayer(playerHtml)
             if (mp4Link != null) {
                 println("🎬 LINK MP4 ENCONTRADO: ${mp4Link.take(100)}...")
+                // AGORA É SUSPEND!
                 createExtractorLink(mp4Link, name, finalPlayerUrl, callback, false)
                 return true
             }
@@ -110,6 +112,7 @@ object ZuPlayExtractor {
             val anyVideoLink = extractAnyVideoLink(playerHtml)
             if (anyVideoLink != null) {
                 println("🎬 LINK DE VÍDEO ENCONTRADO: ${anyVideoLink.take(100)}...")
+                // AGORA É SUSPEND!
                 createExtractorLink(anyVideoLink, name, finalPlayerUrl, callback, anyVideoLink.contains(".m3u8"))
                 return true
             }
@@ -208,9 +211,9 @@ object ZuPlayExtractor {
     }
     
     /**
-     * Cria o ExtractorLink
+     * Cria o ExtractorLink - AGORA É SUSPEND!
      */
-    private fun createExtractorLink(
+    private suspend fun createExtractorLink(
         videoUrl: String,
         name: String,
         referer: String,
@@ -221,6 +224,7 @@ object ZuPlayExtractor {
         val qualityLabel = OdaCDNExtractor.getQualityLabel(quality)
         val type = if (isM3U8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
         
+        // newExtractorLink É SUSPEND, então esta função também precisa ser suspend
         val extractorLink = newExtractorLink(
             source = "ZUPLAY",
             name = "$name ($qualityLabel) [${if (isM3U8) "HLS" else "MP4"}]",
