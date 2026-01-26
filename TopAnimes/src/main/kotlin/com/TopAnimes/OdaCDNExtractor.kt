@@ -9,7 +9,6 @@ object OdaCDNExtractor {
     
     /**
      * Extrai links de vídeo do player OdaCDN (/antivirus2/)
-     * AGORA com suporte a JavaScript
      */
     suspend fun extractVideoLinks(
         url: String,
@@ -20,82 +19,71 @@ object OdaCDNExtractor {
         println("📄 URL do episódio: $url")
         
         return try {
-            // 1. CARREGA PÁGINA COM HEADERS DE NAVEGADOR
-            println("📥 Baixando página...")
-            val headers = mapOf(
-                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-                "Accept-Language" to "pt-BR,pt;q=0.9,en;q=0.8",
-                "Referer" to "https://topanimes.net/",
-                "Sec-Fetch-Dest" to "document",
-                "Sec-Fetch-Mode" to "navigate",
-                "Sec-Fetch-Site" to "same-origin",
-                "Upgrade-Insecure-Requests" to "1"
-            )
+            // 1. CARREGA PÁGINA DO EPISÓDIO
+            println("📥 Baixando página do episódio...")
+            val episodeResponse = app.get(url)
+            val doc = episodeResponse.document
+            println("✅ Página carregada (${episodeResponse.text.length} chars)")
             
-            val episodeResponse = app.get(url, headers = headers, timeout = 30)
-            val html = episodeResponse.text
-            println("✅ Página carregada (${html.length} chars)")
+            // 2. PROCURA IFRAME COM /antivirus2/
+            println("🔎 Procurando iframe /antivirus2/...")
             
-            // 2. PROCURA URL DO PLAYER ODACDN NO HTML (incluindo JavaScript)
-            println("🔎 Procurando URL do player OdaCDN...")
+            var odaIframeSrc: String? = null
             
-            var playerUrl: String? = null
+            // Procura todos os iframes
+            val allIframes = doc.select("iframe")
+            println("📊 Total de iframes na página: ${allIframes.size}")
             
-            // Padrão 1: URL direta em JavaScript
-            val jsPattern = """['"](https?://[^'"]*/antivirus2/[^'"]*)['"]""".toRegex()
-            val jsMatches = jsPattern.findAll(html)
-            
-            jsMatches.forEach { match ->
-                val foundUrl = match.groupValues[1]
-                println("🔗 URL encontrada em JS: $foundUrl")
-                if (foundUrl.contains("antivirus2")) {
-                    playerUrl = foundUrl
-                }
-            }
-            
-            // Padrão 2: Atributo data-src
-            if (playerUrl == null) {
-                val dataSrcPattern = """data-src=['"]([^'"]*/antivirus2/[^'"]*)['"]""".toRegex()
-                val dataSrcMatch = dataSrcPattern.find(html)
-                if (dataSrcMatch != null) {
-                    playerUrl = dataSrcMatch.groupValues[1]
-                    println("🔗 URL encontrada em data-src: $playerUrl")
-                }
-            }
-            
-            // Padrão 3: Iframe src (mesmo que about:blank)
-            if (playerUrl == null) {
-                val iframePattern = """<iframe[^>]*src=['"]([^'"]*)['"][^>]*>""".toRegex(RegexOption.DOT_MATCHES_ALL)
-                val iframeMatches = iframePattern.findAll(html)
+            for ((index, iframe) in allIframes.withIndex()) {
+                val src = iframe.attr("src")
+                println("🔗 Iframe #${index + 1}: $src")
                 
-                iframeMatches.forEach { match ->
-                    val src = match.groupValues[1]
-                    if (src.contains("antivirus2")) {
-                        playerUrl = src
-                        println("🔗 URL encontrada em iframe src: $playerUrl")
+                if (src.contains("/antivirus2/")) {
+                    println("🎯 ENCONTRADO IFRAME ODACDN! (/antivirus2/)")
+                    odaIframeSrc = src
+                    break
+                }
+            }
+            
+            // Se não encontrou diretamente, procura em source-box
+            if (odaIframeSrc == null) {
+                println("🔍 Procurando em source-box...")
+                val sourceBoxes = doc.select(".source-box")
+                
+                for ((index, box) in sourceBoxes.withIndex()) {
+                    val iframeInBox = box.selectFirst("iframe")
+                    val src = iframeInBox?.attr("src") ?: continue
+                    
+                    println("📦 Source-box #${index + 1} iframe: $src")
+                    
+                    if (src.contains("/antivirus2/")) {
+                        println("🎯 ENCONTRADO ODACDN NO SOURCE-BOX!")
+                        odaIframeSrc = src
+                        break
                     }
                 }
             }
             
-            if (playerUrl == null) {
-                println("❌ Nenhuma URL do player OdaCDN encontrada")
+            if (odaIframeSrc == null) {
+                println("❌ NENHUM IFRAME /antivirus2/ ENCONTRADO!")
                 return false
             }
             
-            // 3. CORRIGE URL SE NECESSÁRIO
-            val finalPlayerUrl = when {
-                playerUrl.startsWith("http") -> playerUrl
-                playerUrl.startsWith("//") -> "https:$playerUrl"
-                playerUrl.startsWith("/") -> "https://topanimes.net$playerUrl"
-                else -> "https://topanimes.net/$playerUrl"
+            println("✅ IFRAME ODACDN ENCONTRADO: $odaIframeSrc")
+            
+            // 3. MONTA URL DO PLAYER (já está completa)
+            val playerUrl = when {
+                odaIframeSrc.startsWith("http") -> odaIframeSrc
+                odaIframeSrc.startsWith("//") -> "https:$odaIframeSrc"
+                odaIframeSrc.startsWith("/") -> "https://topanimes.net$odaIframeSrc"
+                else -> "https://topanimes.net/$odaIframeSrc"
             }
             
-            println("🎮 URL final do player: $finalPlayerUrl")
+            println("🎮 URL do player: $playerUrl")
             
-            // 4. ACESSA O PLAYER
-            println("📤 Acessando player OdaCDN...")
-            val playerHeaders = mapOf(
+            // 4. FAZ REQUEST PRO PLAYER
+            println("📤 Fazendo request para o player OdaCDN...")
+            val headers = mapOf(
                 "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
                 "Referer" to url,
                 "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
@@ -105,38 +93,38 @@ object OdaCDNExtractor {
                 "Sec-Fetch-Site" to "same-origin"
             )
             
-            val playerResponse = app.get(finalPlayerUrl, headers = playerHeaders, timeout = 30)
-            val playerHtml = playerResponse.text
-            println("✅ Player acessado (${playerHtml.length} chars)")
+            val playerResponse = app.get(playerUrl, headers = headers, timeout = 30)
+            println("✅ Resposta do player recebida (${playerResponse.text.length} chars)")
             
-            // 5. PROCURA M3U8 NO PLAYER
-            println("🔎 Procurando M3U8 no player...")
-            val m3u8Link = extractM3U8FromPlayer(playerHtml)
+            // 5. PROCURA LINK DO VÍDEO (M3U8 no JWPlayer)
+            println("🔎 Procurando link M3U8 na resposta...")
+            val videoLink = extractM3U8FromPlayer(playerResponse.text)
             
-            if (m3u8Link == null) {
-                println("❌ Nenhum link M3U8 encontrado no player")
+            if (videoLink == null) {
+                println("❌ Nenhum link M3U8 encontrado")
                 return false
             }
             
-            println("🎬 LINK M3U8 ENCONTRADO: ${m3u8Link.take(100)}...")
+            println("🎬 LINK M3U8 ENCONTRADO: $videoLink")
             
-            // 6. CRIA EXTRACTORLINK
-            val quality = determineQuality(m3u8Link)
+            // 6. CRIA EXTRACTORLINK (M3U8)
+            val quality = determineQuality(videoLink)
             val qualityLabel = getQualityLabel(quality)
             
             println("📏 Qualidade: $quality ($qualityLabel)")
             
+            // Para M3U8
             val extractorLink = newExtractorLink(
                 source = "OdaCDN",
                 name = "$name ($qualityLabel) [HLS]",
-                url = m3u8Link,
+                url = videoLink,
                 type = ExtractorLinkType.M3U8
             ) {
-                this.referer = finalPlayerUrl
+                this.referer = playerUrl
                 this.quality = quality
                 this.headers = mapOf(
                     "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                    "Referer" to finalPlayerUrl,
+                    "Referer" to playerUrl,
                     "Origin" to "https://topanimes.net"
                 )
             }
@@ -147,14 +135,16 @@ object OdaCDNExtractor {
             
         } catch (e: Exception) {
             println("💥 ERRO NO ODACDN: ${e.message}")
+            e.printStackTrace()
             false
         }
     }
     
     /**
      * Extrai link M3U8 do HTML do player
+     * AGORA É PUBLIC para ser usado por outros extractors
      */
-    private fun extractM3U8FromPlayer(html: String): String? {
+    fun extractM3U8FromPlayer(html: String): String? {
         println("🔬 Analisando player para M3U8...")
         
         // Padrões comuns em players
@@ -197,9 +187,10 @@ object OdaCDNExtractor {
     }
     
     /**
-     * Determina qualidade
+     * Determina qualidade da URL
+     * AGORA É PUBLIC
      */
-    private fun determineQuality(url: String): Int {
+    fun determineQuality(url: String): Int {
         return when {
             url.contains("1080") || url.contains("fhd") -> 1080
             url.contains("720") || url.contains("hd") -> 720
@@ -211,8 +202,9 @@ object OdaCDNExtractor {
     
     /**
      * Rótulo da qualidade
+     * AGORA É PUBLIC
      */
-    private fun getQualityLabel(quality: Int): String {
+    fun getQualityLabel(quality: Int): String {
         return when {
             quality >= 1080 -> "FHD"
             quality >= 720 -> "HD"
