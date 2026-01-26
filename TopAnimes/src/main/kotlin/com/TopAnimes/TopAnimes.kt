@@ -559,7 +559,7 @@ class TopAnimes : MainAPI() {
                     }
 
                     // Extrai número do episódio de várias fontes possíveis
-                    val episodeNumber = extractEpisodeNumberFromMultipleSources(element, href) ?: (index + 1)
+                    var episodeNumber = extractEpisodeNumberFromMultipleSources(element, href) ?: (index + 1)
 
                     // Tenta extrair número do título também
                     val titleNumber = extractEpisodeNumberFromTitle(episodeTitle)
@@ -608,7 +608,7 @@ class TopAnimes : MainAPI() {
                             episodeTitle = "Episódio ${index + 1}"
                         }
 
-                        val episodeNumber = extractEpisodeNumberFromMultipleSources(element, href) ?: (index + 1)
+                        var episodeNumber = extractEpisodeNumberFromMultipleSources(element, href) ?: (index + 1)
                         
                         // Tenta extrair número do título também
                         val titleNumber = extractEpisodeNumberFromTitle(episodeTitle)
