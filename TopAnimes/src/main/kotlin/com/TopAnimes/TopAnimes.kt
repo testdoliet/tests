@@ -884,45 +884,27 @@ override suspend fun loadLinks(
     subtitleCallback: (SubtitleFile) -> Unit,
     callback: (ExtractorLink) -> Unit
 ): Boolean {
-    println("🔗 LOADLINKS INICIADO: $data")
+    println("🎯 LOADLINKS: OdaCDN → FileMoon → ZUPLAY")
     
-    return try {
-        var foundAny = false
-        
-        // SIMPLESMENTE CHAMA TODOS OS EXTRACTORS DISPONÍVEIS
-        println("\n🎯 Tentando todos os extractors...")
-        
-        // 1. TENTA ZUPLAY
-        println("\n⚡ Tentando ZUPLAY...")
-        val zuplayFound = ZuPlayExtractor.extractVideoLinks(data, "ZUPLAY", callback)
-        if (zuplayFound) {
-            println("✅ ZUPLAY encontrou links!")
-            foundAny = true
-        } else {
-            println("❌ ZUPLAY não encontrou links")
-        }
-        
-        // 2. TENTA ODACDN
-        println("\n⚡ Tentando OdaCDN...")
-        val odaFound = OdaCDNExtractor.extractVideoLinks(data, "OdaCDN", callback)
-        if (odaFound) {
-            println("✅ OdaCDN encontrou links!")
-            foundAny = true
-        } else {
-            println("❌ OdaCDN não encontrou links")
-        }
-        
-        // 3. RESULTADO FINAL
-        println("\n" + "=".repeat(50))
-        println("📊 RESULTADO FINAL:")
-        println("✅ Links encontrados: ${if (foundAny) "SIM" else "NÃO"}")
-        println("=".repeat(50))
-        
-        foundAny
-        
-    } catch (e: Exception) {
-        println("💥 ERRO NO LOADLINKS: ${e.message}")
-        false
+    // Tenta OdaCDN primeiro
+    if (OdaCDNExtractor.extractVideoLinks(data, "OdaCDN", callback)) {
+        println("✅ OdaCDN funcionou!")
+        return true
     }
+    
+    // Se não, tenta FileMoon
+    if (FileMoonExtractor.extractVideoLinks(data, "FileMoon", callback)) {
+        println("✅ FileMoon funcionou!")
+        return true
+    }
+    
+    // Por último, tenta ZUPLAY
+    if (ZuPlayExtractor.extractVideoLinks(data, "ZUPLAY", callback)) {
+        println("✅ ZUPLAY funcionou!")
+        return true
+    }
+    
+    println("❌ Nenhum player funcionou")
+    return false
 }
 }
