@@ -885,7 +885,71 @@ class TopAnimes : MainAPI() {
     subtitleCallback: (SubtitleFile) -> Unit,
     callback: (ExtractorLink) -> Unit
 ): Boolean {
-    // Simplesmente chama o ZUPLAY extractor
-    return ZuPlayExtractor.extractVideoLinks(data, "ZUPLAY", callback)
+    println("🔗 LOADLINKS INICIADO: $data")
+    
+    return try {
+        // Carrega a página do episódio uma vez
+        val episodeResponse = app.get(data)
+        val doc = episodeResponse.document
+        
+        // Lista para armazenar todos os links encontrados
+        var foundAny = false
+        
+        // 1. PROCURA TODOS OS PLAYERS DISPONÍVEIS
+        println("🔍 Procurando todos os players disponíveis...")
+        
+        // Primeiro, pega todas as opções de player (botões)
+        val playerOptions = doc.select("#playeroptionsul li")
+        println("🎮 Players disponíveis na página: ${playerOptions.size}")
+        
+        playerOptions.forEachIndexed { index, option ->
+            val playerName = option.selectFirst(".title")?.text() ?: "Player ${index + 1}"
+            println("  📌 $playerName")
+        }
+        
+        // 2. TENTA ZUPLAY PRIMEIRO (/antivirus3/)
+        println("\n🎯 Tentando ZUPLAY...")
+        val zuplayFound = ZuPlayExtractor.extractVideoLinks(data, "ZUPLAY", callback)
+        if (zuplayFound) {
+            println("✅ ZUPLAY encontrou links!")
+            foundAny = true
+        } else {
+            println("❌ ZUPLAY não encontrou links")
+        }
+        
+        // 3. TENTA ODACDN (/antivirus2/)
+        println("\n🎯 Tentando OdaCDN...")
+        val odaFound = OdaCDNExtractor.extractVideoLinks(data, "OdaCDN", callback)
+        if (odaFound) {
+            println("✅ OdaCDN encontrou links!")
+            foundAny = true
+        } else {
+            println("❌ OdaCDN não encontrou links")
+        }
+        
+        // 4. SE QUISER, PODE TENTAR OUTROS PLAYERS FUTURAMENTE
+        // Ex: ChPlayExtractor, RuPlayExtractor, AnyPlayExtractor
+        
+        // Debug final
+        if (foundAny) {
+            println("🎉 LOADLINKS: Pelo menos um player funcionou!")
+        } else {
+            println("💔 LOADLINKS: Nenhum player funcionou")
+            
+            // DEBUG: Mostra os iframes encontrados para ajudar
+            println("\n🔍 DEBUG - Iframes encontrados na página:")
+            val allIframes = doc.select("iframe")
+            allIframes.forEachIndexed { i, iframe ->
+                val src = iframe.attr("src")
+                println("  Iframe #${i + 1}: $src")
+            }
+        }
+        
+        foundAny
+        
+    } catch (e: Exception) {
+        println("💥 ERRO NO LOADLINKS: ${e.message}")
+        e.printStackTrace()
+        false
     }
 }
