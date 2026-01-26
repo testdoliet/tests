@@ -880,11 +880,12 @@ class TopAnimes : MainAPI() {
 
     // LoadLinks desativado
     override suspend fun loadLinks(
-        data: String,
-        isCasting: Boolean,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        return false
+    data: String,
+    isCasting: Boolean,
+    subtitleCallback: (SubtitleFile) -> Unit,
+    callback: (ExtractorLink) -> Unit
+): Boolean {
+    // Simplesmente chama o ZUPLAY extractor
+    return ZuPlayExtractor.extractVideoLinks(data, "ZUPLAY", callback)
     }
 }
