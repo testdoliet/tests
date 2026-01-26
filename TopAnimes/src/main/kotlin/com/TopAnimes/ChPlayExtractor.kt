@@ -87,7 +87,7 @@ object ChPlayExtractor {
                     Regex("""master\.m3u8""")
                 ),
                 useOkhttp = false,
-                timeout = 15_000L
+                timeout = 30_000L
             )
             
             // 3. ACESSA O PNG PARA INTERCEPTAR O M3U8
