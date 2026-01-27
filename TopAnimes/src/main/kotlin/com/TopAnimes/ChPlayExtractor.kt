@@ -58,7 +58,7 @@ object ChPlayExtractor {
             val allRequests = mutableListOf<String>()
             
             // 6. FUNÇÃO PARA CAPTURAR REQUISIÇÕES COM PADRÃO ESPECÍFICO
-            fun captureWithPattern(pattern: Regex, patternName: String): Boolean {
+            suspend fun captureWithPattern(pattern: Regex, patternName: String): Boolean {
                 println("\n🧪 Testando padrão: $patternName")
                 println("   Regex: ${pattern.pattern}")
                 
@@ -107,8 +107,8 @@ object ChPlayExtractor {
                 Regex(".*\\.ts.*") to "TS FILES"
             )
             
-            patterns.forEach { (pattern, name) ->
-                captureWithPattern(pattern, name)
+            for ((pattern, patternName) in patterns) {
+                captureWithPattern(pattern, patternName)
             }
             
             // 8. TAMBÉM PROCURA NO HTML DIRETAMENTE
@@ -134,18 +134,18 @@ object ChPlayExtractor {
                     """["'](/[^"']*\.mp4[^"']*)["']"""
                 )
                 
-                urlPatterns.forEach { patternStr ->
+                for (patternStr in urlPatterns) {
                     val pattern = Regex(patternStr)
                     val matches = pattern.findAll(text)
                     
-                    matches.forEach { match ->
-                        val foundUrl = match.groupValues.getOrNull(1) ?: return@forEach
+                    for (match in matches) {
+                        val foundUrl = match.groupValues.getOrNull(1) ?: continue
                         
                         val fullUrl = when {
                             foundUrl.startsWith("//") -> "https:$foundUrl"
                             foundUrl.startsWith("/") -> "https://png.strp2p.com$foundUrl"
                             foundUrl.startsWith("http") -> foundUrl
-                            else -> return@forEach
+                            else -> continue
                         }
                         
                         if (!allRequests.contains(fullUrl)) {
@@ -246,12 +246,12 @@ object ChPlayExtractor {
                         return true
                         
                     } else if (videoUrl.contains(".mp4")) {
-                        // Tenta como MP4 direto
+                        // Tenta como MP4 direto - não use MP4 type, use VIDEO ou OTHER
                         val extractorLink = newExtractorLink(
                             source = "ChPlay",
                             name = "$name [MP4]",
                             url = videoUrl,
-                            type = ExtractorLinkType.MP4
+                            type = ExtractorLinkType.VIDEO
                         ) {
                             this.referer = "https://topanimes.net"
                             this.quality = 720
@@ -276,7 +276,7 @@ object ChPlayExtractor {
             val specificPatterns = mutableListOf<Regex>()
             
             // Analisa padrões nas URLs encontradas
-            allRequests.forEach { foundUrl ->
+            for (foundUrl in allRequests) {
                 if (foundUrl.contains("/9a/")) {
                     specificPatterns.add(Regex(""".*/9a/.*"""))
                 }
@@ -348,7 +348,7 @@ object ChPlayExtractor {
                                         source = "ChPlay",
                                         name = "$name [Intercepted MP4]",
                                         url = intercepted,
-                                        type = ExtractorLinkType.MP4
+                                        type = ExtractorLinkType.VIDEO
                                     ) {
                                         this.referer = "https://topanimes.net"
                                         this.quality = 720
@@ -371,13 +371,21 @@ object ChPlayExtractor {
             
             println("\n❌ NENHUMA DAS ABORDAGENS FUNCIONOU")
             println("📊 Total de URLs analisadas: ${allRequests.size}")
+            
+            // Extrai e exibe domínios encontrados
+            val domains = allRequests.mapNotNull { 
+                Regex("""https?://([^/]+)""").find(it)?.groupValues?.get(1)
+            }.distinct()
+            
+            println("\n📝 RESUMO DOS DOMÍNIOS ENCONTRADOS:")
+            for (domain in domains) {
+                println("   - $domain")
+            }
+            
             println("\n📝 SUGESTÕES BASEADAS NAS URLs ENCONTRADAS:")
             println("   - URLs M3U8: ${m3u8Urls.size}")
             println("   - URLs MP4: ${mp4Urls.size}")
             println("   - URLs Master: ${masterUrls.size}")
-            println("   - Domínios encontrados: ${allRequests.map { 
-                Regex("""https?://([^/]+)""").find(it)?.groupValues?.get(1) ?: "desconhecido"
-            }.distinct().joinToString(", ")}")
             
             false
             
