@@ -9,16 +9,12 @@ import com.lagradost.cloudstream3.utils.Qualities
 
 object ChPlayExtractor {
     
-    // Lista para armazenar todas as requisições capturadas
-    private val capturedRequests = mutableListOf<String>()
-    
     suspend fun extractVideoLinks(
         url: String,
         name: String,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         println("🔍 CHPLAY EXTRACTOR - CAPTURA COMPLETA DE REQUISIÇÕES")
-        capturedRequests.clear() // Limpa lista anterior
         
         return try {
             // 1. PEGA O HTML DA PÁGINA DO EPISÓDIO
@@ -58,81 +54,47 @@ object ChPlayExtractor {
             
             println("🎯 URL final para análise: $finalUrl")
             
-            // 5. PRIMEIRO: CAPTURA TODAS AS REQUISIÇÕES SEM FILTRO
-            println("\n📡 CAPTURANDO TODAS AS REQUISIÇÕES DISPONÍVEIS...")
-            println("==================================================")
-            
-            // Versão simplificada - primeiro captura todas as requisições
-            // Fazendo múltiplas tentativas com diferentes padrões
-            
-            // Padrões comuns para testar
+            // 5. LISTA DE PADRÕES PARA TESTAR
             val testPatterns = listOf(
                 "Tudo" to Regex(".*"),
-                "M3U8" to Regex(".*\\.m3u8.*"),
-                "MP4" to Regex(".*\\.mp4.*"),
-                "Master" to Regex(".*master.*"),
-                "Stream" to Regex(".*stream.*"),
-                "Video" to Regex(".*video.*"),
-                "CF-Master" to Regex(".*cf-master.*"),
-                "Padrão 9a" to Regex(".*/9a/.*"),
-                "Padrão v" to Regex(".*/v/.*"),
-                "TS files" to Regex(".*\\.ts.*")
+                "M3U8" to Regex(""".*\.m3u8.*"""),
+                "MP4" to Regex(""".*\.mp4.*"""),
+                "Master" to Regex(""".*master.*"""),
+                "Stream" to Regex(""".*stream.*"""),
+                "Video" to Regex(""".*video.*"""),
+                "CF-Master" to Regex(""".*cf-master.*"""),
+                "Padrão 9a" to Regex(""".*/9a/.*"""),
+                "Padrão v" to Regex(""".*/v/.*"""),
+                "TS files" to Regex(""".*\.ts.*""")
             )
             
             val allFoundUrls = mutableSetOf<String>()
             
+            println("\n📡 TESTANDO PADRÕES DE INTERCEPTAÇÃO...")
+            println("==================================================")
+            
+            // 6. TESTA CADA PADRÃO
             for ((patternName, pattern) in testPatterns) {
-                println("\n🧪 Testando captura com padrão: $patternName")
+                println("\n🧪 Testando: $patternName")
+                println("   Regex: ${pattern.pattern}")
                 
                 try {
-                    val captureResolver = WebViewResolver(
+                    val resolver = WebViewResolver(
                         interceptUrl = pattern,
                         additionalUrls = listOf(pattern),
                         useOkhttp = false,
                         timeout = 5_000L
                     )
                     
-                    val result = app.get(finalUrl, interceptor = captureResolver)
-                    println("   Status: ${result.code}")
+                    val result = app.get(finalUrl, interceptor = resolver)
                     
-                    // Adiciona a URL interceptada (se diferente da original)
+                    println("   Status: ${result.code}")
+                    println("   URL final: ${result.url.take(80)}...")
+                    
+                    // Adiciona URL se for diferente e interessante
                     if (result.url.isNotEmpty() && result.url != finalUrl) {
                         allFoundUrls.add(result.url)
-                        println("   ✅ URL encontrada: ${result.url.take(120)}...")
-                    } else {
-                        println("   ⚠️ Nenhuma URL diferente encontrada")
-                    }
-                    
-                    // Também verifica o texto da resposta por URLs
-                    val textResponse = result.text
-                    val urlPatterns = listOf(
-                        Regex("""["'](https?://[^"']*\.m3u8[^"']*)["']"""),
-                        Regex("""["'](https?://[^"']*\.mp4[^"']*)["']"""),
-                        Regex("""["'](https?://[^"']*\.ts[^"']*)["']"""),
-                        Regex("""["'](//[^"']*\.m3u8[^"']*)["']"""),
-                        Regex("""file\s*:\s*["']([^"']+)["']"""),
-                        Regex("""src\s*:\s*["']([^"']+)["']"""),
-                        Regex("""url\s*:\s*["']([^"']+)["']"""),
-                        Regex("""["'](/[^"']*\.m3u8[^"']*)["']"""),
-                        Regex("""["'](/[^"']*\.mp4[^"']*)["']""")
-                    )
-                    
-                    for (urlRegex in urlPatterns) {
-                        val matches = urlRegex.findAll(textResponse)
-                        for (match in matches) {
-                            val foundUrl = match.groupValues.getOrNull(1) ?: continue
-                            val fullUrl = when {
-                                foundUrl.startsWith("//") -> "https:$foundUrl"
-                                foundUrl.startsWith("/") -> "https://png.strp2p.com$foundUrl"
-                                foundUrl.startsWith("http") -> foundUrl
-                                else -> null
-                            }
-                            
-                            if (fullUrl != null) {
-                                allFoundUrls.add(fullUrl)
-                                println("   🔍 Encontrado no HTML: ${fullUrl.take(100)}...")
-                            }
-                        }
+                        println("   ✅ URL interceptada!")
                     }
                     
                 } catch (e: Exception) {
@@ -140,47 +102,96 @@ object ChPlayExtractor {
                 }
             }
             
-            // 6. EXIBE TODAS AS URLs ENCONTRADAS
-            println("\n📊 TODAS AS URLs ENCONTRADAS (${allFoundUrls.size} total):")
+            // 7. ANALISA O HTML DIRETAMENTE TAMBÉM
+            println("\n🔍 ANALISANDO HTML DIRETAMENTE...")
             println("==================================================")
             
-            val categorizedUrls = allFoundUrls.groupBy { url ->
-                when {
-                    url.contains(".m3u8") -> "M3U8"
-                    url.contains(".mp4") -> "MP4"
-                    url.contains(".ts") -> "TS"
-                    url.contains("master") -> "MASTER"
-                    url.contains("stream") -> "STREAM"
-                    url.contains("video") -> "VIDEO"
-                    url.contains("cf-master") -> "CF-MASTER"
-                    else -> "OUTROS"
+            try {
+                val playerResponse = app.get(finalUrl)
+                val playerText = playerResponse.text
+                println("📄 Tamanho do HTML: ${playerText.length} caracteres")
+                
+                // Procura URLs no HTML
+                val htmlPatterns = listOf(
+                    Regex("""src=["']([^"']*\.m3u8[^"']*)["']"""),
+                    Regex("""src=["']([^"']*\.mp4[^"']*)["']"""),
+                    Regex("""file=["']([^"']+)["']"""),
+                    Regex("""source=["']([^"']+)["']"""),
+                    Regex("""url=["']([^"']+)["']"""),
+                    Regex("""(https?://[^"'\s<>]*\.m3u8[^"'\s<>]*)"""),
+                    Regex("""(https?://[^"'\s<>]*\.mp4[^"'\s<>]*)"""),
+                    Regex("""(//[^"'\s<>]*\.m3u8[^"'\s<>]*)"""),
+                    Regex("""(//[^"'\s<>]*\.mp4[^"'\s<>]*)""")
+                )
+                
+                for (pattern in htmlPatterns) {
+                    val matches = pattern.findAll(playerText)
+                    for (match in matches) {
+                        val foundUrl = match.groupValues.getOrNull(1) ?: continue
+                        val fullUrl = when {
+                            foundUrl.startsWith("//") -> "https:$foundUrl"
+                            foundUrl.startsWith("/") -> "https://png.strp2p.com$foundUrl"
+                            foundUrl.startsWith("http") -> foundUrl
+                            else -> continue
+                        }
+                        
+                        allFoundUrls.add(fullUrl)
+                        println("   🔍 Encontrado: ${fullUrl.take(80)}...")
+                    }
+                }
+                
+            } catch (e: Exception) {
+                println("   ⚠️ Erro ao analisar HTML: ${e.message}")
+            }
+            
+            // 8. EXIBE TODAS AS URLs ENCONTRADAS
+            println("\n📊 RESUMO DAS URLs ENCONTRADAS (${allFoundUrls.size} total):")
+            println("==================================================")
+            
+            if (allFoundUrls.isEmpty()) {
+                println("❌ Nenhuma URL encontrada")
+                return false
+            }
+            
+            // Categoriza as URLs
+            val categories = mapOf(
+                "M3U8" to allFoundUrls.filter { it.contains(".m3u8") },
+                "MP4" to allFoundUrls.filter { it.contains(".mp4") },
+                "TS" to allFoundUrls.filter { it.contains(".ts") },
+                "Master" to allFoundUrls.filter { it.contains("master") && !it.contains(".m3u8") },
+                "Outros" to allFoundUrls.filter { 
+                    !it.contains(".m3u8") && 
+                    !it.contains(".mp4") && 
+                    !it.contains(".ts") && 
+                    !it.contains("master")
+                }
+            )
+            
+            categories.forEach { (category, urls) ->
+                if (urls.isNotEmpty()) {
+                    println("\n🎯 $category (${urls.size}):")
+                    urls.forEachIndexed { i, url ->
+                        println("   ${i + 1}. ${url.take(70)}...")
+                    }
                 }
             }
             
-            categorizedUrls.forEach { (category, urls) ->
-                println("\n🎯 $category (${urls.size}):")
-                urls.forEachIndexed { index, url ->
-                    println("   ${index + 1}. ${url.take(100)}...")
-                }
-            }
-            
-            // 7. TESTA AS URLs DE VÍDEO
-            println("\n🎬 TESTANDO URLs DE VÍDEO ENCONTRADAS:")
+            // 9. TESTA AS URLs DE VÍDEO
+            println("\n🎬 TESTANDO URLs DE VÍDEO...")
             println("==================================================")
             
-            val videoUrls = allFoundUrls.filter { url ->
-                url.contains(".m3u8") || 
-                url.contains(".mp4") || 
-                url.contains(".ts") ||
-                url.contains("master") ||
-                url.contains("stream") ||
-                url.contains("video") ||
-                url.contains("cf-master")
-            }.distinct()
+            val videoUrls = allFoundUrls.filter { 
+                it.contains(".m3u8") || it.contains(".mp4") || it.contains(".ts") 
+            }
+            
+            if (videoUrls.isEmpty()) {
+                println("❌ Nenhuma URL de vídeo encontrada")
+                return false
+            }
             
             for ((index, videoUrl) in videoUrls.withIndex()) {
-                println("\n🔬 Testando vídeo ${index + 1}/${videoUrls.size}:")
-                println("   URL: ${videoUrl.take(100)}...")
+                println("\n🔬 Testando ${index + 1}/${videoUrls.size}:")
+                println("   URL: ${videoUrl.take(80)}...")
                 
                 try {
                     val headers = mapOf(
@@ -191,9 +202,10 @@ object ChPlayExtractor {
                         "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
                     )
                     
-                    if (videoUrl.contains(".m3u8") || videoUrl.contains("master") || videoUrl.contains("cf-master")) {
+                    if (videoUrl.contains(".m3u8")) {
+                        // Tenta como M3U8
                         M3u8Helper.generateM3u8(
-                            "$name (test-${index + 1})",
+                            name,
                             videoUrl,
                             "https://topanimes.net",
                             headers = headers
@@ -201,18 +213,19 @@ object ChPlayExtractor {
                         
                         println("   ✅ M3U8 FUNCIONOU!")
                         return true
-                    }
-                    
-                    else if (videoUrl.contains(".mp4")) {
+                        
+                    } else if (videoUrl.contains(".mp4")) {
+                        // Tenta como MP4 direto
                         callback.invoke(
                             newExtractorLink(
-                                source = "ChPlay",
-                                name = "ChPlay MP4",
+                                name = "ChPlay",
                                 url = videoUrl,
-                                referer = "https://topanimes.net",
-                                quality = Qualities.Unknown.value
+                                quality = Qualities.Unknown.value,
+                                headers = headers,
+                                referer = "https://topanimes.net"
                             )
                         )
+                        
                         println("   ✅ MP4 DIRETO FUNCIONOU!")
                         return true
                     }
@@ -222,38 +235,72 @@ object ChPlayExtractor {
                 }
             }
             
-            // 8. TENTA INTERCEPTAÇÃO COM PADRÕES COMUNS
-            println("\n🔄 TENTANDO INTERCEPTAÇÃO COM PADRÕES ESPECÍFICOS...")
+            // 10. SE NADA FUNCIONOU, TENTA COM PADRÕES MAIS ESPECÍFICOS
+            println("\n🔄 TENTANDO INTERCEPTAÇÃO ESPECÍFICA...")
             println("==================================================")
             
-            val commonVideoPatterns = listOf(
-                Regex(""".*/9a/.*\.m3u8.*"""),
-                Regex(""".*\.m3u8.*"""),
-                Regex(""".*cf-master.*"""),
-                Regex(""".*master.*"""),
-                Regex(""".*\.mp4.*"""),
-                Regex(""".*/v/.*"""),
-                Regex(""".*/stream/.*"""),
-                Regex(""".*/video/.*""")
-            )
+            // Padrões específicos baseados nas URLs encontradas
+            val specificPatterns = mutableListOf<Regex>()
             
-            for ((i, pattern) in commonVideoPatterns.withIndex()) {
-                println("\n🧪 Interceptação ${i + 1}: ${pattern.pattern}")
+            // Analisa padrões nas URLs encontradas
+            allFoundUrls.forEach { url ->
+                // Extrai partes do path para criar padrões
+                val pathMatch = Regex("""https?://[^/]+(/[^?#]+)""").find(url)
+                if (pathMatch != null) {
+                    val path = pathMatch.groupValues[1]
+                    
+                    // Cria padrões baseados no path
+                    if (path.contains("/9a/")) {
+                        specificPatterns.add(Regex(""".*/9a/.*"""))
+                    }
+                    if (path.contains("/v/")) {
+                        specificPatterns.add(Regex(""".*/v/.*"""))
+                    }
+                    if (path.contains("/stream/")) {
+                        specificPatterns.add(Regex(""".*/stream/.*"""))
+                    }
+                    if (path.contains("/video/")) {
+                        specificPatterns.add(Regex(""".*/video/.*"""))
+                    }
+                    
+                    // Pega a extensão do arquivo
+                    val extMatch = Regex("""\.(m3u8|mp4|ts)""").find(path)
+                    if (extMatch != null) {
+                        val ext = extMatch.groupValues[1]
+                        specificPatterns.add(Regex(""".*\.$ext.*"""))
+                    }
+                }
+            }
+            
+            // Adiciona padrões padrão também
+            specificPatterns.addAll(listOf(
+                Regex(""".*\.m3u8.*"""),
+                Regex(""".*\.mp4.*"""),
+                Regex(""".*cf-master.*"""),
+                Regex(""".*master.*\..*""") // master com extensão
+            ))
+            
+            // Remove duplicados
+            val uniquePatterns = specificPatterns.distinctBy { it.pattern }
+            
+            for ((i, pattern) in uniquePatterns.withIndex()) {
+                println("\n🎯 Interceptação específica ${i + 1}:")
+                println("   Padrão: ${pattern.pattern}")
                 
                 try {
-                    val videoResolver = WebViewResolver(
+                    val specificResolver = WebViewResolver(
                         interceptUrl = pattern,
                         additionalUrls = listOf(pattern),
                         useOkhttp = false,
                         timeout = 7_000L
                     )
                     
-                    val intercepted = app.get(finalUrl, interceptor = videoResolver).url
+                    val intercepted = app.get(finalUrl, interceptor = specificResolver).url
                     
                     if (intercepted.isNotEmpty() && intercepted != finalUrl) {
-                        println("   ✅ Interceptou: ${intercepted.take(150)}...")
+                        println("   ✅ Interceptou: ${intercepted.take(80)}...")
                         
-                        // Testa se é um vídeo válido
+                        // Testa se é vídeo
                         if (intercepted.contains(".m3u8") || intercepted.contains(".mp4")) {
                             try {
                                 val headers = mapOf(
@@ -271,16 +318,16 @@ object ChPlayExtractor {
                                         "https://topanimes.net",
                                         headers = headers
                                     ).forEach(callback)
-                                    println("   🎉 VÍDEO ENCONTRADO!")
+                                    println("   🎉 VÍDEO ENCONTRADO VIA INTERCEPTAÇÃO!")
                                     return true
                                 } else if (intercepted.contains(".mp4")) {
                                     callback.invoke(
                                         newExtractorLink(
-                                            source = "ChPlay",
-                                            name = "ChPlay MP4",
+                                            name = "ChPlay",
                                             url = intercepted,
-                                            referer = "https://topanimes.net",
-                                            quality = Qualities.Unknown.value
+                                            quality = Qualities.Unknown.value,
+                                            headers = headers,
+                                            referer = "https://topanimes.net"
                                         )
                                     )
                                     println("   🎉 MP4 ENCONTRADO!")
@@ -296,79 +343,8 @@ object ChPlayExtractor {
                 }
             }
             
-            // 9. ÚLTIMA TENTATIVA: ANÁLISE PROFUNDA DO HTML
-            println("\n🔍 ANÁLISE PROFUNDA DO HTML DO PLAYER...")
-            println("==================================================")
-            
-            try {
-                val playerHtml = app.get(finalUrl).text
-                println("📄 HTML obtido: ${playerHtml.length} caracteres")
-                
-                // Procura por scripts que possam conter URLs
-                val scriptPattern = Regex("""<script[^>]*>([\s\S]*?)</script>""")
-                val scripts = scriptPattern.findAll(playerHtml)
-                
-                scripts.forEachIndexed { scriptIndex, scriptMatch ->
-                    val scriptContent = scriptMatch.groupValues[1]
-                    if (scriptContent.length < 5000) { // Ignora scripts muito grandes
-                        // Procura por URLs em variáveis JavaScript
-                        val jsUrlPatterns = listOf(
-                            Regex("""["'](https?://[^"']+\.m3u8[^"']*)["']"""),
-                            Regex("""["'](https?://[^"']+\.mp4[^"']*)["']"""),
-                            Regex("""file\s*:\s*["']([^"']+)["']"""),
-                            Regex("""src\s*:\s*["']([^"']+)["']"""),
-                            Regex("""source\s*:\s*["']([^"']+)["']"""),
-                            Regex("""url\s*:\s*["']([^"']+)["']"""),
-                            Regex("""= \["'"]?([^"'\s,]+\.m3u8)["'"]?"""),
-                            Regex("""= \["'"]?([^"'\s,]+\.mp4)["'"]?""")
-                        )
-                        
-                        jsUrlPatterns.forEach { pattern ->
-                            val matches = pattern.findAll(scriptContent)
-                            matches.forEach { match ->
-                                val foundUrl = match.groupValues.getOrNull(1) ?: return@forEach
-                                val fullUrl = when {
-                                    foundUrl.startsWith("//") -> "https:$foundUrl"
-                                    foundUrl.startsWith("/") -> "https://png.strp2p.com$foundUrl"
-                                    foundUrl.startsWith("http") -> foundUrl
-                                    else -> "https://$foundUrl"
-                                }
-                                
-                                println("   🔍 Script $scriptIndex - URL: ${fullUrl.take(100)}...")
-                                
-                                // Testa a URL
-                                try {
-                                    if (fullUrl.contains(".m3u8")) {
-                                        val headers = mapOf(
-                                            "Accept" to "*/*",
-                                            "Connection" to "keep-alive",
-                                            "Referer" to finalUrl,
-                                            "Origin" to "https://png.strp2p.com",
-                                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-                                        )
-                                        
-                                        M3u8Helper.generateM3u8(
-                                            name,
-                                            fullUrl,
-                                            "https://topanimes.net",
-                                            headers = headers
-                                        ).forEach(callback)
-                                        println("   🎉 VÍDEO ENCONTRADO NO SCRIPT!")
-                                        return true
-                                    }
-                                } catch (e: Exception) {
-                                    // Ignora erros e continua
-                                }
-                            }
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                println("   ⚠️ Erro na análise: ${e.message}")
-            }
-            
-            println("\n❌ NENHUMA URL DE VÍDEO FUNCIONOU")
-            println("📊 Total de URLs analisadas: ${allFoundUrls.size}")
+            println("\n❌ NENHUMA DAS ABORDAGENS FUNCIONOU")
+            println("📊 URLs analisadas: ${allFoundUrls.size}")
             
             false
             
