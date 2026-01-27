@@ -14,7 +14,7 @@ object ChPlayExtractor {
         name: String,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        println("🔍 CHPLAY EXTRACTOR - DEBUG DE REQUISIÇÕES")
+        println("🔍 CHPLAY EXTRACTOR - BUSCANDO CF-MASTER")
         
         return try {
             // 1. PEGA O HTML DA PÁGINA DO EPISÓDIO
@@ -54,175 +54,191 @@ object ChPlayExtractor {
             
             println("🎯 URL final para análise: $finalUrl")
             
-            // 5. LISTA PARA ARMAZENAR TODAS AS REQUISIÇÕES ENCONTRADAS
-            val allRequests = mutableListOf<String>()
-            
-            // 6. FUNÇÃO PARA CAPTURAR REQUISIÇÕES COM PADRÃO ESPECÍFICO
-            suspend fun captureWithPattern(pattern: Regex, patternName: String): Boolean {
-                println("\n🧪 Testando padrão: $patternName")
-                println("   Regex: ${pattern.pattern}")
-                
-                try {
-                    val resolver = WebViewResolver(
-                        interceptUrl = pattern,
-                        additionalUrls = listOf(pattern),
-                        useOkhttp = false,
-                        timeout = 5_000L
-                    )
-                    
-                    val result = app.get(finalUrl, interceptor = resolver)
-                    
-                    println("   Status: ${result.code}")
-                    println("   URL final: ${result.url.take(100)}...")
-                    
-                    if (result.url.isNotEmpty() && result.url != finalUrl) {
-                        allRequests.add(result.url)
-                        println("   ✅ URL interceptada!")
-                        return true
-                    }
-                    
-                    println("   ⚠️ Nenhuma URL interceptada")
-                    return false
-                    
-                } catch (e: Exception) {
-                    println("   ❌ Erro: ${e.message}")
-                    return false
-                }
-            }
-            
-            // 7. TESTA VÁRIOS PADRÕES
-            println("\n📡 TESTANDO DIFERENTES PADRÕES DE INTERCEPTAÇÃO:")
+            // 5. PADRÃO ESPECÍFICO PARA CF-MASTER
+            println("\n🎯 PROCURANDO APENAS CF-MASTER...")
             println("==================================================")
             
-            val patterns = listOf(
-                Regex(".*") to "TUDO",
-                Regex(".*\\.m3u8.*") to "M3U8",
-                Regex(".*\\.mp4.*") to "MP4", 
-                Regex(".*master.*") to "MASTER",
-                Regex(".*cf-master.*") to "CF-MASTER",
-                Regex(".*/9a/.*") to "PADRÃO /9a/",
-                Regex(".*/v/.*") to "PADRÃO /v/",
-                Regex(".*stream.*") to "STREAM",
-                Regex(".*video.*") to "VIDEO",
-                Regex(".*\\.ts.*") to "TS FILES"
-            )
-            
-            for ((pattern, patternName) in patterns) {
-                captureWithPattern(pattern, patternName)
-            }
-            
-            // 8. TAMBÉM PROCURA NO HTML DIRETAMENTE
-            println("\n🔍 PROCURANDO URLs NO HTML DIRETAMENTE:")
-            println("==================================================")
+            val cfMasterPattern = Regex(""".*cf-master.*""")
+            var interceptedUrl = ""
             
             try {
-                val response = app.get(finalUrl)
-                val text = response.text
-                println("📄 HTML obtido: ${text.length} caracteres")
+                // PRIMEIRA TENTATIVA: Interceptação normal
+                println("🔍 Tentando interceptar cf-master...")
                 
-                // Procura por URLs de vídeo
-                val urlPatterns = listOf(
-                    """["'](https?://[^"']*\.m3u8[^"']*)["']""",
-                    """["'](https?://[^"']*\.mp4[^"']*)["']""",
-                    """["'](//[^"']*\.m3u8[^"']*)["']""",
-                    """["'](//[^"']*\.mp4[^"']*)["']""",
-                    """file\s*:\s*["']([^"']+)["']""",
-                    """src\s*:\s*["']([^"']+)["']""",
-                    """url\s*:\s*["']([^"']+)["']""",
-                    """source\s*:\s*["']([^"']+)["']""",
-                    """["'](/[^"']*\.m3u8[^"']*)["']""",
-                    """["'](/[^"']*\.mp4[^"']*)["']"""
+                val resolver = WebViewResolver(
+                    interceptUrl = cfMasterPattern,
+                    additionalUrls = listOf(cfMasterPattern),
+                    useOkhttp = false,
+                    timeout = 10_000L  // 10 segundos para clicar
                 )
                 
-                for (patternStr in urlPatterns) {
-                    val pattern = Regex(patternStr)
-                    val matches = pattern.findAll(text)
-                    
-                    for (match in matches) {
-                        val foundUrl = match.groupValues.getOrNull(1) ?: continue
-                        
-                        val fullUrl = when {
-                            foundUrl.startsWith("//") -> "https:$foundUrl"
-                            foundUrl.startsWith("/") -> "https://png.strp2p.com$foundUrl"
-                            foundUrl.startsWith("http") -> foundUrl
-                            else -> continue
-                        }
-                        
-                        if (!allRequests.contains(fullUrl)) {
-                            allRequests.add(fullUrl)
-                            println("   🔍 Encontrado no HTML: ${fullUrl.take(80)}...")
-                        }
-                    }
+                val result = app.get(finalUrl, interceptor = resolver)
+                interceptedUrl = result.url
+                
+                if (interceptedUrl.isNotEmpty() && interceptedUrl != finalUrl && interceptedUrl.contains("cf-master")) {
+                    println("✅ URL COM CF-MASTER ENCONTRADA!")
+                    println("🔗 URL: ${interceptedUrl.take(150)}...")
+                } else {
+                    println("⚠️ Nenhum cf-master interceptado (talvez precise clicar)")
                 }
                 
             } catch (e: Exception) {
-                println("⚠️ Erro ao analisar HTML: ${e.message}")
+                println("❌ Erro na interceptação: ${e.message}")
             }
             
-            // 9. EXIBE TODAS AS REQUISIÇÕES ENCONTRADAS
-            println("\n📊 TODAS AS REQUISIÇÕES ENCONTRADAS (${allRequests.size} total):")
-            println("==================================================")
-            
-            if (allRequests.isEmpty()) {
-                println("❌ Nenhuma requisição encontrada")
-                return false
-            }
-            
-            // Agrupa por tipo
-            val m3u8Urls = allRequests.filter { it.contains(".m3u8") }
-            val mp4Urls = allRequests.filter { it.contains(".mp4") }
-            val masterUrls = allRequests.filter { it.contains("master") && !it.contains(".m3u8") }
-            val otherUrls = allRequests.filter { 
-                !it.contains(".m3u8") && !it.contains(".mp4") && !it.contains("master")
-            }
-            
-            if (m3u8Urls.isNotEmpty()) {
-                println("\n🎬 URLs M3U8:")
-                m3u8Urls.forEachIndexed { i, url ->
-                    println("   ${i + 1}. ${url.take(70)}...")
+            // 6. SE NÃO ENCONTROU CF-MASTER, TENTA CLICAR NO PLAYER
+            if (!interceptedUrl.contains("cf-master")) {
+                println("\n🖱️ TENTANDO SIMULAR CLIQUE NO PLAYER...")
+                println("==================================================")
+                
+                // Primeiro, tenta clicar via JavaScript
+                println("🔍 Executando JavaScript para clicar no player...")
+                
+                val clickResolver = WebViewResolver(
+                    interceptUrl = cfMasterPattern,
+                    additionalUrls = listOf(cfMasterPattern),
+                    useOkhttp = false,
+                    timeout = 15_000L, // 15 segundos para interação
+                    onPageFinished = { webView ->
+                        // Aguarda um pouco para a página carregar completamente
+                        Thread.sleep(2000)
+                        
+                        // Tenta clicar no centro da página (onde geralmente está o player)
+                        println("🖱️ Simulando clique no centro da página...")
+                        try {
+                            // Executa JavaScript para simular clique
+                            webView.evaluateJavascript("""
+                                // Cria e dispara evento de clique
+                                var event = new MouseEvent('click', {
+                                    view: window,
+                                    bubbles: true,
+                                    cancelable: true
+                                });
+                                
+                                // Tenta clicar em vários elementos possíveis
+                                var elements = [
+                                    document.querySelector('video'),
+                                    document.querySelector('iframe'),
+                                    document.querySelector('.jwplayer'),
+                                    document.querySelector('.player'),
+                                    document.querySelector('body'),
+                                    document.documentElement
+                                ];
+                                
+                                for (var i = 0; i < elements.length; i++) {
+                                    if (elements[i]) {
+                                        elements[i].dispatchEvent(event);
+                                        console.log('Clicou no elemento ' + i);
+                                    }
+                                }
+                                
+                                // Também tenta rodar o JWPlayer se existir
+                                if (typeof jwplayer !== 'undefined') {
+                                    var players = jwplayer();
+                                    if (players && players.length > 0) {
+                                        players[0].play();
+                                        console.log('JWPlayer iniciado');
+                                    }
+                                }
+                                
+                                // Retorna sucesso
+                                'clique-simulado';
+                            """.trimIndent(), null)
+                            
+                            // Aguarda mais um pouco para o vídeo carregar
+                            Thread.sleep(5000)
+                            
+                        } catch (e: Exception) {
+                            println("⚠️ Erro ao simular clique: ${e.message}")
+                        }
+                    }
+                )
+                
+                try {
+                    val clickResult = app.get(finalUrl, interceptor = clickResolver)
+                    interceptedUrl = clickResult.url
+                    
+                    if (interceptedUrl.isNotEmpty() && interceptedUrl != finalUrl && interceptedUrl.contains("cf-master")) {
+                        println("🎉 CF-MASTER ENCONTRADO APÓS CLIQUE!")
+                        println("🔗 URL: ${interceptedUrl.take(150)}...")
+                    } else {
+                        println("⚠️ Nenhum cf-master após clique")
+                    }
+                    
+                } catch (e: Exception) {
+                    println("❌ Erro na simulação de clique: ${e.message}")
                 }
             }
             
-            if (mp4Urls.isNotEmpty()) {
-                println("\n🎬 URLs MP4:")
-                mp4Urls.forEachIndexed { i, url ->
-                    println("   ${i + 1}. ${url.take(70)}...")
+            // 7. TENTA MÚLTIPLOS CLICKS (como você descreveu: 3x)
+            if (!interceptedUrl.contains("cf-master")) {
+                println("\n🔄 TENTANDO MÚLTIPLOS CLICKS (3x)...")
+                println("==================================================")
+                
+                val multipleClickResolver = WebViewResolver(
+                    interceptUrl = cfMasterPattern,
+                    additionalUrls = listOf(cfMasterPattern),
+                    useOkhttp = false,
+                    timeout = 20_000L, // 20 segundos para múltiplos cliques
+                    onPageFinished = { webView ->
+                        println("🎬 Simulando fluxo de cliques (3 tentativas)...")
+                        
+                        try {
+                            // Fluxo que você descreveu: 3 cliques com pausas
+                            for (attempt in 1..3) {
+                                println("   👆 Tentativa $attempt/3")
+                                
+                                Thread.sleep(3000) // Espera 3s entre cliques
+                                
+                                // Simula clique no centro da página
+                                webView.evaluateJavascript("""
+                                    // Clique simples no body
+                                    var event = new MouseEvent('click', {
+                                        view: window,
+                                        bubbles: true,
+                                        cancelable: true,
+                                        clientX: window.innerWidth / 2,
+                                        clientY: window.innerHeight / 2
+                                    });
+                                    
+                                    document.body.dispatchEvent(event);
+                                    'click-attempt-' + $attempt;
+                                """.trimIndent(), null)
+                                
+                                // Aguarda após cada clique
+                                Thread.sleep(2000)
+                            }
+                            
+                            // Aguarda mais tempo após os cliques
+                            println("   ⏳ Aguardando carregamento do vídeo...")
+                            Thread.sleep(5000)
+                            
+                        } catch (e: Exception) {
+                            println("⚠️ Erro nos múltiplos cliques: ${e.message}")
+                        }
+                    }
+                )
+                
+                try {
+                    val multiClickResult = app.get(finalUrl, interceptor = multipleClickResolver)
+                    interceptedUrl = multiClickResult.url
+                    
+                    if (interceptedUrl.isNotEmpty() && interceptedUrl != finalUrl && interceptedUrl.contains("cf-master")) {
+                        println("🎉 CF-MASTER ENCONTRADO APÓS MÚLTIPLOS CLICKS!")
+                        println("🔗 URL: ${interceptedUrl.take(150)}...")
+                    } else {
+                        println("❌ Nenhum cf-master após múltiplos cliques")
+                    }
+                    
+                } catch (e: Exception) {
+                    println("❌ Erro nos múltiplos cliques: ${e.message}")
                 }
             }
             
-            if (masterUrls.isNotEmpty()) {
-                println("\n🎯 URLs com 'master':")
-                masterUrls.forEachIndexed { i, url ->
-                    println("   ${i + 1}. ${url.take(70)}...")
-                }
-            }
-            
-            if (otherUrls.isNotEmpty()) {
-                println("\n📄 Outras URLs:")
-                otherUrls.take(10).forEachIndexed { i, url ->
-                    println("   ${i + 1}. ${url.take(70)}...")
-                }
-                if (otherUrls.size > 10) {
-                    println("   ... e mais ${otherUrls.size - 10} outras")
-                }
-            }
-            
-            // 10. TESTA AS URLs DE VÍDEO
-            println("\n🎬 TESTANDO URLs DE VÍDEO ENCONTRADAS:")
-            println("==================================================")
-            
-            val videoUrls = allRequests.filter { 
-                it.contains(".m3u8") || it.contains(".mp4")
-            }
-            
-            if (videoUrls.isEmpty()) {
-                println("❌ Nenhuma URL de vídeo encontrada")
-                return false
-            }
-            
-            for ((index, videoUrl) in videoUrls.withIndex()) {
-                println("\n🔬 Testando ${index + 1}/${videoUrls.size}:")
-                println("   URL: ${videoUrl.take(80)}...")
+            // 8. PROCESSAR A URL CF-MASTER ENCONTRADA
+            if (interceptedUrl.isNotEmpty() && interceptedUrl.contains("cf-master")) {
+                println("\n🎬 PROCESSANDO URL CF-MASTER...")
+                println("==================================================")
                 
                 try {
                     val headers = mapOf(
@@ -233,159 +249,82 @@ object ChPlayExtractor {
                         "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
                     )
                     
-                    if (videoUrl.contains(".m3u8")) {
-                        // Tenta como M3U8
-                        M3u8Helper.generateM3u8(
-                            source = "ChPlay",
-                            streamUrl = videoUrl,
-                            referer = "https://topanimes.net",
-                            headers = headers
-                        ).forEach(callback)
-                        
-                        println("   ✅ M3U8 FUNCIONOU!")
-                        return true
-                        
-                    } else if (videoUrl.contains(".mp4")) {
-                        // Tenta como MP4 direto - não use MP4 type, use VIDEO ou OTHER
-                        val extractorLink = newExtractorLink(
-                            source = "ChPlay",
-                            name = "$name [MP4]",
-                            url = videoUrl,
-                            type = ExtractorLinkType.VIDEO
-                        ) {
-                            this.referer = "https://topanimes.net"
-                            this.quality = 720
-                            this.headers = headers
-                        }
-                        
-                        callback(extractorLink)
-                        println("   ✅ MP4 DIRETO FUNCIONOU!")
-                        return true
-                    }
+                    println("🔗 URL final: ${interceptedUrl.take(200)}...")
+                    
+                    // Processa como M3U8
+                    M3u8Helper.generateM3u8(
+                        source = "ChPlay",
+                        streamUrl = interceptedUrl,
+                        referer = "https://topanimes.net",
+                        headers = headers
+                    ).forEach(callback)
+                    
+                    println("✅ VÍDEO CF-MASTER PROCESSADO COM SUCESSO!")
+                    return true
                     
                 } catch (e: Exception) {
-                    println("   ⚠️ Falhou: ${e.message}")
+                    println("❌ Erro ao processar cf-master: ${e.message}")
+                    e.printStackTrace()
                 }
             }
             
-            // 11. SE NENHUMA URL FUNCIONAR, TENTA INTERCEPTAÇÃO DIRETA COM OS PADRÕES MAIS PROMISSORES
-            println("\n🔄 TENTANDO INTERCEPTAÇÃO DIRETA COM PADRÕES ESPECÍFICOS:")
+            // 9. ÚLTIMA TENTATIVA: ANALISAR O HTML APÓS INTERAÇÃO
+            println("\n🔍 ANALISANDO HTML APÓS TODAS AS TENTATIVAS...")
             println("==================================================")
             
-            // Baseado nas URLs encontradas, cria padrões mais específicos
-            val specificPatterns = mutableListOf<Regex>()
-            
-            // Analisa padrões nas URLs encontradas
-            for (foundUrl in allRequests) {
-                if (foundUrl.contains("/9a/")) {
-                    specificPatterns.add(Regex(""".*/9a/.*"""))
-                }
-                if (foundUrl.contains("/v/")) {
-                    specificPatterns.add(Regex(""".*/v/.*"""))
-                }
-                if (foundUrl.contains("cf-master")) {
-                    specificPatterns.add(Regex(""".*cf-master.*"""))
-                }
-                if (foundUrl.contains(".m3u8")) {
-                    // Extrai o domínio e caminho para criar padrão específico
-                    val domainMatch = Regex("""https?://([^/]+)""").find(foundUrl)
-                    val domain = domainMatch?.groupValues?.get(1) ?: ""
-                    if (domain.isNotEmpty()) {
-                        specificPatterns.add(Regex(""".*$domain.*\.m3u8.*"""))
+            try {
+                // Faz uma requisição normal para ver o HTML final
+                val finalResponse = app.get(finalUrl)
+                val finalHtml = finalResponse.text
+                
+                // Procura por cf-master no HTML
+                val cfMasterRegex = Regex("""["'](https?://[^"']*cf-master[^"']*)["']""")
+                val matches = cfMasterRegex.findAll(finalHtml)
+                
+                var found = false
+                for (match in matches) {
+                    val possibleUrl = match.groupValues[1]
+                    println("🔍 Encontrado no HTML: ${possibleUrl.take(100)}...")
+                    
+                    if (possibleUrl.contains("cf-master")) {
+                        interceptedUrl = possibleUrl
+                        found = true
+                        break
                     }
                 }
-            }
-            
-            // Adiciona padrões genéricos também
-            specificPatterns.addAll(listOf(
-                Regex(""".*\.m3u8.*"""),
-                Regex(""".*\.mp4.*"""),
-                Regex(""".*master.*\..*""")
-            ))
-            
-            // Remove duplicados
-            val uniquePatterns = specificPatterns.distinctBy { it.pattern }
-            
-            for ((i, pattern) in uniquePatterns.withIndex()) {
-                println("\n🎯 Testando interceptação direta ${i + 1}:")
-                println("   Padrão: ${pattern.pattern}")
                 
-                try {
-                    val directResolver = WebViewResolver(
-                        interceptUrl = pattern,
-                        additionalUrls = listOf(pattern),
-                        useOkhttp = false,
-                        timeout = 7_000L
+                if (found) {
+                    println("✅ CF-MASTER ENCONTRADO NO HTML FINAL!")
+                    
+                    val headers = mapOf(
+                        "Accept" to "*/*",
+                        "Connection" to "keep-alive",
+                        "Referer" to finalUrl,
+                        "Origin" to "https://png.strp2p.com",
+                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
                     )
                     
-                    val intercepted = app.get(finalUrl, interceptor = directResolver).url
+                    M3u8Helper.generateM3u8(
+                        source = "ChPlay",
+                        streamUrl = interceptedUrl,
+                        referer = "https://topanimes.net",
+                        headers = headers
+                    ).forEach(callback)
                     
-                    if (intercepted.isNotEmpty() && intercepted != finalUrl) {
-                        println("   ✅ Interceptou: ${intercepted.take(100)}...")
-                        
-                        // Testa se é vídeo
-                        if (intercepted.contains(".m3u8") || intercepted.contains(".mp4")) {
-                            try {
-                                val headers = mapOf(
-                                    "Accept" to "*/*",
-                                    "Connection" to "keep-alive",
-                                    "Referer" to finalUrl,
-                                    "Origin" to "https://png.strp2p.com",
-                                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-                                )
-                                
-                                if (intercepted.contains(".m3u8")) {
-                                    M3u8Helper.generateM3u8(
-                                        source = "ChPlay",
-                                        streamUrl = intercepted,
-                                        referer = "https://topanimes.net",
-                                        headers = headers
-                                    ).forEach(callback)
-                                    println("   🎉 VÍDEO ENCONTRADO!")
-                                    return true
-                                } else if (intercepted.contains(".mp4")) {
-                                    val extractorLink = newExtractorLink(
-                                        source = "ChPlay",
-                                        name = "$name [Intercepted MP4]",
-                                        url = intercepted,
-                                        type = ExtractorLinkType.VIDEO
-                                    ) {
-                                        this.referer = "https://topanimes.net"
-                                        this.quality = 720
-                                        this.headers = headers
-                                    }
-                                    
-                                    callback(extractorLink)
-                                    println("   🎉 MP4 ENCONTRADO!")
-                                    return true
-                                }
-                            } catch (e: Exception) {
-                                println("   ⚠️ Erro ao processar: ${e.message}")
-                            }
-                        }
-                    }
-                } catch (e: Exception) {
-                    println("   ❌ Erro: ${e.message}")
+                    println("🎉 VÍDEO ENCONTRADO NO HTML!")
+                    return true
                 }
+                
+            } catch (e: Exception) {
+                println("⚠️ Erro ao analisar HTML final: ${e.message}")
             }
             
-            println("\n❌ NENHUMA DAS ABORDAGENS FUNCIONOU")
-            println("📊 Total de URLs analisadas: ${allRequests.size}")
-            
-            // Extrai e exibe domínios encontrados
-            val domains = allRequests.mapNotNull { 
-                Regex("""https?://([^/]+)""").find(it)?.groupValues?.get(1)
-            }.distinct()
-            
-            println("\n📝 RESUMO DOS DOMÍNIOS ENCONTRADOS:")
-            for (domain in domains) {
-                println("   - $domain")
-            }
-            
-            println("\n📝 SUGESTÕES BASEADAS NAS URLs ENCONTRADAS:")
-            println("   - URLs M3U8: ${m3u8Urls.size}")
-            println("   - URLs MP4: ${mp4Urls.size}")
-            println("   - URLs Master: ${masterUrls.size}")
+            println("\n❌ NENHUM CF-MASTER ENCONTRADO")
+            println("📝 Possíveis problemas:")
+            println("   - O site requer interação humana real")
+            println("   - Pode ter proteção contra bots")
+            println("   - O WebView não está executando JavaScript corretamente")
+            println("   - Pode precisar de mais tempo ou cliques diferentes")
             
             false
             
