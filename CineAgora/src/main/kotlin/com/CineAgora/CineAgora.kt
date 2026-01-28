@@ -8,7 +8,6 @@ import com.lagradost.cloudstream3.app
 import org.jsoup.nodes.Element
 import com.fasterxml.jackson.annotation.JsonProperty
 import java.text.SimpleDateFormat
-import java.net.URLEncoder
 
 class CineAgora : MainAPI() {
     override var mainUrl = "https://cineagora.net"
@@ -65,9 +64,13 @@ class CineAgora : MainAPI() {
     }
 
     override val mainPage = mainPageOf(
-        *HOME_SECTIONS.map { (section, name) -> "home_$section" to name }.toTypedArray(),
+        *HOME_SECTIONS.map { (section, name) -> 
+            "home_$section" to name 
+        }.toTypedArray(),
         *SECTION_URLS.filterKeys { it !in HOME_SECTIONS.map { it.first } }
-            .map { (section, _) -> "section_$section" to getSectionName(section) }.toTypedArray()
+                     .map { (section, _) ->
+                         "section_$section" to getSectionName(section)
+                     }.toTypedArray()
     )
 
     private fun getSectionName(section: String): String {
@@ -119,17 +122,21 @@ class CineAgora : MainAPI() {
         } else {
             baseUrl
         }
-
+        
         val document = try {
-            app.get(url).document
+            val response = app.get(url)
+            response.document
         } catch (e: Exception) {
-            if (page > 1) return newHomePageResponse(request.name, emptyList(), false)
-            throw e
+            if (page > 1) {
+                return newHomePageResponse(request.name, emptyList(), false)
+            } else {
+                throw e
+            }
         }
-
+        
         val items = extractSectionItems(document, sectionId)
         val hasNextPage = checkForNextPage(document, page)
-
+        
         return newHomePageResponse(request.name, items.distinctBy { it.url }, hasNextPage)
     }
 
@@ -140,41 +147,52 @@ class CineAgora : MainAPI() {
             val href = element.attr("href")
             val text = element.text().lowercase()
             href.contains("/page/${currentPage + 1}/") || 
-            text.contains("próxima") || text.contains("next") ||
-            element.hasClass("next") || element.hasClass("next-page")
+            text.contains("próxima") || 
+            text.contains("next") ||
+            element.hasClass("next") ||
+            element.hasClass("next-page")
         }
-
+        
         val pageNumbers = document.select(".page-numbers, .page-number, [class*='page']")
             .filter { it.text().matches(Regex("\\d+")) }
             .mapNotNull { it.text().toIntOrNull() }
             .sorted()
-
-        return nextPageLinks.isNotEmpty() || pageNumbers.any { it > currentPage }
+        
+        if (pageNumbers.any { it > currentPage }) {
+            return true
+        }
+        
+        return nextPageLinks.isNotEmpty()
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
         if (query.isBlank()) return emptyList()
-
+        
+        val searchUrl = mainUrl
+        
         try {
             val document = app.post(
-                url = mainUrl,
+                url = searchUrl,
                 data = mapOf(
                     "do" to "search",
                     "subaction" to "search",
                     "story" to query
                 ),
-                referer = mainUrl,
+                referer = searchUrl,
                 headers = mapOf(
                     "Content-Type" to "application/x-www-form-urlencoded",
                     "Origin" to mainUrl,
                     "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
                 )
             ).document
+            
             return extractSearchResults(document)
+            
         } catch (e: Exception) {
             try {
-                val encodedQuery = URLEncoder.encode(query, "UTF-8")
+                val encodedQuery = java.net.URLEncoder.encode(query, "UTF-8")
                 val fallbackUrl = "$mainUrl/?do=search&subaction=search&story=$encodedQuery"
+                
                 val document = app.get(fallbackUrl).document
                 return extractSearchResults(document)
             } catch (e2: Exception) {
@@ -185,11 +203,12 @@ class CineAgora : MainAPI() {
 
     private fun extractSearchResults(document: org.jsoup.nodes.Document): List<SearchResponse> {
         val searchItems = document.select(".film-list .content .col-6.col-sm-4.col-md-3.col-lg-2 .item-relative > a.item")
+        
         return if (searchItems.isNotEmpty()) {
             searchItems.mapNotNull { it.toSearchResult() }
         } else {
-            document.select(".item, .item-relative .item, .poster, .movie-item, .serie-item")
-                .mapNotNull { it.toSearchResult() }
+            val fallbackItems = document.select(".item, .item-relative .item, .poster, .movie-item, .serie-item")
+            fallbackItems.mapNotNull { it.toSearchResult() }
         }
     }
 
@@ -251,15 +270,18 @@ class CineAgora : MainAPI() {
     }
 
     private fun isScoreLike(text: String): Boolean {
-        return text.equals("N/A", ignoreCase = true) ||
-               text.matches(Regex("""^\d+(\.\d+)?$""")) ||
-               text.matches(Regex("""^\d+(\.\d+)?/10$""")) ||
-               text.contains("★") ||
-               text.contains("pontos", ignoreCase = true)
+        return when {
+            text.equals("N/A", ignoreCase = true) -> true
+            text.matches(Regex("""^\d+(\.\d+)?$""")) -> true
+            text.matches(Regex("""^\d+(\.\d+)?/10$""")) -> true
+            text.contains("★") -> true
+            text.contains("pontos", ignoreCase = true) -> true
+            else -> false
+        }
     }
 
     private fun Element.toSearchResult(): SearchResponse? {
-        val linkElement = selectFirst("a")
+        val linkElement = this.selectFirst("a")
         val href = linkElement?.attr("href")?.takeIf { it.isNotBlank() } ?: return null
         
         val titleElement = selectFirst(".item-footer .title, .title, .poster-title, h3, h4")
@@ -273,10 +295,10 @@ class CineAgora : MainAPI() {
             .replace(Regex("\\d{4}$"), "")
             .trim()
         
-        val posterUrl = selectFirst("img.thumbnail, img.poster, img")?.attr("src")?.let { fixUrl(it) }
+        val imgElement = selectFirst("img.thumbnail, img.poster, img")
+        val posterUrl = imgElement?.attr("src")?.let { fixUrl(it) }
         
         val qualityBadge = select(".item-info, .quality, .badge").firstOrNull()?.selectFirst("div:first-child, span")?.text()?.trim()
-        val languageBadge = select(".item-info, .language, .badge").firstOrNull()?.selectFirst("div:nth-child(2), .lang")?.text()?.trim()
         
         val scoreResult = extractScoreAdvanced(this)
         val scoreText = scoreResult.first
@@ -300,20 +322,24 @@ class CineAgora : MainAPI() {
             qualityBadge?.contains("TS", ignoreCase = true) == true -> SearchQuality.Cam
             else -> null
         }
-
+        
         return if (isSerie) {
             newTvSeriesSearchResponse(cleanTitle, fixUrl(href)) {
                 this.posterUrl = posterUrl
                 this.year = year
                 this.score = score
-                if (quality != null) this.quality = quality
+                if (quality != null) {
+                    this.quality = quality
+                }
             }
         } else {
             newMovieSearchResponse(cleanTitle, fixUrl(href)) {
                 this.posterUrl = posterUrl
                 this.year = year
                 this.score = score
-                if (quality != null) this.quality = quality
+                if (quality != null) {
+                    this.quality = quality
+                }
             }
         }
     }
@@ -347,29 +373,38 @@ class CineAgora : MainAPI() {
         )
         
         for (selector in bannerSelectors) {
-            val element = doc.selectFirst(selector) ?: continue
-            val url = when {
-                selector.startsWith("meta[") -> element.attr("content")
-                selector.contains("source[") -> element.attr("srcset")
-                else -> element.attr("src")
-            }
-            
-            if (url.isNotBlank()) {
-                val fixedUrl = fixUrl(url)
-                if (selector.contains("source[") && url.contains(",")) {
-                    val firstUrl = url.substringBefore(",").trim()
-                    if (firstUrl.isNotBlank()) return fixUrl(firstUrl)
+            val element = doc.selectFirst(selector)
+            if (element != null) {
+                val url = when {
+                    selector.startsWith("meta[") -> element.attr("content")
+                    selector.contains("source[") -> element.attr("srcset")
+                    else -> element.attr("src")
                 }
-                return fixedUrl
+                
+                if (url.isNotBlank()) {
+                    val fixedUrl = fixUrl(url)
+                    
+                    if (selector.contains("source[") && url.contains(",")) {
+                        val firstUrl = url.substringBefore(",").trim()
+                        if (firstUrl.isNotBlank()) {
+                            return fixUrl(firstUrl)
+                        }
+                    }
+                    
+                    return fixedUrl
+                }
             }
         }
-
+        
         val pictureElements = doc.select("picture")
+        
         for (picture in pictureElements) {
             val imgElement = picture.selectFirst("img")
             if (imgElement != null) {
                 val src = imgElement.attr("src")
-                if (src.isNotBlank()) return fixUrl(src)
+                if (src.isNotBlank()) {
+                    return fixUrl(src)
+                }
             }
             
             val sourceElement = picture.selectFirst("source")
@@ -377,12 +412,15 @@ class CineAgora : MainAPI() {
                 val srcset = sourceElement.attr("srcset")
                 if (srcset.isNotBlank()) {
                     val firstUrl = srcset.split(",").firstOrNull()?.trim()?.substringBefore(" ")?.trim()
-                    if (!firstUrl.isNullOrBlank()) return fixUrl(firstUrl)
+                    if (!firstUrl.isNullOrBlank()) {
+                        return fixUrl(firstUrl)
+                    }
                 }
             }
         }
-
+        
         val allImages = doc.select("img[src]")
+        
         val largeImages = allImages.filter { 
             val src = it.attr("src")
             val width = it.attr("width").toIntOrNull()
@@ -395,40 +433,55 @@ class CineAgora : MainAPI() {
             src.contains("cover") ||
             src.contains("featured")
         }
-
+        
         if (largeImages.isNotEmpty()) {
             val sortedImages = largeImages.sortedByDescending { 
                 val width = it.attr("width").toIntOrNull() ?: 0
                 val height = it.attr("height").toIntOrNull() ?: 0
                 width * height
             }
+
             for (img in sortedImages.take(3)) {
                 val src = img.attr("src")
-                if (src.isNotBlank()) return fixUrl(src)
+                if (src.isNotBlank()) {
+                    return fixUrl(src)
+                }
             }
         }
-
+        
         return null
     }
 
     private fun extractYear(doc: org.jsoup.nodes.Document): Int? {
         val yearFromSelector = doc.selectFirst(".year, .date, time")?.text()?.toIntOrNull()
-        if (yearFromSelector != null) return yearFromSelector
+        if (yearFromSelector != null) {
+            return yearFromSelector
+        }
         
         val h1Text = doc.selectFirst("h1")?.text() ?: ""
-        return Regex("(\\d{4})").find(h1Text)?.groupValues?.get(1)?.toIntOrNull()
+        val yearFromRegex = Regex("(\\d{4})").find(h1Text)?.groupValues?.get(1)?.toIntOrNull()
+        if (yearFromRegex != null) {
+            return yearFromRegex
+        }
+        
+        return null
     }
 
     private fun extractGenres(doc: org.jsoup.nodes.Document): List<String>? {
         val genres = doc.select(".genres a, .genre a, .category a, a[href*='genero'], a[href*='categoria']")
             .mapNotNull { it.text().trim() }
             .filter { it.isNotBlank() }
-        return if (genres.isNotEmpty()) genres else null
+        
+        if (genres.isNotEmpty()) {
+            return genres
+        }
+        
+        return null
     }
 
     private suspend fun searchOnTMDB(query: String, year: Int?, isTv: Boolean): TMDBInfo? {
-        try {
-            val encodedQuery = URLEncoder.encode(query, "UTF-8")
+        return try {
+            val encodedQuery = java.net.URLEncoder.encode(query, "UTF-8")
             val yearParam = year?.let { "&year=$it" } ?: ""
 
             val searchUrl = if (isTv) {
@@ -443,11 +496,15 @@ class CineAgora : MainAPI() {
             )
 
             val response = app.get(searchUrl, headers = headers, timeout = 10_000)
-            if (response.code != 200) return null
+            
+            if (response.code != 200) {
+                return null
+            }
 
             val searchResult = response.parsedSafe<TMDBSearchResponse>() ?: return null
+            
             val result = searchResult.results.firstOrNull() ?: return null
-
+            
             val details = getTMDBDetails(result.id, isTv) ?: return null
 
             val allActors = details.credits?.cast?.take(15)?.mapNotNull { actor ->
@@ -467,12 +524,15 @@ class CineAgora : MainAPI() {
             } else {
                 emptyMap()
             }
-
-            return TMDBInfo(
+            
+            TMDBInfo(
                 id = result.id,
                 title = if (isTv) result.name else result.title,
-                year = if (isTv) result.first_air_date?.substring(0, 4)?.toIntOrNull()
-                      else result.release_date?.substring(0, 4)?.toIntOrNull(),
+                year = if (isTv) {
+                    result.first_air_date?.substring(0, 4)?.toIntOrNull()
+                } else {
+                    result.release_date?.substring(0, 4)?.toIntOrNull()
+                },
                 posterUrl = result.poster_path?.let { "$tmdbImageUrl/w500$it" },
                 backdropUrl = details.backdrop_path?.let { "$tmdbImageUrl/original$it" },
                 overview = details.overview,
@@ -484,20 +544,25 @@ class CineAgora : MainAPI() {
                 rating = details.vote_average?.takeIf { it > 0 }
             )
         } catch (e: Exception) {
-            return null
+            e.printStackTrace()
+            null
         }
     }
 
     private suspend fun getTMDBAllSeasons(seriesId: Int): Map<Int, List<TMDBEpisode>> {
-        try {
+        return try {
             val headers = mapOf(
                 "Authorization" to "Bearer $TMDB_ACCESS_TOKEN",
                 "accept" to "application/json"
             )
 
             val seriesDetailsUrl = "https://api.themoviedb.org/3/tv/$seriesId?api_key=$TMDB_API_KEY&language=pt-BR"
+            
             val seriesResponse = app.get(seriesDetailsUrl, headers = headers, timeout = 10_000)
-            if (seriesResponse.code != 200) return emptyMap()
+
+            if (seriesResponse.code != 200) {
+                return emptyMap()
+            }
 
             val seriesDetails = seriesResponse.parsedSafe<TMDBTVDetailsResponse>() ?: return emptyMap()
 
@@ -506,6 +571,7 @@ class CineAgora : MainAPI() {
             for (season in seriesDetails.seasons) {
                 if (season.season_number > 0) {
                     val seasonNumber = season.season_number
+
                     val seasonUrl = "https://api.themoviedb.org/3/tv/$seriesId/season/$seasonNumber?api_key=$TMDB_API_KEY&language=pt-BR"
                     val seasonResponse = app.get(seasonUrl, headers = headers, timeout = 10_000)
 
@@ -518,14 +584,15 @@ class CineAgora : MainAPI() {
                 }
             }
 
-            return seasonsEpisodes
+            seasonsEpisodes
         } catch (e: Exception) {
-            return emptyMap()
+            e.printStackTrace()
+            emptyMap()
         }
     }
 
     private suspend fun getTMDBDetails(id: Int, isTv: Boolean): TMDBDetailsResponse? {
-        try {
+        return try {
             val headers = mapOf(
                 "Authorization" to "Bearer $TMDB_ACCESS_TOKEN",
                 "accept" to "application/json"
@@ -538,49 +605,86 @@ class CineAgora : MainAPI() {
             }
 
             val response = app.get(url, headers = headers, timeout = 10_000)
-            if (response.code != 200) return null
+
+            if (response.code != 200) {
+                return null
+            }
             
-            return response.parsedSafe<TMDBDetailsResponse>()
+            response.parsedSafe<TMDBDetailsResponse>()
         } catch (e: Exception) {
-            return null
+            e.printStackTrace()
+            null
         }
     }
 
     private fun getHighQualityTrailer(videos: List<TMDBVideo>?): String? {
-        if (videos.isNullOrEmpty()) return null
+        if (videos.isNullOrEmpty()) {
+            return null
+        }
         
         val trailerInfo = videos.mapNotNull { video ->
             when {
-                video.site == "YouTube" && video.type == "Trailer" && video.official == true -> Triple(video.key, 10, "")
-                video.site == "YouTube" && video.type == "Trailer" -> Triple(video.key, 9, "")
-                video.site == "YouTube" && video.type == "Teaser" && video.official == true -> Triple(video.key, 8, "")
-                video.site == "YouTube" && video.type == "Teaser" -> Triple(video.key, 7, "")
+                video.site == "YouTube" && video.type == "Trailer" && video.official == true -> {
+                    Triple(video.key, 10, "YouTube Trailer Oficial")
+                }
+                video.site == "YouTube" && video.type == "Trailer" -> {
+                    Triple(video.key, 9, "YouTube Trailer")
+                }
+                video.site == "YouTube" && video.type == "Teaser" && video.official == true -> {
+                    Triple(video.key, 8, "YouTube Teaser Oficial")
+                }
+                video.site == "YouTube" && video.type == "Teaser" -> {
+                    Triple(video.key, 7, "YouTube Teaser")
+                }
                 else -> null
             }
-        }.sortedByDescending { it.second }.firstOrNull()
+        }
+        .sortedByDescending { it.second }
+        .firstOrNull()
         
-        return trailerInfo?.let { (key, _, _) -> "https://www.youtube.com/watch?v=$key" }
+        return trailerInfo?.let { (key, _, _) -> 
+            "https://www.youtube.com/watch?v=$key"
+        }
     }
 
     private suspend fun extractSeriesSlugFromPage(doc: org.jsoup.nodes.Document, baseUrl: String): String? {
         val dataLinkElements = doc.select("[data-link*='/tv/']")
+        
         for (element in dataLinkElements) {
             val dataLink = element.attr("data-link")
-            val tvMatch = Regex("""/tv/([^/?]+)""").find(dataLink)
-            if (tvMatch != null) return tvMatch.groupValues[1]
+            val tvPattern = Regex("""/tv/([^/?]+)""")
+            val tvMatch = tvPattern.find(dataLink)
+            if (tvMatch != null) {
+                return tvMatch.groupValues[1]
+            }
         }
-
-        val tvButtons = doc.select("button[data-link*='/tv/'], span[data-link*='/tv/'], a[data-link*='/tv/'], div[data-link*='/tv/']")
+        
+        val tvButtons = doc.select("""
+            button[data-link*='/tv/'], 
+            span[data-link*='/tv/'], 
+            a[data-link*='/tv/'],
+            div[data-link*='/tv/']
+        """.trimIndent())
+        
         for (element in tvButtons) {
             val dataLink = element.attr("data-link")
-            val tvMatch = Regex("""/tv/([^/?]+)""").find(dataLink)
-            if (tvMatch != null) return tvMatch.groupValues[1]
+            val tvPattern = Regex("""/tv/([^/?]+)""")
+            val tvMatch = tvPattern.find(dataLink)
+            if (tvMatch != null) {
+                return tvMatch.groupValues[1]
+            }
         }
-
+        
         val html = doc.html()
         val brplayerRegex = Regex("""watch\.brplayer\.cc/tv/([^"'\s?&]+)""")
         val matches = brplayerRegex.findAll(html).toList()
-        return matches.firstOrNull()?.groupValues?.get(1)
+        
+        val firstMatch = matches.firstOrNull()
+        if (firstMatch != null) {
+            return firstMatch.groupValues[1]
+        }
+        
+        return null
     }
 
     private suspend fun fetchEpisodesFromApi(seriesSlug: String): List<Episode> {
@@ -604,51 +708,80 @@ class CineAgora : MainAPI() {
                 timeout = 30
             )
             
-            if (!response.isSuccessful) return emptyList()
+            if (!response.isSuccessful) {
+                return emptyList()
+            }
             
             val jsonText = response.text
-            if (jsonText.isEmpty() || jsonText == "null") return emptyList()
             
-            val responseMap: Map<String, Any>? = AppUtils.parseJson(jsonText) ?: return emptyList()
-            val seasonsMap = responseMap["seasons"] as? Map<String, List<Map<String, Any>>> ?: return emptyList()
-
+            if (jsonText.isEmpty() || jsonText == "null") {
+                return emptyList()
+            }
+            
+            val responseMap: Map<String, Any>? = AppUtils.parseJson(jsonText)
+            
+            if (responseMap == null) {
+                return emptyList()
+            }
+            
+            val seasonsMap = responseMap["seasons"] as? Map<String, List<Map<String, Any>>>
+            
+            if (seasonsMap == null) {
+                return emptyList()
+            }
+            
             val episodes = mutableListOf<Episode>()
             
             seasonsMap.forEach { (seasonStr, episodeList) ->
                 val seasonNum = seasonStr.toIntOrNull() ?: 1
                 
                 episodeList.forEach { epMap ->
-                    val videoSlug = epMap["video_slug"] as? String ?: return@forEach
-                    val epNumberStr = epMap["episode_number"] as? String
-                    val epTitleRaw = epMap["episode_title"] as? String
-                    
-                    val epNumber = epNumberStr?.toIntOrNull() ?: 1
-                    val episodeTitle = cleanEpisodeTitle(epTitleRaw, seasonNum, epNumber)
-                    
-                    val episodeUrl = "https://watch.brstream.cc/watch/$videoSlug?ref=&d=null"
-                    
-                    episodes.add(
-                        newEpisode(episodeUrl) {
-                            name = episodeTitle
-                            season = seasonNum
-                            episode = epNumber
-                            description = "Temporada $seasonNum • Episódio $epNumber"
-                        }
-                    )
+                    try {
+                        val videoSlug = epMap["video_slug"] as? String ?: return@forEach
+                        val epNumberStr = epMap["episode_number"] as? String
+                        val epTitleRaw = epMap["episode_title"] as? String
+                        
+                        val epNumber = epNumberStr?.toIntOrNull() ?: 1
+                        
+                        val episodeTitle = cleanEpisodeTitle(epTitleRaw, seasonNum, epNumber)
+                        
+                        val episodeUrl = "https://watch.brstream.cc/watch/$videoSlug?ref=&d=null"
+                        
+                        episodes.add(
+                            newEpisode(episodeUrl) {
+                                name = episodeTitle
+                                season = seasonNum
+                                episode = epNumber
+                                description = "Temporada $seasonNum • Episódio $epNumber"
+                            }
+                        )
+                        
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                    }
                 }
             }
             
             return episodes.sortedWith(compareBy({ it.season }, { it.episode }))
+            
         } catch (e: Exception) {
+            e.printStackTrace()
             return emptyList()
         }
     }
 
     private fun cleanEpisodeTitle(rawTitle: String?, seasonNum: Int, episodeNum: Int): String {
-        if (rawTitle.isNullOrBlank()) return "Episódio $episodeNum"
+        if (rawTitle.isNullOrBlank()) {
+            return "Episódio $episodeNum"
+        }
         
         val cleanTitle = rawTitle.trim()
-        val decodedTitle = try { java.net.URLDecoder.decode(cleanTitle, "UTF-8") } catch (e: Exception) { cleanTitle }
+        
+        val decodedTitle = try {
+            java.net.URLDecoder.decode(cleanTitle, "UTF-8")
+        } catch (e: Exception) {
+            cleanTitle
+        }
         
         val patterns = listOf(
             Regex("""S\d+E\d+\s*(.+?)(?:\.mkv|\.mp4|\.avi)?$""", RegexOption.IGNORE_CASE),
@@ -661,16 +794,32 @@ class CineAgora : MainAPI() {
             val match = pattern.find(decodedTitle)
             if (match != null && match.groupValues.size > 1) {
                 val extracted = match.groupValues[1].trim()
-                if (extracted.isNotBlank() && extracted.length > 2) return extracted
+                if (extracted.isNotBlank() && extracted.length > 2) {
+                    return extracted
+                }
             }
         }
         
-        return if (decodedTitle != cleanTitle && decodedTitle.isNotBlank()) decodedTitle
-               else "Temporada $seasonNum Episódio $episodeNum"
+        if (decodedTitle != cleanTitle && decodedTitle.isNotBlank()) {
+            return decodedTitle
+        }
+        
+        return "Temporada $seasonNum Episódio $episodeNum"
     }
 
     private suspend fun extractEpisodes(doc: org.jsoup.nodes.Document, baseUrl: String): List<Episode> {
-        val seriesSlug = extractSeriesSlugFromPage(doc, baseUrl) ?: return listOf(
+        val seriesSlug = extractSeriesSlugFromPage(doc, baseUrl)
+        
+        if (seriesSlug != null) {
+            val apiEpisodes = fetchEpisodesFromApi(seriesSlug)
+            
+            if (apiEpisodes.isNotEmpty()) {
+                return apiEpisodes.sortedWith(compareBy({ it.season }, { it.episode }))
+            }
+        }
+        
+        val episodes = mutableListOf<Episode>()
+        episodes.add(
             newEpisode(baseUrl) {
                 name = "Episódio 1"
                 season = 1
@@ -678,69 +827,89 @@ class CineAgora : MainAPI() {
             }
         )
         
-        val apiEpisodes = fetchEpisodesFromApi(seriesSlug)
-        return if (apiEpisodes.isNotEmpty()) apiEpisodes else listOf(
-            newEpisode(baseUrl) {
-                name = "Episódio 1"
-                season = 1
-                episode = 1
-            }
-        )
+        return episodes
     }
 
     private suspend fun enrichEpisodesWithTMDBInfo(
         episodes: List<Episode>,
         tmdbInfo: TMDBInfo?
     ): List<Episode> {
-        if (tmdbInfo == null || tmdbInfo.seasonsEpisodes.isEmpty()) return episodes
-
+        if (tmdbInfo == null || tmdbInfo.seasonsEpisodes.isEmpty()) {
+            return episodes
+        }
+        
         return episodes.map { originalEpisode ->
-            val season = originalEpisode.season ?: 1
-            val episodeNum = originalEpisode.episode ?: 1
-            
-            val tmdbEpisode = tmdbInfo.seasonsEpisodes[season]?.find { it.episode_number == episodeNum }
-                ?: return@map originalEpisode
-
-            val descriptionWithDuration = buildDescriptionWithDuration(
-                tmdbEpisode.overview,
-                tmdbEpisode.runtime
-            )
-
-            newEpisode(originalEpisode.data) {
-                name = tmdbEpisode.name
-                season = season
-                episode = episodeNum
-                posterUrl = tmdbEpisode.still_path?.let { "$tmdbImageUrl/w300$it" }
-                description = descriptionWithDuration
+            try {
+                val season = originalEpisode.season ?: 1
+                val episodeNum = originalEpisode.episode ?: 1
                 
-                tmdbEpisode.air_date?.let { airDate ->
-                    try {
-                        val dateFormatter = SimpleDateFormat("yyyy-MM-dd")
-                        val date = dateFormatter.parse(airDate)
-                        this.date = date.time
-                    } catch (_: Exception) {}
+                val tmdbEpisode = findTMDBEpisode(tmdbInfo, season, episodeNum)
+                
+                if (tmdbEpisode != null) {
+                    val descriptionWithDuration = buildDescriptionWithDuration(
+                        tmdbEpisode.overview,
+                        tmdbEpisode.runtime
+                    )
+                    
+                    newEpisode(originalEpisode.data) {
+                        this.name = tmdbEpisode.name
+                        this.season = season
+                        this.episode = episodeNum
+                        this.posterUrl = tmdbEpisode.still_path?.let { "$tmdbImageUrl/w300$it" }
+                        this.description = descriptionWithDuration
+                        
+                        tmdbEpisode.air_date?.let { airDate ->
+                            try {
+                                val dateFormatter = SimpleDateFormat("yyyy-MM-dd")
+                                val date = dateFormatter.parse(airDate)
+                                this.date = date.time
+                            } catch (e: Exception) {
+                                e.printStackTrace()
+                            }
+                        }
+                    }
+                } else {
+                    originalEpisode
                 }
+            } catch (e: Exception) {
+                originalEpisode
             }
         }
     }
     
+    private fun findTMDBEpisode(tmdbInfo: TMDBInfo?, season: Int, episode: Int): TMDBEpisode? {
+        if (tmdbInfo == null) return null
+
+        val episodes = tmdbInfo.seasonsEpisodes[season] ?: return null
+        return episodes.find { it.episode_number == episode }
+    }
+
     private fun buildDescriptionWithDuration(overview: String?, runtime: Int?): String? {
         return when {
-            overview != null && runtime != null && runtime > 0 -> "$overview\n\nDuração: $runtime min"
-            overview != null -> overview
-            runtime != null && runtime > 0 -> "Duração: $runtime min"
+            overview != null && runtime != null && runtime > 0 -> {
+                "$overview\n\nDuração: $runtime min"
+            }
+            overview != null -> {
+                overview
+            }
+            runtime != null && runtime > 0 -> {
+                "Duração: $runtime min"
+            }
             else -> null
         }
     }
 
     override suspend fun load(url: String): LoadResponse? {
         val doc = try {
-            app.get(url).document
+            val response = app.get(url)
+            response.document
         } catch (e: Exception) {
+            e.printStackTrace()
             return null
         }
-
+        
         val bannerUrl = extractBannerUrl(doc)
+        
         val posterUrl = doc.selectFirst("meta[property='og:image']")?.attr("content")?.let { fixUrl(it) }
             ?: doc.selectFirst("#info--box .cover-img")?.attr("src")?.let { fixUrl(it) }
             ?: bannerUrl
@@ -774,32 +943,33 @@ class CineAgora : MainAPI() {
         } else {
             url
         }
-
+        
         return if (isSerie) {
-            createSeriesLoadResponse(
-                tmdbInfo, url, enrichedEpisodes, recommendations,
-                plotFromSite, genresFromSite, bannerUrl, posterUrl, yearFromSite
-            )
+            createSeriesLoadResponse(tmdbInfo, url, enrichedEpisodes, recommendations, plotFromSite, genresFromSite, bannerUrl, posterUrl, yearFromSite)
         } else {
-            createMovieLoadResponse(
-                tmdbInfo, playerUrl, recommendations,
-                plotFromSite, genresFromSite, bannerUrl, posterUrl, yearFromSite
-            )
+            createMovieLoadResponse(tmdbInfo, playerUrl, recommendations, plotFromSite, genresFromSite, bannerUrl, posterUrl, yearFromSite)
         }
     }
-
-    private fun findPlayerUrl(document: org.jsoup.nodes.Document): String? {
-        val iframe = document.selectFirst("iframe[src*='watch.brplayer.cc']") ?: return null
-        val src = iframe.attr("src")
         
-        val watchMatch = Regex("""/watch/([^/?]+)""").find(src) ?: return null
-        val videoSlug = watchMatch.groupValues[1]
-        return "https://watch.brplayer.cc/watch/$videoSlug"
+    private fun findPlayerUrl(document: org.jsoup.nodes.Document): String? {
+        val iframe = document.selectFirst("iframe[src*='watch.brplayer.cc']")
+        if (iframe != null) {
+            val src = iframe.attr("src")
+            val watchPattern = Regex("""/watch/([^/?]+)""")
+            val watchMatch = watchPattern.find(src)
+            if (watchMatch != null) {
+                val videoSlug = watchMatch.groupValues[1]
+                return "https://watch.brplayer.cc/watch/$videoSlug"
+            }
+        }
+        return null
     }
 
     private fun extractRecommendationsFromSite(document: org.jsoup.nodes.Document): List<SearchResponse> {
         return document.select(".item, .item-relative .item, .poster, .movie-item, .serie-item")
-            .mapNotNull { it.toSearchResult() }
+            .mapNotNull { element ->
+                element.toSearchResult()
+            }
             .take(10)
     }
 
@@ -821,7 +991,7 @@ class CineAgora : MainAPI() {
         val backdropUrl = tmdbInfo?.backdropUrl ?: bannerUrlFromSite
         val genres = tmdbInfo?.genres ?: genresFromSite
         val rating = tmdbInfo?.rating?.let { Score.from10(it) }
-
+        
         return newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes) {
             this.posterUrl = posterUrl
             this.backgroundPosterUrl = backdropUrl
@@ -831,8 +1001,13 @@ class CineAgora : MainAPI() {
             this.score = rating
             this.recommendations = siteRecommendations.takeIf { it.isNotEmpty() }
             
-            tmdbInfo?.actors?.let { addActors(it) }
-            tmdbInfo?.youtubeTrailer?.let { addTrailer(it) }
+            tmdbInfo?.actors?.let { actors ->
+                addActors(actors)
+            }
+            
+            tmdbInfo?.youtubeTrailer?.let { trailerUrl ->
+                addTrailer(trailerUrl)
+            }
         }
     }
 
@@ -854,7 +1029,7 @@ class CineAgora : MainAPI() {
         val genres = tmdbInfo?.genres ?: genresFromSite
         val duration = tmdbInfo?.duration
         val rating = tmdbInfo?.rating?.let { Score.from10(it) }
-
+        
         return newMovieLoadResponse(title, playerUrl, TvType.Movie, playerUrl) {
             this.posterUrl = posterUrl
             this.backgroundPosterUrl = backdropUrl
@@ -865,8 +1040,13 @@ class CineAgora : MainAPI() {
             this.score = rating
             this.recommendations = siteRecommendations.takeIf { it.isNotEmpty() }
             
-            tmdbInfo?.actors?.let { addActors(it) }
-            tmdbInfo?.youtubeTrailer?.let { addTrailer(it) }
+            tmdbInfo?.actors?.let { actors ->
+                addActors(actors)
+            }
+            
+            tmdbInfo?.youtubeTrailer?.let { trailerUrl ->
+                addTrailer(trailerUrl)
+            }
         }
     }
 
@@ -876,7 +1056,10 @@ class CineAgora : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        if (data.contains("youtube.com") || data.contains("youtu.be")) return false
+        if (data.contains("youtube.com") || data.contains("youtu.be")) {
+            return false
+        }
+        
         return CineAgoraExtractor.extractVideoLinks(data, name, callback)
     }
 
