@@ -11,6 +11,10 @@ import org.jsoup.nodes.Element
 object CineAgoraExtractor {
     private const val BASE_PLAYER = "https://watch.brplayer.cc"
     private const val REFERER_CINEAGORA = "https://cineagora.net/"
+    
+    // Novo: Adicionar padrão de URL base para os links de série/filme
+    private const val BASE_TV_PATH = "/tv/"
+    private const val BASE_MOVIE_PATH = "/movie/"
 
     suspend fun extractVideoLinks(
         url: String,
@@ -46,8 +50,31 @@ object CineAgoraExtractor {
             val html = app.get(cineAgoraUrl, referer = REFERER_CINEAGORA).text
             println("[CineAgora] Página carregada: ${html.length} caracteres")
 
-            // Método 1: Extrair todas as URLs que contenham watch.brplayer.cc
-            println("[CineAgora] Método 1: Procurando todas as URLs do player...")
+            // **NOVO MÉTODO 1: Procurar por padrões específicos de série/filme (/tv/slug ou /movie/slug)**
+            println("[CineAgora] Método 1: Procurando padrões /tv/ e /movie/...")
+            val mediaSlugs = extractMediaSlugs(html)
+            println("[CineAgora] Encontrados ${mediaSlugs.size} slugs de mídia")
+            
+            for ((index, (slug, type)) in mediaSlugs.withIndex()) {
+                println("[CineAgora] Processando slug $index: $slug ($type)")
+                
+                // Construir URL do player baseado no tipo (tv ou movie)
+                val playerUrl = if (type == "tv") {
+                    "$BASE_PLAYER${BASE_TV_PATH}$slug"
+                } else {
+                    "$BASE_PLAYER${BASE_MOVIE_PATH}$slug"
+                }
+                
+                println("[CineAgora] URL do player gerada: $playerUrl")
+                
+                if (extractHlsFromWatchPage(playerUrl, name, callback)) {
+                    println("[CineAgora] Sucesso com slug $slug ($type)")
+                    return true
+                }
+            }
+            
+            // Método 2: Extrair todas as URLs que contenham watch.brplayer.cc
+            println("[CineAgora] Método 2: Procurando todas as URLs do player...")
             val allUrls = extractAllUrlsFromHtml(html)
             
             println("[CineAgora] Encontradas ${allUrls.size} URLs no total")
@@ -76,8 +103,8 @@ object CineAgoraExtractor {
                 }
             }
             
-            // Método 2: Procurar por iframes genéricos
-            println("[CineAgora] Método 2: Procurando iframes genéricos...")
+            // Método 3: Procurar por iframes genéricos
+            println("[CineAgora] Método 3: Procurando iframes genéricos...")
             val iframeUrls = extractIframeUrls(html)
             println("[CineAgora] Iframes encontrados: ${iframeUrls.size}")
             
@@ -89,8 +116,8 @@ object CineAgoraExtractor {
                 }
             }
             
-            // Método 3: Procurar por URLs em atributos data-src, src, href, etc.
-            println("[CineAgora] Método 3: Procurando URLs em atributos...")
+            // Método 4: Procurar por URLs em atributos data-src, src, href, etc.
+            println("[CineAgora] Método 4: Procurando URLs em atributos...")
             val attributeUrls = extractUrlsFromAttributes(html)
             println("[CineAgora] URLs em atributos: ${attributeUrls.size}")
             
@@ -102,8 +129,8 @@ object CineAgoraExtractor {
                 }
             }
             
-            // Método 4: Procurar por padrões específicos de streaming
-            println("[CineAgora] Método 4: Procurando padrões de streaming...")
+            // Método 5: Procurar por padrões específicos de streaming
+            println("[CineAgora] Método 5: Procurando padrões de streaming...")
             val streamingUrls = extractStreamingUrls(html)
             println("[CineAgora] URLs de streaming: ${streamingUrls.size}")
             
@@ -122,6 +149,97 @@ object CineAgoraExtractor {
             e.printStackTrace()
             return false
         }
+    }
+
+    // **NOVO MÉTODO: Extrair slugs de mídia (/tv/slug ou /movie/slug)**
+    private fun extractMediaSlugs(html: String): List<Pair<String, String>> {
+        val mediaSlugs = mutableListOf<Pair<String, String>>()
+        
+        // Padrões para capturar URLs do tipo /tv/slug ou /movie/slug
+        val patterns = listOf(
+            // Em atributos data-link (que vimos no exemplo: data-link=".../tv/ironheart")
+            """data-link=["']([^"']*/(?:tv|movie)/([^"']+?))["']""",
+            
+            // Em URLs completas
+            """["'](https?://[^"']+/(?:tv|movie)/([^"']+?))["']""",
+            
+            // Em URLs relativas
+            """["'](/(?:tv|movie)/([^"']+?))["']""",
+            
+            // Em atributos src
+            """src=["']([^"']*/(?:tv|movie)/([^"']+?))["']""",
+            
+            // Em atributos href
+            """href=["']([^"']*/(?:tv|movie)/([^"']+?))["']""",
+            
+            // Em iframes
+            """<iframe[^>]+src=["']([^"']*/(?:tv|movie)/([^"']+?))["'][^>]*>""",
+            
+            // Em elementos de player
+            """["']player["'][^}]+["']url["']\s*:\s*["']([^"']*/(?:tv|movie)/([^"']+?))["']""",
+            
+            // Em scripts JSON
+            """["'](?:url|src|link)["']\s*:\s*["']([^"']*/(?:tv|movie)/([^"']+?))["']"""
+        )
+        
+        for (pattern in patterns) {
+            val regex = Regex(pattern, RegexOption.IGNORE_CASE)
+            val matches = regex.findAll(html)
+            
+            matches.forEach { match ->
+                val fullUrl = match.groupValues[1]
+                val slug = match.groupValues[2]
+                
+                if (slug.isNotBlank()) {
+                    // Determinar tipo (tv ou movie)
+                    val type = if (fullUrl.contains("/tv/")) "tv" else "movie"
+                    
+                    val pair = Pair(slug, type)
+                    if (!mediaSlugs.contains(pair)) {
+                        println("[CineAgora] Slug encontrado: $slug ($type) - URL: ${fullUrl.take(50)}...")
+                        mediaSlugs.add(pair)
+                    }
+                }
+            }
+        }
+        
+        // **EXTRA: Procurar por slugs em texto JavaScript/JSON**
+        // Muitas vezes o slug aparece em variáveis JavaScript
+        val jsPatterns = listOf(
+            """["']slug["']\s*:\s*["']([^"']+?)["']""",
+            """["']name["']\s*:\s*["']([^"']+?)["']""",
+            """["']id["']\s*:\s*["']([^"']+?)["']""",
+            """["']title["']\s*:\s*["']([^"']+?)["']""",
+            """/(?:tv|movie)/([^/"']+?)["']"""
+        )
+        
+        // Extrair slugs que pareçam ser de mídia (sem espaços, geralmente letras minúsculas com hífens)
+        val potentialSlugs = mutableSetOf<String>()
+        
+        for (pattern in jsPatterns) {
+            val regex = Regex(pattern, RegexOption.IGNORE_CASE)
+            val matches = regex.findAll(html)
+            
+            matches.forEach { match ->
+                val value = match.groupValues[1]
+                // Filtrar valores que pareçam ser slugs (ex: ironheart, coracao-de-ferro, etc.)
+                if (value.matches(Regex("^[a-z0-9\\-]+$")) && value.length in 2..50) {
+                    potentialSlugs.add(value)
+                }
+            }
+        }
+        
+        // Adicionar slugs potenciais (tentaremos tanto /tv/ quanto /movie/)
+        potentialSlugs.forEach { slug ->
+            if (!mediaSlugs.any { it.first == slug }) {
+                // Tentar primeiro como série (/tv/)
+                mediaSlugs.add(Pair(slug, "tv"))
+                // Também tentar como filme (/movie/)
+                mediaSlugs.add(Pair(slug, "movie"))
+            }
+        }
+        
+        return mediaSlugs.distinct()
     }
 
     private fun extractAllUrlsFromHtml(html: String): List<String> {
@@ -275,6 +393,7 @@ object CineAgoraExtractor {
         return urls.distinct()
     }
 
+    // O restante do código permanece o mesmo...
     private suspend fun extractHlsFromWatchPage(
         watchUrl: String,
         name: String,
