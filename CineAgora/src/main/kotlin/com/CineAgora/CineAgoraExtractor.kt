@@ -152,95 +152,95 @@ object CineAgoraExtractor {
     }
 }
     // **NOVO MÉTODO: Extrair slugs de mídia (/tv/slug ou /movie/slug)**
-    private fun extractMediaSlugs(html: String): List<Pair<String, String>> {
-        val mediaSlugs = mutableListOf<Pair<String, String>>()
+private fun extractMediaSlugs(html: String): List<Pair<String, String>> {
+    val mediaSlugs = mutableListOf<Pair<String, String>>()
+    
+    // Padrões para capturar URLs do tipo /tv/slug ou /movie/slug
+    val patterns = listOf(
+        // Em atributos data-link (que vimos no exemplo: data-link=".../tv/ironheart")
+        """data-link=["']([^"']*/(?:tv|movie)/([^"']+?))["']""",
         
-        // Padrões para capturar URLs do tipo /tv/slug ou /movie/slug
-        val patterns = listOf(
-            // Em atributos data-link (que vimos no exemplo: data-link=".../tv/ironheart")
-            """data-link=["']([^"']*/(?:tv|movie)/([^"']+?))["']""",
-            
-            // Em URLs completas
-            """["'](https?://[^"']+/(?:tv|movie)/([^"']+?))["']""",
-            
-            // Em URLs relativas
-            """["'](/(?:tv|movie)/([^"']+?))["']""",
-            
-            // Em atributos src
-            """src=["']([^"']*/(?:tv|movie)/([^"']+?))["']""",
-            
-            // Em atributos href
-            """href=["']([^"']*/(?:tv|movie)/([^"']+?))["']""",
-            
-            // Em iframes
-            """<iframe[^>]+src=["']([^"']*/(?:tv|movie)/([^"']+?))["'][^>]*>""",
-            
-            // Em elementos de player
-            """["']player["'][^}]+["']url["']\s*:\s*["']([^"']*/(?:tv|movie)/([^"']+?))["']""",
-            
-            // Em scripts JSON
-            """["'](?:url|src|link)["']\s*:\s*["']([^"']*/(?:tv|movie)/([^"']+?))["']"""
-        )
+        // Em URLs completas
+        """["'](https?://[^"']+/(?:tv|movie)/([^"']+?))["']""",
         
-        for (pattern in patterns) {
-            val regex = Regex(pattern, RegexOption.IGNORE_CASE)
-            val matches = regex.findAll(html)
+        // Em URLs relativas
+        """["'](/(?:tv|movie)/([^"']+?))["']""",
+        
+        // Em atributos src
+        """src=["']([^"']*/(?:tv|movie)/([^"']+?))["']""",
+        
+        // Em atributos href
+        """href=["']([^"']*/(?:tv|movie)/([^"']+?))["']""",
+        
+        // Em iframes
+        """<iframe[^>]+src=["']([^"']*/(?:tv|movie)/([^"']+?))["'][^>]*>""",
+        
+        // Em elementos de player
+        """["']player["'][^}]+["']url["']\s*:\s*["']([^"']*/(?:tv|movie)/([^"']+?))["']""",
+        
+        // Em scripts JSON
+        """["'](?:url|src|link)["']\s*:\s*["']([^"']*/(?:tv|movie)/([^"']+?))["']"""
+    )
+    
+    patterns.forEach { pattern ->
+        val regex = Regex(pattern, RegexOption.IGNORE_CASE)
+        val matches = regex.findAll(html)
+        
+        matches.forEach { match ->
+            val fullUrl = match.groupValues[1]
+            val slug = match.groupValues[2]
             
-            matches.forEach { match ->
-                val fullUrl = match.groupValues[1]
-                val slug = match.groupValues[2]
+            if (slug.isNotBlank()) {
+                // Determinar tipo (tv ou movie)
+                val type = if (fullUrl.contains("/tv/")) "tv" else "movie"
                 
-                if (slug.isNotBlank()) {
-                    // Determinar tipo (tv ou movie)
-                    val type = if (fullUrl.contains("/tv/")) "tv" else "movie"
-                    
-                    val pair = Pair(slug, type)
-                    if (!mediaSlugs.contains(pair)) {
-                        println("[CineAgora] Slug encontrado: $slug ($type) - URL: ${fullUrl.take(50)}...")
-                        mediaSlugs.add(pair)
-                    }
+                val pair = slug to type
+                if (!mediaSlugs.contains(pair)) {
+                    println("[CineAgora] Slug encontrado: $slug ($type) - URL: ${fullUrl.take(50)}...")
+                    mediaSlugs.add(pair)
                 }
             }
         }
-        
-        // **EXTRA: Procurar por slugs em texto JavaScript/JSON**
-        // Muitas vezes o slug aparece em variáveis JavaScript
-        val jsPatterns = listOf(
-            """["']slug["']\s*:\s*["']([^"']+?)["']""",
-            """["']name["']\s*:\s*["']([^"']+?)["']""",
-            """["']id["']\s*:\s*["']([^"']+?)["']""",
-            """["']title["']\s*:\s*["']([^"']+?)["']""",
-            """/(?:tv|movie)/([^/"']+?)["']"""
-        )
-        
-        // Extrair slugs que pareçam ser de mídia (sem espaços, geralmente letras minúsculas com hífens)
-        val potentialSlugs = mutableSetOf<String>()
-        
-        for (pattern in jsPatterns) {
-            val regex = Regex(pattern, RegexOption.IGNORE_CASE)
-            val matches = regex.findAll(html)
-            
-            matches.forEach { match ->
-                val value = match.groupValues[1]
-                // Filtrar valores que pareçam ser slugs (ex: ironheart, coracao-de-ferro, etc.)
-                if (value.matches(Regex("^[a-z0-9\\-]+$")) && value.length in 2..50) {
-                    potentialSlugs.add(value)
-                }
-            }
-        }
-        
-        // Adicionar slugs potenciais (tentaremos tanto /tv/ quanto /movie/)
-        potentialSlugs.forEach { slug ->
-            if (!mediaSlugs.any { it.first == slug }) {
-                // Tentar primeiro como série (/tv/)
-                mediaSlugs.add(Pair(slug, "tv"))
-                // Também tentar como filme (/movie/)
-                mediaSlugs.add(Pair(slug, "movie"))
-            }
-        }
-        
-        return mediaSlugs.distinct()
     }
+    
+    // **EXTRA: Procurar por slugs em texto JavaScript/JSON**
+    // Muitas vezes o slug aparece em variáveis JavaScript
+    val jsPatterns = listOf(
+        """["']slug["']\s*:\s*["']([^"']+?)["']""",
+        """["']name["']\s*:\s*["']([^"']+?)["']""",
+        """["']id["']\s*:\s*["']([^"']+?)["']""",
+        """["']title["']\s*:\s*["']([^"']+?)["']""",
+        """/(?:tv|movie)/([^/"']+?)["']"""
+    )
+    
+    // Extrair slugs que pareçam ser de mídia (sem espaços, geralmente letras minúsculas com hífens)
+    val potentialSlugs = mutableSetOf<String>()
+    
+    jsPatterns.forEach { pattern ->
+        val regex = Regex(pattern, RegexOption.IGNORE_CASE)
+        val matches = regex.findAll(html)
+        
+        matches.forEach { match ->
+            val value = match.groupValues[1]
+            // Filtrar valores que pareçam ser slugs (ex: ironheart, coracao-de-ferro, etc.)
+            if (value.matches(Regex("^[a-z0-9\\-]+$")) && value.length in 2..50) {
+                potentialSlugs.add(value)
+            }
+        }
+    }
+    
+    // Adicionar slugs potenciais (tentaremos tanto /tv/ quanto /movie/)
+    potentialSlugs.forEach { slug ->
+        if (!mediaSlugs.any { it.first == slug }) {
+            // Tentar primeiro como série (/tv/)
+            mediaSlugs.add(slug to "tv")
+            // Também tentar como filme (/movie/)
+            mediaSlugs.add(slug to "movie")
+        }
+    }
+    
+    return mediaSlugs.distinct()
+}
 
     private fun extractAllUrlsFromHtml(html: String): List<String> {
         val urls = mutableListOf<String>()
