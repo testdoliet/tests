@@ -198,11 +198,11 @@ object CineAgoraExtractor {
             // **EXTRAIR OS PARÂMETROS DO HTML**
             val videoParams = extractVideoParams(html)
             if (videoParams != null) {
-                val (uid, md5, videoId, status) = videoParams
-                println("[CineAgoraExtractor] 🔗 ✅ Dados extraídos - UID: $uid, MD5: $md5, VideoID: $videoId, Status: $status")
+                // ACESSE AS PROPRIEDADES DIRETAMENTE - NÃO USE DESTRUTURAÇÃO
+                println("[CineAgoraExtractor] 🔗 ✅ Dados extraídos - UID: ${videoParams.uid}, MD5: ${videoParams.md5}, VideoID: ${videoParams.id}, Status: ${videoParams.status}")
                 
                 // Construir URL do HLS
-                val masterUrl = "$BASE_PLAYER/m3u8/$uid/$md5/master.txt?s=1&id=$videoId&cache=$status"
+                val masterUrl = "$BASE_PLAYER/m3u8/${videoParams.uid}/${videoParams.md5}/master.txt?s=1&id=${videoParams.id}&cache=${videoParams.status}"
                 println("[CineAgoraExtractor] 🔗 Master URL: $masterUrl")
                 
                 // Headers para a requisição do HLS
@@ -282,7 +282,7 @@ object CineAgoraExtractor {
     }
 
     // **MÉTODO: Extrair parâmetros do vídeo do HTML**
-    private fun extractVideoParams(html: String): Triple<String, String, String, String>? {
+    private fun extractVideoParams(html: String): VideoParams? {
         // Padrão 1: Buscar por var video = { ... }
         val videoPattern = """var\s+video\s*=\s*\{[^}]+\}"""
         val videoMatch = Regex(videoPattern, RegexOption.DOT_MATCHES_ALL).find(html)
@@ -298,7 +298,7 @@ object CineAgoraExtractor {
             val status = extractFromJson(videoJson, "status") ?: "1"
             
             if (uid != null && md5 != null && id != null) {
-                return Triple(uid, md5, id, status)
+                return VideoParams(uid, md5, id, status)
             }
         }
         
@@ -309,7 +309,7 @@ object CineAgoraExtractor {
         val status = extractFromRegex(html, """"status"\s*:\s*"([^"]+)"""") ?: "1"
         
         if (uid != null && md5 != null && id != null) {
-            return Triple(uid, md5, id, status)
+            return VideoParams(uid, md5, id, status)
         }
         
         return null
@@ -352,4 +352,12 @@ object CineAgoraExtractor {
         
         return null
     }
+
+    // **Data class para armazenar os parâmetros do vídeo**
+    data class VideoParams(
+        val uid: String,
+        val md5: String,
+        val id: String,
+        val status: String
+    )
 }
