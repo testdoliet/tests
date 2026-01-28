@@ -19,19 +19,13 @@ object CineAgoraExtractor {
     ): Boolean {
         println("[CineAgoraExtractor] 🔗 Iniciando extração para: $name - URL: $url")
         
-        return when {
-            url.contains("watch.brstream.cc") -> {
-                println("[CineAgoraExtractor] 🔗 URL direta do player")
-                extractHlsFromWatchPage(url, name, callback)
-            }
-            url.contains("cineagora.net") -> {
-                println("[CineAgoraExtractor] 🔗 URL do CineAgora, extraindo da página")
-                extractFromCineAgoraPage(url, name, callback)
-            }
-            else -> {
-                println("[CineAgoraExtractor] 🔗 URL não reconhecida, tentando extração direta")
-                extractHlsFromWatchPage(url, name, callback)
-            }
+        // Se já é uma URL de watch com video_slug, extrair direto
+        return if (url.contains("/watch/") && url.contains("brstream.cc")) {
+            println("[CineAgoraExtractor] 🔗 URL direta do watch page")
+            extractHlsFromWatchPage(url, name, callback)
+        } else {
+            // Para outros tipos de URL, extrair da página
+            extractFromCineAgoraPage(url, name, callback)
         }
     }
 
@@ -46,97 +40,86 @@ object CineAgoraExtractor {
             val html = app.get(cineAgoraUrl, referer = REFERER_CINEAGORA).text
             println("[CineAgoraExtractor] 🔗 Página carregada: ${html.length} caracteres")
 
-            // **MÉTODO 1: Procurar por padrões específicos de série/filme (/tv/slug ou /movie/slug)**
-            println("[CineAgoraExtractor] 🔗 Método 1: Procurando padrões /tv/ e /movie/...")
-            val mediaSlugs = extractMediaSlugs(html)
-            println("[CineAgoraExtractor] 🔗 Encontrados ${mediaSlugs.size} slugs de mídia")
-            
-            mediaSlugs.forEachIndexed { index, (slug, type) ->
-                println("[CineAgoraExtractor] 🔗 Processando slug $index: $slug ($type)")
-                
-                // Construir URL do player baseado no tipo (tv ou movie)
-                val playerUrl = if (type == "tv") {
-                    "$BASE_PLAYER/tv/$slug"
-                } else {
-                    "$BASE_PLAYER/movie/$slug"
-                }
-                
-                println("[CineAgoraExtractor] 🔗 URL do player gerada: $playerUrl")
-                
-                // Extrair video_slug da página da série
-                val videoSlug = extractVideoSlugFromSeriesPage(playerUrl)
-                if (videoSlug != null) {
-                    println("[CineAgoraExtractor] 🔗 Video slug encontrado: $videoSlug")
-                    
-                    // Agora fazemos a requisição para o endpoint /watch/{video_slug}
-                    val watchUrl = "$BASE_PLAYER/watch/$videoSlug?ref=&d=null"
-                    println("[CineAgoraExtractor] 🔗 Watch URL: $watchUrl")
-                    
-                    if (extractHlsFromWatchPage(watchUrl, name, callback)) {
-                        println("[CineAgoraExtractor] 🔗 Sucesso com video slug $videoSlug")
-                        return true
-                    }
-                } else {
-                    // Se não encontrou video_slug, tenta extrair direto da página /tv/slug
-                    if (extractHlsFromWatchPage(playerUrl, name, callback)) {
-                        println("[CineAgoraExtractor] 🔗 Sucesso com slug $slug ($type)")
-                        return true
-                    }
-                }
-            }
-            
-            // **MÉTODO 2: Procurar por iframes específicos**
-            println("[CineAgoraExtractor] 🔗 Método 2: Procurando iframes específicos...")
+            // **MÉTODO 1: Procurar por iframes do brstream**
+            println("[CineAgoraExtractor] 🔗 Método 1: Procurando iframes...")
             val iframePatterns = listOf(
-                """<iframe[^>]*src=["'](https://watch\.brstream\.cc/watch[^"']+)["']""",
-                """<iframe[^>]*src=["'](https://watch\.brstream\.cc/tv/[^"']+)["']""",
-                """src=["'](https://watch\.brstream\.cc/watch[^"']+)["'][^>]*allowfullscreen""",
-                """data-link=["'](https://watch\.brstream\.cc/[^"']+)["']"""
+                """<iframe[^>]*src=["'](https://watch\.brstream\.cc/watch/([^"']+))["']""",
+                """<iframe[^>]*src=["'](https://watch\.brstream\.cc/tv/([^"']+))["']""",
+                """<iframe[^>]*src=["'](https://watch\.brstream\.cc/movie/([^"']+))["']""",
+                """src=["'](https://watch\.brstream\.cc/watch/([^"']+))["'][^>]*allowfullscreen""",
+                """data-link=["'](https://watch\.brstream\.cc/watch/([^"']+))["']""",
+                """data-link=["'](https://watch\.brstream\.cc/tv/([^"']+))["']"""
             )
 
-            iframePatterns.forEachIndexed { patternIndex, pattern ->
+            for ((index, pattern) in iframePatterns.withIndex()) {
                 val match = Regex(pattern).find(html)
                 if (match != null) {
                     var playerUrl = match.groupValues[1]
-                    if (!playerUrl.startsWith("http")) {
-                        playerUrl = BASE_PLAYER + (if (playerUrl.startsWith("/")) "" else "/") + playerUrl
-                    }
-                    println("[CineAgoraExtractor] 🔗 Iframe encontrado (padrão $patternIndex): $playerUrl")
-                    if (extractHlsFromWatchPage(playerUrl, name, callback)) {
-                        return true
+                    val slug = match.groupValues[2]
+                    
+                    println("[CineAgoraExtractor] 🔗 Iframe encontrado (padrão $index): $playerUrl (slug: $slug)")
+                    
+                    // Se for /tv/, precisamos extrair o video_slug da página da série
+                    if (playerUrl.contains("/tv/")) {
+                        println("[CineAgoraExtractor] 🔗 É uma série, extraindo video_slug da página da série")
+                        val videoSlug = extractVideoSlugFromSeriesPage(playerUrl)
+                        if (videoSlug != null) {
+                            val watchUrl = "$BASE_PLAYER/watch/$videoSlug?ref=&d=null"
+                            println("[CineAgoraExtractor] 🔗 Watch URL gerada: $watchUrl")
+                            if (extractHlsFromWatchPage(watchUrl, name, callback)) {
+                                return true
+                            }
+                        }
+                    } else if (playerUrl.contains("/watch/")) {
+                        // Já é URL de watch direta
+                        if (extractHlsFromWatchPage(playerUrl, name, callback)) {
+                            return true
+                        }
                     }
                 }
             }
             
-            // **MÉTODO 3: Procurar todas as URLs do brstream no HTML**
-            println("[CineAgoraExtractor] 🔗 Método 3: Procurando todas as URLs do player...")
-            val fallbackPattern = """https://watch\.brstream\.cc/[^"'\s<>]+"""
+            // **MÉTODO 2: Procurar por todas as URLs do brstream**
+            println("[CineAgoraExtractor] 🔗 Método 2: Procurando todas as URLs do player...")
+            val fallbackPattern = """https://watch\.brstream\.cc/(watch|tv|movie)/([^"'\s<>?&]+)"""
             val allMatches = Regex(fallbackPattern).findAll(html).toList()
             
             if (allMatches.isNotEmpty()) {
                 println("[CineAgoraExtractor] 🔗 Encontradas ${allMatches.size} URLs no total")
                 
-                // Priorizar URLs com /watch
-                val watchUrls = allMatches.map { it.value }.filter { it.contains("/watch") }
-                println("[CineAgoraExtractor] 🔗 URLs com /watch: ${watchUrls.size}")
-                
-                watchUrls.forEachIndexed { index, playerUrl ->
-                    println("[CineAgoraExtractor] 🔗 Tentando URL watch $index: $playerUrl")
-                    if (extractHlsFromWatchPage(playerUrl, name, callback)) {
-                        println("[CineAgoraExtractor] 🔗 Sucesso com URL watch $index")
-                        return true
-                    }
-                }
-                
-                // Se não encontrou com /watch, tentar outras URLs do brstream
-                val brstreamUrls = allMatches.map { it.value }.filter { it.contains("brstream") }
-                println("[CineAgoraExtractor] 🔗 Outras URLs brstream: ${brstreamUrls.size}")
-                
-                brstreamUrls.forEachIndexed { index, playerUrl ->
-                    println("[CineAgoraExtractor] 🔗 Tentando URL brstream $index: $playerUrl")
-                    if (extractHlsFromWatchPage(playerUrl, name, callback)) {
-                        println("[CineAgoraExtractor] 🔗 Sucesso com URL brstream $index")
-                        return true
+                allMatches.forEachIndexed { index, match ->
+                    val pathType = match.groupValues[1] // watch, tv ou movie
+                    val slug = match.groupValues[2]
+                    val playerUrl = match.value
+                    
+                    println("[CineAgoraExtractor] 🔗 URL $index: $playerUrl (tipo: $pathType, slug: $slug)")
+                    
+                    when (pathType) {
+                        "watch" -> {
+                            // Já é URL de watch direta
+                            if (extractHlsFromWatchPage(playerUrl, name, callback)) {
+                                println("[CineAgoraExtractor] 🔗 ✅ Sucesso com URL watch")
+                                return true
+                            }
+                        }
+                        "tv" -> {
+                            // É página da série, precisamos extrair video_slug
+                            val videoSlug = extractVideoSlugFromSeriesPage(playerUrl)
+                            if (videoSlug != null) {
+                                val watchUrl = "$BASE_PLAYER/watch/$videoSlug?ref=&d=null"
+                                if (extractHlsFromWatchPage(watchUrl, name, callback)) {
+                                    println("[CineAgoraExtractor] 🔗 ✅ Sucesso com video_slug da série")
+                                    return true
+                                }
+                            }
+                        }
+                        "movie" -> {
+                            // É filme, talvez precise extrair de forma diferente
+                            if (extractHlsFromWatchPage(playerUrl, name, callback)) {
+                                println("[CineAgoraExtractor] 🔗 ✅ Sucesso com URL de filme")
+                                return true
+                            }
+                        }
                     }
                 }
             }
@@ -150,50 +133,35 @@ object CineAgoraExtractor {
         }
     }
 
-    // **NOVO MÉTODO: Extrair video_slug da página da série (/tv/slug)**
+    // **EXTRAIR VIDEO_SLUG DA PÁGINA DA SÉRIE**
     private suspend fun extractVideoSlugFromSeriesPage(seriesUrl: String): String? {
         println("[CineAgoraExtractor] 🔗 Extraindo video slug da página da série: $seriesUrl")
         
         try {
             val html = app.get(seriesUrl, referer = REFERER_CINEAGORA).text
-            println("[CineAgoraExtractor] 🔗 Página da série carregada: ${html.length} caracteres")
             
-            // Padrão 1: Buscar por variável JavaScript com video_slug
+            // Padrões para encontrar video_slug
             val patterns = listOf(
                 """video_slug["']\s*:\s*["']([^"']+)["']""",
                 """["']slug["']\s*:\s*["']([^"']+)["']""",
                 """/watch/([^"'\s<>/]+)""",
-                """data-link=["']([^"']+)["'].*?video_slug"""
+                """data-link=["']([^"']+)["'].*?video_slug""",
+                """var\s+video_slug\s*=\s*["']([^"']+)["']""",
+                """video_slug\s*=\s*["']([^"']+)["']"""
             )
             
-            patterns.forEach { pattern ->
+            for (pattern in patterns) {
                 val match = Regex(pattern).find(html)
                 if (match != null) {
                     val slug = match.groupValues[1]
                     if (slug.isNotBlank() && slug.matches(Regex("^[A-Z0-9]+$"))) {
-                        println("[CineAgoraExtractor] 🔗 Video slug encontrado (padrão '$pattern'): $slug")
+                        println("[CineAgoraExtractor] 🔗 ✅ Video slug encontrado (padrão '$pattern'): $slug")
                         return slug
                     }
                 }
             }
             
-            // Padrão 2: Buscar por JSON com informações da série
-            val jsonPattern = """\{.*?"seasons".*?\}"""
-            val jsonMatch = Regex(jsonPattern, RegexOption.DOT_MATCHES_ALL).find(html)
-            if (jsonMatch != null) {
-                val jsonText = jsonMatch.value
-                println("[CineAgoraExtractor] 🔗 JSON encontrado: ${jsonText.take(200)}...")
-                
-                // Tentar extrair o primeiro video_slug do JSON
-                val slugMatch = Regex(""""video_slug"\s*:\s*"([^"]+)"""").find(jsonText)
-                if (slugMatch != null) {
-                    val slug = slugMatch.groupValues[1]
-                    println("[CineAgoraExtractor] 🔗 Video slug extraído do JSON: $slug")
-                    return slug
-                }
-            }
-            
-            println("[CineAgoraExtractor] 🔗 Nenhum video slug encontrado na página da série")
+            println("[CineAgoraExtractor] 🔗 ❌ Nenhum video slug encontrado na página da série")
             return null
         } catch (e: Exception) {
             println("[CineAgoraExtractor] 🔗 ❌ Erro ao extrair video slug: ${e.message}")
@@ -201,41 +169,7 @@ object CineAgoraExtractor {
         }
     }
 
-    // **MÉTODO: Extrair slugs de mídia (/tv/slug ou /movie/slug)**
-    private fun extractMediaSlugs(html: String): List<Pair<String, String>> {
-        val mediaSlugs = mutableListOf<Pair<String, String>>()
-        
-        val patterns = listOf(
-            """data-link=["']([^"']*/(?:tv|movie)/([^"']+?))["']""",
-            """["'](https?://[^"']+/(?:tv|movie)/([^"']+?))["']""",
-            """["'](/(?:tv|movie)/([^"']+?))["']""",
-            """href=["']([^"']*/(?:tv|movie)/([^"']+?))["']""",
-            """<iframe[^>]+src=["']([^"']*/(?:tv|movie)/([^"']+?))["'][^>]*>"""
-        )
-        
-        patterns.forEach { pattern ->
-            val regex = Regex(pattern, RegexOption.IGNORE_CASE)
-            val matches = regex.findAll(html)
-            
-            matches.forEach { match ->
-                val fullUrl = match.groupValues[1]
-                val slug = match.groupValues[2]
-                
-                if (slug.isNotBlank()) {
-                    val type = if (fullUrl.contains("/tv/")) "tv" else "movie"
-                    val pair = slug to type
-                    if (!mediaSlugs.contains(pair)) {
-                        println("[CineAgoraExtractor] 🔗 Slug encontrado: $slug ($type) - URL: ${fullUrl.take(50)}...")
-                        mediaSlugs.add(pair)
-                    }
-                }
-            }
-        }
-        
-        return mediaSlugs.distinct()
-    }
-
-    // **MÉTODO PRINCIPAL: Extrair HLS da página /watch/{video_slug}**
+    // **MÉTODO PRINCIPAL: EXTRAIR HLS DA PÁGINA /watch/{video_slug}**
     private suspend fun extractHlsFromWatchPage(
         watchUrl: String,
         name: String,
@@ -250,7 +184,7 @@ object CineAgoraExtractor {
                 "Accept-Language" to "pt-BR",
                 "Cache-Control" to "no-cache",
                 "Pragma" to "no-cache",
-                "Referer" to if (watchUrl.contains("/tv/")) watchUrl else "https://watch.brstream.cc/tv/severance",
+                "Referer" to "https://watch.brstream.cc/tv/severance",
                 "Sec-Fetch-Dest" to "iframe",
                 "Sec-Fetch-Mode" to "navigate",
                 "Sec-Fetch-Site" to "same-origin",
@@ -261,11 +195,11 @@ object CineAgoraExtractor {
             val html = app.get(watchUrl, headers = headers).text
             println("[CineAgoraExtractor] 🔗 Watch page HTML obtido (${html.length} caracteres)")
 
-            // **EXTRAIR OS PARÂMETROS DO HTML QUE VOCÊ COMPARTILHOU**
+            // **EXTRAIR OS PARÂMETROS DO HTML**
             val videoParams = extractVideoParams(html)
             if (videoParams != null) {
                 val (uid, md5, videoId, status) = videoParams
-                println("[CineAgoraExtractor] 🔗 Dados extraídos - UID: $uid, MD5: $md5, VideoID: $videoId, Status: $status")
+                println("[CineAgoraExtractor] 🔗 ✅ Dados extraídos - UID: $uid, MD5: $md5, VideoID: $videoId, Status: $status")
                 
                 // Construir URL do HLS
                 val masterUrl = "$BASE_PLAYER/m3u8/$uid/$md5/master.txt?s=1&id=$videoId&cache=$status"
@@ -281,7 +215,7 @@ object CineAgoraExtractor {
                 try {
                     // Gerar links M3U8
                     val allLinks = M3u8Helper.generateM3u8(
-                        source = "CineAgora",
+                        source = PRIMARY_SOURCE,
                         streamUrl = masterUrl,
                         referer = watchUrl,
                         headers = hlsHeaders
@@ -289,43 +223,8 @@ object CineAgoraExtractor {
                     
                     println("[CineAgoraExtractor] 🔗 ${allLinks.size} links M3U8 gerados")
                     
-                    // Separar links por fonte
-                    val primaryLinks = mutableListOf<ExtractorLink>()
-                    val secondaryLinks = mutableListOf<ExtractorLink>()
-                    
                     allLinks.forEach { link ->
-                        if (link.source == PRIMARY_SOURCE) {
-                            primaryLinks.add(link)
-                        } else {
-                            secondaryLinks.add(link)
-                        }
-                    }
-                    
-                    // 1. Primeiro enviar os links da fonte principal
-                    if (primaryLinks.isNotEmpty()) {
-                        println("[CineAgoraExtractor] 🔗 Enviando ${primaryLinks.size} links da fonte principal ($PRIMARY_SOURCE)")
-                        primaryLinks.forEach { callback(it) }
-                    }
-                    
-                    // 2. Depois enviar os links secundários
-                    if (secondaryLinks.isNotEmpty()) {
-                        println("[CineAgoraExtractor] 🔗 Enviando ${secondaryLinks.size} links secundários")
-                        secondaryLinks.forEach { callback(it) }
-                    }
-                    
-                    // Se não gerou links via M3u8Helper, criar um link direto
-                    if (primaryLinks.isEmpty() && secondaryLinks.isEmpty()) {
-                        val fallbackLink = newExtractorLink(
-                            source = PRIMARY_SOURCE,
-                            name = name,
-                            url = masterUrl,
-                            type = ExtractorLinkType.M3U8
-                        ) {
-                            this.referer = watchUrl
-                            this.quality = Qualities.Unknown.value
-                            this.headers = hlsHeaders
-                        }
-                        callback(fallbackLink)
+                        callback(link)
                     }
                     
                     return true
@@ -352,7 +251,7 @@ object CineAgoraExtractor {
             // Método alternativo: procurar URL m3u8 diretamente no HTML
             val m3u8Url = extractM3u8UrlDirect(html)
             if (m3u8Url != null) {
-                println("[CineAgoraExtractor] 🔗 URL M3U8 encontrada diretamente: $m3u8Url")
+                println("[CineAgoraExtractor] 🔗 ✅ URL M3U8 encontrada diretamente: $m3u8Url")
                 
                 val hlsHeaders = mapOf(
                     "Referer" to watchUrl,
