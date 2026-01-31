@@ -66,7 +66,20 @@ class FilmesPK : MainAPI() {
             }
         } else {
             // Para páginas de categoria/label - layout horizontal
-            val items = document.select(".ntry").mapNotNull { it.toSearchResult() }
+            val items = document.select(".ntry").mapNotNull { 
+                val item = it.toSearchResult()
+                // Para modo horizontal, ajustar thumbs para proporção 16:9
+                item?.posterUrl = item?.posterUrl?.let { imgUrl ->
+                    // Converter para proporção adequada para modo horizontal
+                    imgUrl.replace("/w240-h240-p-k-no-nu", "/w320-h180-p-k-no-nu") // 16:9 ratio
+                          .replace("=w240-h240", "=w320-h180")
+                          .replace("/w600-h337-p-k-no-nu", "/w320-h180-p-k-no-nu")
+                          .replace("=s240", "=s320")
+                          .replace("-rw-e90", "")
+                          .replace("-p-k-no-nu-rw-e90", "")
+                }
+                item
+            }
             itemsCount = items.size
             
             // Criar HomePageList com imagens horizontais
@@ -101,17 +114,19 @@ class FilmesPK : MainAPI() {
             imgElement?.hasAttr("data-src") == true -> {
                 // Usar data-src se disponível
                 val src = imgElement.attr("data-src")
-                // Remover parâmetros de redimensionamento para imagem original
+                // Remover parâmetros de redimensionamento
                 src.replace("-rw-e90", "")
-                   .replace("-p-k-no-nu-rw-e90", "-p-k-no-nu")
-                   .replace("/w600-h337-p-k-no-nu", "/w240-h240-p-k-no-nu")
+                   .replace("-p-k-no-nu-rw-e90", "")
+                   .replace("/w600-h337-p-k-no-nu", "/w240-h240-p-k-no-nu") // Tamanho padrão
+                   .replace("/w[0-9]+-h[0-9]+-p-k-no-nu", "/w240-h240-p-k-no-nu") // Regex para qualquer tamanho
             }
             imgElement?.hasAttr("src") == true -> {
                 // Usar src como fallback
                 val src = imgElement.attr("src")
                 src.replace("-rw-e90", "")
-                   .replace("-p-k-no-nu-rw-e90", "-p-k-no-nu")
+                   .replace("-p-k-no-nu-rw-e90", "")
                    .replace("/w600-h337-p-k-no-nu", "/w240-h240-p-k-no-nu")
+                   .replace("/w[0-9]+-h[0-9]+-p-k-no-nu", "/w240-h240-p-k-no-nu")
             }
             else -> null
         }
@@ -149,97 +164,110 @@ class FilmesPK : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        val url = "$mainUrl/search?q=${java.net.URLEncoder.encode(query, "UTF-8")}"
-        val document = app.get(url).document
-        return document.select(".ntry").mapNotNull { it.toSearchResult() }
+        return try {
+            val url = "$mainUrl/search?q=${java.net.URLEncoder.encode(query, "UTF-8")}"
+            val document = app.get(url).document
+            document.select(".ntry").mapNotNull { 
+                val item = it.toSearchResult()
+                item
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            emptyList()
+        }
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        val document = app.get(url).document
-        
-        // Extrair título
-        val title = document.selectFirst("h1.post-title")?.text() 
-            ?: document.selectFirst(".pTtl a")?.text() 
-            ?: return null
-        
-        // Extrair imagem do artigo
-        val poster = document.selectFirst("meta[property='og:image']")?.attr("content")
-            ?: document.selectFirst(".pThmb img")?.let { img ->
-                when {
-                    img.hasAttr("data-src") -> img.attr("data-src")
-                        .replace("-rw-e90", "")
-                        .replace("-p-k-no-nu-rw-e90", "-p-k-no-nu")
-                    img.hasAttr("src") -> img.attr("src")
-                        .replace("-rw-e90", "")
-                        .replace("-p-k-no-nu-rw-e90", "-p-k-no-nu")
-                    else -> null
-                }
-            }
-            ?: document.selectFirst("img.imgThm")?.attr("src")?.let { src ->
-                src.replace("-rw-e90", "").replace("-p-k-no-nu-rw-e90", "-p-k-no-nu")
-            }
-        
-        // Extrair descrição
-        val description = document.selectFirst(".post-body")?.text() 
-            ?: document.selectFirst(".pSnpt")?.text()
-        
-        // Extrair ano da descrição
-        val year = description?.let { 
-            Regex("""\b(19|20)\d{2}\b""").find(it)?.value?.toIntOrNull()
-        }
-        
-        // Determinar se é série
-        val isSerie = url.contains("Série", ignoreCase = true) || 
-                      document.select(".post-labels a").any { 
-                          it.text().contains("Séries", ignoreCase = true) || 
-                          it.text().contains("Série", ignoreCase = true)
-                      } ||
-                      title.contains("Série", ignoreCase = true) ||
-                      description?.contains("Temporada", ignoreCase = true) == true ||
-                      description?.contains("Episódio", ignoreCase = true) == true
-
-        return if (isSerie) {
-            val episodes = mutableListOf<Episode>()
+        return try {
+            val document = app.get(url).document
             
-            // Extrair episódios do post-body
-            document.select(".post-body a").forEachIndexed { index, element ->
-                val epUrl = element.attr("href")
-                val epText = element.text().trim()
+            // Extrair título
+            val title = document.selectFirst("h1.post-title")?.text() 
+                ?: document.selectFirst(".pTtl a")?.text() 
+                ?: return null
+            
+            // Extrair imagem do artigo
+            val poster = document.selectFirst("meta[property='og:image']")?.attr("content")
+                ?: document.selectFirst(".pThmb img")?.let { img ->
+                    when {
+                        img.hasAttr("data-src") -> img.attr("data-src")
+                            .replace("-rw-e90", "")
+                            .replace("-p-k-no-nu-rw-e90", "")
+                        img.hasAttr("src") -> img.attr("src")
+                            .replace("-rw-e90", "")
+                            .replace("-p-k-no-nu-rw-e90", "")
+                        else -> null
+                    }
+                }
+                ?: document.selectFirst("img.imgThm")?.attr("src")?.let { src ->
+                    src.replace("-rw-e90", "").replace("-p-k-no-nu-rw-e90", "")
+                }
+            
+            // Extrair descrição
+            val description = document.selectFirst(".post-body")?.text() 
+                ?: document.selectFirst(".pSnpt")?.text()
+            
+            // Extrair ano da descrição
+            val year = description?.let { 
+                Regex("""\b(19|20)\d{2}\b""").find(it)?.value?.toIntOrNull()
+            }
+            
+            // Determinar se é série
+            val isSerie = url.contains("Série", ignoreCase = true) || 
+                          document.select(".post-labels a").any { 
+                              it.text().contains("Séries", ignoreCase = true) || 
+                              it.text().contains("Série", ignoreCase = true)
+                          } ||
+                          title.contains("Série", ignoreCase = true) ||
+                          description?.contains("Temporada", ignoreCase = true) == true ||
+                          description?.contains("Episódio", ignoreCase = true) == true
+
+            return if (isSerie) {
+                val episodes = mutableListOf<Episode>()
                 
-                if (epUrl.isNotBlank() && (epUrl.contains("episodio") || 
-                                           epUrl.contains("episode") || 
-                                           epUrl.contains("temporada") ||
-                                           epText.contains("Episódio") ||
-                                           epText.contains("EP"))) {
+                // Extrair episódios do post-body
+                document.select(".post-body a").forEachIndexed { index, element ->
+                    val epUrl = element.attr("href")
+                    val epText = element.text().trim()
                     
-                    // Extrair número do episódio do texto
-                    val episodeNumber = extractEpisodeNumber(epText) ?: (index + 1)
-                    
-                    episodes.add(newEpisode(fixUrl(epUrl)) {
-                        this.name = if (epText.isNotBlank()) epText else "Episódio $episodeNumber"
-                        this.episode = episodeNumber
+                    if (epUrl.isNotBlank() && (epUrl.contains("episodio") || 
+                                               epUrl.contains("episode") || 
+                                               epUrl.contains("temporada") ||
+                                               epText.contains("Episódio") ||
+                                               epText.contains("EP"))) {
+                        
+                        // Extrair número do episódio do texto
+                        val episodeNumber = extractEpisodeNumber(epText) ?: (index + 1)
+                        
+                        episodes.add(newEpisode(fixUrl(epUrl)) {
+                            this.name = if (epText.isNotBlank()) epText else "Episódio $episodeNumber"
+                            this.episode = episodeNumber
+                        })
+                    }
+                }
+                
+                // Se não encontrou episódios específicos, criar um episódio com o link da página
+                if (episodes.isEmpty()) {
+                    episodes.add(newEpisode(url) { 
+                        this.name = "Assistir"
                     })
                 }
-            }
-            
-            // Se não encontrou episódios específicos, criar um episódio com o link da página
-            if (episodes.isEmpty()) {
-                episodes.add(newEpisode(url) { 
-                    this.name = "Assistir"
-                })
-            }
 
-            newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes) {
-                this.posterUrl = poster
-                this.plot = description
-                this.year = year
+                newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes) {
+                    this.posterUrl = poster
+                    this.plot = description
+                    this.year = year
+                }
+            } else {
+                newMovieLoadResponse(title, url, TvType.Movie, url) {
+                    this.posterUrl = poster
+                    this.plot = description
+                    this.year = year
+                }
             }
-        } else {
-            newMovieLoadResponse(title, url, TvType.Movie, url) {
-                this.posterUrl = poster
-                this.plot = description
-                this.year = year
-            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            null
         }
     }
     
@@ -266,54 +294,59 @@ class FilmesPK : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val document = app.get(data).document
-        var foundLinks = false
-        
-        // 1. Procura por iframes de vídeo
-        document.select("iframe[src*='embed'], iframe[src*='player'], iframe[src*='video']").forEach { iframe ->
-            val src = iframe.attr("src")
-            if (src.isNotBlank()) {
-                loadExtractor(fixUrl(src), data, subtitleCallback, callback)
-                foundLinks = true
-            }
-        }
-
-        // 2. Procura por botões com data-url
-        document.select("[data-url]").forEach { element ->
-            val url = element.attr("data-url")
-            if (url.contains("http")) {
-                loadExtractor(fixUrl(url), data, subtitleCallback, callback)
-                foundLinks = true
-            }
-        }
-
-        // 3. Procura por links diretos em players no post-body
-        document.select(".post-body a[href*='player'], .post-body a[href*='embed'], .post-body a[href*='watch']").forEach { link ->
-            val href = link.attr("href")
-            if (href.isNotBlank() && href.contains("http")) {
-                loadExtractor(fixUrl(href), data, subtitleCallback, callback)
-                foundLinks = true
-            }
-        }
-
-        // 4. Extrair URLs de scripts
-        document.select("script").forEach { script ->
-            val content = script.html()
-            // Procura por URLs comuns de vídeo
-            val videoUrls = Regex("""(https?://[^"' ]*\.(?:mp4|m3u8|mkv|avi|mov|flv)[^"' ]*)""").findAll(content)
-            videoUrls.forEach { match ->
-                loadExtractor(fixUrl(match.value), data, subtitleCallback, callback)
-                foundLinks = true
-            }
+        return try {
+            val document = app.get(data).document
+            var foundLinks = false
             
-            // Procura por URLs de embed
-            val embedUrls = Regex("""(https?://[^"' ]*\.(?:com|net|org)/[^"' ]*embed[^"' ]*)""").findAll(content)
-            embedUrls.forEach { match ->
-                loadExtractor(fixUrl(match.value), data, subtitleCallback, callback)
-                foundLinks = true
+            // 1. Procura por iframes de vídeo
+            document.select("iframe[src*='embed'], iframe[src*='player'], iframe[src*='video']").forEach { iframe ->
+                val src = iframe.attr("src")
+                if (src.isNotBlank()) {
+                    loadExtractor(fixUrl(src), data, subtitleCallback, callback)
+                    foundLinks = true
+                }
             }
-        }
 
-        return foundLinks
+            // 2. Procura por botões com data-url
+            document.select("[data-url]").forEach { element ->
+                val url = element.attr("data-url")
+                if (url.contains("http")) {
+                    loadExtractor(fixUrl(url), data, subtitleCallback, callback)
+                    foundLinks = true
+                }
+            }
+
+            // 3. Procura por links diretos em players no post-body
+            document.select(".post-body a[href*='player'], .post-body a[href*='embed'], .post-body a[href*='watch']").forEach { link ->
+                val href = link.attr("href")
+                if (href.isNotBlank() && href.contains("http")) {
+                    loadExtractor(fixUrl(href), data, subtitleCallback, callback)
+                    foundLinks = true
+                }
+            }
+
+            // 4. Extrair URLs de scripts
+            document.select("script").forEach { script ->
+                val content = script.html()
+                // Procura por URLs comuns de vídeo
+                val videoUrls = Regex("""(https?://[^"' ]*\.(?:mp4|m3u8|mkv|avi|mov|flv)[^"' ]*)""").findAll(content)
+                videoUrls.forEach { match ->
+                    loadExtractor(fixUrl(match.value), data, subtitleCallback, callback)
+                    foundLinks = true
+                }
+                
+                // Procura por URLs de embed
+                val embedUrls = Regex("""(https?://[^"' ]*\.(?:com|net|org)/[^"' ]*embed[^"' ]*)""").findAll(content)
+                embedUrls.forEach { match ->
+                    loadExtractor(fixUrl(match.value), data, subtitleCallback, callback)
+                    foundLinks = true
+                }
+            }
+
+            foundLinks
+        } catch (e: Exception) {
+            e.printStackTrace()
+            false
+        }
     }
 }
