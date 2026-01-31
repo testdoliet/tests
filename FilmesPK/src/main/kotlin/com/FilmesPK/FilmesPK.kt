@@ -30,23 +30,73 @@ class FilmesPK : MainAPI() {
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val isHomePage = request.data == mainUrl
-        val url = if (page > 1) {
-            // Para páginas de categoria com paginação
-            if (request.data.contains("/search/label/")) {
-                "${request.data}?max-results=12&start=${(page - 1) * 12}"
-            } else {
-                "${request.data}?max-results=12&start=${(page - 1) * 12}"
+        
+        // Para páginas com botão "Carregar mais postagens", precisamos simular o clique
+        var url = request.data
+        var document = app.get(url).document
+        
+        // Se for página 2 ou mais, precisamos simular múltiplos cliques no botão jsLd
+        if (page > 1) {
+            // O site usa um sistema de paginação via JavaScript com token de continuidade
+            // Precisamos extrair o token atual e usá-lo para carregar mais
+            var currentToken: String? = null
+            var currentItems = mutableListOf<Element>()
+            
+            // Primeiro, obter o documento inicial
+            document = app.get(url).document
+            currentToken = extractContinuationToken(document)
+            
+            // Simular os cliques necessários para chegar à página desejada
+            for (i in 1 until page) {
+                if (currentToken != null) {
+                    // Carregar mais itens usando o token
+                    val moreContent = loadMoreWithToken(currentToken)
+                    if (moreContent != null) {
+                        // Extrair novos itens do conteúdo carregado
+                        val newItems = moreContent.select(".ntry, .stream-card, .movie-card")
+                        currentItems.addAll(newItems)
+                        
+                        // Extrair novo token para próxima página
+                        currentToken = extractContinuationToken(moreContent)
+                    } else {
+                        break
+                    }
+                } else {
+                    break
+                }
             }
-        } else {
-            request.data
+            
+            // Se conseguimos carregar itens extras, processá-los
+            if (currentItems.isNotEmpty() && !isHomePage) {
+                // Para categorias (não-homepage)
+                val items = currentItems.mapNotNull { it.toSearchResult() }.map { item ->
+                    // Ajustar thumbs para modo horizontal
+                    item.posterUrl = item.posterUrl?.let { imgUrl ->
+                        imgUrl.replace("/w240-h240-p-k-no-nu", "/w320-h180-p-k-no-nu")
+                              .replace("=w240-h240", "=w320-h180")
+                              .replace("/w600-h337-p-k-no-nu", "/w320-h180-p-k-no-nu")
+                              .replace("=s240", "=s320")
+                    }
+                    item
+                }
+                
+                val home = mutableListOf<HomePageList>()
+                home.add(HomePageList(
+                    request.name,
+                    items,
+                    isHorizontalImages = true
+                ))
+                
+                // Verificar se ainda há mais conteúdo para carregar
+                val hasNextPage = currentToken != null && currentToken.isNotBlank()
+                return newHomePageResponse(home, hasNextPage)
+            }
         }
 
-        val document = app.get(url).document
         val home = mutableListOf<HomePageList>()
-        
-        var itemsCount = 0 // Variável para rastrear o número total de itens
+        var itemsCount = 0
 
-        // Para a página inicial (Top 10 da Semana), processamos os carrosséis com imagens verticais
+        // Para a página inicial (Top 10 da Semana)
         if (isHomePage) {
             document.select(".stream-carousel").forEach { carousel ->
                 val title = carousel.previousElementSibling()?.selectFirst(".stream-title, h2")?.text() 
@@ -68,10 +118,9 @@ class FilmesPK : MainAPI() {
             // Para páginas de categoria/label - layout horizontal
             val items = document.select(".ntry").mapNotNull { 
                 val item = it.toSearchResult()
-                // Para modo horizontal, ajustar thumbs para proporção 16:9
+                // Ajustar thumbs para modo horizontal
                 item?.posterUrl = item?.posterUrl?.let { imgUrl ->
-                    // Converter para proporção adequada para modo horizontal
-                    imgUrl.replace("/w240-h240-p-k-no-nu", "/w320-h180-p-k-no-nu") // 16:9 ratio
+                    imgUrl.replace("/w240-h240-p-k-no-nu", "/w320-h180-p-k-no-nu")
                           .replace("=w240-h240", "=w320-h180")
                           .replace("/w600-h337-p-k-no-nu", "/w320-h180-p-k-no-nu")
                           .replace("=s240", "=s320")
@@ -82,7 +131,6 @@ class FilmesPK : MainAPI() {
             }
             itemsCount = items.size
             
-            // Criar HomePageList com imagens horizontais
             home.add(HomePageList(
                 request.name,
                 items,
@@ -90,12 +138,92 @@ class FilmesPK : MainAPI() {
             ))
         }
 
-        // Verificar se há mais páginas
-        val hasNextPage = document.select("#blog-pager .jsLd").isNotEmpty() || 
-                          document.select("a.blog-pager-older-link").isNotEmpty() ||
-                          itemsCount >= 12 // Assume que se tem 12 itens, há mais páginas
+        // Verificar se há botão "Carregar mais postagens"
+        val hasNextPage = document.select("button.jsLd").isNotEmpty() || 
+                         document.select("#blog-pager .jsLd").isNotEmpty() ||
+                         document.select("a.blog-pager-older-link").isNotEmpty() ||
+                         extractContinuationToken(document) != null
 
         return newHomePageResponse(home, hasNextPage)
+    }
+
+    // Função para extrair o token de continuidade do documento
+    private fun extractContinuationToken(document: org.jsoup.nodes.Document): String? {
+        // Procura por scripts que contenham tokens de continuidade
+        document.select("script").forEach { script ->
+            val scriptContent = script.html()
+            // Padrões comuns para tokens de continuidade
+            val patterns = listOf(
+                """continuation=["']([^"']+)["']""",
+                """continuation:["']([^"']+)["']""",
+                """token["']?\s*:\s*["']([^"']+)["']""",
+                """loadMoreToken["']?\s*:\s*["']([^"']+)["']""",
+                """["']continuation["']\s*:\s*["']([^"']+)["']"""
+            )
+            
+            for (pattern in patterns) {
+                val match = Regex(pattern).find(scriptContent)
+                match?.groupValues?.get(1)?.let { token ->
+                    if (token.isNotBlank() && token.length > 10) {
+                        return token
+                    }
+                }
+            }
+        }
+        
+        // Também verifica por atributos data-*
+        document.select("[data-continuation], [data-token]").forEach { element ->
+            element.attr("data-continuation")?.takeIf { it.isNotBlank() }?.let { return it }
+            element.attr("data-token")?.takeIf { it.isNotBlank() }?.let { return it }
+        }
+        
+        return null
+    }
+
+    // Função para carregar mais conteúdo usando o token
+    private suspend fun loadMoreWithToken(token: String): org.jsoup.nodes.Document? {
+        return try {
+            // Tentar carregar usando uma requisição POST similar ao que o site faz
+            val response = app.post(
+                url = "$mainUrl/api/more",
+                data = mapOf(
+                    "continuation" to token,
+                    "ctoken" to token,
+                    "type" to "posts"
+                ),
+                headers = mapOf(
+                    "X-Requested-With" to "XMLHttpRequest",
+                    "Accept" to "application/json",
+                    "Content-Type" to "application/x-www-form-urlencoded"
+                )
+            )
+            
+            // O site pode retornar HTML ou JSON
+            val responseText = response.text
+            if (responseText.contains("<div") || responseText.contains("class=")) {
+                // Parece ser HTML
+                org.jsoup.Jsoup.parse(responseText)
+            } else {
+                // Pode ser JSON, tentar extrair HTML do JSON
+                try {
+                    val json = response.parsedSafe<Map<String, Any>>()
+                    val htmlContent = (json?.get("content") as? String) ?: 
+                                     (json?.get("html") as? String) ?:
+                                     (json?.get("items") as? String)
+                    
+                    if (htmlContent != null) {
+                        org.jsoup.Jsoup.parse(htmlContent)
+                    } else {
+                        null
+                    }
+                } catch (e: Exception) {
+                    null
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            null
+        }
     }
 
     private fun Element.toSearchResult(): SearchResponse? {
@@ -112,16 +240,13 @@ class FilmesPK : MainAPI() {
         val imgElement = article.selectFirst("img")
         val posterUrl = when {
             imgElement?.hasAttr("data-src") == true -> {
-                // Usar data-src se disponível
                 val src = imgElement.attr("data-src")
-                // Remover parâmetros de redimensionamento
                 src.replace("-rw-e90", "")
                    .replace("-p-k-no-nu-rw-e90", "")
-                   .replace("/w600-h337-p-k-no-nu", "/w240-h240-p-k-no-nu") // Tamanho padrão
-                   .replace("/w[0-9]+-h[0-9]+-p-k-no-nu", "/w240-h240-p-k-no-nu") // Regex para qualquer tamanho
+                   .replace("/w600-h337-p-k-no-nu", "/w240-h240-p-k-no-nu")
+                   .replace("/w[0-9]+-h[0-9]+-p-k-no-nu", "/w240-h240-p-k-no-nu")
             }
             imgElement?.hasAttr("src") == true -> {
-                // Usar src como fallback
                 val src = imgElement.attr("src")
                 src.replace("-rw-e90", "")
                    .replace("-p-k-no-nu-rw-e90", "")
@@ -149,7 +274,6 @@ class FilmesPK : MainAPI() {
                           it.text().contains("Anime", ignoreCase = true) 
                       }
 
-        // Criar resposta baseada no tipo
         return when {
             isAnime -> newAnimeSearchResponse(title, fixUrl(href), TvType.Anime) { 
                 this.posterUrl = posterUrl
@@ -167,10 +291,7 @@ class FilmesPK : MainAPI() {
         return try {
             val url = "$mainUrl/search?q=${java.net.URLEncoder.encode(query, "UTF-8")}"
             val document = app.get(url).document
-            document.select(".ntry").mapNotNull { 
-                val item = it.toSearchResult()
-                item
-            }
+            document.select(".ntry").mapNotNull { it.toSearchResult() }
         } catch (e: Exception) {
             e.printStackTrace()
             emptyList()
@@ -181,12 +302,10 @@ class FilmesPK : MainAPI() {
         return try {
             val document = app.get(url).document
             
-            // Extrair título
             val title = document.selectFirst("h1.post-title")?.text() 
                 ?: document.selectFirst(".pTtl a")?.text() 
                 ?: return null
             
-            // Extrair imagem do artigo
             val poster = document.selectFirst("meta[property='og:image']")?.attr("content")
                 ?: document.selectFirst(".pThmb img")?.let { img ->
                     when {
@@ -203,16 +322,13 @@ class FilmesPK : MainAPI() {
                     src.replace("-rw-e90", "").replace("-p-k-no-nu-rw-e90", "")
                 }
             
-            // Extrair descrição
             val description = document.selectFirst(".post-body")?.text() 
                 ?: document.selectFirst(".pSnpt")?.text()
             
-            // Extrair ano da descrição
             val year = description?.let { 
                 Regex("""\b(19|20)\d{2}\b""").find(it)?.value?.toIntOrNull()
             }
             
-            // Determinar se é série
             val isSerie = url.contains("Série", ignoreCase = true) || 
                           document.select(".post-labels a").any { 
                               it.text().contains("Séries", ignoreCase = true) || 
@@ -225,7 +341,6 @@ class FilmesPK : MainAPI() {
             return if (isSerie) {
                 val episodes = mutableListOf<Episode>()
                 
-                // Extrair episódios do post-body
                 document.select(".post-body a").forEachIndexed { index, element ->
                     val epUrl = element.attr("href")
                     val epText = element.text().trim()
@@ -236,7 +351,6 @@ class FilmesPK : MainAPI() {
                                                epText.contains("Episódio") ||
                                                epText.contains("EP"))) {
                         
-                        // Extrair número do episódio do texto
                         val episodeNumber = extractEpisodeNumber(epText) ?: (index + 1)
                         
                         episodes.add(newEpisode(fixUrl(epUrl)) {
@@ -246,7 +360,6 @@ class FilmesPK : MainAPI() {
                     }
                 }
                 
-                // Se não encontrou episódios específicos, criar um episódio com o link da página
                 if (episodes.isEmpty()) {
                     episodes.add(newEpisode(url) { 
                         this.name = "Assistir"
@@ -298,7 +411,6 @@ class FilmesPK : MainAPI() {
             val document = app.get(data).document
             var foundLinks = false
             
-            // 1. Procura por iframes de vídeo
             document.select("iframe[src*='embed'], iframe[src*='player'], iframe[src*='video']").forEach { iframe ->
                 val src = iframe.attr("src")
                 if (src.isNotBlank()) {
@@ -307,7 +419,6 @@ class FilmesPK : MainAPI() {
                 }
             }
 
-            // 2. Procura por botões com data-url
             document.select("[data-url]").forEach { element ->
                 val url = element.attr("data-url")
                 if (url.contains("http")) {
@@ -316,7 +427,6 @@ class FilmesPK : MainAPI() {
                 }
             }
 
-            // 3. Procura por links diretos em players no post-body
             document.select(".post-body a[href*='player'], .post-body a[href*='embed'], .post-body a[href*='watch']").forEach { link ->
                 val href = link.attr("href")
                 if (href.isNotBlank() && href.contains("http")) {
@@ -325,17 +435,14 @@ class FilmesPK : MainAPI() {
                 }
             }
 
-            // 4. Extrair URLs de scripts
             document.select("script").forEach { script ->
                 val content = script.html()
-                // Procura por URLs comuns de vídeo
                 val videoUrls = Regex("""(https?://[^"' ]*\.(?:mp4|m3u8|mkv|avi|mov|flv)[^"' ]*)""").findAll(content)
                 videoUrls.forEach { match ->
                     loadExtractor(fixUrl(match.value), data, subtitleCallback, callback)
                     foundLinks = true
                 }
                 
-                // Procura por URLs de embed
                 val embedUrls = Regex("""(https?://[^"' ]*\.(?:com|net|org)/[^"' ]*embed[^"' ]*)""").findAll(content)
                 embedUrls.forEach { match ->
                     loadExtractor(fixUrl(match.value), data, subtitleCallback, callback)
