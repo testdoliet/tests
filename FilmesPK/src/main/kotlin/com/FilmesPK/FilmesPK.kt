@@ -5,6 +5,7 @@ import com.lagradost.cloudstream3.utils.*
 import org.jsoup.nodes.Element
 
 class FilmesPK : MainAPI() {
+
     override var mainUrl = "https://www.filmesrave.online"
     override var name = "Filmes P K"
     override val hasMainPage = true
@@ -42,6 +43,8 @@ class FilmesPK : MainAPI() {
 
         val document = app.get(url).document
         val home = mutableListOf<HomePageList>()
+        
+        var itemsCount = 0 // Variável para rastrear o número total de itens
 
         // Para a página inicial (Top 10 da Semana), processamos os carrosséis com imagens verticais
         if (isHomePage) {
@@ -51,6 +54,7 @@ class FilmesPK : MainAPI() {
                 val items = carousel.select(".stream-card").mapNotNull { it.toSearchResult() }
                 if (items.isNotEmpty()) {
                     home.add(HomePageList(title, items))
+                    itemsCount += items.size
                 }
             }
             
@@ -58,10 +62,12 @@ class FilmesPK : MainAPI() {
             val otherItems = document.select(".movie-card").mapNotNull { it.toSearchResult() }
             if (otherItems.isNotEmpty()) {
                 home.add(HomePageList("Destaques", otherItems))
+                itemsCount += otherItems.size
             }
         } else {
             // Para páginas de categoria/label - layout horizontal
             val items = document.select(".ntry").mapNotNull { it.toSearchResult() }
+            itemsCount = items.size
             
             // Criar HomePageList com imagens horizontais
             home.add(HomePageList(
@@ -74,7 +80,7 @@ class FilmesPK : MainAPI() {
         // Verificar se há mais páginas
         val hasNextPage = document.select("#blog-pager .jsLd").isNotEmpty() || 
                           document.select("a.blog-pager-older-link").isNotEmpty() ||
-                          items.size >= 12 // Assume que se tem 12 itens, há mais páginas
+                          itemsCount >= 12 // Assume que se tem 12 itens, há mais páginas
 
         return newHomePageResponse(home, hasNextPage)
     }
