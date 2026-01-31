@@ -44,7 +44,6 @@ class AnimeQ : MainAPI() {
     private val mainCategories = mapOf(
         "Últimos Episódios" to "$mainUrl/episodio/",
         "Animes Mais Vistos" to "$mainUrl/",
-        "Animes Recentes" to "$mainUrl/",
     )
 
     private val genresMap = mapOf(
@@ -61,15 +60,12 @@ class AnimeQ : MainAPI() {
         "Sci-Fi" to "genre/ficcao-cientifica",
         "Seinen" to "genre/seinen",
         "Shounen" to "genre/shounen",
-        "Shoujo" to "genre/shoujo",
-        "Slice of Life" to "genre/slice-of-life",
+        "Ecchi" to "genre/ecchi",
+        "Mecha" to "genre/mecha",
         "Esporte" to "genre/esporte",
         "Sobrenatural" to "genre/sobrenatural",
-        "Mecha" to "genre/mecha",
-        "Ecchi" to "genre/ecchi",
-        "Harem" to "genre/harem",
-        "Isekai" to "genre/isekai",
-        "Militar" to "genre/militar"
+        "Superpoder" to "genre/superpoder",
+        "Vida Escolar" to "genre/vida-escolar"
     )
 
     private val typeMap = mapOf(
@@ -79,10 +75,7 @@ class AnimeQ : MainAPI() {
 
     private val specialCategories = mapOf(
         "Filmes" to "filme",
-        "Tokusatsu" to "genre/tokusatsu",
-        "Hentai (+18)" to "genre/hentai",
         "Manhwa" to "genre/Manhwa",
-        "Desenhos" to "genre/desenhos",
         "Donghua" to "genre/Donghua"
     )
 
@@ -174,7 +167,7 @@ class AnimeQ : MainAPI() {
         
         // Converter score usando o método estático from10 como no AnimeFire
         val score = scoreText?.toFloatOrNull()?.let { 
-            Score.from10(it) // Correto: usando o método estático
+            Score.from10(it)
         }
 
         // Determinar se é filme ou série
@@ -185,7 +178,7 @@ class AnimeQ : MainAPI() {
             this.posterUrl = posterUrl
             this.type = type
             this.year = year
-            this.score = score // Agora é do tipo Score correto
+            this.score = score
             addDubStatus(isDubbed, null)
         }
     }
@@ -216,6 +209,7 @@ class AnimeQ : MainAPI() {
                     .mapNotNull { it.toEpisodeSearchResponse() }
                     .distinctBy { it.url }
 
+                // ÚNICA CATEGORIA COM LAYOUT HORIZONTAL
                 newHomePageResponse(
                     list = HomePageList(request.name, items, isHorizontalImages = true),
                     hasNext = episodeElements.isNotEmpty()
@@ -237,20 +231,9 @@ class AnimeQ : MainAPI() {
                     popularItems.addAll(allItems)
                 }
 
+                // LAYOUT VERTICAL
                 newHomePageResponse(
                     list = HomePageList(request.name, popularItems.distinctBy { it.url }, isHorizontalImages = false),
-                    hasNext = false
-                )
-            }
-            "Animes Recentes" -> {
-                // Na página inicial, pegar os primeiros itens do slider de ação
-                val recentItems = document.select("#genre_acao .item.tvshows, #genre_acao .item.movies")
-                    .take(10)
-                    .mapNotNull { it.toAnimeSearchResponse() }
-                    .distinctBy { it.url }
-
-                newHomePageResponse(
-                    list = HomePageList(request.name, recentItems, isHorizontalImages = false),
                     hasNext = false
                 )
             }
@@ -284,8 +267,9 @@ class AnimeQ : MainAPI() {
                     else -> false
                 }
 
+                // TODAS AS OUTRAS CATEGORIAS COM LAYOUT VERTICAL
                 newHomePageResponse(
-                    list = HomePageList(request.name, items, isHorizontalImages = !isEpisodePage),
+                    list = HomePageList(request.name, items, isHorizontalImages = false),
                     hasNext = hasNext
                 )
             }
