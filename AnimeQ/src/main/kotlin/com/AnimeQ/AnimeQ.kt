@@ -29,7 +29,7 @@ class AnimeQ : MainAPI() {
         private const val ITEM_LINK = "a[href]"
         private const val EPISODE_SERIE = ".data .serie"
         private const val ANIME_YEAR = ".data span"
-        private const val ANIME_RATING = ".rating"
+        private const val ANIME_SCORE = ".rating"  // Alterado de ANIME_RATING para ANIME_SCORE
         private const val ANIME_QUALITY = ".mepo .quality"
         
         // Página de detalhes do anime
@@ -170,7 +170,7 @@ class AnimeQ : MainAPI() {
         val posterUrl = selectFirst(ITEM_POSTER)?.attr("src")?.let { fixUrl(it) }
         val isDubbed = isDubbed(rawTitle)
         val year = selectFirst(ANIME_YEAR)?.text()?.trim()?.toIntOrNull()
-        val rating = selectFirst(ANIME_RATING)?.text()?.trim()?.toFloatOrNull()
+        val score = selectFirst(ANIME_SCORE)?.text()?.trim()?.toFloatOrNull() // Alterado de rating para score
 
         // Determinar se é filme ou série
         val isMovie = href.contains("/filme/") || cleanedTitle.contains("filme", true)
@@ -180,7 +180,7 @@ class AnimeQ : MainAPI() {
             this.posterUrl = posterUrl
             this.type = type
             this.year = year
-            this.rating = rating
+            this.score = score // Alterado de rating para score
             addDubStatus(isDubbed, null)
         }
     }
