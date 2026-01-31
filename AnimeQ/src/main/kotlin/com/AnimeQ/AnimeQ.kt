@@ -35,9 +35,16 @@ class AnimeQ : MainAPI() {
         // Página de detalhes do anime
         private const val DETAIL_TITLE = "h1"
         private const val DETAIL_POSTER = ".poster img"
-        private const val DETAIL_SYNOPSIS = ".wp-content"
-        private const val DETAIL_METADATA = ".dtinfo"
-        private const val EPISODE_LIST = ".pag_episodes .item a"
+        private const val DETAIL_SYNOPSIS = ".wp-content p"
+        private const val DETAIL_METADATA = ".extra .wp-content p"
+        private const val DETAIL_GENRES = ".sgeneros a[rel=tag]"
+        private const val DETAIL_YEAR = ".date"
+        private const val DETAIL_SCORE = ".dt_rating_vgs"
+        private const val DETAIL_ALTERNATE_TITLES = "a[href*='/nome-alternativo/']"
+        private const val DETAIL_ALTERNATIVE_TITLES_SECTION = ".extra .wp-content p:contains(Título Alternativo)"
+        private const val EPISODE_LIST = ".episodios li .episodiotitle a"
+        private const val EPISODE_IMAGES = ".episodios li .imagen img"
+        private const val EPISODE_NUMBER = ".episodios li .numerando"
     }
 
     // Mapeamento completo de todas as categorias
@@ -61,10 +68,8 @@ class AnimeQ : MainAPI() {
         "Seinen" to "genre/seinen",
         "Shounen" to "genre/shounen",
         "Ecchi" to "genre/ecchi",
-        "Mecha" to "genre/mecha",
         "Esporte" to "genre/esporte",
         "Sobrenatural" to "genre/sobrenatural",
-        "Superpoder" to "genre/superpoder",
         "Vida Escolar" to "genre/vida-escolar"
     )
 
@@ -300,34 +305,105 @@ class AnimeQ : MainAPI() {
         
         val poster = document.selectFirst(DETAIL_POSTER)?.attr("src")?.let { fixUrl(it) }
         
-        val synopsis = document.selectFirst(DETAIL_SYNOPSIS)?.text()?.trim() ?: "Sinopse não disponível."
+        // Extrair sinopse - melhorado para pegar o primeiro parágrafo do .wp-content
+        val wpContent = document.selectFirst(".wp-content")
+        var synopsis = "Sinopse não disponível."
         
+        wpContent?.let { content ->
+            // Tentar pegar o parágrafo que contém "Sinopse:"
+            val synopsisParagraph = content.select("p:contains(Sinopse:)").firstOrNull()
+            if (synopsisParagraph != null) {
+                synopsis = synopsisParagraph.text()
+                    .replace("Sinopse:", "")
+                    .trim()
+            } else {
+                // Se não encontrar, pegar o segundo parágrafo (geralmente tem a sinopse)
+                val paragraphs = content.select("p")
+                if (paragraphs.size > 1) {
+                    synopsis = paragraphs[1].text().trim()
+                } else if (paragraphs.isNotEmpty()) {
+                    synopsis = paragraphs.first().text().trim()
+                }
+            }
+        }
+        
+        // Extrair gêneros
+        val genres = document.select(DETAIL_GENRES)
+            .mapNotNull { it.text().trim() }
+            .filter { !it.contains("Letra") && !it.contains("tipo") }
+        
+        // Extrair ano de lançamento
         var year: Int? = null
-        var episodes: Int? = null
-        var genres = emptyList<String>()
+        val yearText = document.selectFirst(DETAIL_YEAR)?.text()?.trim()
+        if (yearText != null) {
+            val yearMatch = "\\b(\\d{4})\\b".toRegex().find(yearText)
+            year = yearMatch?.groupValues?.get(1)?.toIntOrNull()
+        }
         
-        document.select(DETAIL_METADATA).forEach { element ->
-            val text = element.text()
-            when {
-                text.contains("Gênero:", true) -> genres = text.substringAfter("Gênero:").split(",").map { it.trim() }
-                text.contains("Ano:", true) -> year = text.substringAfter("Ano:").trim().toIntOrNull()
-                text.contains("Episódios:", true) -> episodes = text.substringAfter("Episódios:").trim().toIntOrNull()
+        // Extrair score
+        var score: Score? = null
+        val scoreText = document.selectFirst(DETAIL_SCORE)?.text()?.trim()
+        if (scoreText != null) {
+            val scoreValue = scoreText.toFloatOrNull()
+            score = scoreValue?.let { Score.from10(it) }
+        }
+        
+        // Extrair títulos alternativos
+        val alternateTitles = mutableListOf<String>()
+        
+        // Primeiro, verificar se há link de nome alternativo
+        document.select(DETAIL_ALTERNATE_TITLES).forEach { element ->
+            val altTitle = element.text().trim()
+            if (altTitle.isNotBlank() && altTitle != title) {
+                alternateTitles.add(altTitle)
+            }
+        }
+        
+        // Depois, verificar na seção de títulos alternativos
+        val alternativeTitlesSection = document.selectFirst(DETAIL_ALTERNATIVE_TITLES_SECTION)
+        if (alternativeTitlesSection != null) {
+            val text = alternativeTitlesSection.text()
+            if (text.contains("Título Alternativo:")) {
+                val altTitlesText = text.substringAfter("Título Alternativo:").trim()
+                val titles = altTitlesText.split(",").map { it.trim() }
+                alternateTitles.addAll(titles.filter { it.isNotBlank() && it != title })
             }
         }
 
+        // Extrair episódios
         val isDubbed = rawTitle.contains("dublado", true) || url.contains("dublado", true)
         val isMovie = url.contains("/filme/") || rawTitle.contains("filme", true)
         
         val episodesList = if (!isMovie) {
-            document.select(EPISODE_LIST).mapNotNull { element ->
+            val episodeElements = document.select(EPISODE_LIST)
+            val episodeImages = document.select(EPISODE_IMAGES)
+            val episodeNumbers = document.select(EPISODE_NUMBER)
+            
+            episodeElements.mapIndexed { index, element ->
                 val episodeTitle = element.text().trim()
                 val episodeUrl = element.attr("href")
-                val epNumber = extractEpisodeNumber(episodeTitle) ?: 1
-
+                val epNumber = extractEpisodeNumber(episodeTitle) ?: (index + 1)
+                
+                // Obter imagem do episódio
+                var episodePoster: String? = null
+                if (index < episodeImages.size) {
+                    episodePoster = episodeImages[index].attr("src")?.let { fixUrl(it) }
+                }
+                
+                // Obter número do episódio do elemento .numerando
+                var displayEpisodeNumber = epNumber
+                if (index < episodeNumbers.size) {
+                    val numberText = episodeNumbers[index].text().trim()
+                    val match = "\\d+".toRegex().find(numberText)
+                    if (match != null) {
+                        displayEpisodeNumber = match.value.toIntOrNull() ?: epNumber
+                    }
+                }
+                
                 newEpisode(episodeUrl) {
-                    this.name = "Episódio $epNumber"
-                    this.episode = epNumber
-                    this.posterUrl = poster
+                    this.name = "Episódio $displayEpisodeNumber"
+                    this.episode = displayEpisodeNumber
+                    this.posterUrl = episodePoster ?: poster
                 }
             }.sortedBy { it.episode }
         } else {
@@ -339,7 +415,9 @@ class AnimeQ : MainAPI() {
             })
         }
 
-        val showStatus = if (isMovie || (episodes != null && episodesList.size >= episodes)) {
+        // Determinar status do anime
+        val showStatus = if (isMovie || episodesList.size >= 50) {
+            // Se for filme ou tiver muitos episódios, provavelmente está completo
             ShowStatus.Completed
         } else {
             ShowStatus.Ongoing
@@ -350,7 +428,13 @@ class AnimeQ : MainAPI() {
             this.year = year
             this.plot = synopsis
             this.tags = genres
+            this.score = score
             this.showStatus = showStatus
+            
+            // Adicionar títulos alternativos se existirem
+            if (alternateTitles.isNotEmpty()) {
+                this.altTitles = alternateTitles
+            }
 
             if (episodesList.isNotEmpty()) {
                 addEpisodes(if (isDubbed) DubStatus.Dubbed else DubStatus.Subbed, episodesList)
