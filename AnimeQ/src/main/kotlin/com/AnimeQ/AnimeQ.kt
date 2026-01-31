@@ -41,7 +41,7 @@ class AnimeQ : MainAPI() {
         private const val DETAIL_YEAR = ".date"
         private const val DETAIL_SCORE = ".dt_rating_vgs"
         private const val DETAIL_ALTERNATE_TITLES = "a[href*='/nome-alternativo/']"
-        private const val DETAIL_ALTERNATIVE_TITLES_SECTION = ".extra .wp-content p:contains(Título Alternativo)"
+        private const val DETAIL_ALTERNATIVE_TITLES_SECTION = ".extra .wp-content"
         private const val EPISODE_LIST = ".episodios li .episodiotitle a"
         private const val EPISODE_IMAGES = ".episodios li .imagen img"
         private const val EPISODE_NUMBER = ".episodios li .numerando"
@@ -305,24 +305,35 @@ class AnimeQ : MainAPI() {
         
         val poster = document.selectFirst(DETAIL_POSTER)?.attr("src")?.let { fixUrl(it) }
         
-        // Extrair sinopse - melhorado para pegar o primeiro parágrafo do .wp-content
-        val wpContent = document.selectFirst(".wp-content")
+        // Extrair sinopse
         var synopsis = "Sinopse não disponível."
         
+        // Primeiro tentar encontrar sinopse no padrão comum
+        val wpContent = document.selectFirst(".wp-content")
         wpContent?.let { content ->
-            // Tentar pegar o parágrafo que contém "Sinopse:"
-            val synopsisParagraph = content.select("p:contains(Sinopse:)").firstOrNull()
-            if (synopsisParagraph != null) {
-                synopsis = synopsisParagraph.text()
-                    .replace("Sinopse:", "")
-                    .trim()
-            } else {
-                // Se não encontrar, pegar o segundo parágrafo (geralmente tem a sinopse)
-                val paragraphs = content.select("p")
-                if (paragraphs.size > 1) {
-                    synopsis = paragraphs[1].text().trim()
-                } else if (paragraphs.isNotEmpty()) {
-                    synopsis = paragraphs.first().text().trim()
+            // Procurar por parágrafos que contenham "Sinopse:"
+            val synopsisElements = content.select("p")
+            for (element in synopsisElements) {
+                val text = element.text()
+                if (text.contains("Sinopse:", true)) {
+                    synopsis = text.replace("Sinopse:", "").trim()
+                    break
+                } else if (text.contains("Sinopse", true) && text.length > 50) {
+                    // Se encontrar "Sinopse" em texto longo, usar esse
+                    synopsis = text.trim()
+                    break
+                }
+            }
+            
+            // Se não encontrou sinopse específica, pegar o primeiro parágrafo longo
+            if (synopsis == "Sinopse não disponível." && synopsisElements.isNotEmpty()) {
+                for (element in synopsisElements) {
+                    val text = element.text().trim()
+                    if (text.length > 50 && !text.contains("Título Alternativo") && 
+                        !text.contains("Ano de Lançamento")) {
+                        synopsis = text
+                        break
+                    }
                 }
             }
         }
@@ -348,28 +359,6 @@ class AnimeQ : MainAPI() {
             score = scoreValue?.let { Score.from10(it) }
         }
         
-        // Extrair títulos alternativos
-        val alternateTitles = mutableListOf<String>()
-        
-        // Primeiro, verificar se há link de nome alternativo
-        document.select(DETAIL_ALTERNATE_TITLES).forEach { element ->
-            val altTitle = element.text().trim()
-            if (altTitle.isNotBlank() && altTitle != title) {
-                alternateTitles.add(altTitle)
-            }
-        }
-        
-        // Depois, verificar na seção de títulos alternativos
-        val alternativeTitlesSection = document.selectFirst(DETAIL_ALTERNATIVE_TITLES_SECTION)
-        if (alternativeTitlesSection != null) {
-            val text = alternativeTitlesSection.text()
-            if (text.contains("Título Alternativo:")) {
-                val altTitlesText = text.substringAfter("Título Alternativo:").trim()
-                val titles = altTitlesText.split(",").map { it.trim() }
-                alternateTitles.addAll(titles.filter { it.isNotBlank() && it != title })
-            }
-        }
-
         // Extrair episódios
         val isDubbed = rawTitle.contains("dublado", true) || url.contains("dublado", true)
         val isMovie = url.contains("/filme/") || rawTitle.contains("filme", true)
@@ -382,7 +371,22 @@ class AnimeQ : MainAPI() {
             episodeElements.mapIndexed { index, element ->
                 val episodeTitle = element.text().trim()
                 val episodeUrl = element.attr("href")
-                val epNumber = extractEpisodeNumber(episodeTitle) ?: (index + 1)
+                
+                // Tentar extrair número do título do episódio
+                var epNumber = extractEpisodeNumber(episodeTitle) ?: (index + 1)
+                
+                // Tentar extrair número do elemento .numerando
+                if (index < episodeNumbers.size) {
+                    val numberText = episodeNumbers[index].text().trim()
+                    // O formato geralmente é "1 - 1" ou similar
+                    val numberMatch = "\\d+".toRegex().findAll(numberText).lastOrNull()
+                    numberMatch?.let {
+                        val extractedNumber = it.value.toIntOrNull()
+                        if (extractedNumber != null) {
+                            epNumber = extractedNumber
+                        }
+                    }
+                }
                 
                 // Obter imagem do episódio
                 var episodePoster: String? = null
@@ -390,19 +394,9 @@ class AnimeQ : MainAPI() {
                     episodePoster = episodeImages[index].attr("src")?.let { fixUrl(it) }
                 }
                 
-                // Obter número do episódio do elemento .numerando
-                var displayEpisodeNumber = epNumber
-                if (index < episodeNumbers.size) {
-                    val numberText = episodeNumbers[index].text().trim()
-                    val match = "\\d+".toRegex().find(numberText)
-                    if (match != null) {
-                        displayEpisodeNumber = match.value.toIntOrNull() ?: epNumber
-                    }
-                }
-                
                 newEpisode(episodeUrl) {
-                    this.name = "Episódio $displayEpisodeNumber"
-                    this.episode = displayEpisodeNumber
+                    this.name = "Episódio $epNumber"
+                    this.episode = epNumber
                     this.posterUrl = episodePoster ?: poster
                 }
             }.sortedBy { it.episode }
@@ -417,7 +411,6 @@ class AnimeQ : MainAPI() {
 
         // Determinar status do anime
         val showStatus = if (isMovie || episodesList.size >= 50) {
-            // Se for filme ou tiver muitos episódios, provavelmente está completo
             ShowStatus.Completed
         } else {
             ShowStatus.Ongoing
@@ -430,11 +423,6 @@ class AnimeQ : MainAPI() {
             this.tags = genres
             this.score = score
             this.showStatus = showStatus
-            
-            // Adicionar títulos alternativos se existirem
-            if (alternateTitles.isNotEmpty()) {
-                this.altTitles = alternateTitles
-            }
 
             if (episodesList.isNotEmpty()) {
                 addEpisodes(if (isDubbed) DubStatus.Dubbed else DubStatus.Subbed, episodesList)
