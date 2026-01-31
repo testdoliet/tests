@@ -172,9 +172,9 @@ class AnimeQ : MainAPI() {
         val year = selectFirst(ANIME_YEAR)?.text()?.trim()?.toIntOrNull()
         val scoreText = selectFirst(ANIME_SCORE)?.text()?.trim()
         
-        // Converter score para o tipo Score do Cloudstream
+        // Converter score usando o método estático from10 como no AnimeFire
         val score = scoreText?.toFloatOrNull()?.let { 
-            Score(it, scale = 10.0f) // O site geralmente usa escala de 10
+            Score.from10(it) // Correto: usando o método estático
         }
 
         // Determinar se é filme ou série
@@ -185,7 +185,7 @@ class AnimeQ : MainAPI() {
             this.posterUrl = posterUrl
             this.type = type
             this.year = year
-            this.score = score // Agora é do tipo Score
+            this.score = score // Agora é do tipo Score correto
             addDubStatus(isDubbed, null)
         }
     }
