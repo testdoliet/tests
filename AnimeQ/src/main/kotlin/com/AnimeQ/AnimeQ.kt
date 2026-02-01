@@ -30,24 +30,20 @@ class AnimeQ : MainAPI() {
         private const val EPISODE_SERIE = ".data .serie"
         private const val ANIME_YEAR = ".data span"
         private const val ANIME_SCORE = ".rating"
-        private const val ANIME_QUALITY = ".mepo .quality"
         
         // Página de detalhes do anime
         private const val DETAIL_TITLE = "h1"
         private const val DETAIL_POSTER = ".poster img"
         private const val DETAIL_SYNOPSIS = ".wp-content p"
-        private const val DETAIL_METADATA = ".extra .wp-content p"
         private const val DETAIL_GENRES = ".sgeneros a[rel=tag]"
         private const val DETAIL_YEAR = ".date"
         private const val DETAIL_SCORE = ".dt_rating_vgs"
-        private const val DETAIL_ALTERNATE_TITLES = "a[href*='/nome-alternativo/']"
-        private const val DETAIL_ALTERNATIVE_TITLES_SECTION = ".extra .wp-content"
         private const val EPISODE_LIST = ".episodios li .episodiotitle a"
         private const val EPISODE_IMAGES = ".episodios li .imagen img"
         private const val EPISODE_NUMBER = ".episodios li .numerando"
     }
 
-    // Mapeamento completo de todas as categorias
+    // Mapeamento de categorias
     private val mainCategories = mapOf(
         "Últimos Episódios" to "$mainUrl/episodio/",
         "Animes Mais Vistos" to "$mainUrl/",
@@ -170,12 +166,10 @@ class AnimeQ : MainAPI() {
         val year = selectFirst(ANIME_YEAR)?.text()?.trim()?.toIntOrNull()
         val scoreText = selectFirst(ANIME_SCORE)?.text()?.trim()
         
-        // Converter score usando o método estático from10 como no AnimeFire
         val score = scoreText?.toFloatOrNull()?.let { 
             Score.from10(it)
         }
 
-        // Determinar se é filme ou série
         val isMovie = href.contains("/filme/") || cleanedTitle.contains("filme", true)
         val type = if (isMovie) TvType.AnimeMovie else TvType.Anime
 
@@ -195,11 +189,10 @@ class AnimeQ : MainAPI() {
         val baseUrl = request.data
         var url = baseUrl
         
-        // Tratar paginação
         if (page > 1) {
             url = when {
                 baseUrl == "$mainUrl/episodio/" -> "$baseUrl/page/$page/"
-                baseUrl == "$mainUrl/" -> baseUrl // Página inicial não tem paginação
+                baseUrl == "$mainUrl/" -> baseUrl
                 baseUrl.contains("/?s=") -> baseUrl.replace("/?s=", "/page/$page/?s=")
                 else -> "$baseUrl/page/$page/"
             }
@@ -214,21 +207,17 @@ class AnimeQ : MainAPI() {
                     .mapNotNull { it.toEpisodeSearchResponse() }
                     .distinctBy { it.url }
 
-                // ÚNICA CATEGORIA COM LAYOUT HORIZONTAL
                 newHomePageResponse(
                     list = HomePageList(request.name, items, isHorizontalImages = true),
                     hasNext = episodeElements.isNotEmpty()
                 )
             }
             "Animes Mais Vistos" -> {
-                // Na página inicial, procurar por seções populares
                 val popularItems = mutableListOf<AnimeSearchResponse>()
                 
-                // Tentar pegar do slider de ação (geralmente tem animes populares)
                 val sliderItems = document.select("#genre_acao .item.tvshows, #genre_acao .item.movies")
                 popularItems.addAll(sliderItems.take(10).mapNotNull { it.toAnimeSearchResponse() })
                 
-                // Se não encontrou no slider, tentar outras seções
                 if (popularItems.isEmpty()) {
                     val allItems = document.select(".item.tvshows, .item.movies")
                         .take(10)
@@ -236,31 +225,26 @@ class AnimeQ : MainAPI() {
                     popularItems.addAll(allItems)
                 }
 
-                // LAYOUT VERTICAL
                 newHomePageResponse(
                     list = HomePageList(request.name, popularItems.distinctBy { it.url }, isHorizontalImages = false),
                     hasNext = false
                 )
             }
             else -> {
-                // Para todas as outras categorias (gêneros, tipos, categorias especiais)
                 val isEpisodePage = baseUrl.contains("/episodio/")
                 val isGenrePage = baseUrl.contains("/genre/") || 
                                  baseUrl.contains("/tipo/") || 
                                  baseUrl == "$mainUrl/filme/"
                 
                 val items = if (isEpisodePage) {
-                    // Páginas de episódios
                     document.select(EPISODE_PAGE_ITEM)
                         .mapNotNull { it.toEpisodeSearchResponse() }
                         .distinctBy { it.url }
                 } else if (isGenrePage) {
-                    // Páginas de gêneros, tipos e categorias
                     document.select(GENRE_PAGE_ITEM)
                         .mapNotNull { it.toAnimeSearchResponse() }
                         .distinctBy { it.url }
                 } else {
-                    // Página inicial ou busca
                     document.select(".item.tvshows, .item.movies")
                         .mapNotNull { it.toAnimeSearchResponse() }
                         .distinctBy { it.url }
@@ -272,7 +256,6 @@ class AnimeQ : MainAPI() {
                     else -> false
                 }
 
-                // TODAS AS OUTRAS CATEGORIAS COM LAYOUT VERTICAL
                 newHomePageResponse(
                     list = HomePageList(request.name, items, isHorizontalImages = false),
                     hasNext = hasNext
@@ -305,13 +288,10 @@ class AnimeQ : MainAPI() {
         
         val poster = document.selectFirst(DETAIL_POSTER)?.attr("src")?.let { fixUrl(it) }
         
-        // Extrair sinopse
         var synopsis = "Sinopse não disponível."
         
-        // Primeiro tentar encontrar sinopse no padrão comum
         val wpContent = document.selectFirst(".wp-content")
         wpContent?.let { content ->
-            // Procurar por parágrafos que contenham "Sinopse:"
             val synopsisElements = content.select("p")
             for (element in synopsisElements) {
                 val text = element.text()
@@ -319,13 +299,11 @@ class AnimeQ : MainAPI() {
                     synopsis = text.replace("Sinopse:", "").trim()
                     break
                 } else if (text.contains("Sinopse", true) && text.length > 50) {
-                    // Se encontrar "Sinopse" em texto longo, usar esse
                     synopsis = text.trim()
                     break
                 }
             }
             
-            // Se não encontrou sinopse específica, pegar o primeiro parágrafo longo
             if (synopsis == "Sinopse não disponível." && synopsisElements.isNotEmpty()) {
                 for (element in synopsisElements) {
                     val text = element.text().trim()
@@ -338,12 +316,10 @@ class AnimeQ : MainAPI() {
             }
         }
         
-        // Extrair gêneros
         val genres = document.select(DETAIL_GENRES)
             .mapNotNull { it.text().trim() }
             .filter { !it.contains("Letra") && !it.contains("tipo") }
         
-        // Extrair ano de lançamento
         var year: Int? = null
         val yearText = document.selectFirst(DETAIL_YEAR)?.text()?.trim()
         if (yearText != null) {
@@ -351,7 +327,6 @@ class AnimeQ : MainAPI() {
             year = yearMatch?.groupValues?.get(1)?.toIntOrNull()
         }
         
-        // Extrair score
         var score: Score? = null
         val scoreText = document.selectFirst(DETAIL_SCORE)?.text()?.trim()
         if (scoreText != null) {
@@ -359,7 +334,6 @@ class AnimeQ : MainAPI() {
             score = scoreValue?.let { Score.from10(it) }
         }
         
-        // Extrair episódios
         val isDubbed = rawTitle.contains("dublado", true) || url.contains("dublado", true)
         val isMovie = url.contains("/filme/") || rawTitle.contains("filme", true)
         
@@ -372,13 +346,10 @@ class AnimeQ : MainAPI() {
                 val episodeTitle = element.text().trim()
                 val episodeUrl = element.attr("href")
                 
-                // Tentar extrair número do título do episódio
                 var epNumber = extractEpisodeNumber(episodeTitle) ?: (index + 1)
                 
-                // Tentar extrair número do elemento .numerando
                 if (index < episodeNumbers.size) {
                     val numberText = episodeNumbers[index].text().trim()
-                    // O formato geralmente é "1 - 1" ou similar
                     val numberMatch = "\\d+".toRegex().findAll(numberText).lastOrNull()
                     numberMatch?.let {
                         val extractedNumber = it.value.toIntOrNull()
@@ -388,7 +359,6 @@ class AnimeQ : MainAPI() {
                     }
                 }
                 
-                // Obter imagem do episódio
                 var episodePoster: String? = null
                 if (index < episodeImages.size) {
                     episodePoster = episodeImages[index].attr("src")?.let { fixUrl(it) }
@@ -401,7 +371,6 @@ class AnimeQ : MainAPI() {
                 }
             }.sortedBy { it.episode }
         } else {
-            // Para filmes, criar um único episódio
             listOf(newEpisode(url) {
                 this.name = "Filme Completo"
                 this.episode = 1
@@ -409,7 +378,6 @@ class AnimeQ : MainAPI() {
             })
         }
 
-        // Determinar status do anime
         val showStatus = if (isMovie || episodesList.size >= 50) {
             ShowStatus.Completed
         } else {
@@ -436,7 +404,6 @@ class AnimeQ : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // Por enquanto desativado como solicitado
-        return false
+        return AnimeQVideoExtractor.extractVideoLinks(data, "Episódio", callback)
     }
 }
