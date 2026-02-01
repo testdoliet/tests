@@ -355,7 +355,7 @@ class FilmesPK : MainAPI() {
                 }
             }
             
-            // Extrair duração - tema Plus UI
+            // Extrair duração - tema Plus UI (já é Int? correto)
             val duration = document.selectFirst(".pInf .pRd span[data-minutes]")?.attr("data-minutes")?.toIntOrNull()
             
             // Extrair classificação indicativa (PG) - tema Plus UI
@@ -450,7 +450,7 @@ class FilmesPK : MainAPI() {
                     this.plot = description
                     this.year = year
                     this.score = score
-                    this.duration = duration?.toString()
+                    this.duration = duration // CORRIGIDO: duration já é Int? correto
                     this.tags = if (pgRating != null) listOf(pgRating) else emptyList()
                 }
             } else {
@@ -459,7 +459,7 @@ class FilmesPK : MainAPI() {
                     this.plot = description
                     this.year = year
                     this.score = score
-                    this.duration = duration?.toString()
+                    this.duration = duration // CORRIGIDO: duration já é Int? correto
                     this.tags = if (pgRating != null) listOf(pgRating) else emptyList()
                 }
             }
