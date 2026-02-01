@@ -340,10 +340,20 @@ class FilmesPK : MainAPI() {
                 Regex("""\b(19|20)\d{2}\b""").find(it)?.value?.toIntOrNull()
             }
             
-            // Extrair avaliação - tema Plus UI
-            val rating = document.selectFirst(".tfxC .pV")?.text()?.let { 
-                Regex("""\d+(\.\d+)?""").find(it)?.value?.toFloatOrNull()?.div(10)
-            } ?: document.selectFirst("meta[name='rating']")?.attr("content")?.toFloatOrNull()
+            // Extrair avaliação e converter para score - tema Plus UI
+            val score = document.selectFirst(".tfxC .pV")?.text()?.let { 
+                // Tentar extrair valor numérico (ex: "8.5/10" ou "4.2 ★")
+                val numericMatch = Regex("""(\d+(\.\d+)?)""").find(it)
+                numericMatch?.value?.toFloatOrNull()?.let { numericValue ->
+                    // Converter para score (0-100) se for de 0-10
+                    when {
+                        it.contains("/10") -> Score.from10(numericValue)
+                        it.contains("★") && numericValue <= 5 -> Score.from5(numericValue)
+                        numericValue <= 10 -> Score.from10(numericValue)
+                        else -> Score.from100(numericValue.toInt())
+                    }
+                }
+            }
             
             // Extrair duração - tema Plus UI
             val duration = document.selectFirst(".pInf .pRd span[data-minutes]")?.attr("data-minutes")?.toIntOrNull()
@@ -439,7 +449,7 @@ class FilmesPK : MainAPI() {
                     this.posterUrl = poster
                     this.plot = description
                     this.year = year
-                    this.rating = rating
+                    this.score = score
                     this.duration = duration?.toString()
                     this.tags = if (pgRating != null) listOf(pgRating) else emptyList()
                 }
@@ -448,7 +458,7 @@ class FilmesPK : MainAPI() {
                     this.posterUrl = poster
                     this.plot = description
                     this.year = year
-                    this.rating = rating
+                    this.score = score
                     this.duration = duration?.toString()
                     this.tags = if (pgRating != null) listOf(pgRating) else emptyList()
                 }
