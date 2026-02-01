@@ -302,34 +302,70 @@ class FilmesPK : MainAPI() {
         return try {
             val document = app.get(url).document
             
+            // Extrair título - tema Plus UI
             val title = document.selectFirst("h1.post-title")?.text() 
+                ?: document.selectFirst(".pTtl.itm")?.text()
                 ?: document.selectFirst(".pTtl a")?.text() 
                 ?: return null
             
+            // Extrair imagem do artigo - tema Plus UI (alta resolução)
             val poster = document.selectFirst("meta[property='og:image']")?.attr("content")
+                ?.replace(Regex("""/s\d+(-c)?/"""), "/s1600/") // Garante resolução máxima
                 ?: document.selectFirst(".pThmb img")?.let { img ->
                     when {
                         img.hasAttr("data-src") -> img.attr("data-src")
                             .replace("-rw-e90", "")
                             .replace("-p-k-no-nu-rw-e90", "")
+                            .replace(Regex("""/s\d+(-c)?/"""), "/s1600/")
                         img.hasAttr("src") -> img.attr("src")
                             .replace("-rw-e90", "")
                             .replace("-p-k-no-nu-rw-e90", "")
+                            .replace(Regex("""/s\d+(-c)?/"""), "/s1600/")
                         else -> null
                     }
                 }
                 ?: document.selectFirst("img.imgThm")?.attr("src")?.let { src ->
-                    src.replace("-rw-e90", "").replace("-p-k-no-nu-rw-e90", "")
+                    src.replace("-rw-e90", "")
+                       .replace("-p-k-no-nu-rw-e90", "")
+                       .replace(Regex("""/s\d+(-c)?/"""), "/s1600/")
                 }
             
+            // Extrair descrição - tema Plus UI
             val description = document.selectFirst(".post-body")?.text() 
+                ?: document.selectFirst(".pEnt")?.text()
                 ?: document.selectFirst(".pSnpt")?.text()
             
+            // Extrair ano da descrição
             val year = description?.let { 
                 Regex("""\b(19|20)\d{2}\b""").find(it)?.value?.toIntOrNull()
             }
             
-            val isSerie = url.contains("Série", ignoreCase = true) || 
+            // Extrair avaliação - tema Plus UI
+            val rating = document.selectFirst(".tfxC .pV")?.text()?.let { 
+                Regex("""\d+(\.\d+)?""").find(it)?.value?.toFloatOrNull()?.div(10)
+            } ?: document.selectFirst("meta[name='rating']")?.attr("content")?.toFloatOrNull()
+            
+            // Extrair duração - tema Plus UI
+            val duration = document.selectFirst(".pInf .pRd span[data-minutes]")?.attr("data-minutes")?.toIntOrNull()
+            
+            // Extrair classificação indicativa (PG) - tema Plus UI
+            val pgRating = document.selectFirst("meta[name='rating']")?.attr("content")
+                ?: document.selectFirst(".pInf .pRd")?.text()?.let { text ->
+                    when {
+                        text.contains("Livre", ignoreCase = true) -> "L"
+                        text.contains("10", ignoreCase = true) -> "10"
+                        text.contains("12", ignoreCase = true) -> "12"
+                        text.contains("14", ignoreCase = true) -> "14"
+                        text.contains("16", ignoreCase = true) -> "16"
+                        text.contains("18", ignoreCase = true) -> "18"
+                        else -> null
+                    }
+                }
+            
+            // Determinar se é série baseado no tema Plus UI
+            val hasTabs = document.select(".tabs").isNotEmpty()
+            val isSerie = hasTabs || 
+                          url.contains("Série", ignoreCase = true) || 
                           document.select(".post-labels a").any { 
                               it.text().contains("Séries", ignoreCase = true) || 
                               it.text().contains("Série", ignoreCase = true)
@@ -341,25 +377,58 @@ class FilmesPK : MainAPI() {
             return if (isSerie) {
                 val episodes = mutableListOf<Episode>()
                 
-                document.select(".post-body a").forEachIndexed { index, element ->
-                    val epUrl = element.attr("href")
-                    val epText = element.text().trim()
+                // Verificar se tem sistema de abas (tabs) do tema Plus UI
+                val tabs = document.select(".tabs")
+                if (tabs.isNotEmpty()) {
+                    // Sistema de abas (temporadas) do tema Plus UI
+                    // Selecionar labels das temporadas
+                    val seasonLabels = tabs.select("> div:first-of-type label")
+                    // Selecionar conteúdo das temporadas
+                    val seasonContents = tabs.select("> div:not(:first-of-type)")
                     
-                    if (epUrl.isNotBlank() && (epUrl.contains("episodio") || 
-                                               epUrl.contains("episode") || 
-                                               epUrl.contains("temporada") ||
-                                               epText.contains("Episódio") ||
-                                               epText.contains("EP"))) {
+                    seasonContents.forEachIndexed { seasonIndex, seasonDiv ->
+                        val seasonNumber = seasonIndex + 1
+                        val seasonName = seasonLabels.getOrNull(seasonIndex)?.text() ?: "Temporada $seasonNumber"
                         
-                        val episodeNumber = extractEpisodeNumber(epText) ?: (index + 1)
+                        // Extrair episódios desta temporada
+                        seasonDiv.select("a").forEachIndexed { episodeIndex, element ->
+                            val epUrl = element.attr("href")
+                            val epText = element.text().trim()
+                            
+                            if (epUrl.isNotBlank()) {
+                                val episodeNumber = extractEpisodeNumber(epText) ?: (episodeIndex + 1)
+                                
+                                episodes.add(newEpisode(fixUrl(epUrl)) {
+                                    this.name = if (epText.isNotBlank()) epText else "Episódio $episodeNumber"
+                                    this.episode = episodeNumber
+                                    this.season = seasonNumber
+                                })
+                            }
+                        }
+                    }
+                } else {
+                    // Sistema antigo (sem tabs)
+                    document.select(".post-body a").forEachIndexed { index, element ->
+                        val epUrl = element.attr("href")
+                        val epText = element.text().trim()
                         
-                        episodes.add(newEpisode(fixUrl(epUrl)) {
-                            this.name = if (epText.isNotBlank()) epText else "Episódio $episodeNumber"
-                            this.episode = episodeNumber
-                        })
+                        if (epUrl.isNotBlank() && (epUrl.contains("episodio") || 
+                                                   epUrl.contains("episode") || 
+                                                   epUrl.contains("temporada") ||
+                                                   epText.contains("Episódio") ||
+                                                   epText.contains("EP"))) {
+                            
+                            val episodeNumber = extractEpisodeNumber(epText) ?: (index + 1)
+                            
+                            episodes.add(newEpisode(fixUrl(epUrl)) {
+                                this.name = if (epText.isNotBlank()) epText else "Episódio $episodeNumber"
+                                this.episode = episodeNumber
+                            })
+                        }
                     }
                 }
                 
+                // Se não encontrou episódios específicos, criar um episódio com o link da página
                 if (episodes.isEmpty()) {
                     episodes.add(newEpisode(url) { 
                         this.name = "Assistir"
@@ -370,12 +439,18 @@ class FilmesPK : MainAPI() {
                     this.posterUrl = poster
                     this.plot = description
                     this.year = year
+                    this.rating = rating
+                    this.duration = duration?.toString()
+                    this.tags = if (pgRating != null) listOf(pgRating) else emptyList()
                 }
             } else {
                 newMovieLoadResponse(title, url, TvType.Movie, url) {
                     this.posterUrl = poster
                     this.plot = description
                     this.year = year
+                    this.rating = rating
+                    this.duration = duration?.toString()
+                    this.tags = if (pgRating != null) listOf(pgRating) else emptyList()
                 }
             }
         } catch (e: Exception) {
