@@ -21,27 +21,103 @@ object AnimeQVideoExtractor {
         313 to 2160,
     )
 
+    // Configuração de debug
+    private var debugEnabled = false
+    
+    fun enableDebug() {
+        debugEnabled = true
+        debugLog("🚀 DEBUG ATIVADO")
+    }
+    
+    fun disableDebug() {
+        debugEnabled = false
+    }
+
+    private fun debugLog(message: String) {
+        if (debugEnabled) {
+            println("[AnimeQDebug] $message")
+        }
+    }
+
+    private fun debugError(message: String, e: Exception? = null) {
+        if (debugEnabled) {
+            println("[AnimeQDebug] ❌ ERRO: $message")
+            e?.printStackTrace()
+        }
+    }
+
+    private fun debugSuccess(message: String) {
+        if (debugEnabled) {
+            println("[AnimeQDebug] ✅ SUCESSO: $message")
+        }
+    }
+
+    private fun debugWarning(message: String) {
+        if (debugEnabled) {
+            println("[AnimeQDebug] ⚠️ ALERTA: $message")
+        }
+    }
+
+    private fun debugInfo(message: String) {
+        if (debugEnabled) {
+            println("[AnimeQDebug] ℹ️ INFO: $message")
+        }
+    }
+
+    private fun debugStep(message: String) {
+        if (debugEnabled) {
+            println("[AnimeQDebug] 🔄 ETAPA: $message")
+        }
+    }
+
     suspend fun extractVideoLinks(
         url: String,
         name: String = "Episódio",
         callback: (ExtractorLink) -> Unit
     ): Boolean {
+        debugLog("🚀 Iniciando extração de vídeo")
+        debugInfo("📌 URL: $url")
+        debugInfo("📝 Nome: $name")
+        
         return try {
+            debugStep("1️⃣ Fazendo requisição para a página...")
             val pageResponse = app.get(url)
+            debugInfo("📊 Status code: ${pageResponse.code}")
+            debugInfo("📏 Tamanho da resposta: ${pageResponse.text.length} caracteres")
+            
             val doc = org.jsoup.Jsoup.parse(pageResponse.text)
+            debugSuccess("✅ Página parseada com sucesso")
 
             // Procurar por iframe do Blogger/YouTube
+            debugStep("2️⃣ Procurando por iframes...")
             val iframe = doc.selectFirst("iframe[src*='blogger.com'], iframe[src*='youtube.com/embed'], iframe[src*='youtube.googleapis.com']")
             
             if (iframe != null) {
                 val iframeUrl = iframe.attr("src")
-                extractFromBloggerIframe(iframeUrl, url, name, callback)
+                debugSuccess("🎯 IFRAME ENCONTRADO!")
+                debugInfo("🔗 URL do iframe: $iframeUrl")
+                
+                debugInfo("📊 Estatísticas de iframes:")
+                debugInfo("  📍 blogger.com: ${doc.select("iframe[src*='blogger.com']").size}")
+                debugInfo("  📍 youtube.com/embed: ${doc.select("iframe[src*='youtube.com/embed']").size}")
+                debugInfo("  📍 youtube.googleapis.com: ${doc.select("iframe[src*='youtube.googleapis.com']").size}")
+                
+                return extractFromBloggerIframe(iframeUrl, url, name, callback)
             } else {
-                // Tentar encontrar diretamente na página
-                extractDirectFromPage(doc, url, name, callback)
+                debugWarning("⚠️ NENHUM IFRAME ENCONTRADO na página principal")
+                debugInfo("📊 Total de iframes na página: ${doc.select("iframe").size}")
+                if (doc.select("iframe").isNotEmpty()) {
+                    doc.select("iframe").forEachIndexed { index, frame ->
+                        debugInfo("  ${index + 1}. ${frame.attr("src")}")
+                    }
+                }
+                
+                debugStep("3️⃣ Tentando extração direta da página...")
+                return extractDirectFromPage(doc, url, name, callback)
             }
         } catch (e: Exception) {
-            false
+            debugError("❌ Falha na extração principal", e)
+            return false
         }
     }
 
@@ -51,6 +127,10 @@ object AnimeQVideoExtractor {
         name: String,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
+        debugLog("🔍 Iniciando extração do iframe")
+        debugInfo("🎯 URL do iframe: $iframeUrl")
+        debugInfo("🔙 Referer: $referer")
+        
         return try {
             val headers = mapOf(
                 "Referer" to referer,
@@ -59,17 +139,25 @@ object AnimeQVideoExtractor {
                 "Accept-Language" to "pt-BR,pt;q=0.9"
             )
 
+            debugStep("1️⃣ Acessando conteúdo do iframe...")
             val iframeResponse = app.get(iframeUrl, headers = headers)
+            debugInfo("📊 Status do iframe: ${iframeResponse.code}")
+            debugInfo("📏 Tamanho HTML do iframe: ${iframeResponse.text.length}")
+            
             val iframeHtml = iframeResponse.text
 
-            // Padrão 1: URLs de videoplayback do Google
+            debugStep("2️⃣ Procurando URLs do Google Video...")
             val videoPattern = """https?://[^"'\s<>]+googlevideo\.com/videoplayback[^"'\s<>]+""".toRegex()
             val matches = videoPattern.findAll(iframeHtml).toList()
-
+            
+            debugInfo("🎯 URLs de videoplayback encontradas: ${matches.size}")
+            
             if (matches.isNotEmpty()) {
+                debugSuccess("✅ VÍDEOS ENCONTRADOS no iframe!")
                 var found = false
-                for (match in matches.distinct()) {
+                for ((index, match) in matches.distinct().withIndex()) {
                     val videoUrl = match.value
+                    debugInfo("🎬 Vídeo ${index + 1}: ${videoUrl.take(100)}...")
                     
                     // Extrair qualidade
                     val itagPattern = """[?&]itag=(\d+)""".toRegex()
@@ -77,6 +165,10 @@ object AnimeQVideoExtractor {
                     val itag = itagMatch?.groupValues?.get(1)?.toIntOrNull() ?: 18
                     val quality = itagQualityMap[itag] ?: 360
                     val qualityLabel = getQualityLabel(quality)
+                    
+                    debugInfo("  📊 Qualidade: $quality")
+                    debugInfo("  🏷️  iTag: $itag")
+                    debugInfo("  🏷️  Label: $qualityLabel")
 
                     val extractorLink = newExtractorLink(
                         source = "AnimeQ",
@@ -93,18 +185,23 @@ object AnimeQVideoExtractor {
                         )
                     }
 
+                    debugSuccess("✅ Link ${index + 1} criado com sucesso!")
                     callback(extractorLink)
                     found = true
                 }
+                debugSuccess("🎉 ${matches.distinct().size} links extraídos do iframe!")
                 return found
             }
 
-            // Padrão 2: Procurar em variáveis JavaScript
+            debugStep("3️⃣ Procurando por URLs de vídeo em JavaScript...")
             val jsPattern = """(?i)(?:src|url|file|video_url)\s*[:=]\s*["'](https?://[^"'\s]+\.(?:mp4|m3u8|m4v|mov|webm|flv|avi))["']""".toRegex()
             val jsMatches = jsPattern.findAll(iframeHtml).toList()
-
-            for (match in jsMatches) {
+            
+            debugInfo("🔍 URLs JS encontradas: ${jsMatches.size}")
+            
+            for ((index, match) in jsMatches.withIndex()) {
                 val videoUrl = match.groupValues[1]
+                debugSuccess("🎬 Vídeo JS encontrado ${index + 1}: $videoUrl")
                 val quality = 720 // Default
                 val qualityLabel = getQualityLabel(quality)
 
@@ -122,13 +219,24 @@ object AnimeQVideoExtractor {
                     )
                 }
 
+                debugSuccess("✅ Link JS criado!")
                 callback(extractorLink)
                 return true
             }
 
-            false
+            debugWarning("⚠️ Nenhum vídeo encontrado no iframe")
+            debugStep("4️⃣ Analisando HTML do iframe...")
+            debugInfo("📊 Primeiros 500 caracteres do HTML:")
+            debugInfo(iframeHtml.take(500))
+            debugInfo("🔍 Procurando por palavras-chave...")
+            debugInfo("  'video' aparece: ${iframeHtml.lowercase().count { it == "video" }} vezes")
+            debugInfo("  'src' aparece: ${iframeHtml.lowercase().count { it == "src" }} vezes")
+            debugInfo("  'http' aparece: ${iframeHtml.lowercase().count { it == "http" }} vezes")
+            
+            return false
         } catch (e: Exception) {
-            false
+            debugError("❌ Falha na extração do iframe", e)
+            return false
         }
     }
 
@@ -138,27 +246,89 @@ object AnimeQVideoExtractor {
         name: String,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // Procurar em scripts
-        val scripts = doc.select("script")
+        debugLog("🔍 Iniciando extração direta da página")
+        debugInfo("🔙 Referer: $referer")
         
-        for (script in scripts) {
+        debugStep("1️⃣ Procurando em scripts...")
+        val scripts = doc.select("script")
+        debugInfo("📊 Total de scripts encontrados: ${scripts.size}")
+        
+        for ((scriptIndex, script) in scripts.withIndex()) {
             val scriptText = script.html()
+            if (scriptText.isNotEmpty()) {
+                debugInfo("📜 Script ${scriptIndex + 1}: ${scriptText.length} caracteres")
+                
+                // Procurar URLs do Google Video
+                val videoPattern = """https?://[^"'\s<>]+googlevideo\.com/videoplayback[^"'\s<>]+""".toRegex()
+                val matches = videoPattern.findAll(scriptText).toList()
+                
+                if (matches.isNotEmpty()) {
+                    debugSuccess("✅ VÍDEOS ENCONTRADOS no script ${scriptIndex + 1}!")
+                    debugInfo("🎯 URLs encontradas: ${matches.size}")
+                    
+                    for ((index, match) in matches.distinct().withIndex()) {
+                        val videoUrl = match.value
+                        debugInfo("🎬 Vídeo ${index + 1}: ${videoUrl.take(100)}...")
+                        val itag = 18 // Default
+                        val quality = itagQualityMap[itag] ?: 360
+                        val qualityLabel = getQualityLabel(quality)
+
+                        val extractorLink = newExtractorLink(
+                            source = "AnimeQ",
+                            name = "$name ($qualityLabel)",
+                            url = videoUrl,
+                            type = ExtractorLinkType.VIDEO
+                        ) {
+                            this.referer = referer
+                            this.quality = quality
+                            this.headers = mapOf(
+                                "Referer" to referer,
+                                "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36"
+                            )
+                        }
+
+                        debugSuccess("✅ Link criado do script!")
+                        callback(extractorLink)
+                        return true
+                    }
+                }
+                
+                // Verificar se tem dados de vídeo
+                if (scriptText.contains("video", true) || 
+                    scriptText.contains("mp4", true) || 
+                    scriptText.contains("m3u8", true)) {
+                    debugInfo("📝 Script ${scriptIndex + 1} contém referências de vídeo")
+                }
+            }
+        }
+        
+        debugStep("2️⃣ Procurando por elementos de vídeo...")
+        val videoTags = doc.select("video")
+        val sourceTags = doc.select("source[src]")
+        val embedTags = doc.select("embed[src]")
+        val objectTags = doc.select("object[data]")
+        
+        debugInfo("📊 Elementos de vídeo encontrados:")
+        debugInfo("  🎥 <video>: ${videoTags.size}")
+        debugInfo("  📍 <source>: ${sourceTags.size}")
+        debugInfo("  📎 <embed>: ${embedTags.size}")
+        debugInfo("  📦 <object>: ${objectTags.size}")
+        
+        if (videoTags.isNotEmpty() || sourceTags.isNotEmpty()) {
+            debugSuccess("✅ Elementos de vídeo HTML5 encontrados!")
             
-            // Procurar URLs do Google Video
-            val videoPattern = """https?://[^"'\s<>]+googlevideo\.com/videoplayback[^"'\s<>]+""".toRegex()
-            val matches = videoPattern.findAll(scriptText).toList()
-            
-            if (matches.isNotEmpty()) {
-                for (match in matches.distinct()) {
-                    val videoUrl = match.value
-                    val itag = 18 // Default
-                    val quality = itagQualityMap[itag] ?: 360
+            // Verificar tags <source>
+            for ((index, source) in sourceTags.withIndex()) {
+                val src = source.attr("src")
+                if (src.isNotBlank() && src.startsWith("http")) {
+                    debugSuccess("🎬 Fonte ${index + 1}: $src")
+                    val quality = 720
                     val qualityLabel = getQualityLabel(quality)
 
                     val extractorLink = newExtractorLink(
                         source = "AnimeQ",
                         name = "$name ($qualityLabel)",
-                        url = videoUrl,
+                        url = src,
                         type = ExtractorLinkType.VIDEO
                     ) {
                         this.referer = referer
@@ -169,9 +339,25 @@ object AnimeQVideoExtractor {
                         )
                     }
 
+                    debugSuccess("✅ Link de fonte criado!")
                     callback(extractorLink)
                     return true
                 }
+            }
+        }
+        
+        debugWarning("⚠️ Nenhum vídeo encontrado na extração direta")
+        debugInfo("📊 Resumo da página:")
+        debugInfo("  🔗 Links totais: ${doc.select("a[href]").size}")
+        debugInfo("  🖼️  Imagens: ${doc.select("img[src]").size}")
+        debugInfo("  📄 Iframes: ${doc.select("iframe").size}")
+        
+        debugStep("3️⃣ Mostrando primeiros links encontrados...")
+        val allLinks = doc.select("a[href]").take(10)
+        allLinks.forEachIndexed { index, link ->
+            val href = link.attr("href")
+            if (href.contains("video", true) || href.contains("mp4", true) || href.contains("m3u8", true)) {
+                debugInfo("🔗 Link ${index + 1} (vídeo): $href")
             }
         }
         
@@ -180,11 +366,11 @@ object AnimeQVideoExtractor {
 
     private fun getQualityLabel(quality: Int): String {
         return when {
-            quality >= 2160 -> "4K"
-            quality >= 1080 -> "FHD"
-            quality >= 720 -> "HD"
-            quality >= 480 -> "SD"
-            else -> "SD"
+            quality >= 2160 -> "4K 🏆"
+            quality >= 1080 -> "FHD 🔥"
+            quality >= 720 -> "HD ⭐"
+            quality >= 480 -> "SD 📺"
+            else -> "SD 📺"
         }
     }
 }
