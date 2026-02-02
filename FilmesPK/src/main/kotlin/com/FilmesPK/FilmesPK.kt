@@ -259,20 +259,24 @@ class FilmesPK : MainAPI() {
         // Extrair descrição
         val description = article.selectFirst(".pSnpt")?.text() ?: ""
         
-        // Determinar tipo baseado no conteúdo
-        val isSerie = description.contains("Série", ignoreCase = true) ||
+        // Determinar tipo baseado no conteúdo - MELHORADO
+        val isSerie = article.select(".pLbls a").any { 
+                          it.text().contains("Série", ignoreCase = true) ||
+                          it.text().contains("Séries", ignoreCase = true)
+                      } ||
+                      description.contains("Série", ignoreCase = true) ||
+                      description.contains("Temporada", ignoreCase = true) ||
+                      description.contains("Episódio", ignoreCase = true) ||
                       title.contains("Série", ignoreCase = true) ||
-                      href.contains("/search/label/S%C3%A9rie") ||
-                      article.select(".pLbls a").any { 
-                          it.text().contains("Série", ignoreCase = true) 
-                      }
+                      href.contains("/search/label/S%C3%A9rie")
         
-        val isAnime = description.contains("Anime", ignoreCase = true) ||
+        val isAnime = article.select(".pLbls a").any { 
+                          it.text().contains("Anime", ignoreCase = true) ||
+                          it.text().contains("Animes", ignoreCase = true)
+                      } ||
+                      description.contains("Anime", ignoreCase = true) ||
                       title.contains("Anime", ignoreCase = true) ||
-                      href.contains("/search/label/Anime") ||
-                      article.select(".pLbls a").any { 
-                          it.text().contains("Anime", ignoreCase = true) 
-                      }
+                      href.contains("/search/label/Anime")
 
         return when {
             isAnime -> newAnimeSearchResponse(title, fixUrl(href), TvType.Anime) { 
@@ -347,21 +351,19 @@ class FilmesPK : MainAPI() {
             // Extrair classificação indicativa (PG) - tema Plus UI
             val pgRating = extractPGRatingFromDocument(document)
             
-            // Determinar se é série baseado no tema Plus UI
-            val hasTabs = document.select(".tabs").isNotEmpty()
-            val isSerie = hasTabs || 
-                          url.contains("Série", ignoreCase = true) || 
-                          document.select(".post-labels a").any { 
-                              it.text().contains("Séries", ignoreCase = true) || 
-                              it.text().contains("Série", ignoreCase = true)
-                          } ||
-                          title.contains("Série", ignoreCase = true) ||
-                          description?.contains("Temporada", ignoreCase = true) == true ||
-                          description?.contains("Episódio", ignoreCase = true) == true
-
+            // DETECÇÃO MELHORADA DE SÉRIES - VERIFICA MÚLTIPLOS FATORES
+            val isSerie = detectSerieFromDocument(document, title, description, url)
+            
+            println("DEBUG: URL=$url")
+            println("DEBUG: Title=$title")
+            println("DEBUG: Has tabs=${document.select(".tabs").isNotEmpty()}")
+            println("DEBUG: Is Serie=$isSerie")
+            
             return if (isSerie) {
                 // Extrair episódios corretamente
                 val episodes = extractEpisodesFromDocument(document, url)
+                
+                println("DEBUG: Found ${episodes.size} episodes")
                 
                 newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes) {
                     this.posterUrl = poster
@@ -387,6 +389,90 @@ class FilmesPK : MainAPI() {
         }
     }
     
+    private fun detectSerieFromDocument(
+        document: org.jsoup.nodes.Document, 
+        title: String, 
+        description: String?, 
+        url: String
+    ): Boolean {
+        // 1. Verifica se tem sistema de abas (tabs) - indicativo forte de série
+        if (document.select(".tabs").isNotEmpty()) {
+            println("DEBUG: Has tabs system")
+            return true
+        }
+        
+        // 2. Verifica labels/categorias
+        val hasSerieLabel = document.select(".post-labels a").any { 
+            it.text().contains("Série", ignoreCase = true) ||
+            it.text().contains("Séries", ignoreCase = true) ||
+            it.text().contains("TV Series", ignoreCase = true) ||
+            it.text().contains("Television", ignoreCase = true)
+        }
+        if (hasSerieLabel) {
+            println("DEBUG: Has serie label")
+            return true
+        }
+        
+        // 3. Verifica URL patterns
+        if (url.contains("Série", ignoreCase = true) ||
+            url.contains("serie", ignoreCase = true) ||
+            url.contains("temporada", ignoreCase = true) ||
+            url.contains("season", ignoreCase = true) ||
+            url.contains("/tv/", ignoreCase = true)) {
+            println("DEBUG: URL indicates serie")
+            return true
+        }
+        
+        // 4. Verifica título
+        if (title.contains("Série", ignoreCase = true) ||
+            title.contains("Temporada", ignoreCase = true) ||
+            title.contains("Season", ignoreCase = true) ||
+            Regex("""S\d+""").containsMatchIn(title)) {
+            println("DEBUG: Title indicates serie")
+            return true
+        }
+        
+        // 5. Verifica descrição
+        description?.let { desc ->
+            if (desc.contains("Temporada", ignoreCase = true) ||
+                desc.contains("Episódio", ignoreCase = true) ||
+                desc.contains("Season", ignoreCase = true) ||
+                desc.contains("Episode", ignoreCase = true) ||
+                desc.contains("Série", ignoreCase = true) ||
+                Regex("""S\d+.*E\d+""").containsMatchIn(desc)) {
+                println("DEBUG: Description indicates serie")
+                return true
+            }
+        }
+        
+        // 6. Verifica conteúdo da página por múltiplos episódios
+        val postBodyText = document.selectFirst(".post-body")?.text() ?: ""
+        if (postBodyText.contains("Temporada") && 
+            (postBodyText.contains("Episódio") || 
+             postBodyText.contains("E1") || 
+             postBodyText.contains("E2") ||
+             Regex("""E\d+""").findAll(postBodyText).count() > 1)) {
+            println("DEBUG: Multiple episodes found in content")
+            return true
+        }
+        
+        // 7. Verifica por elementos específicos de séries no tema Plus UI
+        if (document.select(".seasons, .episodes, .season-list, .episode-list").isNotEmpty()) {
+            println("DEBUG: Has season/episode elements")
+            return true
+        }
+        
+        // 8. Verifica por padrão de episódios no texto
+        val episodePatternCount = Regex("""(?i)(episódio|episode|ep\.?)\s*\d+""").findAll(postBodyText).count()
+        if (episodePatternCount > 1) {
+            println("DEBUG: Found $episodePatternCount episode patterns")
+            return true
+        }
+        
+        println("DEBUG: No serie indicators found")
+        return false
+    }
+    
     private fun cleanDescription(document: org.jsoup.nodes.Document): String? {
         // Primeiro tenta pegar a sinopse limpa
         val postBody = document.selectFirst(".post-body")
@@ -394,18 +480,21 @@ class FilmesPK : MainAPI() {
         // Remove elementos que não são sinopse
         postBody?.let { body ->
             // Remove botões, players, lista de episódios, etc
-            body.select("button, .button, .player, iframe, script, .tabs, .episodes-list, .season-list").remove()
+            body.select("button, .button, .player, iframe, script, .tabs, .seasons, .episodes, .season-list, .episode-list").remove()
             
             // Procura por texto que parece sinopse (parágrafos com mais de 20 caracteres)
             val paragraphs = body.select("p").map { it.text().trim() }
                 .filter { it.length > 20 && 
                          !it.contains("★") && 
+                         !it.contains("/10") &&
                          !it.contains("min :") &&
                          !it.contains("Temporada") &&
                          !it.contains("Episódio") &&
                          !it.contains("ASSISTIR") &&
                          !it.contains("Player") &&
-                         !it.contains("VPN") }
+                         !it.contains("VPN") &&
+                         !it.contains("▶") &&
+                         !it.matches(Regex("""^E\d+.*""")) }
             
             if (paragraphs.isNotEmpty()) {
                 return paragraphs.joinToString("\n\n")
@@ -427,6 +516,7 @@ class FilmesPK : MainAPI() {
                         !line.contains("▶") &&
                         !line.contains("Player") &&
                         !line.contains("VPN") &&
+                        !line.matches(Regex("""^E\d+.*""")) &&
                         line.length > 30 // Linhas muito curtas provavelmente são títulos/links
                     }
                 
@@ -478,6 +568,7 @@ class FilmesPK : MainAPI() {
     }
     
     private fun extractDurationFromDocument(document: org.jsoup.nodes.Document): Int? {
+        // Para séries, não extrair duração do filme inteiro
         // Tenta extrair do elemento data-minutes (tema Plus UI)
         val durationElement = document.selectFirst(".pInf .pRd span[data-minutes]")
         durationElement?.attr("data-minutes")?.toIntOrNull()?.let { return it }
@@ -486,261 +577,4 @@ class FilmesPK : MainAPI() {
         durationElement?.text()?.let { text ->
             // Procura por padrões como "1h30", "90 min", etc
             val patterns = listOf(
-                Regex("""(\d+)\s*h\s*(\d+)\s*min"""), // 1h 30 min
-                Regex("""(\d+)\s*h(\d+)"""),          // 1h30
-                Regex("""(\d+)\s*min"""),             // 90 min
-                Regex("""(\d+)\s*minutos""")          // 90 minutos
-            )
-            
-            for (pattern in patterns) {
-                val match = pattern.find(text)
-                if (match != null) {
-                    return when (match.groupValues.size) {
-                        3 -> { // Tem horas e minutos
-                            val hours = match.groupValues[1].toIntOrNull() ?: 0
-                            val minutes = match.groupValues[2].toIntOrNull() ?: 0
-                            hours * 60 + minutes
-                        }
-                        2 -> { // Apenas minutos
-                            match.groupValues[1].toIntOrNull()
-                        }
-                        else -> null
-                    }
-                }
-            }
-        }
-        
-        return null
-    }
-    
-    private fun extractPGRatingFromDocument(document: org.jsoup.nodes.Document): String? {
-        // Tenta extrair do meta tag
-        val metaRating = document.selectFirst("meta[name='rating']")?.attr("content")
-        if (metaRating != null && metaRating.isNotBlank() && metaRating != "general") {
-            return metaRating
-        }
-        
-        // Tenta extrair do texto
-        val ratingText = document.selectFirst(".pInf .pRd")?.text()
-        ratingText?.let { text ->
-            return when {
-                text.contains("Livre", ignoreCase = true) -> "L"
-                text.contains("10", ignoreCase = true) -> "10"
-                text.contains("12", ignoreCase = true) -> "12"
-                text.contains("14", ignoreCase = true) -> "14"
-                text.contains("16", ignoreCase = true) -> "16"
-                text.contains("18", ignoreCase = true) -> "18"
-                else -> null
-            }
-        }
-        
-        return null
-    }
-    
-    private fun extractEpisodesFromDocument(document: org.jsoup.nodes.Document, baseUrl: String): List<Episode> {
-        val episodes = mutableListOf<Episode>()
-        
-        // Verificar se tem sistema de abas (tabs) do tema Plus UI
-        val tabs = document.select(".tabs")
-        if (tabs.isNotEmpty()) {
-            // Sistema de abas (temporadas) do tema Plus UI
-            // Selecionar labels das temporadas
-            val seasonLabels = tabs.select("> div:first-of-type label")
-            // Selecionar conteúdo das temporadas
-            val seasonContents = tabs.select("> div:not(:first-of-type)")
-            
-            seasonContents.forEachIndexed { seasonIndex, seasonDiv ->
-                val seasonNumber = seasonIndex + 1
-                
-                // Extrair episódios desta temporada
-                seasonDiv.select("a").forEachIndexed { episodeIndex, element ->
-                    val epUrl = element.attr("href")
-                    val epText = element.text().trim()
-                    
-                    if (epUrl.isNotBlank()) {
-                        val episodeNumber = extractEpisodeNumber(epText) ?: (episodeIndex + 1)
-                        
-                        episodes.add(newEpisode(fixUrl(epUrl)) {
-                            this.name = if (epText.isNotBlank()) cleanEpisodeTitle(epText) else "Episódio $episodeNumber"
-                            this.episode = episodeNumber
-                            this.season = seasonNumber
-                        })
-                    }
-                }
-            }
-        } else {
-            // Sistema antigo - extrair do post-body
-            val postBody = document.selectFirst(".post-body")
-            if (postBody != null) {
-                var currentSeason = 1
-                var episodeCount = 0
-                
-                // Procura por padrões de temporada
-                val lines = postBody.text().split("\n")
-                for (line in lines) {
-                    val trimmedLine = line.trim()
-                    
-                    // Detecta nova temporada
-                    if (trimmedLine.contains("Temporada", ignoreCase = true) ||
-                        trimmedLine.contains("Season", ignoreCase = true)) {
-                        val seasonMatch = Regex("""(?i)temporada\s*(\d+)|season\s*(\d+)""").find(trimmedLine)
-                        seasonMatch?.let {
-                            val seasonNum = it.groupValues[1].toIntOrNull() ?: it.groupValues[2].toIntOrNull()
-                            if (seasonNum != null) {
-                                currentSeason = seasonNum
-                                episodeCount = 0
-                            }
-                        }
-                    }
-                    
-                    // Detecta episódios
-                    if ((trimmedLine.contains("E") && Regex("""E\d+""").containsMatchIn(trimmedLine)) ||
-                        trimmedLine.contains("Episódio", ignoreCase = true)) {
-                        
-                        // Procura por links na linha ou próximo
-                        val linkElement = findEpisodeLinkNearText(postBody, trimmedLine)
-                        if (linkElement != null) {
-                            val epUrl = linkElement.attr("href")
-                            if (epUrl.isNotBlank()) {
-                                episodeCount++
-                                val episodeNumber = extractEpisodeNumber(trimmedLine) ?: episodeCount
-                                
-                                episodes.add(newEpisode(fixUrl(epUrl)) {
-                                    this.name = cleanEpisodeTitle(trimmedLine)
-                                    this.episode = episodeNumber
-                                    this.season = currentSeason
-                                })
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        
-        // Se não encontrou episódios específicos, criar um episódio com o link da página
-        if (episodes.isEmpty()) {
-            episodes.add(newEpisode(baseUrl) { 
-                this.name = "Assistir"
-                this.season = 1
-                this.episode = 1
-            })
-        }
-
-        return episodes
-    }
-    
-    private fun findEpisodeLinkNearText(container: Element, text: String): Element? {
-        // Procura por um link próximo ao texto
-        val elements = container.select("*")
-        for (element in elements) {
-            if (element.text().contains(text) && element.tagName() == "a") {
-                return element
-            }
-            if (element.text().contains(text)) {
-                val link = element.selectFirst("a")
-                if (link != null) return link
-                
-                // Procura no próximo elemento
-                element.nextElementSibling()?.selectFirst("a")?.let { return it }
-            }
-        }
-        return null
-    }
-    
-    private fun cleanEpisodeTitle(title: String): String {
-        var cleaned = title.trim()
-        
-        // Remove avaliações
-        cleaned = cleaned.replace(Regex("""★\s*\d+(\.\d+)?/10"""), "")
-        cleaned = cleaned.replace(Regex("""\d+(\.\d+)?/10"""), "")
-        
-        // Remove durações
-        cleaned = cleaned.replace(Regex("""\d+h\d*\s*min\s*:?"""), "")
-        cleaned = cleaned.replace(Regex("""\d+\s*min\s*:?"""), "")
-        
-        // Remove caracteres especiais
-        cleaned = cleaned.replace("🎁", "")
-        cleaned = cleaned.replace("▶", "")
-        cleaned = cleaned.replace(":", "")
-        cleaned = cleaned.replace("v", "")
-        
-        // Limpa espaços extras
-        cleaned = cleaned.replace(Regex("""\s+"""), " ").trim()
-        
-        return if (cleaned.isBlank()) "Episódio" else cleaned
-    }
-    
-    private fun extractEpisodeNumber(text: String): Int? {
-        val patterns = listOf(
-            Regex("""Episódio\s*(\d+)""", RegexOption.IGNORE_CASE),
-            Regex("""EP?\s*(\d+)""", RegexOption.IGNORE_CASE),
-            Regex("""E(\d+)""", RegexOption.IGNORE_CASE),
-            Regex("""(\d+)\s*ª?\s*Temp""", RegexOption.IGNORE_CASE),
-            Regex("""[Tt]emp\s*(\d+)"""),
-            Regex("""\b(\d{1,3})\b""")
-        )
-        
-        for (pattern in patterns) {
-            pattern.find(text)?.groupValues?.get(1)?.toIntOrNull()?.let {
-                return it
-            }
-        }
-        return null
-    }
-
-    override suspend fun loadLinks(
-        data: String,
-        isCasting: Boolean,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        return try {
-            val document = app.get(data).document
-            var foundLinks = false
-            
-            document.select("iframe[src*='embed'], iframe[src*='player'], iframe[src*='video']").forEach { iframe ->
-                val src = iframe.attr("src")
-                if (src.isNotBlank()) {
-                    loadExtractor(fixUrl(src), data, subtitleCallback, callback)
-                    foundLinks = true
-                }
-            }
-
-            document.select("[data-url]").forEach { element ->
-                val url = element.attr("data-url")
-                if (url.contains("http")) {
-                    loadExtractor(fixUrl(url), data, subtitleCallback, callback)
-                    foundLinks = true
-                }
-            }
-
-            document.select(".post-body a[href*='player'], .post-body a[href*='embed'], .post-body a[href*='watch']").forEach { link ->
-                val href = link.attr("href")
-                if (href.isNotBlank() && href.contains("http")) {
-                    loadExtractor(fixUrl(href), data, subtitleCallback, callback)
-                    foundLinks = true
-                }
-            }
-
-            document.select("script").forEach { script ->
-                val content = script.html()
-                val videoUrls = Regex("""(https?://[^"' ]*\.(?:mp4|m3u8|mkv|avi|mov|flv)[^"' ]*)""").findAll(content)
-                videoUrls.forEach { match ->
-                    loadExtractor(fixUrl(match.value), data, subtitleCallback, callback)
-                    foundLinks = true
-                }
-                
-                val embedUrls = Regex("""(https?://[^"' ]*\.(?:com|net|org)/[^"' ]*embed[^"' ]*)""").findAll(content)
-                embedUrls.forEach { match ->
-                    loadExtractor(fixUrl(match.value), data, subtitleCallback, callback)
-                    foundLinks = true
-                }
-            }
-
-            foundLinks
-        } catch (e: Exception) {
-            e.printStackTrace()
-            false
-        }
-    }
-}
+                Regex("""(\d+
