@@ -229,9 +229,17 @@ object AnimeQVideoExtractor {
             debugInfo("📊 Primeiros 500 caracteres do HTML:")
             debugInfo(iframeHtml.take(500))
             debugInfo("🔍 Procurando por palavras-chave...")
-            debugInfo("  'video' aparece: ${iframeHtml.lowercase().count { it == "video" }} vezes")
-            debugInfo("  'src' aparece: ${iframeHtml.lowercase().count { it == "src" }} vezes")
-            debugInfo("  'http' aparece: ${iframeHtml.lowercase().count { it == "http" }} vezes")
+            
+            // CORREÇÃO AQUI: usar count() com lambda em vez de comparar Char com String
+            val lowerHtml = iframeHtml.lowercase()
+            debugInfo("  'video' aparece: ${lowerHtml.count { it == 'v' } + lowerHtml.count { it == 'i' } + lowerHtml.count { it == 'd' } + lowerHtml.count { it == 'e' } + lowerHtml.count { it == 'o' }} vezes (aprox.)")
+            debugInfo("  'src' aparece: ${lowerHtml.count { it == 's' } + lowerHtml.count { it == 'r' } + lowerHtml.count { it == 'c' }} vezes (aprox.)")
+            debugInfo("  'http' aparece: ${lowerHtml.count { it == 'h' } + lowerHtml.count { it == 't' } + lowerHtml.count { it == 't' } + lowerHtml.count { it == 'p' }} vezes (aprox.)")
+            
+            // Contagem mais precisa usando split
+            debugInfo("  String 'video' aparece: ${lowerHtml.split("video").size - 1} vezes")
+            debugInfo("  String 'src' aparece: ${lowerHtml.split("src").size - 1} vezes")
+            debugInfo("  String 'http' aparece: ${lowerHtml.split("http").size - 1} vezes")
             
             return false
         } catch (e: Exception) {
@@ -294,9 +302,10 @@ object AnimeQVideoExtractor {
                 }
                 
                 // Verificar se tem dados de vídeo
-                if (scriptText.contains("video", true) || 
-                    scriptText.contains("mp4", true) || 
-                    scriptText.contains("m3u8", true)) {
+                val lowerScript = scriptText.lowercase()
+                if (lowerScript.contains("video") || 
+                    lowerScript.contains("mp4") || 
+                    lowerScript.contains("m3u8")) {
                     debugInfo("📝 Script ${scriptIndex + 1} contém referências de vídeo")
                 }
             }
