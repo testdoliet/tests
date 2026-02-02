@@ -577,4 +577,288 @@ class FilmesPK : MainAPI() {
         durationElement?.text()?.let { text ->
             // Procura por padrões como "1h30", "90 min", etc
             val patterns = listOf(
-                Regex("""(\d+
+                Regex("""(\d+)\s*h\s*(\d+)\s*min"""), // 1h 30 min
+                Regex("""(\d+)\s*h(\d+)"""),          // 1h30
+                Regex("""(\d+)\s*min"""),             // 90 min
+                Regex("""(\d+)\s*minutos""")          // 90 minutos
+            )
+            
+            for (pattern in patterns) {
+                val match = pattern.find(text)
+                if (match != null) {
+                    return when (match.groupValues.size) {
+                        3 -> { // Tem horas e minutos
+                            val hours = match.groupValues[1].toIntOrNull() ?: 0
+                            val minutes = match.groupValues[2].toIntOrNull() ?: 0
+                            hours * 60 + minutes
+                        }
+                        2 -> { // Apenas minutos
+                            match.groupValues[1].toIntOrNull()
+                        }
+                        else -> null
+                    }
+                }
+            }
+        }
+        
+        return null
+    }
+    
+    private fun extractPGRatingFromDocument(document: org.jsoup.nodes.Document): String? {
+        // Tenta extrair do meta tag
+        val metaRating = document.selectFirst("meta[name='rating']")?.attr("content")
+        if (metaRating != null && metaRating.isNotBlank() && metaRating != "general") {
+            return metaRating
+        }
+        
+        // Tenta extrair do texto
+        val ratingText = document.selectFirst(".pInf .pRd")?.text()
+        ratingText?.let { text ->
+            return when {
+                text.contains("Livre", ignoreCase = true) -> "L"
+                text.contains("10", ignoreCase = true) -> "10"
+                text.contains("12", ignoreCase = true) -> "12"
+                text.contains("14", ignoreCase = true) -> "14"
+                text.contains("16", ignoreCase = true) -> "16"
+                text.contains("18", ignoreCase = true) -> "18"
+                else -> null
+            }
+        }
+        
+        return null
+    }
+    
+    private fun extractEpisodesFromDocument(document: org.jsoup.nodes.Document, baseUrl: String): List<Episode> {
+        val episodes = mutableListOf<Episode>()
+        
+        // Verificar se tem sistema de abas (tabs) do tema Plus UI
+        val tabs = document.select(".tabs")
+        if (tabs.isNotEmpty()) {
+            println("DEBUG: Using tabs system")
+            // Sistema de abas (temporadas) do tema Plus UI
+            // Selecionar labels das temporadas
+            val seasonLabels = tabs.select("> div:first-of-type label")
+            // Selecionar conteúdo das temporadas
+            val seasonContents = tabs.select("> div:not(:first-of-type)")
+            
+            seasonContents.forEachIndexed { seasonIndex, seasonDiv ->
+                val seasonNumber = seasonIndex + 1
+                println("DEBUG: Processing season $seasonNumber")
+                
+                // Extrair episódios desta temporada
+                seasonDiv.select("a").forEachIndexed { episodeIndex, element ->
+                    val epUrl = element.attr("href")
+                    val epText = element.text().trim()
+                    
+                    if (epUrl.isNotBlank()) {
+                        val episodeNumber = extractEpisodeNumber(epText) ?: (episodeIndex + 1)
+                        println("DEBUG: Found episode $episodeNumber - $epText")
+                        
+                        episodes.add(newEpisode(fixUrl(epUrl)) {
+                            this.name = if (epText.isNotBlank()) cleanEpisodeTitle(epText) else "Episódio $episodeNumber"
+                            this.episode = episodeNumber
+                            this.season = seasonNumber
+                        })
+                    }
+                }
+            }
+        } else {
+            println("DEBUG: No tabs, searching in post-body")
+            // Sistema antigo - extrair do post-body
+            val postBody = document.selectFirst(".post-body")
+            if (postBody != null) {
+                var currentSeason = 1
+                var episodeCount = 0
+                
+                // Procura por padrões de temporada
+                val lines = postBody.text().split("\n")
+                for (line in lines) {
+                    val trimmedLine = line.trim()
+                    
+                    // Detecta nova temporada
+                    if (trimmedLine.contains("Temporada", ignoreCase = true) ||
+                        trimmedLine.contains("Season", ignoreCase = true)) {
+                        val seasonMatch = Regex("""(?i)temporada\s*(\d+)|season\s*(\d+)""").find(trimmedLine)
+                        seasonMatch?.let {
+                            val seasonNum = it.groupValues[1].toIntOrNull() ?: it.groupValues[2].toIntOrNull()
+                            if (seasonNum != null) {
+                                currentSeason = seasonNum
+                                episodeCount = 0
+                                println("DEBUG: Found season $currentSeason")
+                            }
+                        }
+                    }
+                    
+                    // Detecta episódios
+                    if ((trimmedLine.contains("E") && Regex("""E\d+""").containsMatchIn(trimmedLine)) ||
+                        trimmedLine.contains("Episódio", ignoreCase = true) ||
+                        trimmedLine.contains("Episode", ignoreCase = true)) {
+                        
+                        println("DEBUG: Found episode line: $trimmedLine")
+                        // Procura por links na linha ou próximo
+                        val linkElement = findEpisodeLinkNearText(postBody, trimmedLine)
+                        if (linkElement != null) {
+                            val epUrl = linkElement.attr("href")
+                            if (epUrl.isNotBlank()) {
+                                episodeCount++
+                                val episodeNumber = extractEpisodeNumber(trimmedLine) ?: episodeCount
+                                println("DEBUG: Added episode $episodeNumber (S$currentSeason)")
+                                
+                                episodes.add(newEpisode(fixUrl(epUrl)) {
+                                    this.name = cleanEpisodeTitle(trimmedLine)
+                                    this.episode = episodeNumber
+                                    this.season = currentSeason
+                                })
+                            }
+                        } else {
+                            // Tenta usar a URL base com parâmetro de episódio
+                            episodeCount++
+                            val episodeNumber = extractEpisodeNumber(trimmedLine) ?: episodeCount
+                            println("DEBUG: Using base URL for episode $episodeNumber")
+                            
+                            episodes.add(newEpisode(baseUrl) {
+                                this.name = cleanEpisodeTitle(trimmedLine)
+                                this.episode = episodeNumber
+                                this.season = currentSeason
+                            })
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Se não encontrou episódios específicos, criar um episódio com o link da página
+        if (episodes.isEmpty()) {
+            println("DEBUG: No episodes found, creating default")
+            episodes.add(newEpisode(baseUrl) { 
+                this.name = "Assistir"
+                this.season = 1
+                this.episode = 1
+            })
+        }
+
+        println("DEBUG: Total episodes found: ${episodes.size}")
+        return episodes
+    }
+    
+    private fun findEpisodeLinkNearText(container: Element, text: String): Element? {
+        // Procura por um link próximo ao texto
+        val elements = container.select("*")
+        for (element in elements) {
+            if (element.text().contains(text) && element.tagName() == "a") {
+                return element
+            }
+            if (element.text().contains(text)) {
+                val link = element.selectFirst("a")
+                if (link != null) return link
+                
+                // Procura no próximo elemento
+                element.nextElementSibling()?.selectFirst("a")?.let { return it }
+            }
+        }
+        return null
+    }
+    
+    private fun cleanEpisodeTitle(title: String): String {
+        var cleaned = title.trim()
+        
+        // Remove avaliações
+        cleaned = cleaned.replace(Regex("""★\s*\d+(\.\d+)?/10"""), "")
+        cleaned = cleaned.replace(Regex("""\d+(\.\d+)?/10"""), "")
+        
+        // Remove durações
+        cleaned = cleaned.replace(Regex("""\d+h\d*\s*min\s*:?"""), "")
+        cleaned = cleaned.replace(Regex("""\d+\s*min\s*:?"""), "")
+        
+        // Remove caracteres especiais
+        cleaned = cleaned.replace("🎁", "")
+        cleaned = cleaned.replace("▶", "")
+        cleaned = cleaned.replace(":", "")
+        cleaned = cleaned.replace("v", "")
+        cleaned = cleaned.replace("•", "")
+        
+        // Remove temporada se estiver no título
+        cleaned = cleaned.replace(Regex("""(?i)temporada\s*\d+"""), "")
+        cleaned = cleaned.replace(Regex("""(?i)season\s*\d+"""), "")
+        
+        // Limpa espaços extras
+        cleaned = cleaned.replace(Regex("""\s+"""), " ").trim()
+        
+        return if (cleaned.isBlank()) "Episódio" else cleaned
+    }
+    
+    private fun extractEpisodeNumber(text: String): Int? {
+        val patterns = listOf(
+            Regex("""Episódio\s*(\d+)""", RegexOption.IGNORE_CASE),
+            Regex("""Episode\s*(\d+)""", RegexOption.IGNORE_CASE),
+            Regex("""EP?\s*(\d+)""", RegexOption.IGNORE_CASE),
+            Regex("""E(\d+)""", RegexOption.IGNORE_CASE),
+            Regex("""(\d+)\s*ª?\s*Temp""", RegexOption.IGNORE_CASE),
+            Regex("""[Tt]emp\s*(\d+)"""),
+            Regex("""\b(\d{1,3})\b""")
+        )
+        
+        for (pattern in patterns) {
+            pattern.find(text)?.groupValues?.get(1)?.toIntOrNull()?.let {
+                return it
+            }
+        }
+        return null
+    }
+
+    override suspend fun loadLinks(
+        data: String,
+        isCasting: Boolean,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        return try {
+            val document = app.get(data).document
+            var foundLinks = false
+            
+            document.select("iframe[src*='embed'], iframe[src*='player'], iframe[src*='video']").forEach { iframe ->
+                val src = iframe.attr("src")
+                if (src.isNotBlank()) {
+                    loadExtractor(fixUrl(src), data, subtitleCallback, callback)
+                    foundLinks = true
+                }
+            }
+
+            document.select("[data-url]").forEach { element ->
+                val url = element.attr("data-url")
+                if (url.contains("http")) {
+                    loadExtractor(fixUrl(url), data, subtitleCallback, callback)
+                    foundLinks = true
+                }
+            }
+
+            document.select(".post-body a[href*='player'], .post-body a[href*='embed'], .post-body a[href*='watch']").forEach { link ->
+                val href = link.attr("href")
+                if (href.isNotBlank() && href.contains("http")) {
+                    loadExtractor(fixUrl(href), data, subtitleCallback, callback)
+                    foundLinks = true
+                }
+            }
+
+            document.select("script").forEach { script ->
+                val content = script.html()
+                val videoUrls = Regex("""(https?://[^"' ]*\.(?:mp4|m3u8|mkv|avi|mov|flv)[^"' ]*)""").findAll(content)
+                videoUrls.forEach { match ->
+                    loadExtractor(fixUrl(match.value), data, subtitleCallback, callback)
+                    foundLinks = true
+                }
+                
+                val embedUrls = Regex("""(https?://[^"' ]*\.(?:com|net|org)/[^"' ]*embed[^"' ]*)""").findAll(content)
+                embedUrls.forEach { match ->
+                    loadExtractor(fixUrl(match.value), data, subtitleCallback, callback)
+                    foundLinks = true
+                }
+            }
+
+            foundLinks
+        } catch (e: Exception) {
+            e.printStackTrace()
+            false
+        }
+    }
+}
