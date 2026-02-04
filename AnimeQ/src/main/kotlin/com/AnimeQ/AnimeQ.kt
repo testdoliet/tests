@@ -2,7 +2,10 @@ package com.AnimeQ
 
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
+import com.lagradost.cloudstream3.network.CloudflareKiller
 import org.jsoup.nodes.Element
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 class AnimeQ : MainAPI() {
     override var mainUrl = "https://animeq.net"
@@ -13,7 +16,15 @@ class AnimeQ : MainAPI() {
     override val supportedTypes = setOf(TvType.Anime, TvType.AnimeMovie)
     override val usesWebView = false
 
+    // Cloudflare protection
+    private val cloudflareInterceptor = CloudflareKiller()
+    private val locker = Mutex()
+    private var isInitialized = false
+    private var persistedCookies: String? = null
+
     companion object {
+        private const val USER_AGENT = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36"
+        
         // Página de busca
         private const val SEARCH_PATH = "/?s="
         
@@ -41,6 +52,52 @@ class AnimeQ : MainAPI() {
         private const val EPISODE_LIST = ".episodios li .episodiotitle a"
         private const val EPISODE_IMAGES = ".episodios li .imagen img"
         private const val EPISODE_NUMBER = ".episodios li .numerando"
+    }
+
+    private val defaultHeaders: Map<String, String>
+        get() = mapOf(
+            "User-Agent" to USER_AGENT,
+            "Referer" to "$mainUrl/",
+            "Cookie" to (persistedCookies ?: "")
+        )
+
+    private suspend fun request(url: String): org.jsoup.nodes.Document {
+        if (!isInitialized) {
+            locker.withLock {
+                if (!isInitialized) {
+                    try {
+                        // Inicializar com Cloudflare
+                        val resMain = app.get(
+                            mainUrl, 
+                            headers = mapOf("User-Agent" to USER_AGENT), 
+                            interceptor = cloudflareInterceptor, 
+                            timeout = 60
+                        )
+                        if (resMain.code == 200) {
+                            // Extrair cookies
+                            val cookieList = mutableListOf<String>()
+                            resMain.okhttpResponse.headers("Set-Cookie").forEach { 
+                                cookieList.add(it.split(";")[0]) 
+                            }
+                            resMain.okhttpResponse.request.header("Cookie")?.let { 
+                                cookieList.add(it) 
+                            }
+                            persistedCookies = cookieList.distinct().joinToString("; ")
+                            isInitialized = true
+                        }
+                    } catch (e: Exception) {
+                        println("[AnimeQ] ❌ Falha na inicialização: ${e.message}")
+                    }
+                }
+            }
+        }
+        
+        return app.get(
+            url, 
+            headers = defaultHeaders, 
+            interceptor = cloudflareInterceptor,
+            timeout = 30
+        ).document
     }
 
     // Mapeamento de categorias
@@ -198,7 +255,7 @@ class AnimeQ : MainAPI() {
             }
         }
 
-        val document = app.get(url).document
+        val document = request(url)
 
         return when (request.name) {
             "Últimos Episódios" -> {
@@ -267,7 +324,7 @@ class AnimeQ : MainAPI() {
     override suspend fun search(query: String): List<SearchResponse> {
         if (query.length < 2) return emptyList()
 
-        val document = app.get("$mainUrl$SEARCH_PATH${query.replace(" ", "+")}").document
+        val document = request("$mainUrl$SEARCH_PATH${query.replace(" ", "+")}")
 
         return document.select(".item.tvshows, .item.movies, .item.se.episodes")
             .mapNotNull { element ->
@@ -281,7 +338,7 @@ class AnimeQ : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse {
-        val document = app.get(url).document
+        val document = request(url)
 
         val rawTitle = document.selectFirst(DETAIL_TITLE)?.text()?.trim() ?: "Sem Título"
         val title = cleanTitle(rawTitle)
