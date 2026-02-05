@@ -16,7 +16,7 @@ class AnimeQ : MainAPI() {
     override val supportedTypes = setOf(TvType.Anime, TvType.AnimeMovie)
     override val usesWebView = false
 
-    // Cloudflare protection
+    // Cloudflare protection - CORRIGIDO
     private val cloudflareInterceptor = CloudflareKiller()
     private val locker = Mutex()
     private var isInitialized = false
@@ -62,42 +62,60 @@ class AnimeQ : MainAPI() {
         )
 
     private suspend fun request(url: String): org.jsoup.nodes.Document {
+        // Inicialização leve - CORRIGIDA: SEM timeout explícito aqui
         if (!isInitialized) {
             locker.withLock {
                 if (!isInitialized) {
                     try {
-                        // Inicializar com Cloudflare
+                        // ⭐ IMPORTANTE: SEM timeout aqui! ⭐
                         val resMain = app.get(
                             mainUrl, 
                             headers = mapOf("User-Agent" to USER_AGENT), 
-                            interceptor = cloudflareInterceptor, 
-                            timeout = 60
+                            interceptor = cloudflareInterceptor
                         )
-                        if (resMain.code == 200) {
-                            // Extrair cookies
-                            val cookieList = mutableListOf<String>()
-                            resMain.okhttpResponse.headers("Set-Cookie").forEach { 
-                                cookieList.add(it.split(";")[0]) 
-                            }
-                            resMain.okhttpResponse.request.header("Cookie")?.let { 
-                                cookieList.add(it) 
-                            }
-                            persistedCookies = cookieList.distinct().joinToString("; ")
-                            isInitialized = true
+                        
+                        // Extrair cookies
+                        val cookieList = mutableListOf<String>()
+                        resMain.okhttpResponse.headers("Set-Cookie").forEach { 
+                            cookieList.add(it.split(";")[0]) 
                         }
+                        
+                        if (cookieList.isNotEmpty()) {
+                            persistedCookies = cookieList.distinct().joinToString("; ")
+                        }
+                        
+                        isInitialized = true
+                        println("[AnimeQ] ✅ Inicializado com ${cookieList.size} cookies")
+                        
                     } catch (e: Exception) {
-                        println("[AnimeQ] ❌ Falha na inicialização: ${e.message}")
+                        // ⭐ IMPORTANTE: Não bloqueie em caso de erro! ⭐
+                        println("[AnimeQ] ⚠️ Inicialização opcional falhou: ${e.message}")
+                        isInitialized = true // Marque como inicializado mesmo assim
                     }
                 }
             }
         }
         
-        return app.get(
-            url, 
-            headers = defaultHeaders, 
-            interceptor = cloudflareInterceptor,
-            timeout = 30
-        ).document
+        // Requisição normal COM timeout adequado
+        return try {
+            app.get(
+                url, 
+                headers = defaultHeaders, 
+                interceptor = cloudflareInterceptor,
+                timeout = 30 // ⭐ Timeout apenas aqui! ⭐
+            ).document
+        } catch (e: Exception) {
+            // Fallback se o CloudflareKiller falhar
+            println("[AnimeQ] ⚠️ Fallback para requisição normal: ${e.message}")
+            app.get(
+                url,
+                headers = mapOf(
+                    "User-Agent" to USER_AGENT,
+                    "Referer" to "$mainUrl/"
+                ),
+                timeout = 25
+            ).document
+        }
     }
 
     // Mapeamento de categorias
