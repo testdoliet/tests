@@ -67,9 +67,9 @@ class AnimeQ : MainAPI() {
             "Accept-Encoding" to "gzip, deflate, br",
             "Connection" to "keep-alive",
             "Upgrade-Insecure-Requests" to "1",
-            "Sec-Fetch-Dest" to "document",  // ⭐⭐ IMPORTANTE: document, NÃO iframe ⭐⭐
+            "Sec-Fetch-Dest" to "document",  // IMPORTANTE: document, NÃO iframe
             "Sec-Fetch-Mode" to "navigate",
-            "Sec-Fetch-Site" to "same-origin",  // ⭐⭐ IMPORTANTE: same-origin ⭐⭐
+            "Sec-Fetch-Site" to "same-origin",  // IMPORTANTE: same-origin
             "Sec-Fetch-User" to "?1",
             "Cache-Control" to "max-age=0",
             "Referer" to "$mainUrl/"
@@ -119,16 +119,16 @@ class AnimeQ : MainAPI() {
         *specialCategories.map { (cat, slug) -> "$mainUrl/$slug" to cat }.toTypedArray()
     )
 
-    // ⭐⭐ FUNÇÃO DE REQUEST IDÊNTICA ao AnimesCloud ⭐⭐
+    // FUNÇÃO DE REQUEST IDÊNTICA ao AnimesCloud
     private suspend fun request(url: String): Document {
-        debugLog("🔗 Request to: $url")
+        println("🔗 Request to: $url")
         
         // Inicialização igual ao AnimesCloud
         if (!isInitialized) {
             locker.withLock {
                 if (!isInitialized) {
                     try {
-                        debugLog("🔄 Inicializando cookies para AnimeQ...")
+                        println("🔄 Inicializando cookies para AnimeQ...")
                         val resMain = app.get(
                             mainUrl, 
                             headers = defaultHeaders, 
@@ -137,7 +137,7 @@ class AnimeQ : MainAPI() {
                         )
                         
                         if (resMain.code == 200) {
-                            debugLog("✅ Cookie initialization successful")
+                            println("✅ Cookie initialization successful")
                             val cookieList = mutableListOf<String>()
                             resMain.okhttpResponse.headers("Set-Cookie").forEach { 
                                 cookieList.add(it.split(";")[0]) 
@@ -148,10 +148,10 @@ class AnimeQ : MainAPI() {
                             persistedCookies = cookieList.distinct().joinToString("; ")
                             isInitialized = true
                         } else {
-                            debugLog("⚠️ Initial request code: ${resMain.code}")
+                            println("⚠️ Initial request code: ${resMain.code}")
                         }
                     } catch (e: Exception) {
-                        debugLog("❌ Initialization error: ${e.message}")
+                        println("❌ Initialization error: ${e.message}")
                         // Tenta novamente com headers mais simples
                         trySimpleInitialization()
                     }
@@ -165,7 +165,7 @@ class AnimeQ : MainAPI() {
             finalHeaders["Cookie"] = it
         }
 
-        debugLog("📡 Fazendo request para: $url")
+        println("📡 Fazendo request para: $url")
         val response = app.get(
             url, 
             headers = finalHeaders, 
@@ -173,14 +173,14 @@ class AnimeQ : MainAPI() {
             timeout = 45
         )
         
-        debugLog("📊 Response code: ${response.code}")
-        debugLog("📄 Response length: ${response.text.length} chars")
+        println("📊 Response code: ${response.code}")
+        println("📄 Response length: ${response.text.length} chars")
         
         // Verifica se ainda tem Cloudflare
         if (response.text.contains("challenge-platform") || 
             response.text.contains("Checking your Browser") ||
             response.text.contains("cf-browser-verification")) {
-            debugLog("🛡️ DETECTADO CLOUDFLARE! Tentando bypass alternativo...")
+            println("🛡️ DETECTADO CLOUDFLARE! Tentando bypass alternativo...")
             
             // Tenta método alternativo
             return tryAlternativeBypass(url)
@@ -191,7 +191,7 @@ class AnimeQ : MainAPI() {
 
     private suspend fun trySimpleInitialization() {
         try {
-            debugLog("🔄 Tentando inicialização simples...")
+            println("🔄 Tentando inicialização simples...")
             val simpleHeaders = mapOf(
                 "User-Agent" to USER_AGENT,
                 "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
@@ -211,16 +211,16 @@ class AnimeQ : MainAPI() {
                 }
                 persistedCookies = cookieList.distinct().joinToString("; ")
                 isInitialized = true
-                debugLog("✅ Simple initialization successful")
+                println("✅ Simple initialization successful")
             }
         } catch (e: Exception) {
-            debugLog("❌ Simple initialization failed: ${e.message}")
+            println("❌ Simple initialization failed: ${e.message}")
         }
     }
 
     // Método alternativo se ainda der Cloudflare
     private suspend fun tryAlternativeBypass(url: String): Document {
-        debugLog("🔄 Tentando método alternativo de bypass...")
+        println("🔄 Tentando método alternativo de bypass...")
         
         // Lista de User-Agents alternativos (desktop)
         val userAgents = listOf(
@@ -231,7 +231,7 @@ class AnimeQ : MainAPI() {
         )
         
         for ((index, ua) in userAgents.withIndex()) {
-            debugLog("🔄 Tentativa ${index + 1} com UA diferente...")
+            println("🔄 Tentativa ${index + 1} com UA diferente...")
             
             try {
                 val headers = defaultHeaders.toMutableMap().apply {
@@ -253,7 +253,7 @@ class AnimeQ : MainAPI() {
                     !response.text.contains("Checking your Browser") &&
                     !response.text.contains("cf-browser-verification") &&
                     response.text.length > 500) {
-                    debugLog("✅ Bypass funcionou com UA alternativo!")
+                    println("✅ Bypass funcionou com UA alternativo!")
                     
                     // Atualiza cookies se conseguir
                     val cookieList = mutableListOf<String>()
@@ -269,7 +269,7 @@ class AnimeQ : MainAPI() {
                 
                 kotlinx.coroutines.delay(1500)
             } catch (e: Exception) {
-                debugLog("⚠️ Erro na tentativa ${index + 1}: ${e.message}")
+                println("⚠️ Erro na tentativa ${index + 1}: ${e.message}")
             }
         }
         
