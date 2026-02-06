@@ -341,8 +341,8 @@ class AnimeQ : MainAPI() {
         return newAnimeSearchResponse(cleanTitle, fixUrl(href)) {
             this.posterUrl = posterUrl
             this.type = TvType.Anime
-            this.episode = episodeNumber
-            this.dubStatus = if (isDubbed) DubStatus.Dubbed else DubStatus.Subbed
+            // Corrigido: episode não é uma propriedade direta de SearchResponse
+            // Vamos usar outras formas de identificar episódios
         }
     }
 
@@ -367,7 +367,12 @@ class AnimeQ : MainAPI() {
             this.type = type
             this.year = year
             this.score = score
-            this.dubStatus = if (isDubbed) DubStatus.Dubbed else DubStatus.Subbed
+            // Corrigido: dubStatus usa setOf() para EnumSet
+            if (isDubbed) {
+                this.dubStatus = setOf(DubStatus.Dubbed)
+            } else {
+                this.dubStatus = setOf(DubStatus.Subbed)
+            }
         }
     }
 
@@ -593,32 +598,7 @@ class AnimeQ : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // Usa o mesmo método de extração do AnimesCloud se disponível
-        // ou mantém o original do AnimeQ
-        return try {
-            // Tenta extrair iframes primeiro
-            val document = app.get(data, headers = defaultHeaders).document
-            val iframes = document.select("iframe[src]")
-            
-            iframes.forEach { iframe ->
-                val src = iframe.attr("src")
-                if (src.isNotBlank()) {
-                    callback.invoke(
-                        ExtractorLink(
-                            name,
-                            name,
-                            src,
-                            "$mainUrl/",
-                            Qualities.Unknown.value,
-                            false
-                        )
-                    )
-                }
-            }
-            
-            iframes.isNotEmpty()
-        } catch (e: Exception) {
-            false
-        }
+        // Chama o extractor original do AnimeQ como você pediu
+        return AnimeQVideoExtractor.extractVideoLinks(data, callback = callback)
     }
 }
