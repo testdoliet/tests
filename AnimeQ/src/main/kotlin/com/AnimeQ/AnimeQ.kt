@@ -7,6 +7,7 @@ import org.jsoup.nodes.Element
 import org.jsoup.nodes.Document
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import java.util.EnumSet
 
 class AnimeQ : MainAPI() {
     override var mainUrl = "https://animeq.net"
@@ -341,8 +342,6 @@ class AnimeQ : MainAPI() {
         return newAnimeSearchResponse(cleanTitle, fixUrl(href)) {
             this.posterUrl = posterUrl
             this.type = TvType.Anime
-            // Corrigido: episode não é uma propriedade direta de SearchResponse
-            // Vamos usar outras formas de identificar episódios
         }
     }
 
@@ -367,11 +366,15 @@ class AnimeQ : MainAPI() {
             this.type = type
             this.year = year
             this.score = score
-            // Corrigido: dubStatus usa setOf() para EnumSet
+            // CORREÇÃO: Usando EnumSet.noneOf() e add()
             if (isDubbed) {
-                this.dubStatus = setOf(DubStatus.Dubbed)
+                this.dubStatus = EnumSet.noneOf(DubStatus::class.java).apply {
+                    add(DubStatus.Dubbed)
+                }
             } else {
-                this.dubStatus = setOf(DubStatus.Subbed)
+                this.dubStatus = EnumSet.noneOf(DubStatus::class.java).apply {
+                    add(DubStatus.Subbed)
+                }
             }
         }
     }
