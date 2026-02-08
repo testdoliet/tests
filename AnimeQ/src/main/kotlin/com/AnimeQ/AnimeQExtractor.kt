@@ -21,31 +21,24 @@ object AnimeQVideoExtractor {
         313 to 2160,
     )
 
-    suspend fun extractVideoLinks(
-        url: String,
-        name: String = "Episódio",
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        println("[AnimeQ] 🚀 Iniciando extração para: $url")
-        
-        return try {
-            // 1. Buscar a página do episódio
-            println("[AnimeQ] 📄 Obtendo página...")
-            val pageResponse = app.get(url)
-            val doc = org.jsoup.Jsoup.parse(pageResponse.text)
-            
-            // 2. Procurar EXATAMENTE ESSE IFRAME com src do Blogger
-            println("[AnimeQ] 🔍 Procurando iframe do Blogger...")
-            
-            // Padrão específico do AnimeQ
-            val iframeSelectors = listOf(
-                "iframe.metaframe.rptss[src*='blogger.com/video.g']",
-                "iframe[src*='blogger.com/video.g']",
-                "iframe[src*='blogger.com']",
-                "#dooplay_player_response iframe",
-                ".pframe iframe",
-                ".play.isnd iframe"
-            )
+    private suspend fun extractVideoLinks(
+    url: String,
+    mainUrl: String,
+    name: String,
+    callback: (ExtractorLink) -> Unit
+): Boolean {
+    val pageResponse = app.get(url)
+    val doc = Jsoup.parse(pageResponse.text)
+
+    // Buscar qualquer iframe que contenha "blogger.com/video"
+    val bloggerIframes = doc.select("iframe[src*='blogger.com/video']")
+    
+    return if (bloggerIframes.isNotEmpty()) {
+        extractBloggerVideo(doc, url, name, callback)
+    } else {
+        extractLightspeedVideo(url, name, callback)
+    }
+}
             
             var bloggerUrl: String? = null
             
