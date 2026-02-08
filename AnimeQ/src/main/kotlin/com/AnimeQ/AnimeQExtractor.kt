@@ -5,6 +5,7 @@ import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import org.json.JSONObject
+import java.net.URLDecoder
 
 object AnimeQVideoExtractor {
     private val itagQualityMap = mapOf(
@@ -44,66 +45,9 @@ object AnimeQVideoExtractor {
                 return false
             }
             
-            // 3. Montar URL da API do Dooplay (sempre usar player option 1 e type tv)
-            val apiUrl = "https://animeq.net/wp-json/dooplayer/v2/$postId/tv/1"
-            println("[AnimeQ] 🔗 API URL: $apiUrl")
-            
-            // 4. Fazer requisição para a API do Dooplay
-            val headers = mapOf(
-                "Referer" to url,
-                "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36",
-                "Accept" to "application/json, text/javascript, */*; q=0.01",
-                "X-Requested-With" to "XMLHttpRequest",
-                "Accept-Language" to "pt-BR,pt;q=0.9",
-                "Origin" to "https://animeq.net"
-            )
-            
-            println("[AnimeQ] 🔄 Acessando API Dooplay...")
-            val response = app.get(apiUrl, headers = headers)
-            println("[AnimeQ] 📊 Status da API: ${response.code}")
-            
-            if (response.code == 200) {
-                val jsonText = response.text
-                println("[AnimeQ] 📄 Resposta da API: $jsonText")
-                
-                // 5. Parsear resposta JSON
-                val json = JSONObject(jsonText)
-                
-                if (json.has("embed_url")) {
-                    val embedUrl = json.getString("embed_url")
-                    println("[AnimeQ] ✅ URL do Blogger encontrada: $embedUrl")
-                    
-                    // 6. Agora extrair os vídeos do Blogger
-                    return extractFromBloggerUrl(embedUrl, url, name, callback)
-                } else if (json.has("url")) {
-                    val videoUrl = json.getString("url")
-                    println("[AnimeQ] ✅ URL de vídeo direta: $videoUrl")
-                    
-                    // Criar link direto
-                    val extractorLink = newExtractorLink(
-                        source = "AnimeQ",
-                        name = "$name (Direto)",
-                        url = videoUrl,
-                        type = ExtractorLinkType.VIDEO
-                    ) {
-                        this.referer = url
-                        this.quality = 720
-                        this.headers = mapOf(
-                            "Referer" to url,
-                            "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36"
-                        )
-                    }
-                    
-                    callback(extractorLink)
-                    return true
-                } else {
-                    println("[AnimeQ] ❌ API não retornou embed_url nem url")
-                    return false
-                }
-            } else {
-                println("[AnimeQ] ❌ Falha na requisição da API: ${response.code}")
-                return false
-            }
+            // 3. AGORA VAMOS TENTAR O PLAYER 2 (FullHD/HLS)
+            println("[AnimeQ] 🎯 Tentando Player Option 2 (FullHD/HLS)...")
+            return tryPlayer2Api(postId, url, name, callback)
             
         } catch (e: Exception) {
             println("[AnimeQ] ❌ Erro na extração: ${e.message}")
@@ -135,18 +79,142 @@ object AnimeQVideoExtractor {
             return id
         }
         
-        // Método 3: Procurar por meta tag
-        val metaPattern = """<meta[^>]*data-postid=['"](\d+)['"][^>]*>""".toRegex()
-        val metaMatch = metaPattern.find(html)
-        
-        if (metaMatch != null) {
-            val id = metaMatch.groupValues[1]
-            println("[AnimeQ] ✅ ID encontrado via meta tag: $id")
-            return id
-        }
-        
         println("[AnimeQ] ❌ Não foi possível extrair o ID do post")
         return null
+    }
+    
+    private suspend fun tryPlayer2Api(
+        postId: String,
+        referer: String,
+        name: String,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        // Montar URL da API do Dooplay para Player Option 2
+        val apiUrl = "https://animeq.net/wp-json/dooplayer/v2/$postId/tv/2"
+        println("[AnimeQ] 🔗 API URL (Player 2): $apiUrl")
+        
+        // Headers necessários
+        val headers = mapOf(
+            "Referer" to referer,
+            "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36",
+            "Accept" to "application/json, text/javascript, */*; q=0.01",
+            "X-Requested-With" to "XMLHttpRequest",
+            "Accept-Language" to "pt-BR,pt;q=0.9",
+            "Origin" to "https://animeq.net"
+        )
+        
+        try {
+            println("[AnimeQ] 🔄 Acessando API Dooplay (Player 2)...")
+            val response = app.get(apiUrl, headers = headers)
+            println("[AnimeQ] 📊 Status da API: ${response.code}")
+            
+            if (response.code == 200) {
+                val jsonText = response.text
+                println("[AnimeQ] 📄 Resposta da API: $jsonText")
+                
+                // Parsear resposta JSON
+                val json = JSONObject(jsonText)
+                
+                // Verificar o tipo de resposta
+                val responseType = json.optString("type", "")
+                val embedUrl = json.optString("embed_url", "")
+                
+                println("[AnimeQ] 🔍 Tipo de resposta: $responseType")
+                println("[AnimeQ] 🔍 Embed URL: $embedUrl")
+                
+                return when (responseType) {
+                    "mp4" -> {
+                        // Player 2 retorna MP4 direto via JWPlayer
+                        handleMp4Response(embedUrl, referer, name, callback)
+                    }
+                    "iframe" -> {
+                        // Player 1 retorna iframe do Blogger (fallback)
+                        println("[AnimeQ] ⚠️ Player 2 retornou iframe (inesperado), usando método Blogger...")
+                        extractFromBloggerUrl(embedUrl, referer, name, callback)
+                    }
+                    else -> {
+                        println("[AnimeQ] ❌ Tipo de resposta desconhecido: $responseType")
+                        false
+                    }
+                }
+            } else {
+                println("[AnimeQ] ❌ Falha na requisição da API: ${response.code}")
+                return false
+            }
+            
+        } catch (e: Exception) {
+            println("[AnimeQ] ❌ Erro na API Dooplay (Player 2): ${e.message}")
+            return false
+        }
+    }
+    
+    private fun handleMp4Response(
+        embedUrl: String,
+        referer: String,
+        name: String,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        println("[AnimeQ] 🎬 Processando resposta MP4...")
+        
+        try {
+            // A embed_url é uma URL do JWPlayer com parâmetro source
+            // Exemplo: https://animeq.net/jwplayer/?source=URL_ENCODED&id=59948&type=mp4
+            
+            // Extrair o parâmetro source da URL
+            val sourcePattern = """[?&]source=([^&]+)""".toRegex()
+            val match = sourcePattern.find(embedUrl)
+            
+            if (match != null) {
+                val encodedSource = match.groupValues[1]
+                val videoUrl = URLDecoder.decode(encodedSource, "UTF-8")
+                
+                println("[AnimeQ] ✅ URL de vídeo extraída: $videoUrl")
+                
+                // Determinar qualidade baseada na URL
+                val quality = determineQualityFromUrl(videoUrl)
+                val qualityLabel = getQualityLabel(quality)
+                
+                println("[AnimeQ] 📊 Qualidade determinada: $quality ($qualityLabel)")
+                
+                // Criar link de vídeo
+                val extractorLink = newExtractorLink(
+                    source = "AnimeQ",
+                    name = "$name ($qualityLabel)",
+                    url = videoUrl,
+                    type = ExtractorLinkType.VIDEO
+                ) {
+                    this.referer = referer
+                    this.quality = quality
+                    this.headers = mapOf(
+                        "Referer" to referer,
+                        "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36"
+                    )
+                }
+                
+                callback(extractorLink)
+                return true
+            } else {
+                println("[AnimeQ] ❌ Não foi possível extrair source da URL: $embedUrl")
+                return false
+            }
+            
+        } catch (e: Exception) {
+            println("[AnimeQ] ❌ Erro ao processar MP4: ${e.message}")
+            return false
+        }
+    }
+    
+    private fun determineQualityFromUrl(url: String): Int {
+        // Analisar a URL para determinar qualidade
+        return when {
+            url.contains("hd.mp4", ignoreCase = true) -> 720
+            url.contains("fhd", ignoreCase = true) -> 1080
+            url.contains("1080", ignoreCase = true) -> 1080
+            url.contains("720", ignoreCase = true) -> 720
+            url.contains("480", ignoreCase = true) -> 480
+            url.contains("360", ignoreCase = true) -> 360
+            else -> 720 // Padrão para HLS/FullHD
+        }
     }
     
     private suspend fun extractFromBloggerUrl(
