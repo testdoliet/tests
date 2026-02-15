@@ -1,4 +1,4 @@
-<div align="center">
+</div>
 
 <img src="https://img.shields.io/badge/CloudStream-3.0+-blue?style=for-the-badge&logo=android" alt="CloudStream 3+">
 <img src="https://img.shields.io/badge/Status-Experimental-yellow?style=for-the-badge" alt="Experimental">
