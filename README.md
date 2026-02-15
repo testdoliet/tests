@@ -33,15 +33,15 @@ O **LietRepo** é um projeto de desenvolvimento de plugins experimentais para Cl
 # 🇺🇸 About the Project
 The **LietRepo** is an experimental plugin development project for CloudStream 3 focused on technical optimization and efficient search tool implementation.
 
-**Technical note:** Plugins function as specialized search tools, locating publicly available content on the web, operating similarly to a search engine or web browser.
+**Technical note:** Plugins function as specialized search tools, locating publicly accessible content on the internet, operating similarly to a search engine or web browser.
 
 ---
 
 # 📦 Instalação / Installation
 
 [![Passo 1](https://img.shields.io/badge/1_📱_Abrir_CloudStream_3-2196F3?style=flat-square&logo=android)]()
-[![Passo 2](https://img.shields.io/badge/2_⚙️_Configurações→Repositórios-4CAF50?style=flat-square&logo=settings)]()
-[![Passo 3](https://img.shields.io/badge/3_➕_Adicionar_Repositório-FF9800?style=flat-square&logo=plus)]()
+[![Passo 2](https://img.shields.io/badge/2_⚙️_Configurações→Extensões-4CAF50?style=flat-square&logo=settings)]()
+[![Passo 3](https://img.shields.io/badge/3_➕_Adicionar_Extensão-FF9800?style=flat-square&logo=plus)]()
 [![Passo 4](https://img.shields.io/badge/4_📋_Colar_URL-9C27B0?style=flat-square&logo=clipboard)]()
 
 **URL para colar:**
@@ -128,8 +128,13 @@ Este repo existe graças à inspiração do **saimuelrepo**, o pioneiro dos repo
 
 <br>
 
-### Valeu por passar aqui! Agora vai lá testar os plugins!  
-### Thanks for stopping by! Now go test the plugins!  
+### Comunidade no Discord (Online ao vivo!)
+[![Junte-se ao Liet Repo no Discord!](https://invidget.switchblade.xyz/q3Xkfhupnz?language=pt)](https://discord.gg/q3Xkfhupnz)
+
+<br>
+
+**Valeu por passar aqui! Agora vai lá testar os plugins!**  
+**Thanks for stopping by! Now go test the plugins!**  
 
 [![Deixe uma Star](https://img.shields.io/badge/⭐_Deixe_uma_Star_no_Repo-FFD700?style=for-the-badge&logo=github&logoColor=black)](https://github.com/lawlietbr/lietrepo/stargazers)
 
