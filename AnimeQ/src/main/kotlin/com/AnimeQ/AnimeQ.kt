@@ -2,408 +2,568 @@ package com.AnimeQ
 
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
+import com.lagradost.cloudstream3.network.CloudflareKiller
 import org.jsoup.nodes.Element
+import org.jsoup.nodes.Document
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import java.net.URI
 
 class AnimeQ : MainAPI() {
-override var mainUrl = "https://animeq.net"
-override var name = "AnimeQ"
-override val hasMainPage = true
-override var lang = "pt-br"
-override val hasDownloadSupport = true
-override val supportedTypes = setOf(TvType.Anime, TvType.AnimeMovie)
-override val usesWebView = false
+    override var mainUrl = "https://animeq.net"
+    override var name = "AnimeQ"
+    override val hasMainPage = true
+    override var lang = "pt-br"
+    override val hasDownloadSupport = true
+    override val supportedTypes = setOf(TvType.Anime, TvType.AnimeMovie)
+    override val usesWebView = false
 
-companion object {
-// Página de busca
-private const val SEARCH_PATH = "/?s="
+    // CloudflareKiller instance
+    private val cloudflareInterceptor = CloudflareKiller()
 
-// Página de episódios
-private const val EPISODE_PAGE_ITEM = ".item.se.episodes"
+    companion object {
+        private const val USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+        
+        // Mutex para controle de inicialização
+        private val locker = Mutex()
+        private var isInitialized = false
+        
+        // Página de busca
+        private const val SEARCH_PATH = "/?s="
 
-// Página de gêneros/categorias (ação, aventura, etc.)
-private const val GENRE_PAGE_ITEM = ".items.full .item.tvshows, .items.full .item.movies"
+        // Página de episódios
+        private const val EPISODE_PAGE_ITEM = ".item.se.episodes"
 
-// Elementos comuns
-private const val ITEM_TITLE = ".data h3 a"
-private const val ITEM_POSTER = ".poster img"
-private const val ITEM_LINK = "a[href]"
-private const val EPISODE_SERIE = ".data .serie"
-private const val ANIME_YEAR = ".data span"
-private const val ANIME_SCORE = ".rating"
+        // Página de gêneros/categorias (ação, aventura, etc.)
+        private const val GENRE_PAGE_ITEM = ".items.full .item.tvshows, .items.full .item.movies"
 
-// Página de detalhes do anime
-private const val DETAIL_TITLE = "h1"
-private const val DETAIL_POSTER = ".poster img"
-private const val DETAIL_SYNOPSIS = ".wp-content p"
-private const val DETAIL_GENRES = ".sgeneros a[rel=tag]"
-private const val DETAIL_YEAR = ".date"
-private const val DETAIL_SCORE = ".dt_rating_vgs"
-private const val EPISODE_LIST = ".episodios li .episodiotitle a"
-private const val EPISODE_IMAGES = ".episodios li .imagen img"
-private const val EPISODE_NUMBER = ".episodios li .numerando"
-}
+        // Elementos comuns
+        private const val ITEM_TITLE = ".data h3 a"
+        private const val ITEM_POSTER = ".poster img"
+        private const val ITEM_LINK = "a[href]"
+        private const val EPISODE_SERIE = ".data .serie"
+        private const val ANIME_YEAR = ".data span"
+        private const val ANIME_SCORE = ".rating"
 
-// Mapeamento de categorias
-private val mainCategories = mapOf(
-"Últimos Episódios" to "$mainUrl/episodio/",
-"Animes Mais Vistos" to "$mainUrl/",
-)
+        // Página de detalhes do anime
+        private const val DETAIL_TITLE = "h1"
+        private const val DETAIL_POSTER = ".poster img"
+        private const val DETAIL_SYNOPSIS = ".wp-content p"
+        private const val DETAIL_GENRES = ".sgeneros a[rel=tag]"
+        private const val DETAIL_YEAR = ".date"
+        private const val DETAIL_SCORE = ".dt_rating_vgs"
+        private const val EPISODE_LIST = ".episodios li .episodiotitle a"
+        private const val EPISODE_IMAGES = ".episodios li .imagen img"
+        private const val EPISODE_NUMBER = ".episodios li .numerando"
+    }
 
-private val genresMap = mapOf(
-"Ação" to "genre/acao",
-"Aventura" to "genre/aventura", 
-"Animação" to "genre/animacao",
-"Drama" to "genre/drama",
-"Crime" to "genre/crime",
-"Mistério" to "genre/misterio",
-"Fantasia" to "genre/fantasia",
-"Terror" to "genre/terror",
-"Comédia" to "genre/comedia",
-"Romance" to "genre/romance",
-"Sci-Fi" to "genre/ficcao-cientifica",
-"Seinen" to "genre/seinen",
-"Shounen" to "genre/shounen",
-"Ecchi" to "genre/ecchi",
-"Esporte" to "genre/esporte",
-"Sobrenatural" to "genre/sobrenatural",
-"Vida Escolar" to "genre/vida-escolar"
-)
+    // Cookies persistidos após bypass do Cloudflare
+    private var persistedCookies: String? = null
 
-private val typeMap = mapOf(
-"Legendado" to "tipo/legendado",
-"Dublado" to "tipo/dublado"
-)
+    // Headers padrão para todas as requisições
+    private val defaultHeaders: Map<String, String>
+        get() = mapOf(
+            "User-Agent" to USER_AGENT,
+            "Referer" to "$mainUrl/",
+            "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            "Accept-Language" to "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+            "Cookie" to (persistedCookies ?: "")
+        )
 
-private val specialCategories = mapOf(
-"Filmes" to "filme",
-"Manhwa" to "genre/Manhwa",
-"Donghua" to "genre/Donghua"
-)
+    // Mapeamento de categorias
+    private val mainCategories = mapOf(
+        "Últimos Episódios" to "$mainUrl/episodio/",
+        "Animes Mais Vistos" to "$mainUrl/",
+    )
 
-override val mainPage = mainPageOf(
-*mainCategories.map { (name, url) -> url to name }.toTypedArray(),
-*genresMap.map { (genre, slug) -> "$mainUrl/$slug" to genre }.toTypedArray(),
-*typeMap.map { (type, slug) -> "$mainUrl/$slug" to type }.toTypedArray(),
-*specialCategories.map { (cat, slug) -> "$mainUrl/$slug" to cat }.toTypedArray()
-)
+    private val genresMap = mapOf(
+        "Ação" to "genre/acao",
+        "Aventura" to "genre/aventura", 
+        "Animação" to "genre/animacao",
+        "Drama" to "genre/drama",
+        "Crime" to "genre/crime",
+        "Mistério" to "genre/misterio",
+        "Fantasia" to "genre/fantasia",
+        "Terror" to "genre/terror",
+        "Comédia" to "genre/comedia",
+        "Romance" to "genre/romance",
+        "Sci-Fi" to "genre/ficcao-cientifica",
+        "Seinen" to "genre/seinen",
+        "Shounen" to "genre/shounen",
+        "Ecchi" to "genre/ecchi",
+        "Esporte" to "genre/esporte",
+        "Sobrenatural" to "genre/sobrenatural",
+        "Vida Escolar" to "genre/vida-escolar"
+    )
 
-private fun cleanTitle(dirtyTitle: String): String {
-return dirtyTitle
-.replace("(?i)\\s*–\\s*todos os epis[oó]dios".toRegex(), "")
-.replace("(?i)\\s*\\(dublado\\)".toRegex(), "")
-.replace("(?i)\\s*\\(legendado\\)".toRegex(), "")
-.replace("(?i)\\s*dublado\\s*$".toRegex(), "")
-.replace("(?i)\\s*legendado\\s*$".toRegex(), "")
-.replace("(?i)\\s*-\\s*epis[oó]dio\\s*\\d+".toRegex(), "")
-.replace("(?i)\\s*–\\s*Epis[oó]dio\\s*\\d+".toRegex(), "")
-.replace("(?i)\\s*epis[oó]dio\\s*\\d+".toRegex(), "")
-.replace("(?i)\\s*Ep\\.\\s*\\d+".toRegex(), "")
-.replace("\\s+".toRegex(), " ")
-.trim()
-.ifBlank { dirtyTitle }
-}
+    private val typeMap = mapOf(
+        "Legendado" to "tipo/legendado",
+        "Dublado" to "tipo/dublado"
+    )
 
-private fun extractEpisodeNumber(title: String): Int? {
-return listOf(
-"Epis[oó]dio\\s*(\\d+)".toRegex(RegexOption.IGNORE_CASE),
-"Ep\\.?\\s*(\\d+)".toRegex(RegexOption.IGNORE_CASE),
-"E(\\d+)".toRegex(RegexOption.IGNORE_CASE),
-"\\b(\\d{3,})\\b".toRegex(),
-"\\b(\\d{1,3})\\b".toRegex()
-).firstNotNullOfOrNull { it.find(title)?.groupValues?.get(1)?.toIntOrNull() } ?: 1
-}
+    private val specialCategories = mapOf(
+        "Filmes" to "filme",
+        "Manhwa" to "genre/Manhwa",
+        "Donghua" to "genre/Donghua"
+    )
 
-private fun extractAnimeTitleFromEpisode(episodeTitle: String): String {
-var clean = episodeTitle
-.replace("(?i)Epis[oó]dio\\s*\\d+".toRegex(), "")
-.replace("(?i)Ep\\.?\\s*\\d+".toRegex(), "")
-.replace("(?i)E\\d+".toRegex(), "")
-.replace("–", "")
-.replace("-", "")
-.replace("(?i)\\s*\\(dublado\\)".toRegex(), "")
-.replace("(?i)\\s*\\(legendado\\)".toRegex(), "")
-.replace("\\s+".toRegex(), " ")
-.trim()
+    override val mainPage = mainPageOf(
+        *mainCategories.map { (name, url) -> url to name }.toTypedArray(),
+        *genresMap.map { (genre, slug) -> "$mainUrl/$slug" to genre }.toTypedArray(),
+        *typeMap.map { (type, slug) -> "$mainUrl/$slug" to type }.toTypedArray(),
+        *specialCategories.map { (cat, slug) -> "$mainUrl/$slug" to cat }.toTypedArray()
+    )
 
-clean = clean.replace("\\s*\\d+\\s*$".toRegex(), "").trim()
+    /**
+     * Função centralizada para fazer requisições com tratamento Cloudflare
+     */
+    private suspend fun request(url: String, debugTag: String = "REQUEST"): Document {
+        println("🔵 [$debugTag] Iniciando requisição para: $url")
+        
+        // Se não estiver inicializado, tenta resolver Cloudflare primeiro
+        if (!isInitialized) {
+            locker.withLock {
+                if (!isInitialized) {
+                    try {
+                        println("🟡 [$debugTag] Primeira requisição - tentando resolver Cloudflare para: $mainUrl")
+                        
+                        // Faz a requisição inicial com o interceptor
+                        val resMain = app.get(
+                            url = mainUrl, 
+                            headers = mapOf("User-Agent" to USER_AGENT), 
+                            interceptor = cloudflareInterceptor, 
+                            timeout = 60
+                        )
+                        
+                        println("🟢 [$debugTag] Resposta inicial - Código: ${resMain.code}")
+                        
+                        if (resMain.code == 200) {
+                            // Captura todos os cookies da resposta
+                            val cookieList = mutableListOf<String>()
+                            
+                            // Cookies do header Set-Cookie
+                            resMain.okhttpResponse.headers("Set-Cookie").forEach { 
+                                val cookiePart = it.split(";")[0]
+                                cookieList.add(cookiePart)
+                                println("🍪 [$debugTag] Set-Cookie recebido: $cookiePart")
+                            }
+                            
+                            // Cookies da requisição (se houver)
+                            resMain.okhttpResponse.request.header("Cookie")?.let { 
+                                cookieList.add(it)
+                                println("🍪 [$debugTag] Cookie da requisição: $it")
+                            }
+                            
+                            // Persiste os cookies
+                            persistedCookies = cookieList.distinct().joinToString("; ")
+                            println("🍪 [$debugTag] Cookies persistidos: $persistedCookies")
+                            
+                            isInitialized = true
+                            println("🟢 [$debugTag] Cloudflare resolvido com sucesso!")
+                        } else {
+                            println("🔴 [$debugTag] Falha na requisição inicial - Código: ${resMain.code}")
+                        }
+                    } catch (e: Exception) {
+                        println("🔴 [$debugTag] Erro ao resolver Cloudflare: ${e.message}")
+                        e.printStackTrace()
+                    }
+                }
+            }
+        } else {
+            println("🟢 [$debugTag] Já inicializado, usando cookies existentes")
+        }
 
-return clean.ifBlank { "Anime" }
-}
+        // Faz a requisição principal com os headers completos
+        println("🟡 [$debugTag] Fazendo requisição principal com headers: ${defaultHeaders.keys}")
+        
+        return try {
+            val response = app.get(
+                url = url, 
+                headers = defaultHeaders, 
+                interceptor = cloudflareInterceptor
+            )
+            
+            println("🟢 [$debugTag] Resposta OK - Código: ${response.code}, Tamanho: ${response.text.length} chars")
+            
+            // Debug: mostra um pedaço do HTML para ver se está correto
+            if (response.text.length > 200) {
+                println("📄 [$debugTag] Preview HTML: ${response.text.substring(0, 200)}...")
+            }
+            
+            response.document
+        } catch (e: Exception) {
+            println("🔴 [$debugTag] Erro na requisição: ${e.message}")
+            throw e
+        }
+    }
 
-private fun isDubbed(title: String): Boolean {
-return title.contains("dublado", true) || 
-title.contains("dublada", true) ||
-title.contains("dublados", true) ||
-title.contains("dubladas", true)
-}
+    private fun cleanTitle(dirtyTitle: String): String {
+        return dirtyTitle
+            .replace("(?i)\\s*–\\s*todos os epis[oó]dios".toRegex(), "")
+            .replace("(?i)\\s*\\(dublado\\)".toRegex(), "")
+            .replace("(?i)\\s*\\(legendado\\)".toRegex(), "")
+            .replace("(?i)\\s*dublado\\s*$".toRegex(), "")
+            .replace("(?i)\\s*legendado\\s*$".toRegex(), "")
+            .replace("(?i)\\s*-\\s*epis[oó]dio\\s*\\d+".toRegex(), "")
+            .replace("(?i)\\s*–\\s*Epis[oó]dio\\s*\\d+".toRegex(), "")
+            .replace("(?i)\\s*epis[oó]dio\\s*\\d+".toRegex(), "")
+            .replace("(?i)\\s*Ep\\.\\s*\\d+".toRegex(), "")
+            .replace("\\s+".toRegex(), " ")
+            .trim()
+            .ifBlank { dirtyTitle }
+    }
 
-private fun Element.toEpisodeSearchResponse(): AnimeSearchResponse? {
-val href = selectFirst(ITEM_LINK)?.attr("href") ?: return null
-val episodeTitle = selectFirst(ITEM_TITLE)?.text()?.trim() ?: return null
-val episodeNumber = extractEpisodeNumber(episodeTitle)
-val animeTitle = extractAnimeTitleFromEpisode(episodeTitle)
-val posterUrl = selectFirst(ITEM_POSTER)?.attr("src")?.let { fixUrl(it) }
-val isDubbed = isDubbed(episodeTitle)
-val serieName = selectFirst(EPISODE_SERIE)?.text()?.trim() ?: animeTitle
+    private fun extractEpisodeNumber(title: String): Int? {
+        return listOf(
+            "Epis[oó]dio\\s*(\\d+)".toRegex(RegexOption.IGNORE_CASE),
+            "Ep\\.?\\s*(\\d+)".toRegex(RegexOption.IGNORE_CASE),
+            "E(\\d+)".toRegex(RegexOption.IGNORE_CASE),
+            "\\b(\\d{3,})\\b".toRegex(),
+            "\\b(\\d{1,3})\\b".toRegex()
+        ).firstNotNullOfOrNull { it.find(title)?.groupValues?.get(1)?.toIntOrNull() } ?: 1
+    }
 
-val cleanTitle = cleanTitle(serieName)
+    private fun extractAnimeTitleFromEpisode(episodeTitle: String): String {
+        var clean = episodeTitle
+            .replace("(?i)Epis[oó]dio\\s*\\d+".toRegex(), "")
+            .replace("(?i)Ep\\.?\\s*\\d+".toRegex(), "")
+            .replace("(?i)E\\d+".toRegex(), "")
+            .replace("–", "")
+            .replace("-", "")
+            .replace("(?i)\\s*\\(dublado\\)".toRegex(), "")
+            .replace("(?i)\\s*\\(legendado\\)".toRegex(), "")
+            .replace("\\s+".toRegex(), " ")
+            .trim()
 
-return newAnimeSearchResponse(cleanTitle, fixUrl(href)) {
-this.posterUrl = posterUrl
-this.type = TvType.Anime
+        clean = clean.replace("\\s*\\d+\\s*$".toRegex(), "").trim()
 
-val dubStatus = if (isDubbed) DubStatus.Dubbed else DubStatus.Subbed
-addDubStatus(dubStatus, episodeNumber)
-}
-}
+        return clean.ifBlank { "Anime" }
+    }
 
-private fun Element.toAnimeSearchResponse(): AnimeSearchResponse? {
-val href = selectFirst(ITEM_LINK)?.attr("href") ?: return null
-val rawTitle = selectFirst(ITEM_TITLE)?.text()?.trim() ?: return null
-val cleanedTitle = cleanTitle(rawTitle).ifBlank { return null }
-val posterUrl = selectFirst(ITEM_POSTER)?.attr("src")?.let { fixUrl(it) }
-val isDubbed = isDubbed(rawTitle)
-val year = selectFirst(ANIME_YEAR)?.text()?.trim()?.toIntOrNull()
-val scoreText = selectFirst(ANIME_SCORE)?.text()?.trim()
+    private fun isDubbed(title: String): Boolean {
+        return title.contains("dublado", true) || 
+               title.contains("dublada", true) ||
+               title.contains("dublados", true) ||
+               title.contains("dubladas", true)
+    }
 
-val score = scoreText?.toFloatOrNull()?.let { 
-Score.from10(it)
-}
+    private fun Element.toEpisodeSearchResponse(): AnimeSearchResponse? {
+        val href = selectFirst(ITEM_LINK)?.attr("href") ?: return null
+        val episodeTitle = selectFirst(ITEM_TITLE)?.text()?.trim() ?: return null
+        val episodeNumber = extractEpisodeNumber(episodeTitle)
+        val animeTitle = extractAnimeTitleFromEpisode(episodeTitle)
+        val posterUrl = selectFirst(ITEM_POSTER)?.attr("src")?.let { fixUrl(it) }
+        val isDubbed = isDubbed(episodeTitle)
+        val serieName = selectFirst(EPISODE_SERIE)?.text()?.trim() ?: animeTitle
 
-val isMovie = href.contains("/filme/") || cleanedTitle.contains("filme", true)
-val type = if (isMovie) TvType.AnimeMovie else TvType.Anime
+        val cleanTitle = cleanTitle(serieName)
 
-return newAnimeSearchResponse(cleanedTitle, fixUrl(href)) {
-this.posterUrl = posterUrl
-this.type = type
-this.year = year
-this.score = score
-addDubStatus(isDubbed, null)
-}
-}
+        return newAnimeSearchResponse(cleanTitle, fixUrl(href)) {
+            this.posterUrl = posterUrl
+            this.type = TvType.Anime
 
-override suspend fun getMainPage(
-page: Int,
-request: MainPageRequest
-): HomePageResponse {
-val baseUrl = request.data
-var url = baseUrl
+            val dubStatus = if (isDubbed) DubStatus.Dubbed else DubStatus.Subbed
+            addDubStatus(dubStatus, episodeNumber)
+        }
+    }
 
-if (page > 1) {
-url = when {
-baseUrl == "$mainUrl/episodio/" -> "$baseUrl/page/$page/"
-baseUrl == "$mainUrl/" -> baseUrl
-baseUrl.contains("/?s=") -> baseUrl.replace("/?s=", "/page/$page/?s=")
-else -> "$baseUrl/page/$page/"
-}
-}
+    private fun Element.toAnimeSearchResponse(): AnimeSearchResponse? {
+        val href = selectFirst(ITEM_LINK)?.attr("href") ?: return null
+        val rawTitle = selectFirst(ITEM_TITLE)?.text()?.trim() ?: return null
+        val cleanedTitle = cleanTitle(rawTitle).ifBlank { return null }
+        val posterUrl = selectFirst(ITEM_POSTER)?.attr("src")?.let { fixUrl(it) }
+        val isDubbed = isDubbed(rawTitle)
+        val year = selectFirst(ANIME_YEAR)?.text()?.trim()?.toIntOrNull()
+        val scoreText = selectFirst(ANIME_SCORE)?.text()?.trim()
 
-        val document = app.get(url).document
+        val score = scoreText?.toFloatOrNull()?.let { 
+            Score.from10(it)
+        }
 
-return when (request.name) {
-"Últimos Episódios" -> {
-val episodeElements = document.select(EPISODE_PAGE_ITEM)
-val items = episodeElements
-.mapNotNull { it.toEpisodeSearchResponse() }
-.distinctBy { it.url }
+        val isMovie = href.contains("/filme/") || cleanedTitle.contains("filme", true)
+        val type = if (isMovie) TvType.AnimeMovie else TvType.Anime
 
-newHomePageResponse(
-list = HomePageList(request.name, items, isHorizontalImages = true),
-hasNext = episodeElements.isNotEmpty()
-)
-}
-"Animes Mais Vistos" -> {
-val popularItems = mutableListOf<AnimeSearchResponse>()
+        return newAnimeSearchResponse(cleanedTitle, fixUrl(href)) {
+            this.posterUrl = posterUrl
+            this.type = type
+            this.year = year
+            this.score = score
+            addDubStatus(isDubbed, null)
+        }
+    }
 
-val sliderItems = document.select("#genre_acao .item.tvshows, #genre_acao .item.movies")
-popularItems.addAll(sliderItems.take(10).mapNotNull { it.toAnimeSearchResponse() })
+    override suspend fun getMainPage(
+        page: Int,
+        request: MainPageRequest
+    ): HomePageResponse {
+        val baseUrl = request.data
+        var url = baseUrl
+        val tag = "MAINPAGE-${request.name}"
 
-if (popularItems.isEmpty()) {
-val allItems = document.select(".item.tvshows, .item.movies")
-.take(10)
-.mapNotNull { it.toAnimeSearchResponse() }
-popularItems.addAll(allItems)
-}
+        println("🏠 [$tag] Carregando página principal - Página: $page, URL base: $baseUrl")
 
-newHomePageResponse(
-list = HomePageList(request.name, popularItems.distinctBy { it.url }, isHorizontalImages = false),
-hasNext = false
-)
-}
-else -> {
-val isEpisodePage = baseUrl.contains("/episodio/")
-val isGenrePage = baseUrl.contains("/genre/") || 
-baseUrl.contains("/tipo/") || 
-baseUrl == "$mainUrl/filme/"
+        if (page > 1) {
+            url = when {
+                baseUrl == "$mainUrl/episodio/" -> "$baseUrl/page/$page/"
+                baseUrl == "$mainUrl/" -> baseUrl
+                baseUrl.contains("/?s=") -> baseUrl.replace("/?s=", "/page/$page/?s=")
+                else -> "$baseUrl/page/$page/"
+            }
+            println("🏠 [$tag] URL com paginação: $url")
+        }
 
-val items = if (isEpisodePage) {
-document.select(EPISODE_PAGE_ITEM)
-.mapNotNull { it.toEpisodeSearchResponse() }
-.distinctBy { it.url }
-} else if (isGenrePage) {
-document.select(GENRE_PAGE_ITEM)
-.mapNotNull { it.toAnimeSearchResponse() }
-.distinctBy { it.url }
-} else {
-document.select(".item.tvshows, .item.movies")
-.mapNotNull { it.toAnimeSearchResponse() }
-.distinctBy { it.url }
-}
+        val document = request(url, tag)
 
-val hasNext = when {
-isEpisodePage -> document.select(".pagination a").isNotEmpty()
-isGenrePage -> document.select(".pagination a").isNotEmpty()
-else -> false
-}
+        return when (request.name) {
+            "Últimos Episódios" -> {
+                println("🏠 [$tag] Processando Últimos Episódios")
+                val episodeElements = document.select(EPISODE_PAGE_ITEM)
+                println("🏠 [$tag] Encontrados ${episodeElements.size} episódios")
+                
+                val items = episodeElements
+                    .mapNotNull { it.toEpisodeSearchResponse() }
+                    .distinctBy { it.url }
+                
+                println("🏠 [$tag] Processados ${items.size} itens")
 
-newHomePageResponse(
-list = HomePageList(request.name, items, isHorizontalImages = false),
-hasNext = hasNext
-)
-}
-}
-}
+                newHomePageResponse(
+                    list = HomePageList(request.name, items, isHorizontalImages = true),
+                    hasNext = episodeElements.isNotEmpty()
+                )
+            }
+            "Animes Mais Vistos" -> {
+                println("🏠 [$tag] Processando Animes Mais Vistos")
+                val popularItems = mutableListOf<AnimeSearchResponse>()
 
-override suspend fun search(query: String): List<SearchResponse> {
-if (query.length < 2) return emptyList()
+                val sliderItems = document.select("#genre_acao .item.tvshows, #genre_acao .item.movies")
+                println("🏠 [$tag] Encontrados ${sliderItems.size} itens no slider")
+                
+                popularItems.addAll(sliderItems.take(10).mapNotNull { it.toAnimeSearchResponse() })
 
-        val document = app.get("$mainUrl$SEARCH_PATH${query.replace(" ", "+")}").document
+                if (popularItems.isEmpty()) {
+                    println("🏠 [$tag] Nenhum item no slider, buscando itens gerais")
+                    val allItems = document.select(".item.tvshows, .item.movies")
+                        .take(10)
+                        .mapNotNull { it.toAnimeSearchResponse() }
+                    popularItems.addAll(allItems)
+                }
+                
+                println("🏠 [$tag] Processados ${popularItems.size} itens populares")
 
-return document.select(".item.tvshows, .item.movies, .item.se.episodes")
-.mapNotNull { element ->
-if (element.hasClass("episodes")) {
-element.toEpisodeSearchResponse()
-} else {
-element.toAnimeSearchResponse()
-}
-}
-.distinctBy { it.url }
-}
+                newHomePageResponse(
+                    list = HomePageList(request.name, popularItems.distinctBy { it.url }, isHorizontalImages = false),
+                    hasNext = false
+                )
+            }
+            else -> {
+                val isEpisodePage = baseUrl.contains("/episodio/")
+                val isGenrePage = baseUrl.contains("/genre/") || 
+                                  baseUrl.contains("/tipo/") || 
+                                  baseUrl == "$mainUrl/filme/"
 
-override suspend fun load(url: String): LoadResponse {
-        val document = app.get(url).document
+                println("🏠 [$tag] Processando categoria: ${request.name}")
+                println("🏠 [$tag] É página de episódio? $isEpisodePage")
+                println("🏠 [$tag] É página de gênero? $isGenrePage")
 
-val rawTitle = document.selectFirst(DETAIL_TITLE)?.text()?.trim() ?: "Sem Título"
-val title = cleanTitle(rawTitle)
+                val items = if (isEpisodePage) {
+                    document.select(EPISODE_PAGE_ITEM)
+                        .mapNotNull { it.toEpisodeSearchResponse() }
+                        .distinctBy { it.url }
+                } else if (isGenrePage) {
+                    document.select(GENRE_PAGE_ITEM)
+                        .mapNotNull { it.toAnimeSearchResponse() }
+                        .distinctBy { it.url }
+                } else {
+                    document.select(".item.tvshows, .item.movies")
+                        .mapNotNull { it.toAnimeSearchResponse() }
+                        .distinctBy { it.url }
+                }
 
-val poster = document.selectFirst(DETAIL_POSTER)?.attr("src")?.let { fixUrl(it) }
+                println("🏠 [$tag] Encontrados ${items.size} itens")
 
-var synopsis = "Sinopse não disponível."
+                val hasNext = when {
+                    isEpisodePage -> document.select(".pagination a").isNotEmpty()
+                    isGenrePage -> document.select(".pagination a").isNotEmpty()
+                    else -> false
+                }
+                
+                println("🏠 [$tag] Tem próxima página? $hasNext")
 
-val wpContent = document.selectFirst(".wp-content")
-wpContent?.let { content ->
-val synopsisElements = content.select("p")
-for (element in synopsisElements) {
-val text = element.text()
-if (text.contains("Sinopse:", true)) {
-synopsis = text.replace("Sinopse:", "").trim()
-break
-} else if (text.contains("Sinopse", true) && text.length > 50) {
-synopsis = text.trim()
-break
-}
-}
+                newHomePageResponse(
+                    list = HomePageList(request.name, items, isHorizontalImages = false),
+                    hasNext = hasNext
+                )
+            }
+        }
+    }
 
-if (synopsis == "Sinopse não disponível." && synopsisElements.isNotEmpty()) {
-for (element in synopsisElements) {
-val text = element.text().trim()
-if (text.length > 50 && !text.contains("Título Alternativo") && 
-!text.contains("Ano de Lançamento")) {
-synopsis = text
-break
-}
-}
-}
-}
+    override suspend fun search(query: String): List<SearchResponse> {
+        if (query.length < 2) return emptyList()
+        
+        println("🔍 [SEARCH] Buscando por: $query")
+        
+        val searchUrl = "$mainUrl$SEARCH_PATH${query.replace(" ", "+")}"
+        val document = request(searchUrl, "SEARCH")
 
-val genres = document.select(DETAIL_GENRES)
-.mapNotNull { it.text().trim() }
-.filter { !it.contains("Letra") && !it.contains("tipo") }
+        val results = document.select(".item.tvshows, .item.movies, .item.se.episodes")
+            .mapNotNull { element ->
+                if (element.hasClass("episodes")) {
+                    element.toEpisodeSearchResponse()
+                } else {
+                    element.toAnimeSearchResponse()
+                }
+            }
+            .distinctBy { it.url }
+        
+        println("🔍 [SEARCH] Encontrados ${results.size} resultados para '$query'")
+        
+        return results
+    }
 
-var year: Int? = null
-val yearText = document.selectFirst(DETAIL_YEAR)?.text()?.trim()
-if (yearText != null) {
-val yearMatch = "\\b(\\d{4})\\b".toRegex().find(yearText)
-year = yearMatch?.groupValues?.get(1)?.toIntOrNull()
-}
+    override suspend fun load(url: String): LoadResponse {
+        println("📺 [LOAD] Carregando detalhes de: $url")
+        
+        val document = request(url, "LOAD")
 
-var score: Score? = null
-val scoreText = document.selectFirst(DETAIL_SCORE)?.text()?.trim()
-if (scoreText != null) {
-val scoreValue = scoreText.toFloatOrNull()
-score = scoreValue?.let { Score.from10(it) }
-}
+        val rawTitle = document.selectFirst(DETAIL_TITLE)?.text()?.trim() ?: "Sem Título"
+        val title = cleanTitle(rawTitle)
+        println("📺 [LOAD] Título: $title")
 
-val isDubbed = rawTitle.contains("dublado", true) || url.contains("dublado", true)
-val isMovie = url.contains("/filme/") || rawTitle.contains("filme", true)
+        val poster = document.selectFirst(DETAIL_POSTER)?.attr("src")?.let { fixUrl(it) }
+        println("📺 [LOAD] Poster: $poster")
 
-val episodesList = if (!isMovie) {
-val episodeElements = document.select(EPISODE_LIST)
-val episodeImages = document.select(EPISODE_IMAGES)
-val episodeNumbers = document.select(EPISODE_NUMBER)
+        var synopsis = "Sinopse não disponível."
 
-episodeElements.mapIndexed { index, element ->
-val episodeTitle = element.text().trim()
-val episodeUrl = element.attr("href")
+        val wpContent = document.selectFirst(".wp-content")
+        wpContent?.let { content ->
+            val synopsisElements = content.select("p")
+            for (element in synopsisElements) {
+                val text = element.text()
+                if (text.contains("Sinopse:", true)) {
+                    synopsis = text.replace("Sinopse:", "").trim()
+                    break
+                } else if (text.contains("Sinopse", true) && text.length > 50) {
+                    synopsis = text.trim()
+                    break
+                }
+            }
 
-var epNumber = extractEpisodeNumber(episodeTitle) ?: (index + 1)
+            if (synopsis == "Sinopse não disponível." && synopsisElements.isNotEmpty()) {
+                for (element in synopsisElements) {
+                    val text = element.text().trim()
+                    if (text.length > 50 && !text.contains("Título Alternativo") && 
+                        !text.contains("Ano de Lançamento")) {
+                        synopsis = text
+                        break
+                    }
+                }
+            }
+        }
+        
+        println("📺 [LOAD] Sinopse: ${synopsis.take(100)}...")
 
-if (index < episodeNumbers.size) {
-val numberText = episodeNumbers[index].text().trim()
-val numberMatch = "\\d+".toRegex().findAll(numberText).lastOrNull()
-numberMatch?.let {
-val extractedNumber = it.value.toIntOrNull()
-if (extractedNumber != null) {
-epNumber = extractedNumber
-}
-}
-}
+        val genres = document.select(DETAIL_GENRES)
+            .mapNotNull { it.text().trim() }
+            .filter { !it.contains("Letra") && !it.contains("tipo") }
+        
+        println("📺 [LOAD] Gêneros: $genres")
 
-var episodePoster: String? = null
-if (index < episodeImages.size) {
-episodePoster = episodeImages[index].attr("src")?.let { fixUrl(it) }
-}
+        var year: Int? = null
+        val yearText = document.selectFirst(DETAIL_YEAR)?.text()?.trim()
+        if (yearText != null) {
+            val yearMatch = "\\b(\\d{4})\\b".toRegex().find(yearText)
+            year = yearMatch?.groupValues?.get(1)?.toIntOrNull()
+        }
+        println("📺 [LOAD] Ano: $year")
 
-newEpisode(episodeUrl) {
-this.name = "Episódio $epNumber"
-this.episode = epNumber
-this.posterUrl = episodePoster ?: poster
-}
-}.sortedBy { it.episode }
-} else {
-listOf(newEpisode(url) {
-this.name = "Filme Completo"
-this.episode = 1
-this.posterUrl = poster
-})
-}
+        var score: Score? = null
+        val scoreText = document.selectFirst(DETAIL_SCORE)?.text()?.trim()
+        if (scoreText != null) {
+            val scoreValue = scoreText.toFloatOrNull()
+            score = scoreValue?.let { Score.from10(it) }
+        }
+        println("📺 [LOAD] Nota: $score")
 
-val showStatus = if (isMovie || episodesList.size >= 50) {
-ShowStatus.Completed
-} else {
-ShowStatus.Ongoing
-}
+        val isDubbed = rawTitle.contains("dublado", true) || url.contains("dublado", true)
+        val isMovie = url.contains("/filme/") || rawTitle.contains("filme", true)
+        
+        println("📺 [LOAD] É filme? $isMovie")
+        println("📺 [LOAD] É dublado? $isDubbed")
 
-return newAnimeLoadResponse(title, url, if (isMovie) TvType.AnimeMovie else TvType.Anime) {
-this.posterUrl = poster
-this.year = year
-this.plot = synopsis
-this.tags = genres
-this.score = score
-this.showStatus = showStatus
+        val episodesList = if (!isMovie) {
+            val episodeElements = document.select(EPISODE_LIST)
+            val episodeImages = document.select(EPISODE_IMAGES)
+            val episodeNumbers = document.select(EPISODE_NUMBER)
+            
+            println("📺 [LOAD] Encontrados ${episodeElements.size} episódios")
 
-if (episodesList.isNotEmpty()) {
-addEpisodes(if (isDubbed) DubStatus.Dubbed else DubStatus.Subbed, episodesList)
-}
-}
-}
+            episodeElements.mapIndexed { index, element ->
+                val episodeTitle = element.text().trim()
+                val episodeUrl = element.attr("href")
 
-override suspend fun loadLinks(
-data: String,
-isCasting: Boolean,
-subtitleCallback: (SubtitleFile) -> Unit,
-callback: (ExtractorLink) -> Unit
-): Boolean {
-return AnimeQVideoExtractor.extractVideoLinks(data, callback = callback)
-}
+                var epNumber = extractEpisodeNumber(episodeTitle) ?: (index + 1)
+
+                if (index < episodeNumbers.size) {
+                    val numberText = episodeNumbers[index].text().trim()
+                    val numberMatch = "\\d+".toRegex().findAll(numberText).lastOrNull()
+                    numberMatch?.let {
+                        val extractedNumber = it.value.toIntOrNull()
+                        if (extractedNumber != null) {
+                            epNumber = extractedNumber
+                        }
+                    }
+                }
+
+                var episodePoster: String? = null
+                if (index < episodeImages.size) {
+                    episodePoster = episodeImages[index].attr("src")?.let { fixUrl(it) }
+                }
+
+                newEpisode(episodeUrl) {
+                    this.name = "Episódio $epNumber"
+                    this.episode = epNumber
+                    this.posterUrl = episodePoster ?: poster
+                }
+            }.sortedBy { it.episode }
+        } else {
+            println("📺 [LOAD] É filme, criando episódio único")
+            listOf(newEpisode(url) {
+                this.name = "Filme Completo"
+                this.episode = 1
+                this.posterUrl = poster
+            })
+        }
+
+        val showStatus = if (isMovie || episodesList.size >= 50) {
+            ShowStatus.Completed
+        } else {
+            ShowStatus.Ongoing
+        }
+        
+        println("📺 [LOAD] Status: $showStatus")
+        println("📺 [LOAD] Total de episódios: ${episodesList.size}")
+
+        return newAnimeLoadResponse(title, url, if (isMovie) TvType.AnimeMovie else TvType.Anime) {
+            this.posterUrl = poster
+            this.year = year
+            this.plot = synopsis
+            this.tags = genres
+            this.score = score
+            this.showStatus = showStatus
+
+            if (episodesList.isNotEmpty()) {
+                addEpisodes(if (isDubbed) DubStatus.Dubbed else DubStatus.Subbed, episodesList)
+            }
+        }
+    }
+
+    override suspend fun loadLinks(
+        data: String,
+        isCasting: Boolean,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        println("🔗 [LINKS] Extraindo links de: $data")
+        return AnimeQVideoExtractor.extractVideoLinks(data, callback = callback)
+    }
 }
