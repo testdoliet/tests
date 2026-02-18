@@ -9,7 +9,7 @@ import org.jsoup.nodes.Element
 import com.fasterxml.jackson.annotation.JsonProperty
 import java.text.SimpleDateFormat
 
-class SuperFlix : MainAPI() {
+class MendigoFlix : MainAPI() {
     override var mainUrl = "https://mendigoflix.lol/"
     override var name = "MendigoFlix"
     override val hasMainPage = true
