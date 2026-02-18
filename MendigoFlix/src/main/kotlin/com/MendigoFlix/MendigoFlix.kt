@@ -679,7 +679,7 @@ class MendigoFlix : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        return SuperFlixExtractor.extractVideoLinks(data, name, callback)
+        return MendigoFlixExtractor.extractVideoLinks(data, name, callback)
     }
 
     private data class TMDBInfo(
