@@ -15,7 +15,7 @@ class SuperFlix : MainAPI() {
     override val hasMainPage = true
     override var lang = "pt-br"
     override val hasDownloadSupport = true
-    override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries, TvType.Anime)
+    override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries)
     override val usesWebView = true
 
     private val tmdbImageUrl = "https://image.tmdb.org/t/p"
@@ -52,7 +52,6 @@ class SuperFlix : MainAPI() {
             if (baseUrl.contains("?")) {
                 "$baseUrl&page=$page"
             } else {
-                // WordPress pagination format: /page/2/
                 val baseWithoutSlash = if (baseUrl.endsWith("/")) baseUrl.dropLast(1) else baseUrl
                 "$baseWithoutSlash/page/$page/"
             }
@@ -63,8 +62,6 @@ class SuperFlix : MainAPI() {
         println("SuperFlix Debug - Loading main page URL: $url")
 
         val document = app.get(url).document
-
-        // New selector for the post list
         val home = document.select("ul.post-lst > li.post").mapNotNull { element ->
             element.toSearchResult()
         }
@@ -72,14 +69,12 @@ class SuperFlix : MainAPI() {
         println("SuperFlix Debug - Found ${home.size} items on main page")
 
         val hasNextPage = document.select("a.next.page-numbers, a:contains(Próxima)").isNotEmpty()
-        println("SuperFlix Debug - Has next page: $hasNextPage")
-
+        
         return newHomePageResponse(request.name, home, hasNextPage)
     }
 
     private fun Element.toSearchResult(): SearchResponse? {
         try {
-            // This element is the 'li.post'
             val article = selectFirst("article") ?: return null
             val linkElement = article.selectFirst("a.lnk-blk") ?: article.selectFirst("a[href]") ?: return null
             val href = linkElement.attr("href") ?: return null
@@ -96,7 +91,6 @@ class SuperFlix : MainAPI() {
 
             val cleanTitle = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
 
-            // Determine type based on URL
             val isSerie = href.contains("/serie/")
             val isAnime = href.contains("/anime/")
 
@@ -141,7 +135,6 @@ class SuperFlix : MainAPI() {
         println("SuperFlix Debug - Loading URL: $url")
         val document = app.get(url).document
 
-        // Extract basic info from the page
         val titleElement = document.selectFirst("article.post.single h1.entry-title")
         val title = titleElement?.text() ?: return null
         println("SuperFlix Debug - Title: $title")
@@ -165,7 +158,6 @@ class SuperFlix : MainAPI() {
         
         println("SuperFlix Debug - Is Serie: $isSerie, Is Anime: $isAnime")
 
-        // TMDB Integration
         val tmdbInfo = if (isSerie || isAnime) {
             searchOnTMDB(title, year, true)
         } else {
@@ -344,12 +336,10 @@ class SuperFlix : MainAPI() {
             val episodeSection = document.selectFirst("section.episodes") ?: return emptyList()
             println("SuperFlix Debug - Found episode section")
 
-            // Find season data from the dropdown
             val seasonItems = episodeSection.select(".aa-drp .sub-menu li a[data-season]")
             println("SuperFlix Debug - Found ${seasonItems.size} seasons")
 
             if (seasonItems.isNotEmpty()) {
-                // Load episodes for each season via AJAX
                 for (seasonLink in seasonItems) {
                     val seasonNumber = seasonLink.attr("data-season").toIntOrNull() ?: continue
                     val postId = seasonLink.attr("data-post") ?: continue
@@ -392,31 +382,6 @@ class SuperFlix : MainAPI() {
                         println("SuperFlix Debug - Error loading episodes for season $seasonNumber: ${e.message}")
                     }
                 }
-            } else {
-                println("SuperFlix Debug - No season dropdown found, trying direct episode list")
-                // Fallback: Try to find episodes directly on the page
-                val episodeElements = episodeSection.select("ul#episode_by_temp li")
-                episodeElements.forEachIndexed { index, element ->
-                    try {
-                        val episodeLink = element.selectFirst("article a.lnk-blk")?.attr("href")
-                        val episodeTitleElement = element.selectFirst(".entry-title")
-                        val episodeNumElement = element.selectFirst(".num-epi")
-
-                        val episodeNum = episodeNumElement?.text()?.split("x")?.lastOrNull()?.toIntOrNull() ?: (index + 1)
-                        val seasonNum = episodeNumElement?.text()?.split("x")?.firstOrNull()?.toIntOrNull() ?: 1
-                        val episodeTitle = episodeTitleElement?.text()?.trim() ?: "Episódio $episodeNum"
-                        val episodeUrl = episodeLink?.let { fixUrl(it) } ?: return@forEachIndexed
-
-                        val episode = newEpisode(episodeUrl) {
-                            this.name = episodeTitle
-                            this.season = seasonNum
-                            this.episode = episodeNum
-                        }
-                        episodes.add(episode)
-                    } catch (e: Exception) {
-                        println("SuperFlix Debug - Error parsing episode: ${e.message}")
-                    }
-                }
             }
         } catch (e: Exception) {
             println("SuperFlix Debug - Error in extractEpisodesFromSite: ${e.message}")
@@ -436,7 +401,6 @@ class SuperFlix : MainAPI() {
         val episodes = extractEpisodesFromSite(document, url, isAnime, isSerie)
         if (tmdbInfo == null) return episodes
 
-        // Enhance episodes with TMDB data
         return episodes.map { episode ->
             val seasonNum = episode.season ?: 1
             val episodeNum = episode.episode ?: 1
@@ -499,7 +463,6 @@ class SuperFlix : MainAPI() {
         val recommendations = mutableListOf<SearchResponse>()
         
         try {
-            // Find the carousel with recommended series
             val carousel = document.selectFirst(".owl-carousel") ?: return emptyList()
             val items = carousel.select(".owl-item .post")
             
@@ -600,7 +563,7 @@ class SuperFlix : MainAPI() {
             val type = if (isAnime) TvType.Anime else TvType.TvSeries
 
             newTvSeriesLoadResponse(
-                name = tmdbInfo.title ?: title,
+                name = tmdbInfo.title ?: "",
                 url = url,
                 type = type,
                 episodes = episodes
@@ -623,7 +586,7 @@ class SuperFlix : MainAPI() {
             }
         } else {
             newMovieLoadResponse(
-                name = tmdbInfo.title ?: title,
+                name = tmdbInfo.title ?: "",
                 url = url,
                 type = TvType.Movie,
                 dataUrl = url
@@ -649,19 +612,16 @@ class SuperFlix : MainAPI() {
     }
 
     private fun findPlayerUrl(document: org.jsoup.nodes.Document): String? {
-        // Try to find iframe
         val iframe = document.selectFirst("iframe[src*='fembed'], iframe[src*='filemoon'], iframe[src*='player'], iframe[src*='embed']")
         if (iframe != null) {
             return iframe.attr("src")
         }
 
-        // Look for play buttons
         val playButton = document.selectFirst("button.bd-play[data-url], a.bd-play[data-url]")
         if (playButton != null) {
             return playButton.attr("data-url")
         }
 
-        // Look for direct video links
         val videoLink = document.selectFirst("a[href*='.m3u8'], a[href*='.mp4']")
         return videoLink?.attr("href")
     }
@@ -687,7 +647,6 @@ class SuperFlix : MainAPI() {
         return SuperFlixExtractor.extractVideoLinks(playerUrl, name, callback)
     }
 
-    // Data classes
     private data class TMDBInfo(
         val id: Int,
         val title: String?,
