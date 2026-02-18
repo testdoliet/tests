@@ -10,7 +10,7 @@ import com.fasterxml.jackson.annotation.JsonProperty
 import java.text.SimpleDateFormat
 
 class SuperFlix : MainAPI() {
-    override var mainUrl = "https://superflix30.lol" // Verifique se ainda é essa
+    override var mainUrl = "https://superflix30.lol"
     override var name = "SuperFlix"
     override val hasMainPage = true
     override var lang = "pt-br"
@@ -23,16 +23,14 @@ class SuperFlix : MainAPI() {
     private val TMDB_ACCESS_TOKEN = BuildConfig.TMDB_ACCESS_TOKEN
 
     companion object {
-        private const val SEARCH_PATH = "/" // Mudou: busca é na raiz com ?s=
+        private const val SEARCH_PATH = "/"
 
-        // ATUALIZADO: Categorias com as novas URLs
         private val FIXED_CATEGORIES = listOf(
             "/categoria/lancamentos/" to "Lançamentos",
             "/assistir-filmes-online/" to "Últimos Filmes",
             "/assistir-series-online/" to "Últimas Séries"
         )
 
-        // ATUALIZADO: Categorias aleatórias com as novas URLs
         private val ALL_RANDOM_CATEGORIES = listOf(
             "/categoria/acao/" to "Ação",
             "/categoria/animacao/" to "Animação",
@@ -102,18 +100,15 @@ class SuperFlix : MainAPI() {
 
         val document = app.get(url).document
 
-        // ATUALIZADO: Seletor para os cards na página inicial
         val home = document.select("li.post").mapNotNull { element ->
             element.toSearchResult()
         }
 
-        // ATUALIZADO: Verificação de próxima página
         val hasNextPage = document.select("a.next, .pagination .next, a:contains(Próxima)").isNotEmpty()
 
         return newHomePageResponse(request.name, home.distinctBy { it.url }, hasNextPage)
     }
 
-    // ATUALIZADO: Função para converter elemento em SearchResponse
     private fun Element.toSearchResult(): SearchResponse? {
         val link = selectFirst("a.lnk-blk") ?: return null
         val href = link.attr("href") ?: return null
@@ -123,10 +118,8 @@ class SuperFlix : MainAPI() {
         val poster = selectFirst("img")?.attr("src")?.let { fixUrl(it) }
         val year = selectFirst(".year")?.text()?.toIntOrNull()
         
-        // Limpa o título (remove ano se tiver)
         val cleanTitle = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
 
-        // Determina o tipo pela URL
         val isAnime = href.contains("/anime/") || title.contains("(Anime)", ignoreCase = true)
         val isSerie = href.contains("/serie/")
         val isMovie = href.contains("/filme/")
@@ -154,7 +147,6 @@ class SuperFlix : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        // ATUALIZADO: URL de busca do WordPress
         val searchUrl = "$mainUrl/?s=${java.net.URLEncoder.encode(query, "UTF-8")}"
         val document = app.get(searchUrl).document
 
@@ -170,28 +162,20 @@ class SuperFlix : MainAPI() {
     override suspend fun load(url: String): LoadResponse? {
         val document = app.get(url).document
 
-        // ATUALIZADO: Título
         val titleElement = document.selectFirst("h1.entry-title")
         val title = titleElement?.text() ?: return null
 
         val year = Regex("\\((\\d{4})\\)").find(title)?.groupValues?.get(1)?.toIntOrNull()
         val cleanTitle = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
 
-        // ATUALIZADO: Detecção de tipo pela URL
         val isAnime = url.contains("/anime/") || title.contains("(Anime)", ignoreCase = true)
         val isSerie = url.contains("/serie/")
         val isMovie = url.contains("/filme/")
 
-        // ATUALIZADO: Poster
         val poster = document.selectFirst(".post-thumbnail img")?.attr("src")?.let { fixUrl(it) }
-        
-        // ATUALIZADO: Sinopse
         val plot = document.selectFirst(".description p")?.text()
-        
-        // ATUALIZADO: Tags/Gêneros
         val tags = document.select(".genres a").map { it.text() }.takeIf { it.isNotEmpty() }
 
-        // ATUALIZADO: Duração (para filmes)
         val duration = document.selectFirst(".duration")?.text()?.let {
             Regex("(\\d+)h\\s*(\\d+)?m?").find(it)?.let { match ->
                 val hours = match.groupValues[1].toIntOrNull() ?: 0
@@ -200,14 +184,12 @@ class SuperFlix : MainAPI() {
             } ?: Regex("(\\d+) min").find(it)?.groupValues?.get(1)?.toIntOrNull()
         }
 
-        // TMDB (mantido igual)
         val tmdbInfo = if (isAnime || isSerie) {
             searchOnTMDB(cleanTitle, year, true)
         } else {
             searchOnTMDB(cleanTitle, year, false)
         }
 
-        // ATUALIZADO: Recomendações
         val siteRecommendations = document.select(".owl-item .post, section.relacionados .post, aside .post").mapNotNull { element ->
             try {
                 element.toSearchResult()
@@ -217,9 +199,7 @@ class SuperFlix : MainAPI() {
         }.distinctBy { it.url }
 
         return if (isSerie || isAnime) {
-            // ATUALIZADO: Extração de episódios
             val episodes = extractEpisodesFromSite(document, url)
-            
             val type = if (isAnime) TvType.Anime else TvType.TvSeries
 
             if (tmdbInfo != null) {
@@ -243,7 +223,6 @@ class SuperFlix : MainAPI() {
                 }
             }
         } else {
-            // ATUALIZADO: Para filmes, pega o iframe do player
             val iframeSrc = document.selectFirst(".video iframe")?.attr("src")
             val playerUrl = iframeSrc?.let { fixUrl(it) } ?: url
 
@@ -272,14 +251,12 @@ class SuperFlix : MainAPI() {
         }
     }
 
-    // NOVA FUNÇÃO: Extrair episódios de séries
     private suspend fun extractEpisodesFromSite(
         document: org.jsoup.nodes.Document,
         baseUrl: String
     ): List<Episode> {
         val episodes = mutableListOf<Episode>()
 
-        // Os episódios estão em ul#episode_by_temp
         document.select("#episode_by_temp li").forEach { episodeElement ->
             try {
                 val link = episodeElement.selectFirst("a.lnk-blk") ?: return@forEach
@@ -288,9 +265,18 @@ class SuperFlix : MainAPI() {
                 val numEpi = episodeElement.selectFirst(".num-epi")?.text() ?: ""
                 val title = episodeElement.selectFirst(".entry-title")?.text() ?: "Episódio"
                 
-                // Extrai temporada e episódio do formato "1x1", "1x2", etc
-                val (season, episode) = Regex("(\\d+)x(\\d+)").find(numEpi)?.destructured
-                    ?: (1 to (episodes.size + 1))
+                var season = 1
+                var episode = episodes.size + 1
+                
+                val regex = Regex("(\\d+)x(\\d+)")
+                val matchResult = regex.find(numEpi)
+                if (matchResult != null) {
+                    val groups = matchResult.groupValues
+                    if (groups.size >= 3) {
+                        season = groups[1].toIntOrNull() ?: 1
+                        episode = groups[2].toIntOrNull() ?: (episodes.size + 1)
+                    }
+                }
 
                 val poster = episodeElement.selectFirst("img")?.attr("src")?.let { fixUrl(it) }
                 
@@ -310,28 +296,27 @@ class SuperFlix : MainAPI() {
         return episodes.distinctBy { "${it.season}-${it.episode}" }
     }
 
-    // ATUALIZADO: loadLinks - agora recebe URL do episódio ou filme
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // Se for URL de episódio, carrega a página do episódio para pegar o iframe
         if (data.contains("/episodio/")) {
-            val document = app.get(data).document
-            val iframeSrc = document.selectFirst(".video iframe")?.attr("src")
-            if (iframeSrc != null) {
-                return SuperFlixExtractor.extractVideoLinks(iframeSrc, name, callback)
+            try {
+                val document = app.get(data).document
+                val iframeSrc = document.selectFirst(".video iframe")?.attr("src")
+                if (iframeSrc != null) {
+                    return SuperFlixExtractor.extractVideoLinks(iframeSrc, name, callback)
+                }
+            } catch (e: Exception) {
+                // Se falhar, tenta com a URL original
             }
         }
         
-        // Se for URL direta do player ou filme, tenta extrair
         return SuperFlixExtractor.extractVideoLinks(data, name, callback)
     }
 
-    // ========== FUNÇÕES DO TMDB (mantidas IGUAIS) ==========
-    
     private suspend fun searchOnTMDB(query: String, year: Int?, isTv: Boolean): TMDBInfo? {
         return try {
             val encodedQuery = java.net.URLEncoder.encode(query, "UTF-8")
@@ -477,8 +462,6 @@ class SuperFlix : MainAPI() {
         ?.firstOrNull()
         ?.let { (key, _, _) -> "https://www.youtube.com/watch?v=$key" }
     }
-
-    // ========== DATA CLASSES (mantidas IGUAIS) ==========
 
     private data class TMDBInfo(
         val id: Int,
