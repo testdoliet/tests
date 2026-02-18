@@ -9,7 +9,7 @@ android {
    buildFeatures {
         buildConfig = true
     }
-    namespace = "com.SuperFlix"
+    namespace = "com.MendigoFlix"
     compileSdk = 33
 
     defaultConfig {
@@ -61,12 +61,12 @@ fun getLocalProperty(key: String): String? {
 
 cloudstream {
     version = 1
-    description = "SuperFlix - Filmes e Séries em Português"
+    description = "MendigoFlix - Filmes e Séries em Português"
     language = "pt-br"
     authors = listOf("lawlietbr")
     status = 1
     tvTypes = listOf("Movies", "Series", "Animes")
-    iconUrl = "https://icons.duckduckgo.com/ip2/superflix22.lol.ico"
+    iconUrl = "https://mendigoflix.lol/assets/favicon.png"
     isCrossPlatform = true
     requiresResources = true
 }
