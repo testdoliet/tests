@@ -177,6 +177,29 @@
         "name": "Goyabu"
     },
     {
+        "iconUrl": "https://mendigoflix.lol/assets/favicon.png",
+        "jarFileSize": 267269,
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/lawlietbt/lietrepo",
+        "fileSize": 64583,
+        "status": 1,
+        "language": "pt-br",
+        "authors": [
+            "lawlietbr"
+        ],
+        "tvTypes": [
+            "Movies",
+            "Series",
+            "Animes"
+        ],
+        "version": 1,
+        "internalName": "MendigoFlix",
+        "jarUrl": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/MendigoFlix.jar",
+        "description": "MendigoFlix - Filmes e S\u00e9ries em Portugu\u00eas",
+        "url": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/MendigoFlix.cs3",
+        "name": "MendigoFlix"
+    },
+    {
         "iconUrl": "https://nexflix.vip/uploads/favicon.png",
         "jarFileSize": 173377,
         "apiVersion": 1,
@@ -199,28 +222,6 @@
         "description": "Assistir filmes online, Assistir s\u00e9ries online, Lan\u00e7amentos de filmes, Filmes 1080p, S\u00e9ries, Animes e Doramas gr\u00e1tis.",
         "url": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/Nexflix.cs3",
         "name": "Nexflix"
-    },
-    {
-        "iconUrl": "https://icons.duckduckgo.com/ip2/superflix22.lol.ico",
-        "jarFileSize": 1101,
-        "apiVersion": 1,
-        "repositoryUrl": "https://github.com/lawlietbt/lietrepo",
-        "status": 1,
-        "language": "pt-br",
-        "authors": [
-            "lawlietbr"
-        ],
-        "tvTypes": [
-            "Movies",
-            "Series",
-            "Animes"
-        ],
-        "version": 1,
-        "internalName": "SuperFlix",
-        "jarUrl": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/SuperFlix.jar",
-        "description": "SuperFlix - Filmes e S\u00e9ries em Portugu\u00eas",
-        "url": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/SuperFlix.cs3",
-        "name": "SuperFlix"
     },
     {
         "iconUrl": "https://topanimes.net/wp-content/uploads/2025/11/1009988.png",
