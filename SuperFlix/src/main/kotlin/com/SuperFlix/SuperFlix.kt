@@ -10,12 +10,12 @@ import com.fasterxml.jackson.annotation.JsonProperty
 import java.text.SimpleDateFormat
 
 class SuperFlix : MainAPI() {
-    override var mainUrl = "https://superflix30.lol"
-    override var name = "SuperFlix"
+    override var mainUrl = "https://mendigoflix.lol/"
+    override var name = "MendigoFlix"
     override val hasMainPage = true
     override var lang = "pt-br"
     override val hasDownloadSupport = true
-    override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries)
+    override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries, TvType.Anime)
     override val usesWebView = true
 
     private val tmdbImageUrl = "https://image.tmdb.org/t/p"
@@ -23,12 +23,39 @@ class SuperFlix : MainAPI() {
     private val TMDB_ACCESS_TOKEN = BuildConfig.TMDB_ACCESS_TOKEN
 
     companion object {
-        private const val SEARCH_PATH = "/?s="
+        private const val SEARCH_PATH = "/buscar"
 
         private val FIXED_CATEGORIES = listOf(
-            "/categoria/lancamentos/" to "Lançamentos",
-            "/assistir-filmes-online/" to "Últimos Filmes", 
-            "/assistir-series-online/" to "Últimas Séries"
+            "/lancamentos" to "Lançamentos",
+            "/filmes" to "Últimos Filmes",
+            "/series" to "Últimas Séries",
+            "/animes" to "Últimos Animes"
+        )
+
+        private val ALL_RANDOM_CATEGORIES = listOf(
+            "/categoria/acao?ft=all" to "Ação",
+            "/categoria/animacao?ft=all" to "Animação",
+            "/categoria/aventura?ft=all" to "Aventura",
+            "/categoria/comedia?ft=all" to "Comédia",
+            "/categoria/drama?ft=all" to "Drama",
+            "/categoria/fantasia?ft=all" to "Fantasia",
+            "/categoria/ficcao-cientifica?ft=all" to "Ficção Científica",
+            "/categoria/romance?ft=all" to "Romance",
+            "/categoria/suspense?ft=all" to "Suspense",
+            "/categoria/terror?ft=all" to "Terror",
+            "/categoria/crime?ft=all" to "Crime",
+            "/categoria/misterio?ft=all" to "Mistério",
+            "/categoria/documentario?ft=all" to "Documentário",
+            "/categoria/familia?ft=all" to "Família",
+            "/categoria/faroeste?ft=all" to "Faroeste",
+            "/categoria/guerra?ft=all" to "Guerra",
+            "/categoria/historia?ft=all" to "História",
+            "/categoria/musica?ft=all" to "Musicais",
+            "/categoria/politica?ft=all" to "Política",
+            "/categoria/reality?ft=all" to "Reality",
+            "/categoria/cinema-tv?ft=all" to "Filmes para TV",
+            "/categoria/kids?ft=all" to "Infantil",
+            "/categoria/soap?ft=all" to "Novelas"
         )
 
         private var cachedRandomTabs: List<Pair<String, String>>? = null
@@ -36,7 +63,21 @@ class SuperFlix : MainAPI() {
         private const val CACHE_DURATION = 300000L
 
         fun getCombinedTabs(): List<Pair<String, String>> {
-            return FIXED_CATEGORIES
+            val currentTime = System.currentTimeMillis()
+
+            if (cachedRandomTabs != null && (currentTime - cacheTime) < CACHE_DURATION) {
+                return FIXED_CATEGORIES + cachedRandomTabs!!
+            }
+
+            val randomTabs = ALL_RANDOM_CATEGORIES
+                .shuffled()
+                .take(9)
+                .distinctBy { it.first }
+
+            cachedRandomTabs = randomTabs
+            cacheTime = currentTime
+
+            return FIXED_CATEGORIES + randomTabs
         }
     }
 
@@ -52,126 +93,127 @@ class SuperFlix : MainAPI() {
             if (baseUrl.contains("?")) {
                 "$baseUrl&page=$page"
             } else {
-                val baseWithoutSlash = if (baseUrl.endsWith("/")) baseUrl.dropLast(1) else baseUrl
-                "$baseWithoutSlash/page/$page/"
+                "$baseUrl?page=$page"
             }
         } else {
             baseUrl
         }
-        
-        println("SuperFlix Debug - Loading main page URL: $url")
 
         val document = app.get(url).document
-        val home = document.select("ul.post-lst > li.post").mapNotNull { element ->
+
+        val home = document.select("a.card, div.recs-grid a.rec-card").mapNotNull { element ->
             element.toSearchResult()
         }
-        
-        println("SuperFlix Debug - Found ${home.size} items on main page")
 
-        val hasNextPage = document.select("a.next.page-numbers, a:contains(Próxima)").isNotEmpty()
-        
-        return newHomePageResponse(request.name, home, hasNextPage)
+        val hasNextPage = document.select("a:contains(Próxima), .page-numbers a[href*='page']").isNotEmpty() ||
+                         document.select(".pagination").isNotEmpty()
+
+        return newHomePageResponse(request.name, home.distinctBy { it.url }, hasNextPage)
     }
 
     private fun Element.toSearchResult(): SearchResponse? {
-        try {
-            val article = selectFirst("article") ?: return null
-            val linkElement = article.selectFirst("a.lnk-blk") ?: article.selectFirst("a[href]") ?: return null
-            val href = linkElement.attr("href") ?: return null
-            if (href.isBlank()) return null
+        val title = attr("title") ?: selectFirst("img")?.attr("alt") ?: return null
+        val href = attr("href") ?: return null
 
-            val titleElement = article.selectFirst(".entry-title") ?: return null
-            val title = titleElement.text().trim()
+        val localPoster = selectFirst("img")?.attr("src")?.let { fixUrl(it) }
+        val year = Regex("\\((\\d{4})\\)").find(title)?.groupValues?.get(1)?.toIntOrNull()
+        val cleanTitle = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
 
-            val imgElement = article.selectFirst(".post-thumbnail img")
-            val localPoster = imgElement?.attr("src")?.let { fixUrl(it) }
+        val badge = selectFirst(".badge-kind")?.text()?.lowercase() ?: ""
+        val isAnime = badge.contains("anime") || href.contains("/anime/") ||
+                      title.contains("(Anime)", ignoreCase = true)
+        val isSerie = badge.contains("série") || badge.contains("serie") ||
+                     href.contains("/serie/") ||
+                     (!isAnime && (badge.contains("tv") || href.contains("/tv/")))
+        val isMovie = !isSerie && !isAnime
 
-            val yearElement = article.selectFirst(".post-thumbnail .year")
-            val year = yearElement?.text()?.toIntOrNull()
-
-            val cleanTitle = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
-
-            val isSerie = href.contains("/serie/")
-            val isAnime = href.contains("/anime/")
-
-            return when {
-                isAnime -> {
-                    newAnimeSearchResponse(cleanTitle, fixUrl(href), TvType.Anime) {
-                        this.posterUrl = localPoster
-                        this.year = year
-                    }
-                }
-                isSerie -> {
-                    newTvSeriesSearchResponse(cleanTitle, fixUrl(href), TvType.TvSeries) {
-                        this.posterUrl = localPoster
-                        this.year = year
-                    }
-                }
-                else -> {
-                    newMovieSearchResponse(cleanTitle, fixUrl(href), TvType.Movie) {
-                        this.posterUrl = localPoster
-                        this.year = year
-                    }
+        return when {
+            isAnime -> {
+                newAnimeSearchResponse(cleanTitle, fixUrl(href), TvType.Anime) {
+                    this.posterUrl = localPoster
+                    this.year = year
                 }
             }
-        } catch (e: Exception) {
-            println("SuperFlix Debug - Error in toSearchResult: ${e.message}")
-            return null
+            isSerie -> {
+                newTvSeriesSearchResponse(cleanTitle, fixUrl(href), TvType.TvSeries) {
+                    this.posterUrl = localPoster
+                    this.year = year
+                }
+            }
+            else -> {
+                newMovieSearchResponse(cleanTitle, fixUrl(href), TvType.Movie) {
+                    this.posterUrl = localPoster
+                    this.year = year
+                }
+            }
         }
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        val searchUrl = "$mainUrl$SEARCH_PATH${java.net.URLEncoder.encode(query, "UTF-8")}"
-        println("SuperFlix Debug - Search URL: $searchUrl")
-        
+        val searchUrl = "$mainUrl$SEARCH_PATH?q=${java.net.URLEncoder.encode(query, "UTF-8")}"
         val document = app.get(searchUrl).document
 
-        return document.select("ul.post-lst > li.post").mapNotNull { card ->
-            card.toSearchResult()
+        return document.select(".grid .card, a.card").mapNotNull { card ->
+            try {
+                val title = card.attr("title") ?: card.selectFirst("img")?.attr("alt") ?: return@mapNotNull null
+                val href = card.attr("href") ?: return@mapNotNull null
+
+                val poster = card.selectFirst("img")?.attr("src")?.let { fixUrl(it) }
+                val year = Regex("\\((\\d{4})\\)").find(title)?.groupValues?.get(1)?.toIntOrNull()
+                val cleanTitle = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
+
+                val badge = card.selectFirst(".badge-kind")?.text()?.lowercase() ?: ""
+                val isAnime = badge.contains("anime") || href.contains("/anime/") ||
+                             title.contains("(Anime)", ignoreCase = true)
+                val isSerie = badge.contains("série") || badge.contains("serie") ||
+                             href.contains("/serie/") ||
+                             (!isAnime && (badge.contains("tv") || href.contains("/tv/")))
+
+                when {
+                    isAnime -> newAnimeSearchResponse(cleanTitle, fixUrl(href), TvType.Anime) {
+                        this.posterUrl = poster
+                        this.year = year
+                    }
+                    isSerie -> newTvSeriesSearchResponse(cleanTitle, fixUrl(href), TvType.TvSeries) {
+                        this.posterUrl = poster
+                        this.year = year
+                    }
+                    else -> newMovieSearchResponse(cleanTitle, fixUrl(href), TvType.Movie) {
+                        this.posterUrl = poster
+                        this.year = year
+                    }
+                }
+            } catch (e: Exception) {
+                null
+            }
         }
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        println("SuperFlix Debug - Loading URL: $url")
         val document = app.get(url).document
 
-        val titleElement = document.selectFirst("article.post.single h1.entry-title")
+        val titleElement = document.selectFirst("h1, .title")
         val title = titleElement?.text() ?: return null
-        println("SuperFlix Debug - Title: $title")
 
-        val descriptionElement = document.selectFirst("article.post.single .description p")
-        val plot = descriptionElement?.text()?.trim()
+        val year = Regex("\\((\\d{4})\\)").find(title)?.groupValues?.get(1)?.toIntOrNull()
+        val cleanTitle = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
 
-        val yearElement = document.selectFirst("article.post.single .entry-meta .year")
-        val year = yearElement?.text()?.toIntOrNull()
+        val isAnime = url.contains("/anime/") || title.contains("(Anime)", ignoreCase = true)
+        val isSerie = url.contains("/serie/") || url.contains("/tv/") ||
+                     (!isAnime && document.selectFirst(".episode-list, .season-list, .seasons") != null)
 
-        val durationElement = document.selectFirst("article.post.single .entry-meta .duration")
-        val duration = durationElement?.text()?.replace("min.", "")?.trim()?.toIntOrNull()
-
-        val genres = document.select("article.post.single .entry-meta .genres a").map { it.text() }
-
-        val posterElement = document.selectFirst("article.post.single .post-thumbnail img")
-        val posterUrl = posterElement?.attr("src")?.let { fixUrl(it) }
-
-        val isSerie = url.contains("/serie/") || document.selectFirst("section.episodes") != null
-        val isAnime = url.contains("/anime/")
-        
-        println("SuperFlix Debug - Is Serie: $isSerie, Is Anime: $isAnime")
-
-        val tmdbInfo = if (isSerie || isAnime) {
-            searchOnTMDB(title, year, true)
+        val tmdbInfo = if (isAnime || isSerie) {
+            searchOnTMDB(cleanTitle, year, true)
         } else {
-            searchOnTMDB(title, year, false)
+            searchOnTMDB(cleanTitle, year, false)
         }
-        
-        println("SuperFlix Debug - TMDB Info found: ${tmdbInfo != null}")
 
         val siteRecommendations = extractRecommendationsFromSite(document)
 
         return if (tmdbInfo != null) {
             createLoadResponseWithTMDB(tmdbInfo, url, document, isAnime, isSerie, siteRecommendations)
         } else {
-            createLoadResponseFromSite(document, url, title, year, isAnime, isSerie, plot, genres, posterUrl, duration)
+            createLoadResponseFromSite(document, url, cleanTitle, year, isAnime, isSerie)
         }
     }
 
@@ -234,7 +276,6 @@ class SuperFlix : MainAPI() {
                 seasonsEpisodes = seasonsEpisodes
             )
         } catch (e: Exception) {
-            println("SuperFlix Debug - TMDB search error: ${e.message}")
             null
         }
     }
@@ -275,7 +316,6 @@ class SuperFlix : MainAPI() {
 
             seasonsEpisodes
         } catch (e: Exception) {
-            println("SuperFlix Debug - TMDB seasons error: ${e.message}")
             emptyMap()
         }
     }
@@ -298,7 +338,6 @@ class SuperFlix : MainAPI() {
             if (response.code != 200) return null
             response.parsedSafe<TMDBDetailsResponse>()
         } catch (e: Exception) {
-            println("SuperFlix Debug - TMDB details error: ${e.message}")
             null
         }
     }
@@ -331,178 +370,81 @@ class SuperFlix : MainAPI() {
         isSerie: Boolean
     ): List<Episode> {
         val episodes = mutableListOf<Episode>()
-        
-        try {
-            val episodeSection = document.selectFirst("section.episodes") ?: return emptyList()
-            println("SuperFlix Debug - Found episode section")
 
-            val seasonItems = episodeSection.select(".aa-drp .sub-menu li a[data-season]")
-            println("SuperFlix Debug - Found ${seasonItems.size} seasons")
+        val episodeElements = document.select("button.bd-play[data-url], a.episode-card, .episode-item, .episode-link, [class*='episode']")
 
-            if (seasonItems.isNotEmpty()) {
-                for (seasonLink in seasonItems) {
-                    val seasonNumber = seasonLink.attr("data-season").toIntOrNull() ?: continue
-                    val postId = seasonLink.attr("data-post") ?: continue
-                    
-                    println("SuperFlix Debug - Loading season $seasonNumber for post $postId")
+        if (episodeElements.isNotEmpty()) {
+            episodeElements.forEachIndexed { index, element ->
+                try {
+                    val dataUrl = element.attr("data-url") ?: element.attr("href") ?: ""
+                    if (dataUrl.isBlank()) {
+                        return@forEachIndexed
+                    }
 
-                    val ajaxUrl = "https://superflix30.lol/wp-admin/admin-ajax.php"
-                    val ajaxBody = mapOf(
-                        "action" to "torofilm_ajax_episodes",
-                        "post" to postId,
-                        "season" to seasonNumber.toString()
-                    )
+                    val epNumber = extractEpisodeNumber(element, index + 1)
+                    val seasonNumber = element.attr("data-season").toIntOrNull() ?: 1
 
-                    try {
-                        val ajaxResponse = app.post(ajaxUrl, data = ajaxBody).document
-                        val episodeElements = ajaxResponse.select("ul#episode_by_temp li")
-                        println("SuperFlix Debug - Found ${episodeElements.size} episodes for season $seasonNumber")
-                        
-                        episodeElements.forEachIndexed { index, element ->
-                            try {
-                                val episodeLink = element.selectFirst("article a.lnk-blk")?.attr("href")
-                                val episodeTitleElement = element.selectFirst(".entry-title")
-                                val episodeNumElement = element.selectFirst(".num-epi")
+                    val episode = newEpisode(fixUrl(dataUrl)) {
+                        this.name = "Episódio $epNumber"
+                        this.season = seasonNumber
+                        this.episode = epNumber
 
-                                val episodeNum = episodeNumElement?.text()?.split("x")?.lastOrNull()?.toIntOrNull() ?: (index + 1)
-                                val episodeTitle = episodeTitleElement?.text()?.trim() ?: "Episódio $episodeNum"
-                                val episodeUrl = episodeLink?.let { fixUrl(it) } ?: return@forEachIndexed
-
-                                val episode = newEpisode(episodeUrl) {
-                                    this.name = episodeTitle
-                                    this.season = seasonNumber
-                                    this.episode = episodeNum
-                                }
-                                episodes.add(episode)
-                            } catch (e: Exception) {
-                                println("SuperFlix Debug - Error parsing episode: ${e.message}")
+                        element.selectFirst(".ep-desc, .description")?.text()?.trim()?.let { desc ->
+                            if (desc.isNotBlank()) {
+                                this.description = desc
                             }
                         }
-                    } catch (e: Exception) {
-                        println("SuperFlix Debug - Error loading episodes for season $seasonNumber: ${e.message}")
                     }
+
+                    episodes.add(episode)
+                } catch (e: Exception) {
+                    null
                 }
             }
-        } catch (e: Exception) {
-            println("SuperFlix Debug - Error in extractEpisodesFromSite: ${e.message}")
         }
 
-        println("SuperFlix Debug - Total episodes extracted: ${episodes.size}")
-        return episodes.sortedWith(compareBy({ it.season ?: 1 }, { it.episode ?: 1 }))
-    }
-
-    private suspend fun extractEpisodesWithTMDBInfo(
-        document: org.jsoup.nodes.Document,
-        url: String,
-        tmdbInfo: TMDBInfo?,
-        isAnime: Boolean,
-        isSerie: Boolean
-    ): List<Episode> {
-        val episodes = extractEpisodesFromSite(document, url, isAnime, isSerie)
-        if (tmdbInfo == null) return episodes
-
-        return episodes.map { episode ->
-            val seasonNum = episode.season ?: 1
-            val episodeNum = episode.episode ?: 1
-            val tmdbEpisode = findTMDBEpisode(tmdbInfo, seasonNum, episodeNum)
-            
-            if (tmdbEpisode != null) {
-                val descriptionWithDuration = buildDescriptionWithDuration(
-                    tmdbEpisode.overview,
-                    tmdbEpisode.runtime
-                )
-                
-                newEpisode(episode.url) {
-                    this.name = tmdbEpisode.name ?: episode.name
-                    this.season = seasonNum
-                    this.episode = episodeNum
-                    this.posterUrl = tmdbEpisode.still_path?.let { "$tmdbImageUrl/w300$it" }
-                    this.description = descriptionWithDuration
-                    
-                    tmdbEpisode.air_date?.let { airDate ->
-                        try {
-                            val dateFormatter = SimpleDateFormat("yyyy-MM-dd")
-                            val date = dateFormatter.parse(airDate)
-                            this.date = date.time
-                        } catch (e: Exception) {}
-                    }
-                }
-            } else {
-                episode
-            }
-        }
-    }
-
-    private fun buildDescriptionWithDuration(overview: String?, runtime: Int?): String? {
-        return when {
-            overview != null && runtime != null && runtime > 0 -> {
-                "$overview\n\nDuração: $runtime min"
-            }
-            overview != null -> {
-                overview
-            }
-            runtime != null && runtime > 0 -> {
-                "Duração: $runtime min"
-            }
-            else -> null
-        }
-    }
-
-    private fun findTMDBEpisode(tmdbInfo: TMDBInfo?, season: Int, episode: Int): TMDBEpisode? {
-        if (tmdbInfo == null) return null
-
-        val episodes = tmdbInfo.seasonsEpisodes[season]
-        if (episodes == null) {
-            return null
-        }
-
-        return episodes.find { it.episode_number == episode }
+        return episodes
     }
 
     private fun extractRecommendationsFromSite(document: org.jsoup.nodes.Document): List<SearchResponse> {
-        val recommendations = mutableListOf<SearchResponse>()
-        
-        try {
-            val carousel = document.selectFirst(".owl-carousel") ?: return emptyList()
-            val items = carousel.select(".owl-item .post")
-            
-            println("SuperFlix Debug - Found ${items.size} recommendations")
-            
-            items.forEach { element ->
-                try {
-                    val link = element.selectFirst("a.lnk-blk")?.attr("href") ?: return@forEach
-                    val title = element.selectFirst(".entry-title")?.text()?.trim() ?: return@forEach
-                    val img = element.selectFirst(".post-thumbnail img")?.attr("src")?.let { fixUrl(it) }
-                    val year = element.selectFirst(".year")?.text()?.toIntOrNull()
-                    
-                    val cleanTitle = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
-                    
-                    val isSerie = link.contains("/serie/")
-                    val isAnime = link.contains("/anime/")
-                    
-                    val searchResponse = when {
-                        isAnime -> newAnimeSearchResponse(cleanTitle, fixUrl(link), TvType.Anime) {
-                            this.posterUrl = img
-                            this.year = year
-                        }
-                        isSerie -> newTvSeriesSearchResponse(cleanTitle, fixUrl(link), TvType.TvSeries) {
-                            this.posterUrl = img
-                            this.year = year
-                        }
-                        else -> newMovieSearchResponse(cleanTitle, fixUrl(link), TvType.Movie) {
-                            this.posterUrl = img
-                            this.year = year
-                        }
+        val recommendations = document.select(".recs-grid .rec-card, .recs-grid a").mapNotNull { element ->
+            try {
+                val href = element.attr("href") ?: return@mapNotNull null
+                if (href.isBlank() || href == "#") return@mapNotNull null
+
+                val imgElement = element.selectFirst("img")
+                val title = imgElement?.attr("alt") ?:
+                           element.selectFirst(".rec-title")?.text() ?:
+                           element.attr("title") ?:
+                           return@mapNotNull null
+
+                val poster = imgElement?.attr("src")?.let { fixUrl(it) }
+                val cleanTitle = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
+                val year = Regex("\\((\\d{4})\\)").find(title)?.groupValues?.get(1)?.toIntOrNull()
+
+                val isAnime = href.contains("/anime/") || title.contains("(Anime)", ignoreCase = true)
+                val isSerie = href.contains("/serie/") || href.contains("/tv/")
+                val isMovie = !isSerie && !isAnime
+
+                when {
+                    isAnime -> newAnimeSearchResponse(cleanTitle, fixUrl(href), TvType.Anime) {
+                        this.posterUrl = poster
+                        this.year = year
                     }
-                    recommendations.add(searchResponse)
-                } catch (e: Exception) {
-                    println("SuperFlix Debug - Error parsing recommendation: ${e.message}")
+                    isSerie -> newTvSeriesSearchResponse(cleanTitle, fixUrl(href), TvType.TvSeries) {
+                        this.posterUrl = poster
+                        this.year = year
+                    }
+                    else -> newMovieSearchResponse(cleanTitle, fixUrl(href), TvType.Movie) {
+                        this.posterUrl = poster
+                        this.year = year
+                    }
                 }
+            } catch (e: Exception) {
+                null
             }
-        } catch (e: Exception) {
-            println("SuperFlix Debug - Error in extractRecommendationsFromSite: ${e.message}")
         }
-        
+
         return recommendations
     }
 
@@ -512,32 +454,40 @@ class SuperFlix : MainAPI() {
         title: String,
         year: Int?,
         isAnime: Boolean,
-        isSerie: Boolean,
-        plot: String?,
-        tags: List<String>,
-        posterUrl: String?,
-        duration: Int?
+        isSerie: Boolean
     ): LoadResponse {
+        val ogImage = document.selectFirst("meta[property='og:image']")?.attr("content")
+        val poster = ogImage?.let { fixUrl(it) }
+
+        val description = document.selectFirst("meta[name='description']")?.attr("content")
+        val synopsis = document.selectFirst(".syn, .description, .sinopse, .plot")?.text()
+        val plot = description ?: synopsis
+
+        val tags = document.select("a.chip, .chip, .genre, .tags").map { it.text() }
+            .takeIf { it.isNotEmpty() }?.toList()
+
         val siteRecommendations = extractRecommendationsFromSite(document)
 
-        return if (isSerie || isAnime) {
+        return if (isAnime || isSerie) {
             val type = if (isAnime) TvType.Anime else TvType.TvSeries
+
             val episodes = extractEpisodesFromSite(document, url, isAnime, isSerie)
 
             newTvSeriesLoadResponse(title, url, type, episodes) {
-                this.posterUrl = posterUrl
+                this.posterUrl = poster
                 this.year = year
                 this.plot = plot
-                this.tags = tags.takeIf { it.isNotEmpty() }
+                this.tags = tags
                 this.recommendations = siteRecommendations.takeIf { it.isNotEmpty() }
             }
         } else {
-            newMovieLoadResponse(title, url, TvType.Movie, url) {
-                this.posterUrl = posterUrl
+            val playerUrl = findPlayerUrl(document)
+
+            newMovieLoadResponse(title, url, TvType.Movie, playerUrl ?: url) {
+                this.posterUrl = poster
                 this.year = year
                 this.plot = plot
-                this.tags = tags.takeIf { it.isNotEmpty() }
-                this.duration = duration
+                this.tags = tags
                 this.recommendations = siteRecommendations.takeIf { it.isNotEmpty() }
             }
         }
@@ -551,7 +501,7 @@ class SuperFlix : MainAPI() {
         isSerie: Boolean,
         siteRecommendations: List<SearchResponse>
     ): LoadResponse {
-        return if (isSerie || isAnime) {
+        return if (isAnime || isSerie) {
             val episodes = extractEpisodesWithTMDBInfo(
                 document = document,
                 url = url,
@@ -585,11 +535,13 @@ class SuperFlix : MainAPI() {
                 this.recommendations = siteRecommendations.takeIf { it.isNotEmpty() }
             }
         } else {
+            val playerUrl = findPlayerUrl(document)
+
             newMovieLoadResponse(
                 name = tmdbInfo.title ?: "",
                 url = url,
                 type = TvType.Movie,
-                dataUrl = url
+                dataUrl = playerUrl ?: url
             ) {
                 this.posterUrl = tmdbInfo.posterUrl
                 this.backgroundPosterUrl = tmdbInfo.backdropUrl
@@ -611,18 +563,113 @@ class SuperFlix : MainAPI() {
         }
     }
 
+    private suspend fun extractEpisodesWithTMDBInfo(
+        document: org.jsoup.nodes.Document,
+        url: String,
+        tmdbInfo: TMDBInfo?,
+        isAnime: Boolean,
+        isSerie: Boolean = false
+    ): List<Episode> {
+        val episodes = mutableListOf<Episode>()
+
+        val episodeElements = document.select("button.bd-play[data-url], a.episode-card, .episode-item, .episode-link, [class*='episode']")
+
+        if (episodeElements.isNotEmpty()) {
+            episodeElements.forEachIndexed { index, element ->
+                try {
+                    val dataUrl = element.attr("data-url") ?: element.attr("href") ?: ""
+                    if (dataUrl.isBlank()) return@forEachIndexed
+
+                    val epNumber = extractEpisodeNumber(element, index + 1)
+                    val seasonNumber = element.attr("data-season").toIntOrNull() ?: 1
+
+                    val tmdbEpisode = findTMDBEpisode(tmdbInfo, seasonNumber, epNumber)
+
+                    val episode = if (tmdbEpisode != null) {
+                        val descriptionWithDuration = buildDescriptionWithDuration(
+                            tmdbEpisode.overview,
+                            tmdbEpisode.runtime
+                        )
+
+                        newEpisode(fixUrl(dataUrl)) {
+                            this.name = tmdbEpisode.name ?: "Episódio $epNumber"
+                            this.season = seasonNumber
+                            this.episode = epNumber
+                            this.posterUrl = tmdbEpisode.still_path?.let { "$tmdbImageUrl/w300$it" }
+                            this.description = descriptionWithDuration
+
+                            tmdbEpisode.air_date?.let { airDate ->
+                                try {
+                                    val dateFormatter = SimpleDateFormat("yyyy-MM-dd")
+                                    val date = dateFormatter.parse(airDate)
+                                    this.date = date.time
+                                } catch (e: Exception) {}
+                            }
+                        }
+                    } else {
+                        newEpisode(fixUrl(dataUrl)) {
+                            this.name = "Episódio $epNumber"
+                            this.season = seasonNumber
+                            this.episode = epNumber
+                        }
+                    }
+
+                    episodes.add(episode)
+                } catch (e: Exception) {
+                    null
+                }
+            }
+        }
+
+        return episodes
+    }
+
+    private fun buildDescriptionWithDuration(overview: String?, runtime: Int?): String? {
+        return when {
+            overview != null && runtime != null && runtime > 0 -> {
+                "$overview\n\nDuração: $runtime min"
+            }
+            overview != null -> {
+                overview
+            }
+            runtime != null && runtime > 0 -> {
+                "Duração: $runtime min"
+            }
+            else -> null
+        }
+    }
+
+    private fun findTMDBEpisode(tmdbInfo: TMDBInfo?, season: Int, episode: Int): TMDBEpisode? {
+        if (tmdbInfo == null) return null
+
+        val episodes = tmdbInfo.seasonsEpisodes[season]
+        if (episodes == null) {
+            return null
+        }
+
+        return episodes.find { it.episode_number == episode }
+    }
+
+    private fun extractEpisodeNumber(element: Element, default: Int): Int {
+        return element.attr("data-ep").toIntOrNull() ?:
+               element.selectFirst(".ep-number, .number, .episode-number")?.text()?.toIntOrNull() ?:
+               Regex("Ep\\.?\\s*(\\d+)").find(element.text())?.groupValues?.get(1)?.toIntOrNull() ?:
+               Regex("Epis[oó]dio\\s*(\\d+)").find(element.text())?.groupValues?.get(1)?.toIntOrNull() ?:
+               default
+    }
+
     private fun findPlayerUrl(document: org.jsoup.nodes.Document): String? {
+        val playButton = document.selectFirst("button.bd-play[data-url]")
+        if (playButton != null) {
+            return playButton.attr("data-url")
+        }
+
         val iframe = document.selectFirst("iframe[src*='fembed'], iframe[src*='filemoon'], iframe[src*='player'], iframe[src*='embed']")
         if (iframe != null) {
             return iframe.attr("src")
         }
 
-        val playButton = document.selectFirst("button.bd-play[data-url], a.bd-play[data-url]")
-        if (playButton != null) {
-            return playButton.attr("data-url")
-        }
-
-        val videoLink = document.selectFirst("a[href*='.m3u8'], a[href*='.mp4']")
+        val videoLink = document.selectFirst("a[href*='.m3u8'], a[href*='.mp4'], a[href*='watch']")
         return videoLink?.attr("href")
     }
 
@@ -632,19 +679,7 @@ class SuperFlix : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        println("SuperFlix Debug - Loading links from: $data")
-        
-        val episodeDocument = app.get(data).document
-        val playerUrl = findPlayerUrl(episodeDocument)
-        
-        println("SuperFlix Debug - Found player URL: $playerUrl")
-        
-        if (playerUrl == null) {
-            println("SuperFlix Debug - No player URL found")
-            return false
-        }
-
-        return SuperFlixExtractor.extractVideoLinks(playerUrl, name, callback)
+        return SuperFlixExtractor.extractVideoLinks(data, name, callback)
     }
 
     private data class TMDBInfo(
