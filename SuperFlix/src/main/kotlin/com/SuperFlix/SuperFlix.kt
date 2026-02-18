@@ -319,20 +319,20 @@ class SuperFlix : MainAPI() {
         
         println("[SuperFlix DEBUG] extractEpisodesFromSite - Elementos de episódio encontrados: ${episodeElements.size}")
 
-        episodeElements.forEachIndexed { index, episodeElement ->
+        for ((index, episodeElement) in episodeElements.withIndex()) {
             try {
                 println("[SuperFlix DEBUG] extractEpisodesFromSite - Processando episódio $index")
                 
                 val link = episodeElement.selectFirst("a.lnk-blk")
                 if (link == null) {
                     println("[SuperFlix DEBUG] extractEpisodesFromSite - Link não encontrado para episódio $index")
-                    return@forEach
+                    continue
                 }
                 
                 val episodeUrl = link.attr("href")
                 if (episodeUrl.isNullOrBlank()) {
                     println("[SuperFlix DEBUG] extractEpisodesFromSite - URL vazia para episódio $index")
-                    return@forEach
+                    continue
                 }
                 
                 val numEpi = episodeElement.selectFirst(".num-epi")?.text() ?: ""
@@ -402,7 +402,6 @@ class SuperFlix : MainAPI() {
         return SuperFlixExtractor.extractVideoLinks(data, name, callback)
     }
 
-    // Funções TMDB (mantidas iguais, mas adicionei logs)
     private suspend fun searchOnTMDB(query: String, year: Int?, isTv: Boolean): TMDBInfo? {
         println("[SuperFlix DEBUG] searchOnTMDB - Query: $query, Ano: $year, isTv: $isTv")
         return try {
@@ -589,7 +588,6 @@ class SuperFlix : MainAPI() {
         return trailer
     }
 
-    // Data classes (mantidas iguais)
     private data class TMDBInfo(
         val id: Int,
         val title: String?,
