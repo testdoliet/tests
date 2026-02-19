@@ -307,8 +307,7 @@ class FilmesOnlineX : MainAPI() {
         ?.firstOrNull()
         ?.let { (key, _, _) -> "https://www.youtube.com/watch?v=$key" }
     }
-
-    private fun extractEpisodes(document: org.jsoup.nodes.Document): List<Episode> {
+private fun extractEpisodes(document: org.jsoup.nodes.Document): List<Episode> {
     println("🔍 [DEBUG] Iniciando extração de episódios")
     val episodes = mutableListOf<Episode>()
 
@@ -467,7 +466,7 @@ class FilmesOnlineX : MainAPI() {
                         }
                     }
                     episodes.add(episode)
-                    println("      ✅ [DEBUG] Episódio alternativo adicionado")
+                    println("      ✅ [DEBUG] Episódio alternativo adicionado: S${seasonNumber}E${episodeNumber}")
                     
                 } catch (e: Exception) {
                     println("      ❌ [DEBUG] Erro na linha alternativa: ${e.message}")
@@ -477,13 +476,9 @@ class FilmesOnlineX : MainAPI() {
     }
 
     println("📊 [DEBUG] Total de episódios extraídos: ${episodes.size}")
-    episodes.forEachIndexed { index, episode ->
-        println("  📺 [DEBUG] Episódio ${index + 1}: S${episode.season}E${episode.episode} - ${episode.name} - ${episode.url}")
-    }
     
     return episodes
 }
-
     private fun extractPlayerUrl(document: org.jsoup.nodes.Document): String? {
         val playButton = document.selectFirst("a.Button.TPlay[href]")
         if (playButton != null) {
