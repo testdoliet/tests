@@ -14,6 +14,7 @@ class FilmesOnlineX : MainAPI() {
     override var lang = "pt-br"
     override val hasDownloadSupport = true
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries)
+    override val usesWebView = true
 
     companion object {
         private const val SEARCH_PATH = "/?s"
@@ -54,19 +55,18 @@ class FilmesOnlineX : MainAPI() {
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val baseUrl = request.data
         val url = if (page > 1) {
-            if (baseUrl.contains("?")) {
-                "$baseUrl&page=$page"
+            if (request.data.contains("?")) {
+                "${request.data}&page=$page"
             } else {
-                "$baseUrl?page=$page"
+                "${request.data}?page=$page"
             }
         } else {
-            baseUrl
+            request.data
         }
 
         val document = app.get(url).document
-        val items = document.select("ul.MovieList.Rows > li.TPostMv > article.TPost.B").mapNotNull { element ->
+        val items = document.select(".MovieList .TPost.B").mapNotNull { element ->
             element.toSearchResult()
         }
 
@@ -76,25 +76,23 @@ class FilmesOnlineX : MainAPI() {
     }
 
     private fun Element.toSearchResult(): SearchResponse? {
-        val linkElement = selectFirst("a[href]") ?: return null
-        val href = linkElement.attr("href")
-        val title = linkElement.selectFirst("h2.Title")?.text() ?: return null
+        val link = selectFirst("a[href]") ?: return null
+        val href = fixUrl(link.attr("href"))
+        val title = selectFirst(".Title")?.text() ?: return null
 
-        val poster = selectFirst("img[src]")?.attr("src")?.let { fixUrl(it) }
-        val yearElement = selectFirst(".Qlty.Yr")
-        val year = yearElement?.text()?.toIntOrNull()
-        val cleanTitle = title.replace(Regex("\\s*\\(\\d{4}\\)"), "").trim()
+        val poster = selectFirst("img")?.attr("src")?.let { fixUrl(it) }
+        val year = selectFirst(".Qlty.Yr")?.text()?.toIntOrNull()
+        val cleanTitle = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
 
-        val urlLower = href.lowercase()
-        val isSerie = urlLower.contains("/series/") || urlLower.contains("/serie/")
+        val isSerie = href.contains("/series/") || href.contains("/serie/")
         
         return if (isSerie) {
-            newTvSeriesSearchResponse(cleanTitle, fixUrl(href), TvType.TvSeries) {
+            newTvSeriesSearchResponse(cleanTitle, href, TvType.TvSeries) {
                 this.posterUrl = poster
                 this.year = year
             }
         } else {
-            newMovieSearchResponse(cleanTitle, fixUrl(href), TvType.Movie) {
+            newMovieSearchResponse(cleanTitle, href, TvType.Movie) {
                 this.posterUrl = poster
                 this.year = year
             }
@@ -106,7 +104,7 @@ class FilmesOnlineX : MainAPI() {
         
         return try {
             val document = app.get(searchUrl).document
-            document.select("ul.MovieList.Rows > li.TPostMv > article.TPost.B").mapNotNull { element ->
+            document.select(".MovieList .TPost.B").mapNotNull { element ->
                 element.toSearchResult()
             }
         } catch (e: Exception) {
@@ -118,25 +116,20 @@ class FilmesOnlineX : MainAPI() {
         val document = app.get(url).document
 
         val title = document.selectFirst("h1.Title, h2.Title")?.text() ?: return null
-        val cleanTitle = title.replace(Regex("\\s*\\(\\d{4}\\)"), "").trim()
+        val cleanTitle = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
         
-        val year = document.selectFirst(".Info .Date")?.text()?.toIntOrNull() ?:
-                   Regex("\\((\\d{4})\\)").find(title)?.groupValues?.get(1)?.toIntOrNull()
+        val year = document.selectFirst(".Info .Date")?.text()?.toIntOrNull()
         
-        val poster = document.selectFirst("meta[property='og:image']")?.attr("content") ?:
+        val poster = document.selectFirst("meta[property='og:image']")?.attr("content")?.let { fixUrl(it) } ?:
                     document.selectFirst("img[src*='tmdb.org']")?.attr("src")?.let { fixUrl(it) }
         
         val plot = document.selectFirst(".Description p")?.text()?.trim()
         
         val tags = document.select(".Genre a").map { it.text() }.takeIf { it.isNotEmpty() }
         
-        val castItems = document.select(".Cast a").mapNotNull { element ->
-            val name = element.text()
-            if (name.isNotBlank()) Actor(name = name) else null
-        }
+        val cast = document.select(".Cast a").map { it.text() }.takeIf { it.isNotEmpty() }
 
-        val isSerie = url.contains("/series/") || 
-                     document.selectFirst(".SeasonBx, .Episodes, .seasons") != null
+        val isSerie = url.contains("/series/") || document.selectFirst(".SeasonBx") != null
 
         val recommendations = document.select(".MovieList .TPost.B").mapNotNull { element ->
             element.toSearchResult()
@@ -150,18 +143,16 @@ class FilmesOnlineX : MainAPI() {
                 this.year = year
                 this.plot = plot
                 this.tags = tags
-                if (castItems.isNotEmpty()) addActors(castItems)
+                cast?.let { addActors(it.map { name -> Actor(name) }) }
                 this.recommendations = recommendations
             }
         } else {
-            val playerUrl = extractPlayerUrl(document) ?: url
-            
-            newMovieLoadResponse(cleanTitle, url, TvType.Movie, playerUrl) {
+            newMovieLoadResponse(cleanTitle, url, TvType.Movie, url) {
                 this.posterUrl = poster
                 this.year = year
                 this.plot = plot
                 this.tags = tags
-                if (castItems.isNotEmpty()) addActors(castItems)
+                cast?.let { addActors(it.map { name -> Actor(name) }) }
                 this.recommendations = recommendations
             }
         }
@@ -170,75 +161,37 @@ class FilmesOnlineX : MainAPI() {
     private fun extractEpisodes(document: org.jsoup.nodes.Document): List<Episode> {
         val episodes = mutableListOf<Episode>()
 
-        val seasonBoxes = document.select(".SeasonBx")
-        
-        if (seasonBoxes.isNotEmpty()) {
-            seasonBoxes.forEach { seasonBox ->
-                val seasonNumber = seasonBox.selectFirst(".Title span")?.text()?.toIntOrNull() ?: 1
-                
-                val episodeRows = seasonBox.select(".TPTblCn tbody tr")
-                
-                episodeRows.forEach { row ->
-                    try {
-                        val numberElement = row.selectFirst("td span.Num")
-                        val episodeNumber = numberElement?.text()?.toIntOrNull()
-                        
-                        val linkElement = row.selectFirst("td.MvTbImg a[href]") ?: 
-                                         row.selectFirst("td.MvTbTtl a[href]")
-                        val episodeUrl = linkElement?.attr("href")?.let { fixUrl(it) }
-                        
-                        val titleElement = row.selectFirst("td.MvTbTtl a")
-                        val episodeTitle = titleElement?.text()?.trim()
-                        
-                        val dateElement = row.selectFirst("td.MvTbTtl span")
-                        val dateText = dateElement?.text()?.trim()
-                        
-                        val poster = row.selectFirst("td.MvTbImg img")?.attr("src")?.let { fixUrl(it) }
+        document.select(".SeasonBx").forEach { seasonBox ->
+            val seasonNumber = seasonBox.selectFirst(".Title span")?.text()?.toIntOrNull() ?: 1
+            
+            seasonBox.select(".TPTblCn tbody tr").forEach { row ->
+                try {
+                    val episodeNumber = row.selectFirst("td span.Num")?.text()?.toIntOrNull() ?: return@forEach
+                    val link = row.selectFirst("td.MvTbImg a, td.MvTbTtl a")?.attr("href")?.let { fixUrl(it) } ?: return@forEach
+                    val episodeTitle = row.selectFirst("td.MvTbTtl a")?.text()?.trim()
+                    val dateText = row.selectFirst("td.MvTbTtl span")?.text()?.trim()
+                    val poster = row.selectFirst("td.MvTbImg img")?.attr("src")?.let { fixUrl(it) }
 
-                        if (episodeUrl != null && episodeNumber != null) {
-                            val episode = newEpisode(episodeUrl) {
-                                this.name = episodeTitle ?: "Episódio $episodeNumber"
-                                this.season = seasonNumber
-                                this.episode = episodeNumber
-                                this.posterUrl = poster
-                                
-                                dateText?.let {
-                                    try {
-                                        val formats = listOf("dd-MM-yyyy", "yyyy-MM-dd", "dd/MM/yyyy")
-                                        for (format in formats) {
-                                            try {
-                                                val date = SimpleDateFormat(format).parse(it)
-                                                this.date = date.time
-                                                break
-                                            } catch (e: Exception) {}
-                                        }
-                                    } catch (e: Exception) {}
-                                }
-                            }
-                            episodes.add(episode)
+                    val episode = newEpisode(link) {
+                        this.name = episodeTitle ?: "Episódio $episodeNumber"
+                        this.season = seasonNumber
+                        this.episode = episodeNumber
+                        this.posterUrl = poster
+                        
+                        dateText?.let {
+                            try {
+                                val date = SimpleDateFormat("yyyy-MM-dd").parse(it)
+                                this.date = date.time
+                            } catch (e: Exception) {}
                         }
-                    } catch (e: Exception) {
                     }
+                    episodes.add(episode)
+                } catch (e: Exception) {
                 }
             }
         }
 
         return episodes.distinctBy { it.url }
-    }
-
-    private fun extractPlayerUrl(document: org.jsoup.nodes.Document): String? {
-        val playButton = document.selectFirst("a.Button.TPlay[href]")
-        if (playButton != null) {
-            return playButton.attr("href")
-        }
-
-        val iframe = document.selectFirst("iframe[src*='player'], iframe[src*='embed'], iframe[src*='video']")
-        if (iframe != null) {
-            return iframe.attr("src")
-        }
-
-        val videoLink = document.selectFirst("a[href*='.m3u8'], a[href*='.mp4']")
-        return videoLink?.attr("href")
     }
 
     override suspend fun loadLinks(
