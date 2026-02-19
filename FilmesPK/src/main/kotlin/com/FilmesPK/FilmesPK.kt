@@ -41,29 +41,53 @@ class FilmesPK : MainAPI() {
 
         // ============================================
         // PASSO 2: PARA CADA CATEGORIA, EXTRAIR CONTEÚDOS
-        // USANDO A MESMA LÓGICA QUE JÁ FUNCIONA
         // ============================================
         categorias.forEach { (nome, link) ->
             try {
                 println("📂 Carregando categoria: $nome")
                 
-                // Carregar a página da categoria
                 val catDoc = app.get(link).document
                 
-                // Extrair items usando os seletores que funcionam
                 val items = catDoc.select(".ntry, .stream-card, .movie-card").mapNotNull { card ->
                     card.toSearchResult()
                 }.map { item ->
-                    // Aplicar as transformações de imagem
-                    item.posterUrl = item.posterUrl?.let { imgUrl ->
-                        imgUrl.replace("/w240-h240-p-k-no-nu", "/w320-h180-p-k-no-nu")
-                              .replace("=w240-h240", "=w320-h180")
-                              .replace("/w600-h337-p-k-no-nu", "/w320-h180-p-k-no-nu")
-                              .replace("=s240", "=s320")
-                              .replace("-rw-e90", "")
-                              .replace("-p-k-no-nu-rw-e90", "")
+                    // Aplicar transformações de imagem
+                    when (item) {
+                        is MovieSearchResponse -> {
+                            item.posterUrl = item.posterUrl?.let { imgUrl ->
+                                imgUrl.replace("/w240-h240-p-k-no-nu", "/w320-h180-p-k-no-nu")
+                                      .replace("=w240-h240", "=w320-h180")
+                                      .replace("/w600-h337-p-k-no-nu", "/w320-h180-p-k-no-nu")
+                                      .replace("=s240", "=s320")
+                                      .replace("-rw-e90", "")
+                                      .replace("-p-k-no-nu-rw-e90", "")
+                            }
+                            item
+                        }
+                        is TvSeriesSearchResponse -> {
+                            item.posterUrl = item.posterUrl?.let { imgUrl ->
+                                imgUrl.replace("/w240-h240-p-k-no-nu", "/w320-h180-p-k-no-nu")
+                                      .replace("=w240-h240", "=w320-h180")
+                                      .replace("/w600-h337-p-k-no-nu", "/w320-h180-p-k-no-nu")
+                                      .replace("=s240", "=s320")
+                                      .replace("-rw-e90", "")
+                                      .replace("-p-k-no-nu-rw-e90", "")
+                            }
+                            item
+                        }
+                        is AnimeSearchResponse -> {
+                            item.posterUrl = item.posterUrl?.let { imgUrl ->
+                                imgUrl.replace("/w240-h240-p-k-no-nu", "/w320-h180-p-k-no-nu")
+                                      .replace("=w240-h240", "=w320-h180")
+                                      .replace("/w600-h337-p-k-no-nu", "/w320-h180-p-k-no-nu")
+                                      .replace("=s240", "=s320")
+                                      .replace("-rw-e90", "")
+                                      .replace("-p-k-no-nu-rw-e90", "")
+                            }
+                            item
+                        }
+                        else -> item
                     }
-                    item
                 }
                 
                 if (items.isNotEmpty()) {
@@ -79,13 +103,12 @@ class FilmesPK : MainAPI() {
         }
 
         // ============================================
-        // PASSO 3: TAMBÉM CAPTURAR SEÇÕES ESPECIAIS DA HOME
+        // PASSO 3: SEÇÕES ESPECIAIS DA HOME
         // ============================================
         
-        // Seções de carrossel (Últimas Postagens, Natal, Netflix, etc.)
+        // Seções de carrossel
         document.select(".stream-section").forEach { section ->
             val title = section.selectFirst(".stream-header .stream-title")?.text() ?: return@forEach
-            // Evitar duplicar categorias que já pegamos do menu
             if (categorias.none { it.first == title }) {
                 val items = section.select(".stream-card").mapNotNull { it.toSearchResult() }
                 if (items.isNotEmpty()) {
@@ -144,8 +167,7 @@ class FilmesPK : MainAPI() {
             else -> null
         }
 
-        // Extrair descrição/tags
-        val description = article.selectFirst(".pSnpt, .stream-genres, .movie-genres")?.text() ?: ""
+        // Extrair tags
         val tags = article.select(".pLbls a, .stream-genre, .movie-genres span").map { it.text() }
         
         // Determinar tipo
@@ -153,31 +175,26 @@ class FilmesPK : MainAPI() {
                           it.contains("Série", ignoreCase = true) ||
                           it.contains("Séries", ignoreCase = true)
                       } ||
-                      description.contains("Série", ignoreCase = true) ||
-                      description.contains("Temporada", ignoreCase = true) ||
                       title.contains("Série", ignoreCase = true) ||
+                      title.contains("Temporada", ignoreCase = true) ||
                       href.contains("/search/label/S%C3%A9rie")
         
         val isAnime = tags.any { 
                           it.contains("Anime", ignoreCase = true) ||
                           it.contains("Animes", ignoreCase = true)
                       } ||
-                      description.contains("Anime", ignoreCase = true) ||
                       title.contains("Anime", ignoreCase = true) ||
                       href.contains("/search/label/Anime")
 
         return when {
             isAnime -> newAnimeSearchResponse(title, fixUrl(href), TvType.Anime) { 
                 this.posterUrl = posterUrl
-                this.plot = description
             }
             isSerie -> newTvSeriesSearchResponse(title, fixUrl(href), TvType.TvSeries) { 
                 this.posterUrl = posterUrl
-                this.plot = description
             }
             else -> newMovieSearchResponse(title, fixUrl(href), TvType.Movie) { 
                 this.posterUrl = posterUrl
-                this.plot = description
             }
         }
     }
@@ -232,7 +249,7 @@ class FilmesPK : MainAPI() {
                 ?.let { Regex("""\b(19|20)\d{2}\b""").find(it)?.value?.toIntOrNull() }
                 ?: Regex("""\b(19|20)\d{2}\b""").find(title)?.value?.toIntOrNull()
             
-            // Extrair tags para determinar tipo
+            // Extrair tags
             val tags = document.select(".post-labels a, .pLbls a").map { it.text() }
             
             // Determinar se é série
