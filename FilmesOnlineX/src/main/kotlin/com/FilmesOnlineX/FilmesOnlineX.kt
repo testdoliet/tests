@@ -18,14 +18,10 @@ class FilmesOnlineX : MainAPI() {
     companion object {
         private const val SEARCH_PATH = "/?s"
 
-        // TODAS as categorias do menu, fixas (sem aleatoriedade)
         private val ALL_CATEGORIES = listOf(
-            // Primeiro as seções principais
             "/movies" to "Filmes",
             "/series" to "Séries",
             "/lancamentos" to "Lançamentos",
-            
-            // Depois todas as categorias do menu
             "/category/acao/" to "Ação",
             "/category/action-adventure/" to "Action & Adventure",
             "/category/animacao/" to "Animação",
@@ -51,7 +47,6 @@ class FilmesOnlineX : MainAPI() {
         )
     }
 
-    // Todas as categorias como abas fixas
     override val mainPage = mainPageOf(
         *ALL_CATEGORIES.map { (path, name) -> 
             "$mainUrl$path" to name 
@@ -71,13 +66,10 @@ class FilmesOnlineX : MainAPI() {
         }
 
         val document = app.get(url).document
-
-        // Seletores baseados no HTML fornecido
         val items = document.select("ul.MovieList.Rows > li.TPostMv > article.TPost.B").mapNotNull { element ->
             element.toSearchResult()
         }
 
-        // Verifica se existe próxima página
         val hasNextPage = document.select("a:contains(Próxima), .wp-pagenavi .next, .pagination a[href*='page']").isNotEmpty()
 
         return newHomePageResponse(request.name, items, hasNextPage)
@@ -88,17 +80,11 @@ class FilmesOnlineX : MainAPI() {
         val href = linkElement.attr("href")
         val title = linkElement.selectFirst("h2.Title")?.text() ?: return null
 
-        // Poster
         val poster = selectFirst("img[src]")?.attr("src")?.let { fixUrl(it) }
-        
-        // Ano
         val yearElement = selectFirst(".Qlty.Yr")
         val year = yearElement?.text()?.toIntOrNull()
-        
-        // Limpar título
         val cleanTitle = title.replace(Regex("\\s*\\(\\d{4}\\)"), "").trim()
 
-        // Determinar tipo
         val urlLower = href.lowercase()
         val isSerie = urlLower.contains("/series/") || urlLower.contains("/serie/")
         
@@ -184,7 +170,6 @@ class FilmesOnlineX : MainAPI() {
     private fun extractEpisodes(document: org.jsoup.nodes.Document, baseUrl: String): List<Episode> {
         val episodes = mutableListOf<Episode>()
 
-        // Baseado no HTML da página de temporada
         val seasonBoxes = document.select(".SeasonBx")
         
         if (seasonBoxes.isNotEmpty()) {
@@ -200,7 +185,7 @@ class FilmesOnlineX : MainAPI() {
                         
                         val linkElement = row.selectFirst("td.MvTbImg a[href]") ?: 
                                          row.selectFirst("td.MvTbTtl a[href]")
-                        val episodeUrl = linkElement?.attr("href")?.let { fixUrl(it) }
+                        val episodeUrl = linkElement?.attr("href")?.let { fixUrl(it, baseUrl) }
                         
                         val titleElement = row.selectFirst("td.MvTbTtl a")
                         val episodeTitle = titleElement?.text()?.trim()
@@ -208,7 +193,7 @@ class FilmesOnlineX : MainAPI() {
                         val dateElement = row.selectFirst("td.MvTbTtl span")
                         val dateText = dateElement?.text()?.trim()
                         
-                        val poster = row.selectFirst("td.MvTbImg img")?.attr("src")?.let { fixUrl(it) }
+                        val poster = row.selectFirst("td.MvTbImg img")?.attr("src")?.let { fixUrl(it, baseUrl) }
 
                         if (episodeUrl != null && episodeNumber != null) {
                             val episode = newEpisode(episodeUrl) {
@@ -233,7 +218,6 @@ class FilmesOnlineX : MainAPI() {
                             episodes.add(episode)
                         }
                     } catch (e: Exception) {
-                        // Ignora erro em um episódio específico
                     }
                 }
             }
@@ -243,31 +227,26 @@ class FilmesOnlineX : MainAPI() {
     }
 
     private fun extractPlayerUrl(document: org.jsoup.nodes.Document): String? {
-        // Botão "Assistir Agora" - tem classe Button.TPlay
         val playButton = document.selectFirst("a.Button.TPlay[href]")
         if (playButton != null) {
             return playButton.attr("href")
         }
 
-        // Iframe de player
         val iframe = document.selectFirst("iframe[src*='player'], iframe[src*='embed'], iframe[src*='video']")
         if (iframe != null) {
             return iframe.attr("src")
         }
 
-        // Links diretos
         val videoLink = document.selectFirst("a[href*='.m3u8'], a[href*='.mp4']")
         return videoLink?.attr("href")
     }
 
-    // loadLinks desativado por enquanto - retorna false
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // Desativado - será implementado depois
         return false
     }
 }
