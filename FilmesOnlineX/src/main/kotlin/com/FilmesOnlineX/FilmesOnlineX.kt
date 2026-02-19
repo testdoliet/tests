@@ -143,7 +143,7 @@ class FilmesOnlineX : MainAPI() {
         }.take(20)
 
         return if (isSerie) {
-            val episodes = extractEpisodes(document, url)
+            val episodes = extractEpisodes(document)
             
             newTvSeriesLoadResponse(cleanTitle, url, TvType.TvSeries, episodes) {
                 this.posterUrl = poster
@@ -167,7 +167,7 @@ class FilmesOnlineX : MainAPI() {
         }
     }
 
-    private fun extractEpisodes(document: org.jsoup.nodes.Document, baseUrl: String): List<Episode> {
+    private fun extractEpisodes(document: org.jsoup.nodes.Document): List<Episode> {
         val episodes = mutableListOf<Episode>()
 
         val seasonBoxes = document.select(".SeasonBx")
@@ -185,7 +185,7 @@ class FilmesOnlineX : MainAPI() {
                         
                         val linkElement = row.selectFirst("td.MvTbImg a[href]") ?: 
                                          row.selectFirst("td.MvTbTtl a[href]")
-                        val episodeUrl = linkElement?.attr("href")?.let { fixUrl(it, baseUrl) }
+                        val episodeUrl = linkElement?.attr("href")?.let { fixUrl(it) }
                         
                         val titleElement = row.selectFirst("td.MvTbTtl a")
                         val episodeTitle = titleElement?.text()?.trim()
@@ -193,7 +193,7 @@ class FilmesOnlineX : MainAPI() {
                         val dateElement = row.selectFirst("td.MvTbTtl span")
                         val dateText = dateElement?.text()?.trim()
                         
-                        val poster = row.selectFirst("td.MvTbImg img")?.attr("src")?.let { fixUrl(it, baseUrl) }
+                        val poster = row.selectFirst("td.MvTbImg img")?.attr("src")?.let { fixUrl(it) }
 
                         if (episodeUrl != null && episodeNumber != null) {
                             val episode = newEpisode(episodeUrl) {
