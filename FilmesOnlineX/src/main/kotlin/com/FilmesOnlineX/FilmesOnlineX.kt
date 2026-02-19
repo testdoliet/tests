@@ -92,10 +92,7 @@ class FilmesOnlineX : MainAPI() {
         val href = fixUrl(linkElement.attr("href"))
         val title = linkElement.selectFirst("h2.Title")?.text() ?: return null
 
-        // Tenta pegar imagem de várias fontes
         var poster = selectFirst("img[src]")?.attr("src")?.let { fixUrl(it) }
-        
-        // Se tem lazy loading, tenta data-src
         if (poster == null || poster.contains("noimga.svg") || poster.contains("lazy")) {
             poster = selectFirst("img[data-src]")?.attr("data-src")?.let { fixUrl(it) }
         }
@@ -139,11 +136,9 @@ class FilmesOnlineX : MainAPI() {
         val title = document.selectFirst("h1.Title, h2.Title")?.text() ?: return null
         val cleanTitle = title.replace(Regex("\\s*\\(\\d{4}\\)"), "").trim()
         
-        // Tenta extrair ano do título ou do elemento Info
         val year = document.selectFirst(".Info .Date")?.text()?.toIntOrNull() ?:
                    Regex("\\((\\d{4})\\)").find(title)?.groupValues?.get(1)?.toIntOrNull()
         
-        // Tenta pegar poster de várias fontes
         var poster = document.selectFirst("meta[property='og:image']")?.attr("content")?.let { fixUrl(it) }
         if (poster == null) {
             poster = document.selectFirst("img[src*='tmdb.org']")?.attr("src")?.let { fixUrl(it) }
@@ -160,7 +155,6 @@ class FilmesOnlineX : MainAPI() {
 
         val isSerie = url.contains("/series/") || document.selectFirst(".SeasonBx") != null
 
-        // Busca informações no TMDB para enriquecer os dados
         val tmdbInfo = searchOnTMDB(cleanTitle, year, isSerie)
 
         val recommendations = document.select(".MovieList .TPost.B").mapNotNull { element ->
@@ -171,7 +165,6 @@ class FilmesOnlineX : MainAPI() {
             val episodes = extractEpisodes(document)
             
             newTvSeriesLoadResponse(cleanTitle, url, TvType.TvSeries, episodes) {
-                // Prioriza dados do TMDB se disponíveis
                 this.posterUrl = tmdbInfo?.posterUrl ?: poster
                 this.backgroundPosterUrl = tmdbInfo?.backdropUrl
                 this.year = tmdbInfo?.year ?: year
@@ -194,7 +187,6 @@ class FilmesOnlineX : MainAPI() {
             val playerUrl = extractPlayerUrl(document) ?: url
             
             newMovieLoadResponse(cleanTitle, url, TvType.Movie, playerUrl) {
-                // Prioriza dados do TMDB se disponíveis
                 this.posterUrl = tmdbInfo?.posterUrl ?: poster
                 this.backgroundPosterUrl = tmdbInfo?.backdropUrl
                 this.year = tmdbInfo?.year ?: year
@@ -319,12 +311,13 @@ class FilmesOnlineX : MainAPI() {
     private fun extractEpisodes(document: org.jsoup.nodes.Document): List<Episode> {
         val episodes = mutableListOf<Episode>()
 
-        val seasonBoxes = document.select(".SeasonBx")
+        // Na página de temporada, os episódios estão em uma tabela
+        val episodeRows = document.select(".TPTblCn tbody tr")
         
-        for (seasonBox in seasonBoxes) {
-            val seasonNumber = seasonBox.selectFirst(".Title span")?.text()?.toIntOrNull() ?: 1
-            
-            val episodeRows = seasonBox.select(".TPTblCn tbody tr")
+        if (episodeRows.isNotEmpty()) {
+            // Extrair número da temporada do título
+            val seasonTitle = document.selectFirst(".SeasonBx .Title")?.text() ?: ""
+            val seasonNumber = Regex("Temporada (\\d+)").find(seasonTitle)?.groupValues?.get(1)?.toIntOrNull() ?: 1
             
             for (row in episodeRows) {
                 try {
@@ -355,13 +348,21 @@ class FilmesOnlineX : MainAPI() {
                         
                         if (dateText != null) {
                             try {
-                                val date = SimpleDateFormat("yyyy-MM-dd").parse(dateText)
-                                this.date = date.time
+                                val formats = listOf("dd-MM-yyyy", "yyyy-MM-dd", "dd/MM/yyyy")
+                                for (format in formats) {
+                                    try {
+                                        val date = SimpleDateFormat(format).parse(dateText)
+                                        this.date = date.time
+                                        break
+                                    } catch (e: Exception) {}
+                                }
                             } catch (e: Exception) {}
                         }
                     }
                     episodes.add(episode)
-                } catch (e: Exception) {}
+                } catch (e: Exception) {
+                    // Ignora erro em um episódio específico
+                }
             }
         }
 
