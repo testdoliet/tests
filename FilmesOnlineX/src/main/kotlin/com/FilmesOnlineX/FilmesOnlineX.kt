@@ -163,69 +163,52 @@ class FilmesOnlineX : MainAPI() {
     }
 
     private fun extractEpisodes(document: org.jsoup.nodes.Document): List<Episode> {
-        val episodes: MutableList<Episode> = mutableListOf()
+        val episodes = mutableListOf<Episode>()
 
         val seasonBoxes = document.select(".SeasonBx")
         
-        if (seasonBoxes.isNotEmpty()) {
-            for (seasonBox in seasonBoxes) {
-                val seasonNumber = seasonBox.selectFirst(".Title span")?.text()?.toIntOrNull() ?: 1
-                
-                val episodeRows = seasonBox.select(".TPTblCn tbody tr")
-                
-                for (row in episodeRows) {
-                    try {
-                        val numberElement = row.selectFirst("td span.Num")
-                        val episodeNumber = numberElement?.text()?.toIntOrNull() ?: continue
-                        
-                        val linkElement = row.selectFirst("td.MvTbImg a[href]") ?: 
-                                         row.selectFirst("td.MvTbTtl a[href]") ?: continue
-                        val episodeUrl = fixUrl(linkElement.attr("href"))
-                        
-                        val titleElement = row.selectFirst("td.MvTbTtl a")
-                        val episodeTitle = titleElement?.text()?.trim()
-                        
-                        val dateElement = row.selectFirst("td.MvTbTtl span")
-                        val dateText = dateElement?.text()?.trim()
-                        
-                        val posterElement = row.selectFirst("td.MvTbImg img")
-                        val poster = posterElement?.attr("src")?.let { fixUrl(it) }
+        for (seasonBox in seasonBoxes) {
+            val seasonNumber = seasonBox.selectFirst(".Title span")?.text()?.toIntOrNull() ?: 1
+            
+            val episodeRows = seasonBox.select(".TPTblCn tbody tr")
+            
+            for (row in episodeRows) {
+                try {
+                    val numberElement = row.selectFirst("td span.Num")
+                    val episodeNumber = numberElement?.text()?.toIntOrNull() ?: continue
+                    
+                    val linkElement = row.selectFirst("td.MvTbImg a[href]") ?: 
+                                     row.selectFirst("td.MvTbTtl a[href]") ?: continue
+                    val episodeUrl = fixUrl(linkElement.attr("href"))
+                    
+                    val titleElement = row.selectFirst("td.MvTbTtl a")
+                    val episodeTitle = titleElement?.text()?.trim()
+                    
+                    val dateElement = row.selectFirst("td.MvTbTtl span")
+                    val dateText = dateElement?.text()?.trim()
+                    
+                    val posterElement = row.selectFirst("td.MvTbImg img")
+                    val poster = posterElement?.attr("src")?.let { fixUrl(it) }
 
-                        val episode = newEpisode(episodeUrl) {
-                            this.name = episodeTitle ?: "Episódio $episodeNumber"
-                            this.season = seasonNumber
-                            this.episode = episodeNumber
-                            this.posterUrl = poster
-                            
-                            if (dateText != null) {
-                                try {
-                                    val date = SimpleDateFormat("yyyy-MM-dd").parse(dateText)
-                                    this.date = date.time
-                                } catch (e: Exception) {
-                                    // Ignora erro de data
-                                }
-                            }
+                    val episode = newEpisode(episodeUrl) {
+                        this.name = episodeTitle ?: "Episódio $episodeNumber"
+                        this.season = seasonNumber
+                        this.episode = episodeNumber
+                        this.posterUrl = poster
+                        
+                        if (dateText != null) {
+                            try {
+                                val date = SimpleDateFormat("yyyy-MM-dd").parse(dateText)
+                                this.date = date.time
+                            } catch (e: Exception) {}
                         }
-                        episodes.add(episode)
-                    } catch (e: Exception) {
-                        // Ignora erro em um episódio específico
                     }
-                }
+                    episodes.add(episode)
+                } catch (e: Exception) {}
             }
         }
 
-        // Usando for-loop explícito para evitar problemas de inferência
-        val result: MutableList<Episode> = mutableListOf()
-        val seenUrls = mutableSetOf<String>()
-        
-        for (episode in episodes) {
-            if (!seenUrls.contains(episode.url)) {
-                seenUrls.add(episode.url)
-                result.add(episode)
-            }
-        }
-        
-        return result
+        return episodes
     }
 
     private fun extractPlayerUrl(document: org.jsoup.nodes.Document): String? {
