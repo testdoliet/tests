@@ -307,178 +307,156 @@ class FilmesOnlineX : MainAPI() {
         ?.firstOrNull()
         ?.let { (key, _, _) -> "https://www.youtube.com/watch?v=$key" }
     }
-private fun extractEpisodes(document: org.jsoup.nodes.Document): List<Episode> {
-    println("🔍 [DEBUG] Iniciando extração de episódios")
-    val episodes = mutableListOf<Episode>()
 
-    // Log do título da página
-    val pageTitle = document.title()
-    println("📄 [DEBUG] Título da página: $pageTitle")
+    private fun extractEpisodes(document: org.jsoup.nodes.Document): List<Episode> {
+        println("🔍 [DEBUG] Iniciando extração de episódios")
+        val episodes = mutableListOf<Episode>()
 
-    // Verificar se encontrou a seção SeasonBx
-    val seasonBoxes = document.select(".SeasonBx")
-    println("📦 [DEBUG] SeasonBx encontrados: ${seasonBoxes.size}")
-    
-    if (seasonBoxes.isNotEmpty()) {
-        println("✅ [DEBUG] SeasonBx encontrado")
-        seasonBoxes.forEachIndexed { index, seasonBox ->
-            println("🎬 [DEBUG] Processando SeasonBox #$index")
-            
-            // Log do título da temporada
-            val seasonTitleElement = seasonBox.selectFirst(".Title")
-            val seasonTitle = seasonTitleElement?.text() ?: "Não encontrado"
-            println("📌 [DEBUG] Título da temporada: $seasonTitle")
-            
-            // Extrair número da temporada
-            val seasonNumber = Regex("Temporada (\\d+)").find(seasonTitle)?.groupValues?.get(1)?.toIntOrNull() ?: 1
-            println("🔢 [DEBUG] Número da temporada detectado: $seasonNumber")
-            
-            // Procurar tabela de episódios
-            val table = seasonBox.selectFirst(".TPTblCn")
-            println("📊 [DEBUG] Tabela encontrada: ${table != null}")
-            
-            if (table != null) {
-                val episodeRows = table.select("tbody tr")
-                println("📝 [DEBUG] Linhas de episódios encontradas: ${episodeRows.size}")
+        val pageTitle = document.title()
+        println("📄 [DEBUG] Título da página: $pageTitle")
+
+        val seasonBoxes = document.select(".SeasonBx")
+        println("📦 [DEBUG] SeasonBx encontrados: ${seasonBoxes.size}")
+        
+        if (seasonBoxes.isNotEmpty()) {
+            println("✅ [DEBUG] SeasonBx encontrado")
+            seasonBoxes.forEachIndexed { index, seasonBox ->
+                println("🎬 [DEBUG] Processando SeasonBox #$index")
                 
-                episodeRows.forEachIndexed { rowIndex, row ->
-                    try {
-                        println("  └─ [DEBUG] Processando linha #$rowIndex")
-                        
-                        // Número do episódio
-                        val numberElement = row.selectFirst("td span.Num")
-                        val episodeNumber = numberElement?.text()?.toIntOrNull()
-                        println("      [DEBUG] Elemento número: ${numberElement?.text()} -> $episodeNumber")
-                        
-                        if (episodeNumber == null) {
-                            println("      ⚠️ [DEBUG] Número do episódio não encontrado, pulando")
-                            return@forEachIndexed
+                val seasonTitleElement = seasonBox.selectFirst(".Title")
+                val seasonTitle = seasonTitleElement?.text() ?: "Não encontrado"
+                println("📌 [DEBUG] Título da temporada: $seasonTitle")
+                
+                val seasonNumber = Regex("Temporada (\\d+)").find(seasonTitle)?.groupValues?.get(1)?.toIntOrNull() ?: 1
+                println("🔢 [DEBUG] Número da temporada detectado: $seasonNumber")
+                
+                // Vamos ver TODO o HTML dentro do SeasonBox
+                println("📄 [DEBUG] HTML do SeasonBox:")
+                println(seasonBox.html())
+                
+                val table = seasonBox.selectFirst(".TPTblCn")
+                println("📊 [DEBUG] Tabela .TPTblCn encontrada: ${table != null}")
+                
+                if (table != null) {
+                    println("📄 [DEBUG] HTML da tabela:")
+                    println(table.html())
+                    
+                    val episodeRows = table.select("tbody tr")
+                    println("📝 [DEBUG] Linhas (tbody tr): ${episodeRows.size}")
+                    
+                    // Vamos tentar outros seletores
+                    val anyRows = table.select("tr")
+                    println("📝 [DEBUG] Qualquer tr: ${anyRows.size}")
+                    
+                    val anyLinks = table.select("a[href]")
+                    println("🔗 [DEBUG] Links na tabela: ${anyLinks.size}")
+                    
+                    if (anyLinks.isNotEmpty()) {
+                        println("🔗 [DEBUG] Primeiros links encontrados:")
+                        anyLinks.take(3).forEach { link ->
+                            println("      ${link.attr("href")} - ${link.text()}")
                         }
-                        
-                        // Link do episódio
-                        val linkElement = row.selectFirst("td.MvTbImg a[href]") ?: 
-                                         row.selectFirst("td.MvTbTtl a[href]")
-                        val episodeUrl = linkElement?.attr("href")?.let { fixUrl(it) }
-                        println("      🔗 [DEBUG] Link encontrado: ${episodeUrl != null} - ${episodeUrl ?: "null"}")
-                        
-                        if (episodeUrl == null) {
-                            println("      ⚠️ [DEBUG] Link do episódio não encontrado, pulando")
-                            return@forEachIndexed
-                        }
-                        
-                        // Título do episódio
-                        val titleElement = row.selectFirst("td.MvTbTtl a")
-                        val episodeTitle = titleElement?.text()?.trim()
-                        println("      📝 [DEBUG] Título do episódio: $episodeTitle")
-                        
-                        // Data de exibição
-                        val dateElement = row.selectFirst("td.MvTbTtl span")
-                        val dateText = dateElement?.text()?.trim()
-                        println("      📅 [DEBUG] Data: $dateText")
-                        
-                        // Poster
-                        val posterElement = row.selectFirst("td.MvTbImg img")
-                        var poster = posterElement?.attr("src")?.let { fixUrl(it) }
-                        if (poster == null) {
-                            poster = posterElement?.attr("data-src")?.let { fixUrl(it) }
-                        }
-                        println("      🖼️ [DEBUG] Poster: ${poster != null}")
-                        
-                        val episode = newEpisode(episodeUrl) {
-                            this.name = episodeTitle ?: "Episódio $episodeNumber"
-                            this.season = seasonNumber
-                            this.episode = episodeNumber
-                            this.posterUrl = poster
+                    }
+                    
+                    episodeRows.forEachIndexed { rowIndex, row ->
+                        try {
+                            println("  └─ [DEBUG] Processando linha #$rowIndex")
+                            println("      📄 HTML da linha: ${row.html()}")
                             
-                            if (dateText != null) {
-                                try {
-                                    val formats = listOf("dd-MM-yyyy", "yyyy-MM-dd", "dd/MM/yyyy")
-                                    for (format in formats) {
-                                        try {
-                                            val date = SimpleDateFormat(format).parse(dateText)
-                                            this.date = date.time
-                                            println("      ✅ [DEBUG] Data convertida: $dateText -> ${date.time}")
-                                            break
-                                        } catch (e: Exception) {
-                                            println("      ⚠️ [DEBUG] Falha no formato $format: ${e.message}")
+                            val numberElement = row.selectFirst("td span.Num")
+                            val episodeNumber = numberElement?.text()?.toIntOrNull()
+                            println("      [DEBUG] Número: ${numberElement?.text()} -> $episodeNumber")
+                            
+                            if (episodeNumber == null) {
+                                println("      ⚠️ [DEBUG] Número não encontrado, pulando")
+                                return@forEachIndexed
+                            }
+                            
+                            val linkElement = row.selectFirst("td.MvTbImg a[href]") ?: 
+                                             row.selectFirst("td.MvTbTtl a[href]")
+                            val episodeUrl = linkElement?.attr("href")?.let { fixUrl(it) }
+                            println("      🔗 [DEBUG] Link encontrado: ${episodeUrl != null} - ${episodeUrl ?: "null"}")
+                            
+                            if (episodeUrl == null) {
+                                println("      ⚠️ [DEBUG] Link do episódio não encontrado, pulando")
+                                return@forEachIndexed
+                            }
+                            
+                            val titleElement = row.selectFirst("td.MvTbTtl a")
+                            val episodeTitle = titleElement?.text()?.trim()
+                            println("      📝 [DEBUG] Título do episódio: $episodeTitle")
+                            
+                            val dateElement = row.selectFirst("td.MvTbTtl span")
+                            val dateText = dateElement?.text()?.trim()
+                            println("      📅 [DEBUG] Data: $dateText")
+                            
+                            val posterElement = row.selectFirst("td.MvTbImg img")
+                            var poster = posterElement?.attr("src")?.let { fixUrl(it) }
+                            if (poster == null) {
+                                poster = posterElement?.attr("data-src")?.let { fixUrl(it) }
+                            }
+                            println("      🖼️ [DEBUG] Poster: ${poster != null}")
+                            
+                            val episode = newEpisode(episodeUrl) {
+                                this.name = episodeTitle ?: "Episódio $episodeNumber"
+                                this.season = seasonNumber
+                                this.episode = episodeNumber
+                                this.posterUrl = poster
+                                
+                                if (dateText != null) {
+                                    try {
+                                        val formats = listOf("dd-MM-yyyy", "yyyy-MM-dd", "dd/MM/yyyy")
+                                        for (format in formats) {
+                                            try {
+                                                val date = SimpleDateFormat(format).parse(dateText)
+                                                this.date = date.time
+                                                println("      ✅ [DEBUG] Data convertida: $dateText -> ${date.time}")
+                                                break
+                                            } catch (e: Exception) {
+                                                println("      ⚠️ [DEBUG] Falha no formato $format: ${e.message}")
+                                            }
                                         }
+                                    } catch (e: Exception) {
+                                        println("      ❌ [DEBUG] Erro ao converter data: ${e.message}")
                                     }
-                                } catch (e: Exception) {
-                                    println("      ❌ [DEBUG] Erro ao converter data: ${e.message}")
                                 }
                             }
+                            episodes.add(episode)
+                            println("      ✅ [DEBUG] Episódio adicionado: S${seasonNumber}E${episodeNumber} - ${episode.name}")
+                            
+                        } catch (e: Exception) {
+                            println("      ❌ [DEBUG] Erro ao processar linha #$rowIndex: ${e.message}")
+                            e.printStackTrace()
                         }
-                        episodes.add(episode)
-                        println("      ✅ [DEBUG] Episódio adicionado: S${seasonNumber}E${episodeNumber} - ${episode.name}")
-                        
-                    } catch (e: Exception) {
-                        println("      ❌ [DEBUG] Erro ao processar linha #$rowIndex: ${e.message}")
-                        e.printStackTrace()
+                    }
+                } else {
+                    println("⚠️ [DEBUG] Tabela .TPTblCn não encontrada dentro do SeasonBx")
+                    
+                    // Vamos procurar qualquer tabela na página
+                    val allTables = document.select("table")
+                    println("📊 [DEBUG] Todas as tabelas na página: ${allTables.size}")
+                    allTables.forEachIndexed { i, tbl ->
+                        println("  Tabela #$i: classes = ${tbl.className()}")
                     }
                 }
-            } else {
-                println("⚠️ [DEBUG] Tabela .TPTblCn não encontrada dentro do SeasonBx")
             }
-        }
-    } else {
-        println("⚠️ [DEBUG] Nenhum SeasonBx encontrado, tentando seletor alternativo")
-        
-        // Tentar seletor alternativo - tabela direta
-        val altRows = document.select(".TPTblCn tbody tr")
-        println("📊 [DEBUG] Linhas alternativas encontradas: ${altRows.size}")
-        
-        if (altRows.isNotEmpty()) {
-            println("✅ [DEBUG] Usando seletor alternativo")
-            val seasonNumber = 1 // fallback
+        } else {
+            println("⚠️ [DEBUG] Nenhum SeasonBx encontrado")
             
-            altRows.forEachIndexed { rowIndex, row ->
-                try {
-                    println("  └─ [DEBUG] Processando linha alternativa #$rowIndex")
-                    
-                    val numberElement = row.selectFirst("td span.Num")
-                    val episodeNumber = numberElement?.text()?.toIntOrNull()
-                    println("      [DEBUG] Número: $episodeNumber")
-                    
-                    if (episodeNumber == null) return@forEachIndexed
-                    
-                    val linkElement = row.selectFirst("td.MvTbImg a[href]") ?: 
-                                     row.selectFirst("td.MvTbTtl a[href]")
-                    val episodeUrl = linkElement?.attr("href")?.let { fixUrl(it) }
-                    
-                    if (episodeUrl == null) return@forEachIndexed
-                    
-                    val titleElement = row.selectFirst("td.MvTbTtl a")
-                    val episodeTitle = titleElement?.text()?.trim()
-                    
-                    val dateElement = row.selectFirst("td.MvTbTtl span")
-                    val dateText = dateElement?.text()?.trim()
-                    
-                    val episode = newEpisode(episodeUrl) {
-                        this.name = episodeTitle ?: "Episódio $episodeNumber"
-                        this.season = seasonNumber
-                        this.episode = episodeNumber
-                        
-                        if (dateText != null) {
-                            try {
-                                val date = SimpleDateFormat("yyyy-MM-dd").parse(dateText)
-                                this.date = date.time
-                            } catch (e: Exception) {}
-                        }
-                    }
-                    episodes.add(episode)
-                    println("      ✅ [DEBUG] Episódio alternativo adicionado: S${seasonNumber}E${episodeNumber}")
-                    
-                } catch (e: Exception) {
-                    println("      ❌ [DEBUG] Erro na linha alternativa: ${e.message}")
-                }
+            // Vamos procurar qualquer tabela que possa conter episódios
+            val allTables = document.select("table")
+            println("📊 [DEBUG] Todas as tabelas na página: ${allTables.size}")
+            allTables.forEachIndexed { i, tbl ->
+                println("  Tabela #$i: classes = ${tbl.className()}")
+                println("  HTML: ${tbl.html().take(200)}...")
             }
         }
+
+        println("📊 [DEBUG] Total de episódios extraídos: ${episodes.size}")
+        
+        return episodes
     }
 
-    println("📊 [DEBUG] Total de episódios extraídos: ${episodes.size}")
-    
-    return episodes
-}
     private fun extractPlayerUrl(document: org.jsoup.nodes.Document): String? {
         val playButton = document.selectFirst("a.Button.TPlay[href]")
         if (playButton != null) {
