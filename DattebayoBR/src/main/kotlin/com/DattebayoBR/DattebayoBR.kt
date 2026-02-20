@@ -4,16 +4,11 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
 import com.lagradost.cloudstream3.plugins.Plugin
-import com.lagradost.cloudstream3.LoadResponse.Companion.addMalId
 import android.content.Context
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import org.json.JSONArray
 import org.json.JSONObject
-import com.fasterxml.jackson.annotation.JsonProperty
-import com.fasterxml.jackson.annotation.JsonIgnoreProperties
-import com.fasterxml.jackson.databind.ObjectMapper
-import java.net.URLEncoder
 
 @CloudstreamPlugin
 class DattebayoBRPlugin : Plugin() {
@@ -52,44 +47,11 @@ class DattebayoBR : MainAPI() {
         private const val EPISODE_ITEM = ".ultimosEpisodiosHomeItem"
         private const val EPISODE_LINK = "a"
         private const val EPISODE_TITLE_ATTR = "title"
-        private const val DETAIL_MAL_LINK = ".malLink"
         
         // URLs das requisições
         private const val OUTBRAIN_URL = "https://widgets.outbrain.com/outbrain.js"
         private const val ADS_API_URL = "https://ads.animeyabu.net/"
-        private const val ANI_ZIP_API = "https://api.ani.zip/mappings?mal_id="
-        
-        // ObjectMapper para JSON
-        private val mapper = ObjectMapper()
     }
-
-    // Data classes para a API ani.zip com ignoreUnknown = true
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    data class AniZipData(
-        @JsonProperty("titles") val titles: Map<String, String>? = null,
-        @JsonProperty("images") val images: List<ImageData>? = null,
-        @JsonProperty("episodes") val episodes: Map<String, MetaEpisode>? = null
-    )
-
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    data class ImageData(
-        @JsonProperty("coverType") val coverType: String?,
-        @JsonProperty("url") val url: String?
-    )
-
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    data class MetaEpisode(
-        @JsonProperty("episode") val episode: String?,
-        @JsonProperty("airdate") val airdate: String?,
-        @JsonProperty("airDateUtc") val airDateUtc: String?,
-        @JsonProperty("length") val length: Int?,
-        @JsonProperty("runtime") val runtime: Int?,
-        @JsonProperty("image") val image: String?,
-        @JsonProperty("title") val title: Map<String, String>?,
-        @JsonProperty("overview") val overview: String?,
-        @JsonProperty("rating") val rating: String?,
-        @JsonProperty("finaleType") val finaleType: String?
-    )
 
     // Página principal com todas as abas
     override val mainPage = mainPageOf(
@@ -128,17 +90,6 @@ class DattebayoBR : MainAPI() {
             val total = it.groupValues[2].toIntOrNull()
             current to total
         } ?: (null to null)
-    }
-
-    // === FUNÇÃO PARA BUSCAR DADOS DA ANI.ZIP ===
-    private suspend fun fetchAniZipData(malId: String): AniZipData? {
-        return try {
-            val response = app.get(ANI_ZIP_API + malId).text
-            mapper.readValue(response, AniZipData::class.java)
-        } catch (e: Exception) {
-            println("❌ Erro ao buscar ani.zip: ${e.message}")
-            null
-        }
     }
 
     // === FUNÇÃO PRINCIPAL PARA ENCONTRAR LINKS DE VÍDEO ===
@@ -329,30 +280,16 @@ class DattebayoBR : MainAPI() {
         val title = document.selectFirst(DETAIL_TITLE)?.text()?.trim() ?: "Sem título"
         val isDub = isDub(title, actualUrl)
         
-        // Poster do site (fallback)
-        val sitePoster = thumbPoster ?: document.selectFirst(DETAIL_POSTER)?.attr("src")?.let { fixUrl(it) }
+        // Poster
+        val poster = thumbPoster ?: document.selectFirst(DETAIL_POSTER)?.attr("src")?.let { fixUrl(it) }
         
-        // Sinopse do site (fallback)
-        val siteSynopsis = document.selectFirst(DETAIL_SYNOPSIS)?.text()?.trim()
+        // Sinopse
+        val synopsis = document.selectFirst(DETAIL_SYNOPSIS)?.text()?.trim() ?: "Sinopse não disponível"
         
-        // Gêneros do site
-        val siteGenres = document.select(DETAIL_GENRES).map { it.text() }.filter { it.isNotBlank() }
+        // Gêneros
+        val genres = document.select(DETAIL_GENRES).map { it.text() }.filter { it.isNotBlank() }
         
-        // Extrair MAL ID
-        var malId: String? = null
-        document.selectFirst(DETAIL_MAL_LINK)?.attr("href")?.let { malUrl ->
-            malId = malUrl.substringAfter("/anime/").substringBefore("/")
-            println("✅ MAL ID encontrado: $malId")
-        }
-        
-        // Buscar dados da ani.zip se tiver MAL ID
-        var aniZipData: AniZipData? = null
-        if (malId != null) {
-            aniZipData = fetchAniZipData(malId)
-            println("✅ Ani.zip data fetched for MAL ID: $malId")
-        }
-        
-        // Ano e status do site
+        // Ano e status
         var year: Int? = null
         var totalEpisodes: Int? = null
         var tvType = TvType.Anime
@@ -365,6 +302,7 @@ class DattebayoBR : MainAPI() {
                     val (current, total) = extractTotalEpisodes(text)
                     totalEpisodes = total
                 }
+                // Verifica se é filme pelo texto "Tipo" no elemento
                 text.contains("Tipo") && text.contains("Filme", ignoreCase = true) -> {
                     tvType = TvType.AnimeMovie
                 }
@@ -378,7 +316,7 @@ class DattebayoBR : MainAPI() {
             ShowStatus.Ongoing
         }
 
-        // Lista de episódios do site COM dados da ani.zip
+        // Lista de episódios
         val episodes = mutableListOf<Episode>()
         document.select(EPISODE_CONTAINER).select(EPISODE_ITEM).forEach { element ->
             val link = element.selectFirst(EPISODE_LINK) ?: return@forEach
@@ -386,46 +324,13 @@ class DattebayoBR : MainAPI() {
             val episodeTitle = link.attr(EPISODE_TITLE_ATTR).takeIf { it.isNotBlank() } 
                 ?: element.selectFirst(HOME_TITLE)?.text()?.trim() ?: return@forEach
             val episodeNumber = extractEpisodeNumber(episodeTitle) ?: 1
-            
-            // Buscar dados do episódio na ani.zip
-            val epData = aniZipData?.episodes?.get(episodeNumber.toString())
-            
-            // Thumb do episódio: prioridade ani.zip > thumb do site > poster do anime
-            val episodeThumb = epData?.image?.let { fixUrl(it) }
-                ?: element.selectFirst("img")?.attr("src")?.let { fixUrl(it) }
-                ?: sitePoster
-            
-            // Título do episódio: prioridade ani.zip (inglês) > ani.zip (japonês) > título do site
-            val episodeName = if (tvType == TvType.AnimeMovie) {
-                "Filme"
-            } else {
-                epData?.title?.get("en") 
-                    ?: epData?.title?.get("x-jat") 
-                    ?: epData?.title?.get("ja")
-                    ?: "Episódio $episodeNumber"
-            }
-            
+            val episodePoster = element.selectFirst("img")?.attr("src")?.let { fixUrl(it) }
+
             episodes.add(
                 newEpisode(episodeUrl) {
-                    this.name = episodeName
-                    this.episode = episodeNumber
-                    this.posterUrl = episodeThumb
-                    this.description = epData?.overview
-                    
-                    // Adicionar data de lançamento
-                    epData?.airDateUtc?.let { airDate ->
-                        this.addDate(airDate)
-                    }
-                    
-                    // Adicionar duração
-                    epData?.runtime?.let { runtime ->
-                        this.runTime = runtime
-                    }
-                    
-                    // Adicionar score do episódio (ani.zip retorna como string tipo "8.5")
-                    epData?.rating?.toDoubleOrNull()?.let { rating ->
-                        this.score = Score.from10(rating)
-                    }
+                    name = if (tvType == TvType.AnimeMovie) "Filme" else "Episódio $episodeNumber"
+                    episode = episodeNumber
+                    posterUrl = episodePoster ?: poster
                 }
             )
         }
@@ -433,24 +338,14 @@ class DattebayoBR : MainAPI() {
         episodes.sortBy { it.episode }
 
         return newAnimeLoadResponse(cleanTitle(title), actualUrl, tvType) {
-            // Priorizar dados da ani.zip para o poster
-            this.posterUrl = aniZipData?.images
-                ?.firstOrNull { it.coverType.equals("Poster", ignoreCase = true) }?.url
-                ?.let { fixUrl(it) } ?: sitePoster
-            
-            // Banner/Background da ani.zip
-            this.backgroundPosterUrl = aniZipData?.images
-                ?.firstOrNull { it.coverType.equals("Fanart", ignoreCase = true) }?.url
-                ?.let { fixUrl(it) }
-            
+            this.posterUrl = poster
             this.year = year
-            this.plot = siteSynopsis
-            this.tags = siteGenres
+            this.plot = synopsis
+            this.tags = genres
             this.showStatus = showStatus
-            
-            // Usando addMalId exatamente como no plugin AllWish
-            malId?.toIntOrNull()?.let { addMalId(it) }
-            
+            // Explicitamente definir como null para evitar enriquecimento automático
+            this.malId = null
+            this.anilistId = null
             if (isDub) {
                 addEpisodes(DubStatus.Dubbed, episodes)
             } else {
