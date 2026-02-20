@@ -190,23 +190,42 @@ class DattebayoBR : MainAPI() {
         }
     }
 
-    // === CARREGAR LINKS DE VÍDEO (PARTE MAIS IMPORTANTE) ===
-    override suspend fun loadLinks(
-        data: String,
-        isCasting: Boolean,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        // 1. Pega a URL da página do episódio
-        val episodePageUrl = data.split("|poster=")[0]
-        
-        // 2. FAZ UMA REQUISIÇÃO NOVA para a página (link fresco!)
-        val document = app.get(episodePageUrl, referer = mainUrl).document
-        var linksFound = false
+// === CARREGAR LINKS DE VÍDEO (PARTE MAIS IMPORTANTE) ===
+override suspend fun loadLinks(
+    data: String,
+    isCasting: Boolean,
+    subtitleCallback: (SubtitleFile) -> Unit,
+    callback: (ExtractorLink) -> Unit
+): Boolean {
+    // Debug: URL recebida
+    println("🔍 DEBUG LOADLINKS - URL recebida: $data")
+    
+    // 1. Pega a URL da página do episódio
+    val episodePageUrl = data.split("|poster=")[0]
+    println("🔍 DEBUG - URL da página do episódio: $episodePageUrl")
+    
+    // 2. FAZ UMA REQUISIÇÃO NOVA para a página (link fresco!)
+    println("🔍 DEBUG - Fazendo requisição para: $episodePageUrl")
+    val document = try {
+        app.get(episodePageUrl, referer = mainUrl).document
+    } catch (e: Exception) {
+        println("❌ DEBUG - Erro ao fazer requisição: ${e.message}")
+        e.printStackTrace()
+        return false
+    }
+    println("🔍 DEBUG - Requisição OK, documento carregado")
+    
+    var linksFound = false
 
-        // 3. Tenta extrair da META TAG (mais fácil e confiável)
-        val metaVideoUrl = document.selectFirst(VIDEO_META_TAG)?.attr("content")
-        if (!metaVideoUrl.isNullOrBlank()) {
+    // 3. Tenta extrair da META TAG (mais fácil e confiável)
+    println("🔍 DEBUG - Procurando meta tag: $VIDEO_META_TAG")
+    val metaElement = document.selectFirst(VIDEO_META_TAG)
+    if (metaElement != null) {
+        val metaVideoUrl = metaElement.attr("content")
+        println("🔍 DEBUG - Meta tag encontrada: $metaVideoUrl")
+        
+        if (metaVideoUrl.isNotBlank()) {
+            println("✅ DEBUG - Link da meta tag OK, adicionando callback")
             callback.invoke(
                 newExtractorLink(
                     source = name,
@@ -223,17 +242,33 @@ class DattebayoBR : MainAPI() {
                 }
             )
             linksFound = true
+            println("✅ DEBUG - Callback da meta tag adicionado com sucesso")
+        } else {
+            println("⚠️ DEBUG - Meta tag encontrada mas está em branco")
         }
+    } else {
+        println("❌ DEBUG - Meta tag NÃO encontrada")
+    }
 
-        // 4. Fallback: extrair do SCRIPT (caso a meta tag não exista)
-        if (!linksFound) {
-            document.select("script").forEach { script ->
-                script.data().let { content ->
-                    val regex = VIDEO_SCRIPT_VAR.toRegex()
-                    val match = regex.find(content)
-                    val scriptUrl = match?.groupValues?.get(1)
+    // 4. Fallback: extrair do SCRIPT (caso a meta tag não exista)
+    if (!linksFound) {
+        println("🔍 DEBUG - Procurando link em scripts...")
+        val scripts = document.select("script")
+        println("🔍 DEBUG - Total de scripts encontrados: ${scripts.size}")
+        
+        scripts.forEachIndexed { index, script ->
+            val content = script.data()
+            if (content.isNotBlank()) {
+                println("🔍 DEBUG - Script $index: tamanho ${content.length}")
+                
+                val regex = VIDEO_SCRIPT_VAR.toRegex()
+                val match = regex.find(content)
+                
+                if (match != null) {
+                    val scriptUrl = match.groupValues[1]
+                    println("✅ DEBUG - Link encontrado no script $index: $scriptUrl")
                     
-                    if (!scriptUrl.isNullOrBlank()) {
+                    if (scriptUrl.isNotBlank()) {
                         callback.invoke(
                             newExtractorLink(
                                 source = name,
@@ -247,50 +282,77 @@ class DattebayoBR : MainAPI() {
                             }
                         )
                         linksFound = true
+                        println("✅ DEBUG - Callback do script adicionado com sucesso")
+                    }
+                } else {
+                    // Debug: mostrar primeiros 200 caracteres do script que não deu match
+                    if (content.contains("vid")) {
+                        println("⚠️ DEBUG - Script $index contém 'vid' mas regex não capturou:")
+                        println(content.take(200))
                     }
                 }
             }
         }
-
-        // 5. Se ainda não achou, tenta os players por qualidade
-        if (!linksFound) {
-            val players = listOf(
-                "jwContainer_0" to "SD",
-                "jwContainer_1" to "HD",
-                "jwContainer_2" to "FULLHD"
-            )
-            
-            players.forEach { (containerId, qualityName) ->
-                document.select("#$containerId script").forEach { script ->
-                    script.data().let { content ->
-                        val regex = "var vid = '(.*?)'".toRegex()
-                        val match = regex.find(content)
-                        val playerUrl = match?.groupValues?.get(1)
-                        
-                        if (!playerUrl.isNullOrBlank()) {
-                            callback.invoke(
-                                newExtractorLink(
-                                    source = name,
-                                    name = "Player $qualityName",
-                                    url = playerUrl,
-                                    type = ExtractorLinkType.VIDEO
-                                ) {
-                                    referer = "https://playembedapi.site/"
-                                    quality = when (qualityName) {
-                                        "FULLHD" -> 1080
-                                        "HD" -> 720
-                                        else -> 480
-                                    }
-                                    headers = mapOf("Range" to "bytes=0-")
-                                }
-                            )
-                            linksFound = true
-                        }
-                    }
-                }
-            }
-        }
-
-        return linksFound
     }
+
+    // 5. Se ainda não achou, tenta os players por qualidade
+    if (!linksFound) {
+        println("🔍 DEBUG - Procurando links nos players específicos...")
+        val players = listOf(
+            "jwContainer_0" to "SD",
+            "jwContainer_1" to "HD",
+            "jwContainer_2" to "FULLHD"
+        )
+        
+        players.forEach { (containerId, qualityName) ->
+            println("🔍 DEBUG - Procurando player $containerId ($qualityName)")
+            val playerScripts = document.select("#$containerId script")
+            println("🔍 DEBUG - Scripts encontrados no player $containerId: ${playerScripts.size}")
+            
+            playerScripts.forEachIndexed { index, script ->
+                val content = script.data()
+                val regex = "var vid = '(.*?)'".toRegex()
+                val match = regex.find(content)
+                
+                if (match != null) {
+                    val playerUrl = match.groupValues[1]
+                    println("✅ DEBUG - Link encontrado no player $containerId: $playerUrl")
+                    
+                    if (playerUrl.isNotBlank()) {
+                        callback.invoke(
+                            newExtractorLink(
+                                source = name,
+                                name = "Player $qualityName",
+                                url = playerUrl,
+                                type = ExtractorLinkType.VIDEO
+                            ) {
+                                referer = "https://playembedapi.site/"
+                                quality = when (qualityName) {
+                                    "FULLHD" -> 1080
+                                    "HD" -> 720
+                                    else -> 480
+                                }
+                                headers = mapOf("Range" to "bytes=0-")
+                            }
+                        )
+                        linksFound = true
+                        println("✅ DEBUG - Callback do player $qualityName adicionado")
+                    }
+                }
+            }
+        }
+    }
+
+    // 6. Resultado final
+    if (linksFound) {
+        println("✅✅✅ DEBUG SUCESSO - Links encontrados: $linksFound")
+    } else {
+        println("❌❌❌ DEBUG FALHA - Nenhum link encontrado")
+        
+        // Debug: salvar HTML para análise
+        println("🔍 DEBUG - Primeiros 1000 caracteres do HTML:")
+        println(document.html().take(1000))
+    }
+
+    return linksFound
 }
