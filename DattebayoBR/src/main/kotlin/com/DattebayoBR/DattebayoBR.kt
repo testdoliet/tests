@@ -313,7 +313,6 @@ class DattebayoBR : MainAPI() {
         val document = app.get(searchUrl).document
         return document.select(HOME_ITEM).mapNotNull { it.toSearchResponse() }
     }
-
 // === CARREGAR DETALHES ===
 override suspend fun load(url: String): LoadResponse {
     val (actualUrl, thumbPoster) = url.split("|poster=").let { 
@@ -443,8 +442,8 @@ override suspend fun load(url: String): LoadResponse {
         this.tags = siteGenres
         this.showStatus = showStatus
         
-        // CORREÇÃO: Converter String? para Int? e setar o malId
-        malId?.toIntOrNull()?.let { this.malId = it }
+        // Usando a função addMalId() como no plugin do AllWish
+        malId?.toIntOrNull()?.let { addMalId(it) }
         
         if (isDub) {
             addEpisodes(DubStatus.Dubbed, episodes)
@@ -453,6 +452,7 @@ override suspend fun load(url: String): LoadResponse {
         }
     }
 }
+
     
     // === FUNÇÃO PARA EXTRAIR TOKEN DO JSON ===
     private fun extractTokenFromJson(jsonString: String): String? {
