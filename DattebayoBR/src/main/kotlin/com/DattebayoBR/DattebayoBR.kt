@@ -7,6 +7,10 @@ import com.lagradost.cloudstream3.plugins.Plugin
 import android.content.Context
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
+import com.lagradost.cloudstream3.utils.JsonUtils.json
+import com.lagradost.cloudstream3.utils.JsonUtils.optString
+import com.lagradost.cloudstream3.utils.JsonUtils.toJsonArray
+import com.lagradost.cloudstream3.utils.JsonUtils.toJsonObject
 
 @CloudstreamPlugin
 class DattebayoBRPlugin : Plugin() {
@@ -44,6 +48,10 @@ class DattebayoBR : MainAPI() {
         private const val EPISODE_ITEM = ".ultimosEpisodiosHomeItem"
         private const val EPISODE_LINK = "a"
         private const val EPISODE_TITLE_ATTR = "title"
+        
+        // URLs das requisições
+        private const val OUTBRAIN_URL = "https://widgets.outbrain.com/outbrain.js"
+        private const val ADS_API_URL = "https://ads.animeyabu.net/"
     }
 
     // Página principal
@@ -244,76 +252,101 @@ class DattebayoBR : MainAPI() {
         }
     }
 
+    // === CARREGAR LINKS DE VÍDEO (COM AS 3 REQUISIÇÕES) ===
     override suspend fun loadLinks(
-    data: String,
-    isCasting: Boolean,
-    subtitleCallback: (SubtitleFile) -> Unit,
-    callback: (ExtractorLink) -> Unit
-): Boolean {
-    val episodePageUrl = data.split("|poster=")[0]
-    println("🔍 DEBUG - URL do episódio: $episodePageUrl")
-    
-    // 1. Primeiro, pega a página do episódio para obter os links base
-    val document = app.get(episodePageUrl, referer = mainUrl).document
-    val baseUrls = findAllVideoUrls(document)
-    
-    if (baseUrls.isEmpty()) return false
-    
-    // 2. Para cada link base, obtém os parâmetros de autenticação
-    baseUrls.forEach { (baseUrl, quality) ->
-        try {
-            // Passo 1: GET outbrain.js
-            println("🔍 DEBUG - Buscando outbrain.js")
-            val outbrainJs = app.get(
-                "https://widgets.outbrain.com/outbrain.js",
-                headers = mapOf(
-                    "Referer" to mainUrl,
-                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-                )
-            ).text
-            
-            // Passo 2: POST para ads.animeyabu.net
-            println("🔍 DEBUG - Enviando POST para ads.animeyabu.net")
-            val firstResponse = app.post(
-                url = "https://ads.animeyabu.net/",
-                data = mapOf(
-                    "category" to "client",
-                    "type" to "premium",
-                    "ad" to outbrainJs
-                ),
-                headers = mapOf(
-                    "Content-Type" to "application/x-www-form-urlencoded",
-                    "Referer" to mainUrl,
-                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-                )
-            ).text
-            
-            // Parse da primeira resposta
-            val firstJson = parseJson(firstResponse).asJsonArray[0].asJsonObject
-            val token = firstJson["publicidade"]?.asString ?: return@forEach
-            
-            println("🔍 DEBUG - Token obtido: $token")
-            
-            // Passo 3: GET com token + URL base
-            val secondUrl = "https://ads.animeyabu.net/?token=${token}&url=${baseUrl}"
-            println("🔍 DEBUG - Buscando parâmetros finais")
-            
-            val secondResponse = app.get(
-                secondUrl,
-                headers = mapOf(
-                    "Referer" to mainUrl,
-                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-                )
-            ).text
-            
-            // Parse da segunda resposta
-            val secondJson = parseJson(secondResponse).asJsonArray[0].asJsonObject
-            val authParams = secondJson["publicidade"]?.asString
-            
-            if (!authParams.isNullOrBlank()) {
-                // Link final = baseUrl + authParams
-                val finalUrl = baseUrl + authParams
+        data: String,
+        isCasting: Boolean,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        val episodePageUrl = data.split("|poster=")[0]
+        println("🔍 DEBUG LOADLINKS - URL recebida: $episodePageUrl")
+        
+        // 1. Pega a página do episódio para obter os links base
+        val document = app.get(episodePageUrl, referer = mainUrl).document
+        val baseUrls = findAllVideoUrls(document)
+        println("🔍 DEBUG - Links base encontrados: ${baseUrls.size}")
+        
+        if (baseUrls.isEmpty()) {
+            println("❌ DEBUG - Nenhum link base encontrado!")
+            return false
+        }
+        
+        // Prioriza os links por qualidade
+        val priority = mapOf("FULLHD" to 4, "HD" to 3, "SD" to 2, "Unknown" to 1)
+        val sortedUrls = baseUrls.sortedByDescending { priority[it.second] ?: 0 }
+        
+        var linksFound = false
+        
+        // Para cada link base, faz as 3 requisições
+        sortedUrls.forEach { (baseUrl, quality) ->
+            try {
+                println("🔍 DEBUG - Processando link: $quality")
                 
+                // PASSO 1: GET outbrain.js
+                println("🔍 DEBUG - Buscando outbrain.js")
+                val outbrainJs = app.get(
+                    OUTBRAIN_URL,
+                    headers = mapOf(
+                        "Referer" to mainUrl,
+                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                    )
+                ).text
+                
+                // PASSO 2: POST para ads.animeyabu.net
+                println("🔍 DEBUG - Enviando POST para ads.animeyabu.net")
+                val firstResponse = app.post(
+                    url = ADS_API_URL,
+                    data = mapOf(
+                        "category" to "client",
+                        "type" to "premium",
+                        "ad" to outbrainJs
+                    ),
+                    headers = mapOf(
+                        "Content-Type" to "application/x-www-form-urlencoded",
+                        "Referer" to mainUrl,
+                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                    )
+                ).text
+                
+                // Parse da primeira resposta
+                val firstArray = firstResponse.toJsonArray()
+                val firstObj = firstArray[0].toJsonObject()
+                val token = firstObj.optString("publicidade")
+                
+                if (token.isNullOrBlank()) {
+                    println("❌ DEBUG - Token não encontrado na primeira resposta")
+                    return@forEach
+                }
+                
+                println("🔍 DEBUG - Token obtido: ${token.take(50)}...")
+                
+                // PASSO 3: GET com token + URL base
+                val secondUrl = "$ADS_API_URL?token=$token&url=$baseUrl"
+                println("🔍 DEBUG - Buscando parâmetros finais")
+                
+                val secondResponse = app.get(
+                    secondUrl,
+                    headers = mapOf(
+                        "Referer" to mainUrl,
+                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                    )
+                ).text
+                
+                // Parse da segunda resposta
+                val secondArray = secondResponse.toJsonArray()
+                val secondObj = secondArray[0].toJsonObject()
+                val authParams = secondObj.optString("publicidade")
+                
+                if (authParams.isNullOrBlank()) {
+                    println("❌ DEBUG - Parâmetros não encontrados na segunda resposta")
+                    return@forEach
+                }
+                
+                println("🔍 DEBUG - Parâmetros obtidos: ${authParams.take(50)}...")
+                
+                // Link final = baseUrl + authParams (concatenação simples!)
+                val finalUrl = baseUrl + authParams
                 println("✅ DEBUG - Link final gerado: ${finalUrl.take(100)}...")
                 
                 val qualityValue = when (quality) {
@@ -334,17 +367,20 @@ class DattebayoBR : MainAPI() {
                         referer = mainUrl
                         headers = mapOf(
                             "Referer" to mainUrl,
-                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
                         )
                     }
                 )
+                
+                linksFound = true
+                
+            } catch (e: Exception) {
+                println("❌ DEBUG - Erro ao processar link: ${e.message}")
+                e.printStackTrace()
             }
-        } catch (e: Exception) {
-            println("❌ DEBUG - Erro ao processar link: ${e.message}")
-            e.printStackTrace()
         }
+        
+        println("✅✅✅ DEBUG - Links encontrados: $linksFound")
+        return linksFound
     }
-    
-    return true
-}
 }
