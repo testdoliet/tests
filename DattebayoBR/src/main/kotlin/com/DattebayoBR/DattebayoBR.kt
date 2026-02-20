@@ -52,15 +52,6 @@ class DattebayoBR : MainAPI() {
         // URLs das requisições
         private const val OUTBRAIN_URL = "https://widgets.outbrain.com/outbrain.js"
         private const val ADS_API_URL = "https://ads.animeyabu.net/"
-        
-        // Padrões de paginação
-        private val PAGINATION_PATTERNS = mapOf(
-            "/animes/letra/todos" to "/animes/page/%d/letra/todos",
-            "/anime-dublado" to "/anime-dublado/page/%d/",
-            "/tokusatsus" to "/tokusatsus/page/%d/",
-            "/doramas" to "/doramas/page/%d/",
-            "/donghua" to "/donghua/page/%d/"
-        )
     }
 
     // Página principal com todas as abas
@@ -217,32 +208,36 @@ class DattebayoBR : MainAPI() {
             )
         }
         
-        // Para todas as outras abas, aplica paginação
-        val baseUrl = request.data.replace(mainUrl, "")
-        val pattern = PAGINATION_PATTERNS.entries.find { baseUrl.contains(it.key) }
-        
-        val url = if (pattern != null) {
-            // Aplica o padrão de paginação correto
-            if (page == 1) {
-                request.data
-            } else {
-                mainUrl + pattern.value.format(page)
-            }
+        // Para todas as outras abas, constrói a URL paginada
+        val baseUrl = request.data.removeSuffix("/")
+        val url = if (page == 1) {
+            baseUrl
         } else {
-            // Fallback para URLs sem padrão definido
-            if (page == 1) request.data else "$mainUrl/page/$page/"
+            // Para URLs que já contêm "/letra/todos" (caso dos animes A-Z)
+            if (baseUrl.contains("/letra/todos")) {
+                baseUrl.replace("/letra/todos", "") + "/page/$page/letra/todos"
+            } else {
+                // Para todas as outras abas: /doramas, /anime-dublado, /tokusatsus, /donghua
+                "$baseUrl/page/$page"
+            }
         }
         
         println("🔍 DEBUG - Carregando página: $url")
-        val document = app.get(url, referer = mainUrl).document
+        
+        val document = try {
+            app.get(url, referer = mainUrl).document
+        } catch (e: Exception) {
+            println("❌ DEBUG - Erro ao acessar $url: ${e.message}")
+            return newHomePageResponse(request.name, emptyList(), hasNext = false)
+        }
         
         val items = document.select(HOME_ITEM)
             .mapNotNull { it.toSearchResponse() }
             .distinctBy { it.url }
         
-        // Verifica se existe próxima página
-        val hasNext = document.select(".letterBox a").any { 
-            it.text().contains("»") || it.attr("href").contains("/page/${page + 1}/")
+        // Verifica se existe próxima página - PROCURA PELO LINK "»"
+        val hasNext = document.select(".letterBox a").any { link ->
+            link.text() == "»" && !link.attr("href").contains("/page/$page/")
         }
         
         return newHomePageResponse(request.name, items, hasNext)
