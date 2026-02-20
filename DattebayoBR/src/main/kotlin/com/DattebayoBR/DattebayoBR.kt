@@ -139,7 +139,7 @@ class DattebayoBR : MainAPI() {
         // Ano e status
         var year: Int? = null
         var totalEpisodes: Int? = null
-        var showStatus = ShowStatus.Unknown
+        // Removido ShowStatus.Unknown, vamos usar null
 
         document.select(DETAIL_EPISODES_INFO).forEach { element ->
             val text = element.text()
@@ -154,10 +154,10 @@ class DattebayoBR : MainAPI() {
         }
 
         // Status (Completo ou Emissão)
-        if (document.selectFirst(DETAIL_STATUS)?.text()?.contains("Completo") == true) {
-            showStatus = ShowStatus.Completed
+        val showStatus = if (document.selectFirst(DETAIL_STATUS)?.text()?.contains("Completo") == true) {
+            ShowStatus.Completed
         } else {
-            showStatus = ShowStatus.Ongoing
+            ShowStatus.Ongoing
         }
 
         // Lista de episódios
@@ -207,7 +207,7 @@ class DattebayoBR : MainAPI() {
         // 3. Tenta extrair da META TAG (mais fácil e confiável)
         val metaVideoUrl = document.selectFirst(VIDEO_META_TAG)?.attr("content")
         if (!metaVideoUrl.isNullOrBlank()) {
-            callback(
+            callback.invoke(
                 newExtractorLink(
                     source = name,
                     name = "Servidor Principal",
@@ -216,8 +216,10 @@ class DattebayoBR : MainAPI() {
                 ) {
                     referer = "https://playembedapi.site/"  // Header essencial!
                     quality = 1080
-                    addHeader("Range", "bytes=0-")
-                    addHeader("Accept-Language", "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7")
+                    headers = mapOf(
+                        "Range" to "bytes=0-",
+                        "Accept-Language" to "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7"
+                    )
                 }
             )
             linksFound = true
@@ -232,7 +234,7 @@ class DattebayoBR : MainAPI() {
                     val scriptUrl = match?.groupValues?.get(1)
                     
                     if (!scriptUrl.isNullOrBlank()) {
-                        callback(
+                        callback.invoke(
                             newExtractorLink(
                                 source = name,
                                 name = "Servidor (Script)",
@@ -241,7 +243,7 @@ class DattebayoBR : MainAPI() {
                             ) {
                                 referer = "https://playembedapi.site/"
                                 quality = 720
-                                addHeader("Range", "bytes=0-")
+                                headers = mapOf("Range" to "bytes=0-")
                             }
                         )
                         linksFound = true
@@ -266,7 +268,7 @@ class DattebayoBR : MainAPI() {
                         val playerUrl = match?.groupValues?.get(1)
                         
                         if (!playerUrl.isNullOrBlank()) {
-                            callback(
+                            callback.invoke(
                                 newExtractorLink(
                                     source = name,
                                     name = "Player $qualityName",
@@ -279,7 +281,7 @@ class DattebayoBR : MainAPI() {
                                         "HD" -> 720
                                         else -> 480
                                     }
-                                    addHeader("Range", "bytes=0-")
+                                    headers = mapOf("Range" to "bytes=0-")
                                 }
                             )
                             linksFound = true
