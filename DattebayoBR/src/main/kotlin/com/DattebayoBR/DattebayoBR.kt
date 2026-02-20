@@ -11,6 +11,7 @@ import org.jsoup.nodes.Element
 import org.json.JSONArray
 import org.json.JSONObject
 import com.fasterxml.jackson.annotation.JsonProperty
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 import com.fasterxml.jackson.databind.ObjectMapper
 import java.net.URLEncoder
 
@@ -62,18 +63,21 @@ class DattebayoBR : MainAPI() {
         private val mapper = ObjectMapper()
     }
 
-    // Data classes para a API ani.zip
+    // Data classes para a API ani.zip com ignoreUnknown = true
+    @JsonIgnoreProperties(ignoreUnknown = true)
     data class AniZipData(
         @JsonProperty("titles") val titles: Map<String, String>? = null,
         @JsonProperty("images") val images: List<ImageData>? = null,
-        @JsonProperty("episodes") val episodes: Map<String, MetaEpisode>? = null,
+        @JsonProperty("episodes") val episodes: Map<String, MetaEpisode>? = null
     )
 
+    @JsonIgnoreProperties(ignoreUnknown = true)
     data class ImageData(
         @JsonProperty("coverType") val coverType: String?,
         @JsonProperty("url") val url: String?
     )
 
+    @JsonIgnoreProperties(ignoreUnknown = true)
     data class MetaEpisode(
         @JsonProperty("episode") val episode: String?,
         @JsonProperty("airdate") val airdate: String?,
