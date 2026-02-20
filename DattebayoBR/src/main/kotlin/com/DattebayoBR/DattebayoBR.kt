@@ -160,13 +160,13 @@ class DattebayoBR : MainAPI() {
         val tipo = selectFirst(HOME_TIPO)?.text()?.trim()
         val isDub = isDub(title, href)
 
-        // SEMPRE passar o poster na URL, seja episódio ou anime normal
-        val urlWithPoster = if (poster != null) "$href|poster=$poster" else href
-
         return if (episodeNum != null) {
             // É um episódio
             val epNumber = extractEpisodeNumber(title) ?: 1
             val animeName = cleanTitle(title)
+            
+            // Passa o poster junto na URL para usar em load()
+            val urlWithPoster = if (poster != null) "$href|poster=$poster" else href
             
             newAnimeSearchResponse(animeName, urlWithPoster, TvType.Anime) {
                 this.posterUrl = poster
@@ -178,7 +178,7 @@ class DattebayoBR : MainAPI() {
             }
         } else {
             // É um anime
-            newAnimeSearchResponse(cleanTitle(title), urlWithPoster, TvType.Anime) {
+            newAnimeSearchResponse(cleanTitle(title), href, TvType.Anime) {
                 this.posterUrl = poster
                 if (isDub) {
                     addDubStatus(DubStatus.Dubbed, null)
