@@ -43,6 +43,7 @@ class DattebayoBR : MainAPI() {
         private const val DETAIL_GENRES = ".aniInfosSingleGeneros span"
         private const val DETAIL_STATUS = "#completed"
         private const val DETAIL_EPISODES_INFO = ".aniInfosSingleNumsItem"
+        private const val DETAIL_TIPO = ".aniInfosSingleNumsItem:contains(Tipo) span"
         private const val EPISODE_CONTAINER = ".aniContainer"
         private const val EPISODE_ITEM = ".ultimosEpisodiosHomeItem"
         private const val EPISODE_LINK = "a"
@@ -51,6 +52,15 @@ class DattebayoBR : MainAPI() {
         // URLs das requisições
         private const val OUTBRAIN_URL = "https://widgets.outbrain.com/outbrain.js"
         private const val ADS_API_URL = "https://ads.animeyabu.net/"
+        
+        // Padrões de paginação
+        private val PAGINATION_PATTERNS = mapOf(
+            "/animes/letra/todos" to "/animes/page/%d/letra/todos",
+            "/anime-dublado" to "/anime-dublado/page/%d/",
+            "/tokusatsus" to "/tokusatsus/page/%d/",
+            "/doramas" to "/doramas/page/%d/",
+            "/donghua" to "/donghua/page/%d/"
+        )
     }
 
     // Página principal com todas as abas
@@ -191,67 +201,51 @@ class DattebayoBR : MainAPI() {
 
     // === PÁGINA PRINCIPAL ===
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val url = when {
-            // Últimos Episódios - seção especial da home
-            request.name == "Últimos Episódios" -> {
-                "$mainUrl/"
-            }
-            // Animes (AZ) - com paginação
-            request.data.contains("animes/letra/todos") -> {
-                if (page == 1) request.data else "$mainUrl/animes/page/$page/letra/todos"
-            }
-            // Animes Dublados - com paginação
-            request.data.contains("anime-dublado") -> {
-                if (page == 1) request.data else "$mainUrl/anime-dublado/page/$page/"
-            }
-            // Tokusatsus - com paginação
-            request.data.contains("tokusatsus") -> {
-                if (page == 1) request.data else "$mainUrl/tokusatsus/page/$page/"
-            }
-            // Doramas - com paginação
-            request.data.contains("doramas") -> {
-                if (page == 1) request.data else "$mainUrl/doramas/page/$page/"
-            }
-            // Donghuas - com paginação
-            request.data.contains("donghua") -> {
-                if (page == 1) request.data else "$mainUrl/donghua/page/$page/"
-            }
-            // Fallback
-            else -> {
-                if (page == 1) request.data else "$mainUrl/page/$page/"
-            }
+        // Últimos Episódios - seção especial da home (sem paginação)
+        if (request.name == "Últimos Episódios") {
+            val document = app.get("$mainUrl/", referer = mainUrl).document
+            // Pega apenas a seção de "Últimos episódios em lançamento"
+            val episodeElements = document.select(".epiContainer .ultimosEpisodiosHomeItem")
+            val items = episodeElements
+                .mapNotNull { it.toSearchResponse() }
+                .distinctBy { it.url }
+            
+            // Retorna como lista horizontal (isHorizontalImages = true)
+            return newHomePageResponse(
+                list = HomePageList(request.name, items, isHorizontalImages = true),
+                hasNext = false
+            )
         }
         
+        // Para todas as outras abas, aplica paginação
+        val baseUrl = request.data.replace(mainUrl, "")
+        val pattern = PAGINATION_PATTERNS.entries.find { baseUrl.contains(it.key) }
+        
+        val url = if (pattern != null) {
+            // Aplica o padrão de paginação correto
+            if (page == 1) {
+                request.data
+            } else {
+                mainUrl + pattern.value.format(page)
+            }
+        } else {
+            // Fallback para URLs sem padrão definido
+            if (page == 1) request.data else "$mainUrl/page/$page/"
+        }
+        
+        println("🔍 DEBUG - Carregando página: $url")
         val document = app.get(url, referer = mainUrl).document
         
-        return when (request.name) {
-            "Últimos Episódios" -> {
-                // Pega apenas a seção de "Últimos episódios em lançamento"
-                val episodeElements = document.select(".epiContainer .ultimosEpisodiosHomeItem")
-                val items = episodeElements
-                    .mapNotNull { it.toSearchResponse() }
-                    .distinctBy { it.url }
-                
-                // Retorna como lista horizontal (isHorizontalImages = true)
-                newHomePageResponse(
-                    list = HomePageList(request.name, items, isHorizontalImages = true),
-                    hasNext = false
-                )
-            }
-            else -> {
-                // Para todas as outras abas, pega todos os itens normalmente
-                val items = document.select(HOME_ITEM)
-                    .mapNotNull { it.toSearchResponse() }
-                    .distinctBy { it.url }
-                
-                // Verifica se existe próxima página
-                val hasNext = document.select(".letterBox a").any { 
-                    it.text().contains("»") || it.attr("href").contains("/page/${page + 1}/")
-                }
-                
-                newHomePageResponse(request.name, items, hasNext)
-            }
+        val items = document.select(HOME_ITEM)
+            .mapNotNull { it.toSearchResponse() }
+            .distinctBy { it.url }
+        
+        // Verifica se existe próxima página
+        val hasNext = document.select(".letterBox a").any { 
+            it.text().contains("»") || it.attr("href").contains("/page/${page + 1}/")
         }
+        
+        return newHomePageResponse(request.name, items, hasNext)
     }
 
     // === PESQUISA ===
@@ -293,10 +287,14 @@ class DattebayoBR : MainAPI() {
                 text.contains("Episódios") -> {
                     val (current, total) = extractTotalEpisodes(text)
                     totalEpisodes = total
-                    if (total == 1) tvType = TvType.AnimeMovie
                 }
-                text.contains("Tipo") && text.contains("Filme") -> tvType = TvType.AnimeMovie
             }
+        }
+        
+        // Verifica se é filme pelo campo Tipo
+        val tipoElement = document.selectFirst(DETAIL_TIPO)
+        if (tipoElement?.text()?.contains("Filme", ignoreCase = true) == true) {
+            tvType = TvType.AnimeMovie
         }
 
         // Status (Completo ou Emissão)
