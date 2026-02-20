@@ -244,7 +244,7 @@ class DattebayoBR : MainAPI() {
         }
     }
 
-    // === CARREGAR LINKS DE VÍDEO (VERSÃO FINAL COM BUSCA GENÉRICA) ===
+    // === CARREGAR LINKS DE VÍDEO (APENAS HEADERS ESSENCIAIS) ===
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -286,10 +286,10 @@ class DattebayoBR : MainAPI() {
                     ) {
                         referer = "https://playembedapi.site/"
                         quality = 720
+                        // APENAS REFERER E USER-AGENT
                         headers = mapOf(
-                            "Range" to "bytes=0-",
                             "Referer" to "https://playembedapi.site/",
-                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
                         )
                     }
                 )
@@ -322,13 +322,12 @@ class DattebayoBR : MainAPI() {
                     type = ExtractorLinkType.VIDEO
                 ) {
                     this.quality = qualityValue
+                    referer = "https://playembedapi.site/"
+                    
+                    // APENAS OS DOIS HEADERS QUE FUNCIONARAM PARA VOCÊ
                     headers = mapOf(
-                        "Range" to "bytes=0-",
                         "Referer" to "https://playembedapi.site/",
-                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                        "Accept" to "*/*",
-                        "Accept-Language" to "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
-                        "Connection" to "keep-alive"
+                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
                     )
                 }
             )
