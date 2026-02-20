@@ -244,95 +244,107 @@ class DattebayoBR : MainAPI() {
         }
     }
 
-    // === CARREGAR LINKS DE VÍDEO (COM REFERER CORRIGIDO) ===
     override suspend fun loadLinks(
-        data: String,
-        isCasting: Boolean,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        // 1. Pega a URL da página do episódio
-        val episodePageUrl = data.split("|poster=")[0]
-        println("🔍 DEBUG LOADLINKS - URL recebida: $episodePageUrl")
-        
-        // 2. Faz uma requisição NOVA para a página (link fresco!)
-        println("🔍 DEBUG - Fazendo requisição para: $episodePageUrl")
-        val document = try {
-            app.get(episodePageUrl, referer = mainUrl).document
-        } catch (e: Exception) {
-            println("❌ DEBUG - Erro ao fazer requisição: ${e.message}")
-            e.printStackTrace()
-            return false
-        }
-        println("🔍 DEBUG - Requisição OK, documento carregado")
-        
-        // 3. Encontra TODOS os links de vídeo no HTML
-        val allVideoUrls = findAllVideoUrls(document)
-        println("🔍 DEBUG - Total de links encontrados: ${allVideoUrls.size}")
-        
-        if (allVideoUrls.isEmpty()) {
-            println("❌ DEBUG - NENHUM link encontrado!")
+    data: String,
+    isCasting: Boolean,
+    subtitleCallback: (SubtitleFile) -> Unit,
+    callback: (ExtractorLink) -> Unit
+): Boolean {
+    val episodePageUrl = data.split("|poster=")[0]
+    println("🔍 DEBUG - URL do episódio: $episodePageUrl")
+    
+    // 1. Primeiro, pega a página do episódio para obter os links base
+    val document = app.get(episodePageUrl, referer = mainUrl).document
+    val baseUrls = findAllVideoUrls(document)
+    
+    if (baseUrls.isEmpty()) return false
+    
+    // 2. Para cada link base, obtém os parâmetros de autenticação
+    baseUrls.forEach { (baseUrl, quality) ->
+        try {
+            // Passo 1: GET outbrain.js
+            println("🔍 DEBUG - Buscando outbrain.js")
+            val outbrainJs = app.get(
+                "https://widgets.outbrain.com/outbrain.js",
+                headers = mapOf(
+                    "Referer" to mainUrl,
+                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                )
+            ).text
             
-            // Fallback: tentar a meta tag (último recurso)
-            val metaVideoUrl = document.selectFirst("meta[itemprop=\"contentURL\"]")?.attr("content")
-            if (!metaVideoUrl.isNullOrBlank()) {
-                println("⚠️ DEBUG - Usando meta tag como fallback: $metaVideoUrl")
+            // Passo 2: POST para ads.animeyabu.net
+            println("🔍 DEBUG - Enviando POST para ads.animeyabu.net")
+            val firstResponse = app.post(
+                url = "https://ads.animeyabu.net/",
+                data = mapOf(
+                    "category" to "client",
+                    "type" to "premium",
+                    "ad" to outbrainJs
+                ),
+                headers = mapOf(
+                    "Content-Type" to "application/x-www-form-urlencoded",
+                    "Referer" to mainUrl,
+                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                )
+            ).text
+            
+            // Parse da primeira resposta
+            val firstJson = parseJson(firstResponse).asJsonArray[0].asJsonObject
+            val token = firstJson["publicidade"]?.asString ?: return@forEach
+            
+            println("🔍 DEBUG - Token obtido: $token")
+            
+            // Passo 3: GET com token + URL base
+            val secondUrl = "https://ads.animeyabu.net/?token=${token}&url=${baseUrl}"
+            println("🔍 DEBUG - Buscando parâmetros finais")
+            
+            val secondResponse = app.get(
+                secondUrl,
+                headers = mapOf(
+                    "Referer" to mainUrl,
+                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                )
+            ).text
+            
+            // Parse da segunda resposta
+            val secondJson = parseJson(secondResponse).asJsonArray[0].asJsonObject
+            val authParams = secondJson["publicidade"]?.asString
+            
+            if (!authParams.isNullOrBlank()) {
+                // Link final = baseUrl + authParams
+                val finalUrl = baseUrl + authParams
+                
+                println("✅ DEBUG - Link final gerado: ${finalUrl.take(100)}...")
+                
+                val qualityValue = when (quality) {
+                    "FULLHD" -> 1080
+                    "HD" -> 720
+                    "SD" -> 480
+                    else -> 720
+                }
+                
                 callback.invoke(
                     newExtractorLink(
                         source = name,
-                        name = "Servidor (Fallback)",
-                        url = metaVideoUrl,
+                        name = "Cloudflare $quality",
+                        url = finalUrl,
                         type = ExtractorLinkType.VIDEO
                     ) {
-                        referer = mainUrl  // ← CORRIGIDO
-                        quality = 720
+                        this.quality = qualityValue
+                        referer = mainUrl
                         headers = mapOf(
-                            "Referer" to mainUrl,  // ← CORRIGIDO
-                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                            "Referer" to mainUrl,
+                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
                         )
                     }
                 )
-                return true
             }
-            
-            return false
+        } catch (e: Exception) {
+            println("❌ DEBUG - Erro ao processar link: ${e.message}")
+            e.printStackTrace()
         }
-        
-        // 4. Prioriza os links por qualidade: FULLHD > HD > SD > Unknown
-        val priority = mapOf("FULLHD" to 4, "HD" to 3, "SD" to 2, "Unknown" to 1)
-        val sortedUrls = allVideoUrls.sortedByDescending { priority[it.second] ?: 0 }
-        
-        // 5. Adiciona todos os links encontrados (em ordem de prioridade)
-        sortedUrls.forEachIndexed { index, (url, quality) ->
-            println("✅ DEBUG - Adicionando link ${index + 1}: $quality - ${url.take(100)}...")
-            
-            val qualityValue = when (quality) {
-                "FULLHD" -> 1080
-                "HD" -> 720
-                "SD" -> 480
-                else -> 720
-            }
-            
-            callback.invoke(
-                newExtractorLink(
-                    source = name,
-                    name = "Cloudflare $quality",
-                    url = url,
-                    type = ExtractorLinkType.VIDEO
-                ) {
-                    this.quality = qualityValue
-                    referer = mainUrl  // ← CORRIGIDO: agora usa o site principal
-                    
-                    // APENAS OS DOIS HEADERS QUE FUNCIONARAM
-                    headers = mapOf(
-                        "Referer" to mainUrl,  // ← CORRIGIDO: https://www.dattebayo-br.com/
-                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-                    )
-                }
-            )
-        }
-        
-        println("✅✅✅ DEBUG SUCESSO - ${sortedUrls.size} links adicionados com sucesso!")
-        return true
     }
+    
+    return true
+}
 }
