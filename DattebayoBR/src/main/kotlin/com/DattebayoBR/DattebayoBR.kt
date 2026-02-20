@@ -5,6 +5,7 @@ import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
 import com.lagradost.cloudstream3.plugins.Plugin
 import android.content.Context
+import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 
 @CloudstreamPlugin
@@ -43,10 +44,6 @@ class DattebayoBR : MainAPI() {
         private const val EPISODE_ITEM = ".ultimosEpisodiosHomeItem"
         private const val EPISODE_LINK = "a"
         private const val EPISODE_TITLE_ATTR = "title"
-        
-        // Seletores de vídeo
-        private const val VIDEO_META_TAG = "meta[itemprop=\"contentURL\"]"
-        private const val VIDEO_SCRIPT_VAR = "var vid = '(.*?)'"
     }
 
     // Página principal
@@ -72,6 +69,64 @@ class DattebayoBR : MainAPI() {
     private fun extractAnimeNameFromEpisode(episodeItem: Element): String {
         val fullTitle = episodeItem.selectFirst(EPISODE_LINK)?.attr(EPISODE_TITLE_ATTR) ?: return ""
         return fullTitle.replace("(?i)\\s+ep\\s+\\d+(\\s*-\\s*final)?".toRegex(), "").trim()
+    }
+
+    // === FUNÇÃO PRINCIPAL PARA ENCONTRAR LINKS DE VÍDEO ===
+    private fun findAllVideoUrls(document: Document): List<Pair<String, String>> {
+        val videoUrls = mutableListOf<Pair<String, String>>()
+        
+        println("🔍 DEBUG - Varrendo HTML em busca de links do Cloudflare...")
+        
+        // 1. Procurar em scripts com var vid
+        document.select("script").forEachIndexed { index, script ->
+            val content = script.data()
+            
+            // Regex para encontrar var vid = 'URL' (Cloudflare R2)
+            val regex = "var vid = '(https?://[a-zA-Z0-9]+\\.r2\\.cloudflarestorage\\.com/[^']+\\.mp4)'".toRegex()
+            val matches = regex.findAll(content)
+            
+            matches.forEach { match ->
+                val url = match.groupValues[1]
+                
+                // Determinar qualidade pelo ID do container pai ou padrão na URL
+                val quality = when {
+                    script.parent()?.id() == "jwContainer_2" -> "FULLHD"
+                    script.parent()?.id() == "jwContainer_1" -> "HD"
+                    script.parent()?.id() == "jwContainer_0" -> "SD"
+                    url.contains("/fful/") -> "FULLHD"
+                    url.contains("/f222/") -> "HD"
+                    url.contains("/fiphoneb/") -> "SD"
+                    url.contains("/fiphonec/") -> "SD"
+                    url.contains("/f333/") -> "HD"
+                    else -> "Unknown"
+                }
+                
+                println("✅ DEBUG - Link encontrado no script $index: $quality - $url")
+                videoUrls.add(Pair(url, quality))
+            }
+        }
+        
+        // 2. Procurar em qualquer lugar do HTML por URLs do Cloudflare (fallback)
+        val html = document.html()
+        val cloudflareRegex = "https?://[a-zA-Z0-9]+\\.r2\\.cloudflarestorage\\.com/[a-zA-Z0-9]+/[0-9]+\\.mp4".toRegex()
+        cloudflareRegex.findAll(html).forEach { match ->
+            val url = match.value
+            // Evitar duplicatas
+            if (!videoUrls.any { it.first == url }) {
+                val quality = when {
+                    url.contains("/fful/") -> "FULLHD"
+                    url.contains("/f222/") -> "HD"
+                    url.contains("/fiphoneb/") -> "SD"
+                    url.contains("/fiphonec/") -> "SD"
+                    url.contains("/f333/") -> "HD"
+                    else -> "Unknown"
+                }
+                println("✅ DEBUG - Link encontrado no HTML: $quality - $url")
+                videoUrls.add(Pair(url, quality))
+            }
+        }
+        
+        return videoUrls.distinctBy { it.first }
     }
 
     // === FUNÇÕES DE MAPEAMENTO ===
@@ -139,7 +194,6 @@ class DattebayoBR : MainAPI() {
         // Ano e status
         var year: Int? = null
         var totalEpisodes: Int? = null
-        // Removido ShowStatus.Unknown, vamos usar null
 
         document.select(DETAIL_EPISODES_INFO).forEach { element ->
             val text = element.text()
@@ -190,123 +244,97 @@ class DattebayoBR : MainAPI() {
         }
     }
 
-// === CARREGAR LINKS DE VÍDEO (CORRIGIDO) ===
-override suspend fun loadLinks(
-    data: String,
-    isCasting: Boolean,
-    subtitleCallback: (SubtitleFile) -> Unit,
-    callback: (ExtractorLink) -> Unit
-): Boolean {
-    // Debug: URL recebida
-    println("🔍 DEBUG LOADLINKS - URL recebida: $data")
-    
-    // 1. Pega a URL da página do episódio
-    val episodePageUrl = data.split("|poster=")[0]
-    println("🔍 DEBUG - URL da página do episódio: $episodePageUrl")
-    
-    // 2. FAZ UMA REQUISIÇÃO NOVA para a página (link fresco!)
-    println("🔍 DEBUG - Fazendo requisição para: $episodePageUrl")
-    val document = try {
-        app.get(episodePageUrl, referer = mainUrl).document
-    } catch (e: Exception) {
-        println("❌ DEBUG - Erro ao fazer requisição: ${e.message}")
-        e.printStackTrace()
-        return false
-    }
-    println("🔍 DEBUG - Requisição OK, documento carregado")
-    
-    var linksFound = false
-
-    // PRIMEIRO: Tenta os players por qualidade (Google Storage)
-    println("🔍 DEBUG - Procurando links nos players (prioridade alta)...")
-    val players = listOf(
-        "jwContainer_2" to "FULLHD",
-        "jwContainer_1" to "HD",
-        "jwContainer_0" to "SD"
-    )
-    
-    players.forEach { (containerId, qualityName) ->
-        println("🔍 DEBUG - Procurando player $containerId ($qualityName)")
-        val playerScripts = document.select("#$containerId script")
-        println("🔍 DEBUG - Scripts encontrados no player $containerId: ${playerScripts.size}")
+    // === CARREGAR LINKS DE VÍDEO (VERSÃO FINAL COM BUSCA GENÉRICA) ===
+    override suspend fun loadLinks(
+        data: String,
+        isCasting: Boolean,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        // 1. Pega a URL da página do episódio
+        val episodePageUrl = data.split("|poster=")[0]
+        println("🔍 DEBUG LOADLINKS - URL recebida: $episodePageUrl")
         
-        playerScripts.forEachIndexed { index, script ->
-            val content = script.data()
-            val regex = "var vid = '(.*?)'".toRegex()
-            val match = regex.find(content)
-            
-            if (match != null) {
-                val playerUrl = match.groupValues[1]
-                println("✅ DEBUG - Link encontrado no player $containerId: $playerUrl")
-                
-                // Verifica se é do Google Storage (preferencial)
-                if (playerUrl.contains("storage.googleapis.com")) {
-                    println("✅✅✅ DEBUG - Link do Google Storage encontrado!")
-                }
-                
-                if (playerUrl.isNotBlank()) {
-                    callback.invoke(
-                        newExtractorLink(
-                            source = name,
-                            name = "Player $qualityName",
-                            url = playerUrl,
-                            type = ExtractorLinkType.VIDEO
-                        ) {
-                            referer = "https://playembedapi.site/"
-                            quality = when (qualityName) {
-                                "FULLHD" -> 1080
-                                "HD" -> 720
-                                else -> 480
-                            }
-                            headers = mapOf("Range" to "bytes=0-")
-                        }
-                    )
-                    linksFound = true
-                    println("✅ DEBUG - Callback do player $qualityName adicionado")
-                }
-            }
+        // 2. Faz uma requisição NOVA para a página (link fresco!)
+        println("🔍 DEBUG - Fazendo requisição para: $episodePageUrl")
+        val document = try {
+            app.get(episodePageUrl, referer = mainUrl).document
+        } catch (e: Exception) {
+            println("❌ DEBUG - Erro ao fazer requisição: ${e.message}")
+            e.printStackTrace()
+            return false
         }
-    }
-
-    // SEGUNDO: Fallback para meta tag (se não achou nos players)
-    if (!linksFound) {
-        println("🔍 DEBUG - Nenhum link nos players, tentando meta tag...")
-        val metaElement = document.selectFirst(VIDEO_META_TAG)
-        if (metaElement != null) {
-            val metaVideoUrl = metaElement.attr("content")
-            println("🔍 DEBUG - Meta tag encontrada: $metaVideoUrl")
+        println("🔍 DEBUG - Requisição OK, documento carregado")
+        
+        // 3. Encontra TODOS os links de vídeo no HTML
+        val allVideoUrls = findAllVideoUrls(document)
+        println("🔍 DEBUG - Total de links encontrados: ${allVideoUrls.size}")
+        
+        if (allVideoUrls.isEmpty()) {
+            println("❌ DEBUG - NENHUM link encontrado!")
             
-            if (metaVideoUrl.isNotBlank()) {
+            // Fallback: tentar a meta tag (último recurso)
+            val metaVideoUrl = document.selectFirst("meta[itemprop=\"contentURL\"]")?.attr("content")
+            if (!metaVideoUrl.isNullOrBlank()) {
+                println("⚠️ DEBUG - Usando meta tag como fallback: $metaVideoUrl")
                 callback.invoke(
                     newExtractorLink(
                         source = name,
-                        name = "Servidor Alternativo",
+                        name = "Servidor (Fallback)",
                         url = metaVideoUrl,
                         type = ExtractorLinkType.VIDEO
                     ) {
                         referer = "https://playembedapi.site/"
                         quality = 720
-                        headers = mapOf("Range" to "bytes=0-")
+                        headers = mapOf(
+                            "Range" to "bytes=0-",
+                            "Referer" to "https://playembedapi.site/",
+                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                        )
                     }
                 )
-                linksFound = true
-                println("✅ DEBUG - Callback da meta tag adicionado")
+                return true
             }
+            
+            return false
         }
+        
+        // 4. Prioriza os links por qualidade: FULLHD > HD > SD > Unknown
+        val priority = mapOf("FULLHD" to 4, "HD" to 3, "SD" to 2, "Unknown" to 1)
+        val sortedUrls = allVideoUrls.sortedByDescending { priority[it.second] ?: 0 }
+        
+        // 5. Adiciona todos os links encontrados (em ordem de prioridade)
+        sortedUrls.forEachIndexed { index, (url, quality) ->
+            println("✅ DEBUG - Adicionando link ${index + 1}: $quality - ${url.take(100)}...")
+            
+            val qualityValue = when (quality) {
+                "FULLHD" -> 1080
+                "HD" -> 720
+                "SD" -> 480
+                else -> 720
+            }
+            
+            callback.invoke(
+                newExtractorLink(
+                    source = name,
+                    name = "Cloudflare $quality",
+                    url = url,
+                    type = ExtractorLinkType.VIDEO
+                ) {
+                    this.quality = qualityValue
+                    headers = mapOf(
+                        "Range" to "bytes=0-",
+                        "Referer" to "https://playembedapi.site/",
+                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                        "Accept" to "*/*",
+                        "Accept-Language" to "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+                        "Connection" to "keep-alive"
+                    )
+                }
+            )
+        }
+        
+        println("✅✅✅ DEBUG SUCESSO - ${sortedUrls.size} links adicionados com sucesso!")
+        return true
     }
-
-    // TERCEIRO: Fallback para scripts gerais
-    if (!linksFound) {
-        println("🔍 DEBUG - Procurando link em scripts gerais...")
-        // ... código dos scripts gerais ...
-    }
-
-    if (linksFound) {
-        println("✅✅✅ DEBUG SUCESSO - Links encontrados: $linksFound")
-    } else {
-        println("❌❌❌ DEBUG FALHA - Nenhum link encontrado")
-    }
-
-    return linksFound
-}
 }
