@@ -343,9 +343,7 @@ class DattebayoBR : MainAPI() {
             this.plot = synopsis
             this.tags = genres
             this.showStatus = showStatus
-            // Explicitamente definir como null para evitar enriquecimento automático
-            this.malId = null
-            this.anilistId = null
+            // Sem referências a malId ou anilistId - apenas dados do site
             if (isDub) {
                 addEpisodes(DubStatus.Dubbed, episodes)
             } else {
