@@ -53,17 +53,21 @@ class DattebayoBR : MainAPI() {
         private const val ADS_API_URL = "https://ads.animeyabu.net/"
     }
 
-    // Página principal
+    // Página principal com todas as abas
     override val mainPage = mainPageOf(
         "$mainUrl/" to "Últimos Episódios",
         "$mainUrl/animes/letra/todos" to "Animes (AZ)",
         "$mainUrl/anime-dublado" to "Animes Dublados",
+        "$mainUrl/tokusatsus" to "Tokusatsus",
+        "$mainUrl/doramas" to "Doramas",
+        "$mainUrl/donghua" to "Donghuas",
     )
 
     // === FUNÇÕES AUXILIARES ===
     private fun isDub(title: String, url: String? = null): Boolean {
         return title.contains("Dublado", ignoreCase = true) || 
-               url?.contains("dublado", ignoreCase = true) == true
+               url?.contains("dublado", ignoreCase = true) == true ||
+               url?.contains("anime-dublado", ignoreCase = true) == true
     }
 
     private fun cleanTitle(title: String): String {
@@ -187,20 +191,67 @@ class DattebayoBR : MainAPI() {
 
     // === PÁGINA PRINCIPAL ===
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val url = if (request.data.contains("/page/")) {
-            // Se já tem paginação na URL, substitui o número da página
-            request.data.replace(Regex("/page/\\d+"), "/page/$page")
-        } else if (request.data == "$mainUrl/animes/letra/todos") {
-            // URL da lista de animes com paginação
-            if (page == 1) request.data else "$mainUrl/animes/page/$page/letra/todos"
-        } else {
-            // Outras páginas (home, dublados)
-            if (page == 1) request.data else "$mainUrl/page/$page/"
+        val url = when {
+            // Últimos Episódios - seção especial da home
+            request.name == "Últimos Episódios" -> {
+                "$mainUrl/"
+            }
+            // Animes (AZ) - com paginação
+            request.data.contains("animes/letra/todos") -> {
+                if (page == 1) request.data else "$mainUrl/animes/page/$page/letra/todos"
+            }
+            // Animes Dublados - com paginação
+            request.data.contains("anime-dublado") -> {
+                if (page == 1) request.data else "$mainUrl/anime-dublado/page/$page/"
+            }
+            // Tokusatsus - com paginação
+            request.data.contains("tokusatsus") -> {
+                if (page == 1) request.data else "$mainUrl/tokusatsus/page/$page/"
+            }
+            // Doramas - com paginação
+            request.data.contains("doramas") -> {
+                if (page == 1) request.data else "$mainUrl/doramas/page/$page/"
+            }
+            // Donghuas - com paginação
+            request.data.contains("donghua") -> {
+                if (page == 1) request.data else "$mainUrl/donghua/page/$page/"
+            }
+            // Fallback
+            else -> {
+                if (page == 1) request.data else "$mainUrl/page/$page/"
+            }
         }
         
         val document = app.get(url, referer = mainUrl).document
-        val items = document.select(HOME_ITEM).mapNotNull { it.toSearchResponse() }
-        return newHomePageResponse(request.name, items.distinctBy { it.url })
+        
+        return when (request.name) {
+            "Últimos Episódios" -> {
+                // Pega apenas a seção de "Últimos episódios em lançamento"
+                val episodeElements = document.select(".epiContainer .ultimosEpisodiosHomeItem")
+                val items = episodeElements
+                    .mapNotNull { it.toSearchResponse() }
+                    .distinctBy { it.url }
+                
+                // Retorna como lista horizontal (isHorizontalImages = true)
+                newHomePageResponse(
+                    list = HomePageList(request.name, items, isHorizontalImages = true),
+                    hasNext = false
+                )
+            }
+            else -> {
+                // Para todas as outras abas, pega todos os itens normalmente
+                val items = document.select(HOME_ITEM)
+                    .mapNotNull { it.toSearchResponse() }
+                    .distinctBy { it.url }
+                
+                // Verifica se existe próxima página
+                val hasNext = document.select(".letterBox a").any { 
+                    it.text().contains("»") || it.attr("href").contains("/page/${page + 1}/")
+                }
+                
+                newHomePageResponse(request.name, items, hasNext)
+            }
+        }
     }
 
     // === PESQUISA ===
