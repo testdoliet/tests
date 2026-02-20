@@ -7,10 +7,8 @@ import com.lagradost.cloudstream3.plugins.Plugin
 import android.content.Context
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
-import com.lagradost.cloudstream3.utils.JsonUtils.json
-import com.lagradost.cloudstream3.utils.JsonUtils.optString
-import com.lagradost.cloudstream3.utils.JsonUtils.toJsonArray
-import com.lagradost.cloudstream3.utils.JsonUtils.toJsonObject
+import org.json.JSONArray
+import org.json.JSONObject
 
 @CloudstreamPlugin
 class DattebayoBRPlugin : Plugin() {
@@ -109,7 +107,7 @@ class DattebayoBR : MainAPI() {
                     else -> "Unknown"
                 }
                 
-                println("✅ DEBUG - Link encontrado no script $index: $quality - $url")
+                println("✅ DEBUG - Link encontrado no script $index: $quality - ${url.take(100)}...")
                 videoUrls.add(Pair(url, quality))
             }
         }
@@ -129,7 +127,7 @@ class DattebayoBR : MainAPI() {
                     url.contains("/f333/") -> "HD"
                     else -> "Unknown"
                 }
-                println("✅ DEBUG - Link encontrado no HTML: $quality - $url")
+                println("✅ DEBUG - Link encontrado no HTML: $quality - ${url.take(100)}...")
                 videoUrls.add(Pair(url, quality))
             }
         }
@@ -252,6 +250,18 @@ class DattebayoBR : MainAPI() {
         }
     }
 
+    // === FUNÇÃO PARA EXTRAIR TOKEN DO JSON ===
+    private fun extractTokenFromJson(jsonString: String): String? {
+        return try {
+            val jsonArray = JSONArray(jsonString)
+            val jsonObject = jsonArray.getJSONObject(0)
+            jsonObject.optString("publicidade")
+        } catch (e: Exception) {
+            println("❌ DEBUG - Erro ao fazer parse do JSON: ${e.message}")
+            null
+        }
+    }
+
     // === CARREGAR LINKS DE VÍDEO (COM AS 3 REQUISIÇÕES) ===
     override suspend fun loadLinks(
         data: String,
@@ -263,7 +273,13 @@ class DattebayoBR : MainAPI() {
         println("🔍 DEBUG LOADLINKS - URL recebida: $episodePageUrl")
         
         // 1. Pega a página do episódio para obter os links base
-        val document = app.get(episodePageUrl, referer = mainUrl).document
+        val document = try {
+            app.get(episodePageUrl, referer = mainUrl).document
+        } catch (e: Exception) {
+            println("❌ DEBUG - Erro ao acessar página: ${e.message}")
+            return false
+        }
+        
         val baseUrls = findAllVideoUrls(document)
         println("🔍 DEBUG - Links base encontrados: ${baseUrls.size}")
         
@@ -310,9 +326,7 @@ class DattebayoBR : MainAPI() {
                 ).text
                 
                 // Parse da primeira resposta
-                val firstArray = firstResponse.toJsonArray()
-                val firstObj = firstArray[0].toJsonObject()
-                val token = firstObj.optString("publicidade")
+                val token = extractTokenFromJson(firstResponse)
                 
                 if (token.isNullOrBlank()) {
                     println("❌ DEBUG - Token não encontrado na primeira resposta")
@@ -334,9 +348,7 @@ class DattebayoBR : MainAPI() {
                 ).text
                 
                 // Parse da segunda resposta
-                val secondArray = secondResponse.toJsonArray()
-                val secondObj = secondArray[0].toJsonObject()
-                val authParams = secondObj.optString("publicidade")
+                val authParams = extractTokenFromJson(secondResponse)
                 
                 if (authParams.isNullOrBlank()) {
                     println("❌ DEBUG - Parâmetros não encontrados na segunda resposta")
