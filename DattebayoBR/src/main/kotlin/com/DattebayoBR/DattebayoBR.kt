@@ -4,6 +4,7 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
 import com.lagradost.cloudstream3.plugins.Plugin
+import com.lagradost.cloudstream3.LoadResponse.Companion.addMalId
 import android.content.Context
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
@@ -313,147 +314,147 @@ class DattebayoBR : MainAPI() {
         val document = app.get(searchUrl).document
         return document.select(HOME_ITEM).mapNotNull { it.toSearchResponse() }
     }
-// === CARREGAR DETALHES ===
-override suspend fun load(url: String): LoadResponse {
-    val (actualUrl, thumbPoster) = url.split("|poster=").let { 
-        it[0] to it.getOrNull(1)?.takeIf { it.isNotBlank() }?.let { fixUrl(it) }
-    }
 
-    val document = app.get(actualUrl).document
-    val title = document.selectFirst(DETAIL_TITLE)?.text()?.trim() ?: "Sem título"
-    val isDub = isDub(title, actualUrl)
-    
-    // Poster do site (fallback)
-    val sitePoster = thumbPoster ?: document.selectFirst(DETAIL_POSTER)?.attr("src")?.let { fixUrl(it) }
-    
-    // Sinopse do site (fallback)
-    val siteSynopsis = document.selectFirst(DETAIL_SYNOPSIS)?.text()?.trim()
-    
-    // Gêneros do site
-    val siteGenres = document.select(DETAIL_GENRES).map { it.text() }.filter { it.isNotBlank() }
-    
-    // Extrair MAL ID
-    var malId: String? = null
-    document.selectFirst(DETAIL_MAL_LINK)?.attr("href")?.let { malUrl ->
-        malId = malUrl.substringAfter("/anime/").substringBefore("/")
-        println("✅ MAL ID encontrado: $malId")
-    }
-    
-    // Buscar dados da ani.zip se tiver MAL ID
-    var aniZipData: AniZipData? = null
-    if (malId != null) {
-        aniZipData = fetchAniZipData(malId)
-        println("✅ Ani.zip data fetched for MAL ID: $malId")
-    }
-    
-    // Ano e status do site
-    var year: Int? = null
-    var totalEpisodes: Int? = null
-    var tvType = TvType.Anime
+    // === CARREGAR DETALHES ===
+    override suspend fun load(url: String): LoadResponse {
+        val (actualUrl, thumbPoster) = url.split("|poster=").let { 
+            it[0] to it.getOrNull(1)?.takeIf { it.isNotBlank() }?.let { fixUrl(it) }
+        }
 
-    document.select(DETAIL_EPISODES_INFO).forEach { element ->
-        val text = element.text()
-        when {
-            text.contains("Ano") -> year = text.substringAfter("Ano").trim().toIntOrNull()
-            text.contains("Episódios") -> {
-                val (current, total) = extractTotalEpisodes(text)
-                totalEpisodes = total
-            }
-            text.contains("Tipo") && text.contains("Filme", ignoreCase = true) -> {
-                tvType = TvType.AnimeMovie
+        val document = app.get(actualUrl).document
+        val title = document.selectFirst(DETAIL_TITLE)?.text()?.trim() ?: "Sem título"
+        val isDub = isDub(title, actualUrl)
+        
+        // Poster do site (fallback)
+        val sitePoster = thumbPoster ?: document.selectFirst(DETAIL_POSTER)?.attr("src")?.let { fixUrl(it) }
+        
+        // Sinopse do site (fallback)
+        val siteSynopsis = document.selectFirst(DETAIL_SYNOPSIS)?.text()?.trim()
+        
+        // Gêneros do site
+        val siteGenres = document.select(DETAIL_GENRES).map { it.text() }.filter { it.isNotBlank() }
+        
+        // Extrair MAL ID
+        var malId: String? = null
+        document.selectFirst(DETAIL_MAL_LINK)?.attr("href")?.let { malUrl ->
+            malId = malUrl.substringAfter("/anime/").substringBefore("/")
+            println("✅ MAL ID encontrado: $malId")
+        }
+        
+        // Buscar dados da ani.zip se tiver MAL ID
+        var aniZipData: AniZipData? = null
+        if (malId != null) {
+            aniZipData = fetchAniZipData(malId)
+            println("✅ Ani.zip data fetched for MAL ID: $malId")
+        }
+        
+        // Ano e status do site
+        var year: Int? = null
+        var totalEpisodes: Int? = null
+        var tvType = TvType.Anime
+
+        document.select(DETAIL_EPISODES_INFO).forEach { element ->
+            val text = element.text()
+            when {
+                text.contains("Ano") -> year = text.substringAfter("Ano").trim().toIntOrNull()
+                text.contains("Episódios") -> {
+                    val (current, total) = extractTotalEpisodes(text)
+                    totalEpisodes = total
+                }
+                text.contains("Tipo") && text.contains("Filme", ignoreCase = true) -> {
+                    tvType = TvType.AnimeMovie
+                }
             }
         }
-    }
 
-    // Status (Completo ou Emissão)
-    val showStatus = if (document.selectFirst(DETAIL_STATUS)?.text()?.contains("Completo") == true) {
-        ShowStatus.Completed
-    } else {
-        ShowStatus.Ongoing
-    }
-
-    // Lista de episódios do site COM dados da ani.zip
-    val episodes = mutableListOf<Episode>()
-    document.select(EPISODE_CONTAINER).select(EPISODE_ITEM).forEach { element ->
-        val link = element.selectFirst(EPISODE_LINK) ?: return@forEach
-        val episodeUrl = fixUrl(link.attr("href"))
-        val episodeTitle = link.attr(EPISODE_TITLE_ATTR).takeIf { it.isNotBlank() } 
-            ?: element.selectFirst(HOME_TITLE)?.text()?.trim() ?: return@forEach
-        val episodeNumber = extractEpisodeNumber(episodeTitle) ?: 1
-        
-        // Buscar dados do episódio na ani.zip
-        val epData = aniZipData?.episodes?.get(episodeNumber.toString())
-        
-        // Thumb do episódio: prioridade ani.zip > thumb do site > poster do anime
-        val episodeThumb = epData?.image?.let { fixUrl(it) }
-            ?: element.selectFirst("img")?.attr("src")?.let { fixUrl(it) }
-            ?: sitePoster
-        
-        // Título do episódio: prioridade ani.zip (inglês) > ani.zip (japonês) > título do site
-        val episodeName = if (tvType == TvType.AnimeMovie) {
-            "Filme"
+        // Status (Completo ou Emissão)
+        val showStatus = if (document.selectFirst(DETAIL_STATUS)?.text()?.contains("Completo") == true) {
+            ShowStatus.Completed
         } else {
-            epData?.title?.get("en") 
-                ?: epData?.title?.get("x-jat") 
-                ?: epData?.title?.get("ja")
-                ?: "Episódio $episodeNumber"
+            ShowStatus.Ongoing
         }
-        
-        episodes.add(
-            newEpisode(episodeUrl) {
-                this.name = episodeName
-                this.episode = episodeNumber
-                this.posterUrl = episodeThumb
-                this.description = epData?.overview
-                
-                // Adicionar data de lançamento
-                epData?.airDateUtc?.let { airDate ->
-                    this.addDate(airDate)
-                }
-                
-                // Adicionar duração
-                epData?.runtime?.let { runtime ->
-                    this.runTime = runtime
-                }
-                
-                // Adicionar score do episódio (ani.zip retorna como string tipo "8.5")
-                epData?.rating?.toDoubleOrNull()?.let { rating ->
-                    this.score = Score.from10(rating)
-                }
+
+        // Lista de episódios do site COM dados da ani.zip
+        val episodes = mutableListOf<Episode>()
+        document.select(EPISODE_CONTAINER).select(EPISODE_ITEM).forEach { element ->
+            val link = element.selectFirst(EPISODE_LINK) ?: return@forEach
+            val episodeUrl = fixUrl(link.attr("href"))
+            val episodeTitle = link.attr(EPISODE_TITLE_ATTR).takeIf { it.isNotBlank() } 
+                ?: element.selectFirst(HOME_TITLE)?.text()?.trim() ?: return@forEach
+            val episodeNumber = extractEpisodeNumber(episodeTitle) ?: 1
+            
+            // Buscar dados do episódio na ani.zip
+            val epData = aniZipData?.episodes?.get(episodeNumber.toString())
+            
+            // Thumb do episódio: prioridade ani.zip > thumb do site > poster do anime
+            val episodeThumb = epData?.image?.let { fixUrl(it) }
+                ?: element.selectFirst("img")?.attr("src")?.let { fixUrl(it) }
+                ?: sitePoster
+            
+            // Título do episódio: prioridade ani.zip (inglês) > ani.zip (japonês) > título do site
+            val episodeName = if (tvType == TvType.AnimeMovie) {
+                "Filme"
+            } else {
+                epData?.title?.get("en") 
+                    ?: epData?.title?.get("x-jat") 
+                    ?: epData?.title?.get("ja")
+                    ?: "Episódio $episodeNumber"
             }
-        )
-    }
+            
+            episodes.add(
+                newEpisode(episodeUrl) {
+                    this.name = episodeName
+                    this.episode = episodeNumber
+                    this.posterUrl = episodeThumb
+                    this.description = epData?.overview
+                    
+                    // Adicionar data de lançamento
+                    epData?.airDateUtc?.let { airDate ->
+                        this.addDate(airDate)
+                    }
+                    
+                    // Adicionar duração
+                    epData?.runtime?.let { runtime ->
+                        this.runTime = runtime
+                    }
+                    
+                    // Adicionar score do episódio (ani.zip retorna como string tipo "8.5")
+                    epData?.rating?.toDoubleOrNull()?.let { rating ->
+                        this.score = Score.from10(rating)
+                    }
+                }
+            )
+        }
 
-    episodes.sortBy { it.episode }
+        episodes.sortBy { it.episode }
 
-    return newAnimeLoadResponse(cleanTitle(title), actualUrl, tvType) {
-        // Priorizar dados da ani.zip para o poster
-        this.posterUrl = aniZipData?.images
-            ?.firstOrNull { it.coverType.equals("Poster", ignoreCase = true) }?.url
-            ?.let { fixUrl(it) } ?: sitePoster
-        
-        // Banner/Background da ani.zip
-        this.backgroundPosterUrl = aniZipData?.images
-            ?.firstOrNull { it.coverType.equals("Fanart", ignoreCase = true) }?.url
-            ?.let { fixUrl(it) }
-        
-        this.year = year
-        this.plot = siteSynopsis
-        this.tags = siteGenres
-        this.showStatus = showStatus
-        
-        // Usando a função addMalId() como no plugin do AllWish
-        malId?.toIntOrNull()?.let { addMalId(it) }
-        
-        if (isDub) {
-            addEpisodes(DubStatus.Dubbed, episodes)
-        } else {
-            addEpisodes(DubStatus.Subbed, episodes)
+        return newAnimeLoadResponse(cleanTitle(title), actualUrl, tvType) {
+            // Priorizar dados da ani.zip para o poster
+            this.posterUrl = aniZipData?.images
+                ?.firstOrNull { it.coverType.equals("Poster", ignoreCase = true) }?.url
+                ?.let { fixUrl(it) } ?: sitePoster
+            
+            // Banner/Background da ani.zip
+            this.backgroundPosterUrl = aniZipData?.images
+                ?.firstOrNull { it.coverType.equals("Fanart", ignoreCase = true) }?.url
+                ?.let { fixUrl(it) }
+            
+            this.year = year
+            this.plot = siteSynopsis
+            this.tags = siteGenres
+            this.showStatus = showStatus
+            
+            // Usando addMalId exatamente como no plugin AllWish
+            malId?.toIntOrNull()?.let { addMalId(it) }
+            
+            if (isDub) {
+                addEpisodes(DubStatus.Dubbed, episodes)
+            } else {
+                addEpisodes(DubStatus.Subbed, episodes)
+            }
         }
     }
-}
 
-    
     // === FUNÇÃO PARA EXTRAIR TOKEN DO JSON ===
     private fun extractTokenFromJson(jsonString: String): String? {
         return try {
