@@ -207,37 +207,57 @@ class DattebayoBR : MainAPI() {
             )
         }
         
-        // Para todas as outras abas, constrói a URL paginada
-        val baseUrl = request.data.removeSuffix("/")
-        val url = if (page == 1) {
-            baseUrl
-        } else {
-            // Para URLs que já contêm "/letra/todos" (caso dos animes A-Z)
-            if (baseUrl.contains("/letra/todos")) {
-                baseUrl.replace("/letra/todos", "") + "/page/$page/letra/todos"
-            } else {
-                // Para todas as outras abas: /doramas, /anime-dublado, /tokusatsus, /donghua
-                "$baseUrl/page/$page"
-            }
+        // Para todas as outras abas, a página é TOTALMENTE ALEATÓRIA!
+        // O parâmetro 'page' é completamente ignorado - sempre geramos uma página aleatória
+        
+        // Define os ranges máximos para cada aba baseado nos dados fornecidos
+        val maxPage = when {
+            request.data.contains("/animes/letra/todos") -> 218  // Animes A-Z
+            request.data.contains("/anime-dublado") -> 51        // Animes Dublados
+            request.data.contains("/tokusatsus") -> 12           // Tokusatsus
+            request.data.contains("/doramas") -> 36              // Doramas
+            request.data.contains("/donghua") -> 10              // Donghuas
+            else -> 50 // Fallback
         }
         
-        println("🔍 DEBUG - Carregando página: $url")
+        // Gera um número aleatório entre 1 e o maxPage da aba
+        val randomPage = (1..maxPage).random()
+        
+        println("🔍 DEBUG - Carregando página ALEATÓRIA $randomPage de ${request.name} (max: $maxPage)")
+        
+        // Constrói a URL com a página aleatória
+        val baseUrl = request.data.removeSuffix("/")
+        val url = if (baseUrl.contains("/letra/todos")) {
+            // Para URLs que contêm "/letra/todos" (caso dos animes A-Z)
+            baseUrl.replace("/letra/todos", "") + "/page/$randomPage/letra/todos"
+        } else {
+            // Para todas as outras abas: /doramas, /anime-dublado, /tokusatsus, /donghua
+            "$baseUrl/page/$randomPage"
+        }
+        
+        println("🔍 DEBUG - URL aleatória: $url")
         
         val document = try {
             app.get(url, referer = mainUrl).document
         } catch (e: Exception) {
             println("❌ DEBUG - Erro ao acessar $url: ${e.message}")
-            return newHomePageResponse(request.name, emptyList(), hasNext = false)
+            // Se a página não existir, tenta a página 1 como fallback
+            val fallbackUrl = if (baseUrl.contains("/letra/todos")) {
+                baseUrl.replace("/letra/todos", "") + "/page/1/letra/todos"
+            } else {
+                "$baseUrl/page/1"
+            }
+            println("🔄 DEBUG - Tentando fallback: $fallbackUrl")
+            app.get(fallbackUrl, referer = mainUrl).document
         }
         
         val items = document.select(HOME_ITEM)
             .mapNotNull { it.toSearchResponse() }
             .distinctBy { it.url }
         
-        // Verifica se existe próxima página - PROCURA PELO LINK "»"
-        val hasNext = document.select(".letterBox a").any { link ->
-            link.text() == "»" && !link.attr("href").contains("/page/$page/")
-        }
+        // SEMPRE diz que tem próxima página, porque sempre podemos gerar outra aleatória!
+        // Isso faz com que o usuário possa ficar rolando infinitamente
+        val hasNext = true
         
         return newHomePageResponse(request.name, items, hasNext)
     }
@@ -323,6 +343,9 @@ class DattebayoBR : MainAPI() {
             this.plot = synopsis
             this.tags = genres
             this.showStatus = showStatus
+            // Explicitamente definir como null para evitar enriquecimento automático
+            this.malId = null
+            this.anilistId = null
             if (isDub) {
                 addEpisodes(DubStatus.Dubbed, episodes)
             } else {
