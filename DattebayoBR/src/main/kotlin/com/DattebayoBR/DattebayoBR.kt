@@ -244,7 +244,7 @@ class DattebayoBR : MainAPI() {
         }
     }
 
-    // === CARREGAR LINKS DE VÍDEO (APENAS HEADERS ESSENCIAIS) ===
+    // === CARREGAR LINKS DE VÍDEO (COM REFERER CORRIGIDO) ===
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -284,11 +284,10 @@ class DattebayoBR : MainAPI() {
                         url = metaVideoUrl,
                         type = ExtractorLinkType.VIDEO
                     ) {
-                        referer = "https://playembedapi.site/"
+                        referer = mainUrl  // ← CORRIGIDO
                         quality = 720
-                        // APENAS REFERER E USER-AGENT
                         headers = mapOf(
-                            "Referer" to "https://playembedapi.site/",
+                            "Referer" to mainUrl,  // ← CORRIGIDO
                             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
                         )
                     }
@@ -322,11 +321,11 @@ class DattebayoBR : MainAPI() {
                     type = ExtractorLinkType.VIDEO
                 ) {
                     this.quality = qualityValue
-                    referer = "https://playembedapi.site/"
+                    referer = mainUrl  // ← CORRIGIDO: agora usa o site principal
                     
-                    // APENAS OS DOIS HEADERS QUE FUNCIONARAM PARA VOCÊ
+                    // APENAS OS DOIS HEADERS QUE FUNCIONARAM
                     headers = mapOf(
-                        "Referer" to "https://playembedapi.site/",
+                        "Referer" to mainUrl,  // ← CORRIGIDO: https://www.dattebayo-br.com/
                         "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
                     )
                 }
