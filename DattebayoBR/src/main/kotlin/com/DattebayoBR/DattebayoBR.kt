@@ -43,7 +43,6 @@ class DattebayoBR : MainAPI() {
         private const val DETAIL_GENRES = ".aniInfosSingleGeneros span"
         private const val DETAIL_STATUS = "#completed"
         private const val DETAIL_EPISODES_INFO = ".aniInfosSingleNumsItem"
-        private const val DETAIL_TIPO = ".aniInfosSingleNumsItem:contains(Tipo) span"
         private const val EPISODE_CONTAINER = ".aniContainer"
         private const val EPISODE_ITEM = ".ultimosEpisodiosHomeItem"
         private const val EPISODE_LINK = "a"
@@ -283,13 +282,11 @@ class DattebayoBR : MainAPI() {
                     val (current, total) = extractTotalEpisodes(text)
                     totalEpisodes = total
                 }
+                // Verifica se é filme pelo texto "Tipo" no elemento
+                text.contains("Tipo") && text.contains("Filme", ignoreCase = true) -> {
+                    tvType = TvType.AnimeMovie
+                }
             }
-        }
-        
-        // Verifica se é filme pelo campo Tipo
-        val tipoElement = document.selectFirst(DETAIL_TIPO)
-        if (tipoElement?.text()?.contains("Filme", ignoreCase = true) == true) {
-            tvType = TvType.AnimeMovie
         }
 
         // Status (Completo ou Emissão)
