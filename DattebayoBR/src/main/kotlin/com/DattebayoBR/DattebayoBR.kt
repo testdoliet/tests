@@ -23,7 +23,7 @@ class DattebayoBR : MainAPI() {
     override val hasMainPage = true
     override var lang = "pt-br"
     override val hasDownloadSupport = true
-    override val supportedTypes = setOf(TvType.Anime)
+    override val supportedTypes = setOf(TvType.Anime, TvType.AnimeMovie)
     override val usesWebView = false
 
     companion object {
@@ -34,6 +34,7 @@ class DattebayoBR : MainAPI() {
         private const val HOME_IMG = ".ultimosAnimesHomeItemImg img, .ultimosEpisodiosHomeItemImg img"
         private const val HOME_EP_NUM = ".ultimosEpisodiosHomeItemInfosNum"
         private const val HOME_EP_TOTAL = ".ultimosAnimesHomeItemQntEps"
+        private const val HOME_TIPO = ".ultimosAnimesHomeItemTipo"
 
         // Seletores de detalhes
         private const val DETAIL_TITLE = "h1"
@@ -55,14 +56,20 @@ class DattebayoBR : MainAPI() {
     // Página principal
     override val mainPage = mainPageOf(
         "$mainUrl/" to "Últimos Episódios",
-        "$mainUrl/animes" to "Animes (AZ)",
+        "$mainUrl/animes/letra/todos" to "Animes (AZ)",
         "$mainUrl/anime-dublado" to "Animes Dublados",
     )
 
     // === FUNÇÕES AUXILIARES ===
+    private fun isDub(title: String, url: String? = null): Boolean {
+        return title.contains("Dublado", ignoreCase = true) || 
+               url?.contains("dublado", ignoreCase = true) == true
+    }
+
     private fun cleanTitle(title: String): String {
         return title.replace("(?i)\\s*ep\\s*\\d+".toRegex(), "")
             .replace("(?i)\\s*-\\s*final".toRegex(), "")
+            .replace("- Dublado", "", ignoreCase = true)
             .replace("\\s+".toRegex(), " ")
             .trim()
     }
@@ -72,9 +79,13 @@ class DattebayoBR : MainAPI() {
             .find(title)?.groupValues?.get(1)?.toIntOrNull()
     }
 
-    private fun extractAnimeNameFromEpisode(episodeItem: Element): String {
-        val fullTitle = episodeItem.selectFirst(EPISODE_LINK)?.attr(EPISODE_TITLE_ATTR) ?: return ""
-        return fullTitle.replace("(?i)\\s+ep\\s+\\d+(\\s*-\\s*final)?".toRegex(), "").trim()
+    private fun extractTotalEpisodes(text: String): Pair<Int?, Int?> {
+        val regex = "(\\d+)/(\\d+)".toRegex()
+        return regex.find(text)?.let {
+            val current = it.groupValues[1].toIntOrNull()
+            val total = it.groupValues[2].toIntOrNull()
+            current to total
+        } ?: (null to null)
     }
 
     // === FUNÇÃO PRINCIPAL PARA ENCONTRAR LINKS DE VÍDEO ===
@@ -142,31 +153,52 @@ class DattebayoBR : MainAPI() {
         val title = selectFirst(HOME_TITLE)?.text()?.trim() ?: return null
         val poster = selectFirst(HOME_IMG)?.attr("src")?.let { fixUrl(it) }
         val episodeNum = selectFirst(HOME_EP_NUM)
+        val tipo = selectFirst(HOME_TIPO)?.text()?.trim()
+        val isDub = isDub(title, href)
 
         return if (episodeNum != null) {
             // É um episódio
             val epNumber = extractEpisodeNumber(title) ?: 1
-            val animeName = extractAnimeNameFromEpisode(this)
+            val animeName = cleanTitle(title)
             
             // Passa o poster junto na URL para usar em load()
             val urlWithPoster = if (poster != null) "$href|poster=$poster" else href
             
             newAnimeSearchResponse(animeName, urlWithPoster, TvType.Anime) {
                 this.posterUrl = poster
-                addDubStatus(DubStatus.Subbed, epNumber)
+                if (isDub) {
+                    addDubStatus(DubStatus.Dubbed, epNumber)
+                } else {
+                    addDubStatus(DubStatus.Subbed, epNumber)
+                }
             }
         } else {
             // É um anime
             newAnimeSearchResponse(cleanTitle(title), href, TvType.Anime) {
                 this.posterUrl = poster
-                addDubStatus(DubStatus.Subbed, null)
+                if (isDub) {
+                    addDubStatus(DubStatus.Dubbed, null)
+                } else {
+                    addDubStatus(DubStatus.Subbed, null)
+                }
             }
         }
     }
 
     // === PÁGINA PRINCIPAL ===
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val document = app.get(request.data).document
+        val url = if (request.data.contains("/page/")) {
+            // Se já tem paginação na URL, substitui o número da página
+            request.data.replace(Regex("/page/\\d+"), "/page/$page")
+        } else if (request.data == "$mainUrl/animes/letra/todos") {
+            // URL da lista de animes com paginação
+            if (page == 1) request.data else "$mainUrl/animes/page/$page/letra/todos"
+        } else {
+            // Outras páginas (home, dublados)
+            if (page == 1) request.data else "$mainUrl/page/$page/"
+        }
+        
+        val document = app.get(url, referer = mainUrl).document
         val items = document.select(HOME_ITEM).mapNotNull { it.toSearchResponse() }
         return newHomePageResponse(request.name, items.distinctBy { it.url })
     }
@@ -187,6 +219,7 @@ class DattebayoBR : MainAPI() {
 
         val document = app.get(actualUrl).document
         val title = document.selectFirst(DETAIL_TITLE)?.text()?.trim() ?: "Sem título"
+        val isDub = isDub(title, actualUrl)
         
         // Poster
         val poster = thumbPoster ?: document.selectFirst(DETAIL_POSTER)?.attr("src")?.let { fixUrl(it) }
@@ -200,16 +233,18 @@ class DattebayoBR : MainAPI() {
         // Ano e status
         var year: Int? = null
         var totalEpisodes: Int? = null
+        var tvType = TvType.Anime
 
         document.select(DETAIL_EPISODES_INFO).forEach { element ->
             val text = element.text()
             when {
                 text.contains("Ano") -> year = text.substringAfter("Ano").trim().toIntOrNull()
                 text.contains("Episódios") -> {
-                    "(\\d+)/(\\d+)".toRegex().find(text)?.let {
-                        totalEpisodes = it.groupValues[2].toIntOrNull()
-                    }
+                    val (current, total) = extractTotalEpisodes(text)
+                    totalEpisodes = total
+                    if (total == 1) tvType = TvType.AnimeMovie
                 }
+                text.contains("Tipo") && text.contains("Filme") -> tvType = TvType.AnimeMovie
             }
         }
 
@@ -225,13 +260,14 @@ class DattebayoBR : MainAPI() {
         document.select(EPISODE_CONTAINER).select(EPISODE_ITEM).forEach { element ->
             val link = element.selectFirst(EPISODE_LINK) ?: return@forEach
             val episodeUrl = fixUrl(link.attr("href"))
-            val episodeTitle = link.attr(EPISODE_TITLE_ATTR)
-            val episodeNumber = extractEpisodeNumber(episodeTitle) ?: return@forEach
+            val episodeTitle = link.attr(EPISODE_TITLE_ATTR).takeIf { it.isNotBlank() } 
+                ?: element.selectFirst(HOME_TITLE)?.text()?.trim() ?: return@forEach
+            val episodeNumber = extractEpisodeNumber(episodeTitle) ?: 1
             val episodePoster = element.selectFirst("img")?.attr("src")?.let { fixUrl(it) }
 
             episodes.add(
                 newEpisode(episodeUrl) {
-                    name = "Episódio $episodeNumber"
+                    name = if (tvType == TvType.AnimeMovie) "Filme" else "Episódio $episodeNumber"
                     episode = episodeNumber
                     posterUrl = episodePoster ?: poster
                 }
@@ -240,13 +276,17 @@ class DattebayoBR : MainAPI() {
 
         episodes.sortBy { it.episode }
 
-        return newAnimeLoadResponse(cleanTitle(title), actualUrl, TvType.Anime) {
+        return newAnimeLoadResponse(cleanTitle(title), actualUrl, tvType) {
             this.posterUrl = poster
             this.year = year
             this.plot = synopsis
             this.tags = genres
             this.showStatus = showStatus
-            addEpisodes(DubStatus.Subbed, episodes)
+            if (isDub) {
+                addEpisodes(DubStatus.Dubbed, episodes)
+            } else {
+                addEpisodes(DubStatus.Subbed, episodes)
+            }
         }
     }
 
