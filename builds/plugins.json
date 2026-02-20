@@ -246,6 +246,28 @@
         "name": "Nexflix"
     },
     {
+        "iconUrl": "https://superflix1.cloud/wp-content/uploads/2024/07/FAVIFLIX-1-300x300.png",
+        "jarFileSize": 95974,
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/lawlietbt/lietrepo",
+        "fileSize": 27216,
+        "status": 1,
+        "language": "pt-br",
+        "authors": [
+            "lawlietbr"
+        ],
+        "tvTypes": [
+            "Movies",
+            "Series"
+        ],
+        "version": 1,
+        "internalName": "Superflix",
+        "jarUrl": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/Superflix.jar",
+        "description": "Superflix - Assistir Filmes e S\u00e9ries Online HD",
+        "url": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/Superflix.cs3",
+        "name": "Superflix"
+    },
+    {
         "iconUrl": "https://topanimes.net/wp-content/uploads/2025/11/1009988.png",
         "jarFileSize": 197404,
         "apiVersion": 1,
