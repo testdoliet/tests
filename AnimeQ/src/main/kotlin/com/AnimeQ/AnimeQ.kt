@@ -82,33 +82,34 @@ class AnimeQ : MainAPI() {
     // Cache simples para posters (evita requisições repetidas)
     private val posterCache = mutableMapOf<String, String?>()
 
-    // Categorias principais
-    private val mainCategories = mapOf(
-        "Últimos Episódios" to "$mainUrl/episodio/",
-        "Animes Mais Vistos" to "$mainUrl/",
-        "Dublado" to "$mainUrl/tipo/dublado",
-        "Legendado" to "$mainUrl/tipo/legendado",
-        "Filmes" to "$mainUrl/filme",
-        "Ação" to "$mainUrl/genre/acao",
-        "Aventura" to "$mainUrl/genre/aventura", 
-        "Animação" to "$mainUrl/genre/animacao",
-        "Drama" to "$mainUrl/genre/drama",
-        "Crime" to "$mainUrl/genre/crime",
-        "Mistério" to "$mainUrl/genre/misterio",
-        "Fantasia" to "$mainUrl/genre/fantasia",
-        "Terror" to "$mainUrl/genre/terror",
-        "Comédia" to "$mainUrl/genre/comedia",
-        "Romance" to "$mainUrl/genre/romance",
-        "Sci-Fi" to "$mainUrl/genre/ficcao-cientifica",
-        "Seinen" to "$mainUrl/genre/seinen",
-        "Shounen" to "$mainUrl/genre/shounen",
-        "Ecchi" to "$mainUrl/genre/ecchi",
-        "Esporte" to "$mainUrl/genre/esporte",
-        "Sobrenatural" to "$mainUrl/genre/sobrenatural",
-        "Vida Escolar" to "$mainUrl/genre/vida-escolar",
-        "Manhwa" to "$mainUrl/genre/Manhwa",
-        "Donghua" to "$mainUrl/genre/Donghua"
-    )
+    // Categorias principais (APENAS 5 para teste)
+private val mainCategories = mapOf(
+    "Últimos Episódios" to "$mainUrl/episodio/",
+    "Animes Mais Vistos" to "$mainUrl/",
+    "Dublado" to "$mainUrl/tipo/dublado",
+    "Legendado" to "$mainUrl/tipo/legendado",
+    "Filmes" to "$mainUrl/filme"
+    // COMENTADAS para não sobrecarregar:
+    // "Ação" to "$mainUrl/genre/acao",
+    // "Aventura" to "$mainUrl/genre/aventura", 
+    // "Animação" to "$mainUrl/genre/animacao",
+    // "Drama" to "$mainUrl/genre/drama",
+    // "Crime" to "$mainUrl/genre/crime",
+    // "Mistério" to "$mainUrl/genre/misterio",
+    // "Fantasia" to "$mainUrl/genre/fantasia",
+    // "Terror" to "$mainUrl/genre/terror",
+    // "Comédia" to "$mainUrl/genre/comedia",
+    // "Romance" to "$mainUrl/genre/romance",
+    // "Sci-Fi" to "$mainUrl/genre/ficcao-cientifica",
+    // "Seinen" to "$mainUrl/genre/seinen",
+    // "Shounen" to "$mainUrl/genre/shounen",
+    // "Ecchi" to "$mainUrl/genre/ecchi",
+    // "Esporte" to "$mainUrl/genre/esporte",
+    // "Sobrenatural" to "$mainUrl/genre/sobrenatural",
+    // "Vida Escolar" to "$mainUrl/genre/vida-escolar",
+    // "Manhwa" to "$mainUrl/genre/Manhwa",
+    // "Donghua" to "$mainUrl/genre/Donghua"
+)
 
     override val mainPage = mainPageOf(
         *mainCategories.map { (name, url) -> url to name }.toTypedArray()
