@@ -17,15 +17,15 @@ override val hasMainPage = true
 override var lang = "pt-br"
 override val hasDownloadSupport = true
 override val supportedTypes = setOf(TvType.Anime, TvType.AnimeMovie)
-override val usesWebView = false
+    override val usesWebView = false
 
-// CloudflareKiller instance
+    // CloudflareKiller instance
 private val cloudflareInterceptor = CloudflareKiller()
 
 companion object {
 private const val USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 
-// Mutex para controle de inicialização
+        // Mutex para controle de inicialização
 private val locker = Mutex()
 private var isInitialized = false
 
@@ -36,42 +36,42 @@ private var isInitialized = false
 private const val SEARCH_PATH = "/?s="
 
 // Página de episódios
-private const val EPISODE_PAGE_ITEM = ".item.se.episodes"
+        private const val EPISODE_PAGE_ITEM = ".item.se.episodes"
 
-        // Página de gêneros/categorias
-private const val GENRE_PAGE_ITEM = ".items.full .item.tvshows, .items.full .item.movies"
+// Página de gêneros/categorias
+        private const val GENRE_PAGE_ITEM = ".items.full .item.tvshows, .items.full .item.movies"
 
 // Elementos comuns
-private const val ITEM_TITLE = ".data h3 a"
-private const val ITEM_POSTER = ".poster img"
+        private const val ITEM_TITLE = ".data h3 a"
+        private const val ITEM_POSTER = ".poster img"
 private const val ITEM_LINK = "a[href]"
-private const val EPISODE_SERIE = ".data .serie"
-private const val ANIME_YEAR = ".data span"
-private const val ANIME_SCORE = ".rating"
+        private const val EPISODE_SERIE = ".data .serie"
+        private const val ANIME_YEAR = ".data span"
+        private const val ANIME_SCORE = ".rating"
 
 // Página de detalhes do anime
 private const val DETAIL_TITLE = "h1"
-private const val DETAIL_POSTER = ".poster img"
-private const val DETAIL_SYNOPSIS = ".wp-content p"
-private const val DETAIL_GENRES = ".sgeneros a[rel=tag]"
-private const val DETAIL_YEAR = ".date"
-private const val DETAIL_SCORE = ".dt_rating_vgs"
-private const val EPISODE_LIST = ".episodios li .episodiotitle a"
-private const val EPISODE_IMAGES = ".episodios li .imagen img"
-private const val EPISODE_NUMBER = ".episodios li .numerando"
+        private const val DETAIL_POSTER = ".poster img"
+        private const val DETAIL_SYNOPSIS = ".wp-content p"
+        private const val DETAIL_GENRES = ".sgeneros a[rel=tag]"
+        private const val DETAIL_YEAR = ".date"
+        private const val DETAIL_SCORE = ".dt_rating_vgs"
+        private const val EPISODE_LIST = ".episodios li .episodiotitle a"
+        private const val EPISODE_IMAGES = ".episodios li .imagen img"
+        private const val EPISODE_NUMBER = ".episodios li .numerando"
 }
 
-// Cookies persistidos após bypass do Cloudflare
+    // Cookies persistidos após bypass do Cloudflare
 private var persistedCookies: String? = null
 
-// Headers padrão para todas as requisições
+    // Headers padrão para todas as requisições
 private val defaultHeaders: Map<String, String>
 get() = mapOf(
 "User-Agent" to USER_AGENT,
-"Referer" to "$mainUrl/",
-"Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-"Accept-Language" to "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
-"Cookie" to (persistedCookies ?: "")
+            "Referer" to "$mainUrl/",
+            "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            "Accept-Language" to "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+            "Cookie" to (persistedCookies ?: "")
 )
 
     // REDUZIDO: Apenas categorias principais para teste
@@ -85,36 +85,36 @@ private val mainCategories = mapOf(
 
     // Comentado temporariamente para teste
     /*
-   private val genresMap = mapOf(
-       "Ação" to "genre/acao",
-       "Aventura" to "genre/aventura", 
-       "Animação" to "genre/animacao",
-       "Drama" to "genre/drama",
-       "Crime" to "genre/crime",
-       "Mistério" to "genre/misterio",
-       "Fantasia" to "genre/fantasia",
-       "Terror" to "genre/terror",
-       "Comédia" to "genre/comedia",
-       "Romance" to "genre/romance",
-       "Sci-Fi" to "genre/ficcao-cientifica",
-       "Seinen" to "genre/seinen",
-       "Shounen" to "genre/shounen",
-       "Ecchi" to "genre/ecchi",
-       "Esporte" to "genre/esporte",
-       "Sobrenatural" to "genre/sobrenatural",
-       "Vida Escolar" to "genre/vida-escolar"
-   )
+private val genresMap = mapOf(
+"Ação" to "genre/acao",
+"Aventura" to "genre/aventura", 
+"Animação" to "genre/animacao",
+"Drama" to "genre/drama",
+"Crime" to "genre/crime",
+"Mistério" to "genre/misterio",
+"Fantasia" to "genre/fantasia",
+"Terror" to "genre/terror",
+"Comédia" to "genre/comedia",
+"Romance" to "genre/romance",
+"Sci-Fi" to "genre/ficcao-cientifica",
+"Seinen" to "genre/seinen",
+"Shounen" to "genre/shounen",
+"Ecchi" to "genre/ecchi",
+"Esporte" to "genre/esporte",
+"Sobrenatural" to "genre/sobrenatural",
+"Vida Escolar" to "genre/vida-escolar"
+)
 
-   private val typeMap = mapOf(
-       "Legendado" to "tipo/legendado",
-       "Dublado" to "tipo/dublado"
-   )
+private val typeMap = mapOf(
+"Legendado" to "tipo/legendado",
+"Dublado" to "tipo/dublado"
+)
 
-   private val specialCategories = mapOf(
-       "Filmes" to "filme",
-       "Manhwa" to "genre/Manhwa",
-       "Donghua" to "genre/Donghua"
-   )
+private val specialCategories = mapOf(
+"Filmes" to "filme",
+"Manhwa" to "genre/Manhwa",
+"Donghua" to "genre/Donghua"
+)
     */
 
 override val mainPage = mainPageOf(
@@ -125,12 +125,12 @@ override val mainPage = mainPageOf(
         // *specialCategories.map { (cat, slug) -> "$mainUrl/$slug" to cat }.toTypedArray()
 )
 
-/**
-    * Função centralizada para fazer requisições com tratamento Cloudflare
-    */
-private suspend fun request(url: String, debugTag: String = "REQUEST"): Document {
+    /**
+     * Função centralizada para fazer requisições com tratamento Cloudflare
+     */
+    private suspend fun request(url: String, debugTag: String = "REQUEST"): Document {
         val startTime = System.currentTimeMillis()
-println("🔵 [$debugTag] Iniciando requisição para: $url")
+        println("🔵 [$debugTag] Iniciando requisição para: $url")
 
         try {
             // Inicialização do Cloudflare (apenas na primeira vez)
@@ -139,7 +139,7 @@ println("🔵 [$debugTag] Iniciando requisição para: $url")
                     if (!isInitialized) {
                         try {
                             println("🟡 [$debugTag] Primeira requisição - tentando resolver Cloudflare para: $mainUrl")
-
+                            
                             // Requisição inicial com timeout
                             val resMain = withTimeoutOrNull(REQUEST_TIMEOUT_MS) {
                                 app.get(
@@ -149,7 +149,7 @@ println("🔵 [$debugTag] Iniciando requisição para: $url")
                                     timeout = 30
                                 )
 }
-
+                            
                             if (resMain == null) {
                                 println("⚠️ [$debugTag] TIMEOUT na requisição inicial após ${REQUEST_TIMEOUT_MS}ms")
                                 return@withLock
@@ -206,17 +206,17 @@ println("🔵 [$debugTag] Iniciando requisição para: $url")
                 println("⚠️ [$debugTag] TIMEOUT após ${REQUEST_TIMEOUT_MS}ms - retornando documento vazio")
                 return Document("")
             }
-
-println("🟢 [$debugTag] Resposta OK - Código: ${response.code}, Tamanho: ${response.text.length} chars")
-
+            
+            println("🟢 [$debugTag] Resposta OK - Código: ${response.code}, Tamanho: ${response.text.length} chars")
+            
             // Preview do HTML para debug (primeiros 200 caracteres)
-if (response.text.length > 200) {
+            if (response.text.length > 200) {
                 println("📄 [$debugTag] Preview HTML: ${response.text.substring(0, 200).replace("\n", " ")}...")
-}
-
+            }
+            
             return response.document
             
-} catch (e: Exception) {
+        } catch (e: Exception) {
             val elapsed = System.currentTimeMillis() - startTime
             println("🔴 [$debugTag] Erro após ${elapsed}ms: ${e.message}")
             
@@ -282,12 +282,12 @@ title.contains("dublados", true) ||
 title.contains("dubladas", true)
 }
 
-private fun Element.toEpisodeSearchResponse(): AnimeSearchResponse? {
+    private fun Element.toEpisodeSearchResponse(): AnimeSearchResponse? {
 val href = selectFirst(ITEM_LINK)?.attr("href") ?: return null
 val episodeTitle = selectFirst(ITEM_TITLE)?.text()?.trim() ?: return null
-val episodeNumber = extractEpisodeNumber(episodeTitle)
+        val episodeNumber = extractEpisodeNumber(episodeTitle)
 val animeTitle = extractAnimeTitleFromEpisode(episodeTitle)
-val posterUrl = selectFirst(ITEM_POSTER)?.attr("src")?.let { fixUrl(it) }
+        val posterUrl = selectFirst(ITEM_POSTER)?.attr("src")?.let { fixUrl(it) }
 val isDubbed = isDubbed(episodeTitle)
 val serieName = selectFirst(EPISODE_SERIE)?.text()?.trim() ?: animeTitle
 
@@ -297,16 +297,16 @@ return newAnimeSearchResponse(cleanTitle, fixUrl(href)) {
 this.posterUrl = posterUrl
 this.type = TvType.Anime
 
-val dubStatus = if (isDubbed) DubStatus.Dubbed else DubStatus.Subbed
-addDubStatus(dubStatus, episodeNumber)
+            val dubStatus = if (isDubbed) DubStatus.Dubbed else DubStatus.Subbed
+            addDubStatus(dubStatus, episodeNumber)
 }
 }
 
-private fun Element.toAnimeSearchResponse(): AnimeSearchResponse? {
+    private fun Element.toAnimeSearchResponse(): AnimeSearchResponse? {
 val href = selectFirst(ITEM_LINK)?.attr("href") ?: return null
 val rawTitle = selectFirst(ITEM_TITLE)?.text()?.trim() ?: return null
 val cleanedTitle = cleanTitle(rawTitle).ifBlank { return null }
-val posterUrl = selectFirst(ITEM_POSTER)?.attr("src")?.let { fixUrl(it) }
+        val posterUrl = selectFirst(ITEM_POSTER)?.attr("src")?.let { fixUrl(it) }
 val isDubbed = isDubbed(rawTitle)
 val year = selectFirst(ANIME_YEAR)?.text()?.trim()?.toIntOrNull()
 val scoreText = selectFirst(ANIME_SCORE)?.text()?.trim()
@@ -323,7 +323,7 @@ this.posterUrl = posterUrl
 this.type = type
 this.year = year
 this.score = score
-addDubStatus(isDubbed, null)
+            addDubStatus(isDubbed, null)
 }
 }
 
@@ -333,9 +333,9 @@ request: MainPageRequest
 ): HomePageResponse {
 val baseUrl = request.data
 var url = baseUrl
-val tag = "MAINPAGE-${request.name}"
+        val tag = "MAINPAGE-${request.name}"
 
-println("🏠 [$tag] Carregando página principal - Página: $page, URL base: $baseUrl")
+        println("🏠 [$tag] Carregando página principal - Página: $page, URL base: $baseUrl")
 
 if (page > 1) {
 url = when {
@@ -344,7 +344,7 @@ baseUrl == "$mainUrl/" -> baseUrl
 baseUrl.contains("/?s=") -> baseUrl.replace("/?s=", "/page/$page/?s=")
 else -> "$baseUrl/page/$page/"
 }
-println("🏠 [$tag] URL com paginação: $url")
+            println("🏠 [$tag] URL com paginação: $url")
 }
 
         return try {
@@ -363,7 +363,7 @@ println("🏠 [$tag] URL com paginação: $url")
                     println("🏠 [$tag] Encontrados ${episodeElements.size} episódios")
                     
                     val items = episodeElements
-.mapNotNull { it.toEpisodeSearchResponse() }
+                        .mapNotNull { it.toEpisodeSearchResponse() }
 .distinctBy { it.url }
                     
                     println("🏠 [$tag] Processados ${items.size} itens")
@@ -372,7 +372,7 @@ println("🏠 [$tag] URL com paginação: $url")
                         list = HomePageList(request.name, items, isHorizontalImages = true),
                         hasNext = episodeElements.isNotEmpty()
                     )
-                }
+}
                 "Animes Mais Vistos" -> {
                     println("🏠 [$tag] Processando Animes Mais Vistos")
                     val popularItems = mutableListOf<AnimeSearchResponse>()
@@ -445,11 +445,11 @@ println("🏠 [$tag] URL com paginação: $url")
 
 override suspend fun search(query: String): List<SearchResponse> {
 if (query.length < 2) return emptyList()
-
-println("🔍 [SEARCH] Buscando por: $query")
-
-val searchUrl = "$mainUrl$SEARCH_PATH${query.replace(" ", "+")}"
-val document = request(searchUrl, "SEARCH")
+        
+        println("🔍 [SEARCH] Buscando por: $query")
+        
+        val searchUrl = "$mainUrl$SEARCH_PATH${query.replace(" ", "+")}"
+        val document = request(searchUrl, "SEARCH")
 
         // Se documento vazio, retorna lista vazia
         if (document.text().isBlank()) {
@@ -457,25 +457,25 @@ val document = request(searchUrl, "SEARCH")
             return emptyList()
         }
 
-val results = document.select(".item.tvshows, .item.movies, .item.se.episodes")
+        val results = document.select(".item.tvshows, .item.movies, .item.se.episodes")
 .mapNotNull { element ->
-if (element.hasClass("episodes")) {
+                if (element.hasClass("episodes")) {
 element.toEpisodeSearchResponse()
 } else {
 element.toAnimeSearchResponse()
 }
 }
 .distinctBy { it.url }
-
-println("🔍 [SEARCH] Encontrados ${results.size} resultados para '$query'")
-
-return results
+        
+        println("🔍 [SEARCH] Encontrados ${results.size} resultados para '$query'")
+        
+        return results
 }
 
 override suspend fun load(url: String): LoadResponse {
 println("📺 [LOAD] Carregando detalhes de: $url")
-
-val document = request(url, "LOAD")
+        
+        val document = request(url, "LOAD")
         
         // Se documento vazio, retorna resposta básica
         if (document.text().isBlank()) {
@@ -487,9 +487,9 @@ val document = request(url, "LOAD")
 
 val rawTitle = document.selectFirst(DETAIL_TITLE)?.text()?.trim() ?: "Sem Título"
 val title = cleanTitle(rawTitle)
-println("📺 [LOAD] Título: $title")
+        println("📺 [LOAD] Título: $title")
 
-val poster = document.selectFirst(DETAIL_POSTER)?.attr("src")?.let { fixUrl(it) }
+        val poster = document.selectFirst(DETAIL_POSTER)?.attr("src")?.let { fixUrl(it) }
 println("📺 [LOAD] Poster: $poster")
 
 var synopsis = "Sinopse não disponível."
@@ -519,13 +519,13 @@ break
 }
 }
 }
-
+        
 println("📺 [LOAD] Sinopse: ${synopsis.take(100)}...")
 
 val genres = document.select(DETAIL_GENRES)
 .mapNotNull { it.text().trim() }
 .filter { !it.contains("Letra") && !it.contains("tipo") }
-
+        
 println("📺 [LOAD] Gêneros: $genres")
 
 var year: Int? = null
@@ -542,11 +542,11 @@ if (scoreText != null) {
 val scoreValue = scoreText.toFloatOrNull()
 score = scoreValue?.let { Score.from10(it) }
 }
-println("📺 [LOAD] Nota: $score")
+        println("📺 [LOAD] Nota: $score")
 
 val isDubbed = rawTitle.contains("dublado", true) || url.contains("dublado", true)
 val isMovie = url.contains("/filme/") || rawTitle.contains("filme", true)
-
+        
 println("📺 [LOAD] É filme? $isMovie")
 println("📺 [LOAD] É dublado? $isDubbed")
 
@@ -554,8 +554,8 @@ val episodesList = if (!isMovie) {
 val episodeElements = document.select(EPISODE_LIST)
 val episodeImages = document.select(EPISODE_IMAGES)
 val episodeNumbers = document.select(EPISODE_NUMBER)
-
-println("📺 [LOAD] Encontrados ${episodeElements.size} episódios")
+            
+            println("📺 [LOAD] Encontrados ${episodeElements.size} episódios")
 
 episodeElements.mapIndexed { index, element ->
 val episodeTitle = element.text().trim()
@@ -576,7 +576,7 @@ epNumber = extractedNumber
 
 var episodePoster: String? = null
 if (index < episodeImages.size) {
-episodePoster = episodeImages[index].attr("src")?.let { fixUrl(it) }
+                    episodePoster = episodeImages[index].attr("src")?.let { fixUrl(it) }
 }
 
 newEpisode(episodeUrl) {
@@ -599,7 +599,7 @@ ShowStatus.Completed
 } else {
 ShowStatus.Ongoing
 }
-
+        
 println("📺 [LOAD] Status: $showStatus")
 println("📺 [LOAD] Total de episódios: ${episodesList.size}")
 
@@ -623,7 +623,7 @@ isCasting: Boolean,
 subtitleCallback: (SubtitleFile) -> Unit,
 callback: (ExtractorLink) -> Unit
 ): Boolean {
-println("🔗 [LINKS] Extraindo links de: $data")
+        println("🔗 [LINKS] Extraindo links de: $data")
 return AnimeQVideoExtractor.extractVideoLinks(data, callback = callback)
 }
 }
