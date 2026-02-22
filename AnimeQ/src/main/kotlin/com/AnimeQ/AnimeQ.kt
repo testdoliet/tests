@@ -480,8 +480,10 @@ class AnimeQ : MainAPI() {
         if (scoreText != null) {
             val scoreValue = scoreText.toFloatOrNull()
             score = scoreValue?.let { Score.from10(it) }
+            println("📺 [LOAD] Nota: $scoreValue")
+        } else {
+            println("📺 [LOAD] Nota: não disponível")
         }
-        println("📺 [LOAD] Nota: ${scoreValue}")
 
         val isDubbed = rawTitle.contains("dublado", true) || url.contains("dublado", true)
         val isMovie = url.contains("/filme/") || rawTitle.contains("filme", true)
