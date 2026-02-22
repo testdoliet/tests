@@ -30,7 +30,7 @@ class AnimeQ : MainAPI() {
         private var isInitialized = false
         
         // Timeout global para requisições (15 segundos)
-        private const val REQUEST_TIMEOUT_MS = 15000L
+        private const val REQUEST_TIMEOUT_MS = 30000L
         
         // Página de busca
         private const val SEARCH_PATH = "/?s="
