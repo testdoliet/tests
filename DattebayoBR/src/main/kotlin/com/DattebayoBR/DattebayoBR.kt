@@ -23,7 +23,11 @@ class DattebayoBR : MainAPI() {
     override val hasMainPage = true
     override var lang = "pt-br"
     override val hasDownloadSupport = true
-    override val supportedTypes = setOf(TvType.Anime, TvType.AnimeMovie)
+    override val supportedTypes = setOf(
+        TvType.Anime, 
+        TvType.AnimeMovie,
+        TvType.TvSeries  // Para doramas
+    )
     override val usesWebView = false
 
     companion object {
@@ -79,8 +83,19 @@ class DattebayoBR : MainAPI() {
     }
 
     private fun extractEpisodeNumber(title: String): Int? {
-        return "ep(?:is[oó]dio)?\\s*(\\d+)".toRegex(RegexOption.IGNORE_CASE)
+        // Tenta extrair de "Episódio 1" ou "Episódio 01"
+        val fromEpisodio = "ep(?:is[oó]dio)?\\s*(\\d+)".toRegex(RegexOption.IGNORE_CASE)
             .find(title)?.groupValues?.get(1)?.toIntOrNull()
+        if (fromEpisodio != null) return fromEpisodio
+        
+        // Tenta extrair de "18 Again - 01" (formato comum em doramas)
+        val fromDash = "-\\s*(\\d+)".toRegex().find(title)?.groupValues?.get(1)?.toIntOrNull()
+        if (fromDash != null) return fromDash
+        
+        // Tenta extrair qualquer número no final do título
+        val numberAtEnd = "\\b(\\d+)\\s*$".toRegex().find(title)?.groupValues?.get(1)?.toIntOrNull()
+        
+        return numberAtEnd
     }
 
     private fun extractTotalEpisodes(text: String): Pair<Int?, Int?> {
@@ -160,15 +175,18 @@ class DattebayoBR : MainAPI() {
         val tipo = selectFirst(HOME_TIPO)?.text()?.trim()
         val isDub = isDub(title, href)
 
+        // Detectar se é dorama pela URL
+        val isDorama = href.contains("/doramas/")
+        
+        // Passa o poster junto na URL para usar em load()
+        val urlWithPoster = if (poster != null) "$href|poster=$poster" else href
+
         return if (episodeNum != null) {
             // É um episódio
             val epNumber = extractEpisodeNumber(title) ?: 1
             val animeName = cleanTitle(title)
             
-            // Passa o poster junto na URL para usar em load()
-            val urlWithPoster = if (poster != null) "$href|poster=$poster" else href
-            
-            newAnimeSearchResponse(animeName, urlWithPoster, TvType.Anime) {
+            newAnimeSearchResponse(animeName, urlWithPoster, if (isDorama) TvType.TvSeries else TvType.Anime) {
                 this.posterUrl = poster
                 if (isDub) {
                     addDubStatus(DubStatus.Dubbed, epNumber)
@@ -177,8 +195,8 @@ class DattebayoBR : MainAPI() {
                 }
             }
         } else {
-            // É um anime
-            newAnimeSearchResponse(cleanTitle(title), href, TvType.Anime) {
+            // É um anime/dorama
+            newAnimeSearchResponse(cleanTitle(title), urlWithPoster, if (isDorama) TvType.TvSeries else TvType.Anime) {
                 this.posterUrl = poster
                 if (isDub) {
                     addDubStatus(DubStatus.Dubbed, null)
@@ -280,6 +298,9 @@ class DattebayoBR : MainAPI() {
         val title = document.selectFirst(DETAIL_TITLE)?.text()?.trim() ?: "Sem título"
         val isDub = isDub(title, actualUrl)
         
+        // Detectar se é dorama pela URL
+        val isDorama = actualUrl.contains("/doramas/")
+        
         // Poster
         val poster = thumbPoster ?: document.selectFirst(DETAIL_POSTER)?.attr("src")?.let { fixUrl(it) }
         
@@ -292,7 +313,7 @@ class DattebayoBR : MainAPI() {
         // Ano e status
         var year: Int? = null
         var totalEpisodes: Int? = null
-        var tvType = TvType.Anime
+        var tvType = if (isDorama) TvType.TvSeries else TvType.Anime
 
         document.select(DETAIL_EPISODES_INFO).forEach { element ->
             val text = element.text()
@@ -302,8 +323,8 @@ class DattebayoBR : MainAPI() {
                     val (current, total) = extractTotalEpisodes(text)
                     totalEpisodes = total
                 }
-                // Verifica se é filme pelo texto "Tipo" no elemento
-                text.contains("Tipo") && text.contains("Filme", ignoreCase = true) -> {
+                // Verifica se é filme pelo texto "Tipo" no elemento (só para animes)
+                !isDorama && text.contains("Tipo") && text.contains("Filme", ignoreCase = true) -> {
                     tvType = TvType.AnimeMovie
                 }
             }
@@ -316,26 +337,43 @@ class DattebayoBR : MainAPI() {
             ShowStatus.Ongoing
         }
 
-        // Lista de episódios
+        // Lista de episódios - CORRIGIDO para pegar TODOS os episódios
         val episodes = mutableListOf<Episode>()
-        document.select(EPISODE_CONTAINER).select(EPISODE_ITEM).forEach { element ->
-            val link = element.selectFirst(EPISODE_LINK) ?: return@forEach
+        
+        document.select(EPISODE_CONTAINER).select(EPISODE_ITEM).forEachIndexed { index, element ->
+            val link = element.selectFirst(EPISODE_LINK)
+            if (link == null) {
+                println("⚠️ Episódio sem link encontrado, pulando...")
+                return@forEachIndexed
+            }
+            
             val episodeUrl = fixUrl(link.attr("href"))
             val episodeTitle = link.attr(EPISODE_TITLE_ATTR).takeIf { it.isNotBlank() } 
-                ?: element.selectFirst(HOME_TITLE)?.text()?.trim() ?: return@forEach
-            val episodeNumber = extractEpisodeNumber(episodeTitle) ?: 1
+                ?: element.selectFirst(HOME_TITLE)?.text()?.trim()
+            
+            if (episodeTitle.isNullOrBlank()) {
+                println("⚠️ Episódio sem título, pulando...")
+                return@forEachIndexed
+            }
+            
+            // Tenta extrair número do episódio, se não conseguir, usa o índice + 1
+            val episodeNumber = extractEpisodeNumber(episodeTitle) ?: (index + 1)
             val episodePoster = element.selectFirst("img")?.attr("src")?.let { fixUrl(it) }
 
             episodes.add(
                 newEpisode(episodeUrl) {
-                    name = if (tvType == TvType.AnimeMovie) "Filme" else "Episódio $episodeNumber"
+                    name = if (tvType == TvType.AnimeMovie) "Filme" 
+                           else "Episódio $episodeNumber"
                     episode = episodeNumber
                     posterUrl = episodePoster ?: poster
                 }
             )
         }
 
+        // Ordenar episódios por número
         episodes.sortBy { it.episode }
+        
+        println("✅ Total de episódios encontrados: ${episodes.size}")
 
         return newAnimeLoadResponse(cleanTitle(title), actualUrl, tvType) {
             this.posterUrl = poster
