@@ -18,8 +18,8 @@ class HinataSoulPlugin : Plugin() {
 }
 
 class HinataSoul : MainAPI() {
-    override var mainUrl = "hinatasoul.com"
-    override var name = "HinataSoul"
+    override var mainUrl = "https://hinatasoul.com"
+    override var name = "Hinata Soul"
     override val hasMainPage = true
     override var lang = "pt-br"
     override val hasDownloadSupport = true
