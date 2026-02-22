@@ -24,12 +24,14 @@ object AnimeQVideoExtractor {
     private val cfKiller = CloudflareKiller()
     private const val USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 
+    // 🔥 AGORA SÓ 2 PARÂMETROS (igual seu load espera)
     suspend fun extractVideoLinks(
         url: String,
-        mainUrl: String,
-        name: String,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
+        val mainUrl = "https://animeq.net"  // Fixo
+        val name = "AnimeQ"                  // Fixo
+        
         return try {
             val document = app.get(url, interceptor = cfKiller, headers = mapOf("User-Agent" to USER_AGENT)).document
             val playerOptions = document.select("ul#playeroptionsul li.dooplay_player_option")
@@ -62,17 +64,17 @@ object AnimeQVideoExtractor {
                                 if (embedUrl.contains("source=") && (embedUrl.contains(".mp4") || embedUrl.contains(".m3u8"))) {
                                     Regex("source=([^&]+)").find(embedUrl)?.groupValues?.get(1)?.let {
                                         val directUrl = URLDecoder.decode(it, "UTF-8")
-                                        callback(newExtractorLink("AnimesCloud $title", "AnimesCloud $title", directUrl, ExtractorLinkType.VIDEO) { this.referer = mainUrl })
+                                        callback(newExtractorLink("AnimeQ $title", "AnimeQ $title", directUrl, ExtractorLinkType.VIDEO) { this.referer = mainUrl })
                                         hasValidLinks = true
                                     }
                                 } else if (embedUrl.contains("animeshd.cloud")) {
                                     val extractor = AnimesHD()
-                                    extractor.name = "AnimesCloud $title"
+                                    extractor.name = "AnimeQ $title"
                                     extractor.getUrl(embedUrl, mainUrl, { }, callback)
                                     hasValidLinks = true
                                 } else if (embedUrl.contains("animes.strp2p.com")) {
                                     val extractor = AnimesSTRP()
-                                    extractor.name = "AnimesCloud $title"
+                                    extractor.name = "AnimeQ $title"
                                     extractor.getUrl(embedUrl, mainUrl, { }, callback)
                                     hasValidLinks = true
                                 }
