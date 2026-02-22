@@ -22,10 +22,10 @@
     },
     {
         "iconUrl": "https://animeq.net/wp-content/uploads/2025/06/Favicon-AnimeQ-1-150x150.png",
-        "jarFileSize": 136966,
+        "jarFileSize": 125956,
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/lawlietbt/lietrepo",
-        "fileSize": 42901,
+        "fileSize": 40073,
         "status": 1,
         "language": "pt-br",
         "authors": [
@@ -218,6 +218,27 @@
         "description": "Animes Online em HD gratuitamente no Goyabu",
         "url": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/Goyabu.cs3",
         "name": "Goyabu"
+    },
+    {
+        "iconUrl": "https://www.hinatasoul.com/favicon.png",
+        "jarFileSize": 75923,
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/lawlietbt/lietrepo",
+        "fileSize": 27406,
+        "status": 1,
+        "language": "pt-br",
+        "authors": [
+            "lawlietbr"
+        ],
+        "tvTypes": [
+            "Anime, AsianDrama"
+        ],
+        "version": 1,
+        "internalName": "HinataSoul",
+        "jarUrl": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/HinataSoul.jar",
+        "description": "hinatasoul.com",
+        "url": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/HinataSoul.cs3",
+        "name": "HinataSoul"
     },
     {
         "iconUrl": "https://mendigoflix.lol/assets/favicon.png",
