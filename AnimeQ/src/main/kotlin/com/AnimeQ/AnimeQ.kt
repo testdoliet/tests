@@ -87,16 +87,11 @@ class AnimeQ : MainAPI() {
             "Cookie" to (persistedCookies ?: "")
         )
 
-    // Função para fixar URL normal (usa o fixUrl da classe base)
-    private fun fixNormalUrl(url: String?): String? {
-        return url?.let { super.fixUrl(it) }
-    }
-
     // Função para fixar URL com headers para imagens
     private fun fixImageUrl(url: String?): String? {
         return url?.let {
-            // Primeiro, fixa a URL normal
-            val fixedUrl = super.fixUrl(it)
+            // Primeiro, fixa a URL usando a função da classe base
+            val fixedUrl = this.fixUrl(it)
             
             // Depois adiciona headers se for imagem
             if (fixedUrl.contains(".jpg") || fixedUrl.contains(".png") || 
@@ -275,7 +270,7 @@ class AnimeQ : MainAPI() {
 
         val cleanTitle = cleanTitle(serieName)
 
-        return newAnimeSearchResponse(cleanTitle, fixNormalUrl(href) ?: "") {
+        return newAnimeSearchResponse(cleanTitle, this@AnimeQ.fixUrl(href)) {
             this.posterUrl = posterUrl
             this.type = TvType.Anime
 
@@ -300,7 +295,7 @@ class AnimeQ : MainAPI() {
         val isMovie = href.contains("/filme/") || cleanedTitle.contains("filme", true)
         val type = if (isMovie) TvType.AnimeMovie else TvType.Anime
 
-        return newAnimeSearchResponse(cleanedTitle, fixNormalUrl(href) ?: "") {
+        return newAnimeSearchResponse(cleanedTitle, this@AnimeQ.fixUrl(href)) {
             this.posterUrl = posterUrl
             this.type = type
             this.year = year
