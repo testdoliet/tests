@@ -57,7 +57,7 @@ object AnimeQVideoExtractor {
             println("[AnimeQ] 🔍 Tentando players 1 e 2...")
             var foundAny = false
 
-            // Player 1 (Mobile) - IGNORAR IGUAL ANIMESCLOUD
+            // Player 1 
             println("[AnimeQ] 🎯 Tentando player option 1...")
             val success1 = tryPlayerApi(postId, 1, url, name) { extractorLink ->
                 println("[AnimeQ] ✅ Adicionando link do player 1")
@@ -70,7 +70,7 @@ object AnimeQVideoExtractor {
                 println("[AnimeQ] ❌ Player 1 não encontrou links")
             }
 
-            // Player 2 (FullHD/HLS)
+            // Player 2
             println("[AnimeQ] 🎯 Tentando player option 2...")
             val success2 = tryPlayerApi(postId, 2, url, name) { extractorLink ->
                 println("[AnimeQ] ✅ Adicionando link do player 2")
@@ -192,8 +192,8 @@ object AnimeQVideoExtractor {
         }
     }
     
-    // 9️⃣ SEUS MÉTODOS EXISTENTES (inalterados)
-    private fun handleDirectSource(
+    // 9️⃣ handleDirectSource AGORA É SUSPEND
+    private suspend fun handleDirectSource(
         embedUrl: String,
         playerOption: Int,
         referer: String,
@@ -213,7 +213,7 @@ object AnimeQVideoExtractor {
                 val quality = determineQualityFromUrl(videoUrl, playerOption)
                 val qualityLabel = getQualityLabel(quality)
                 
-                callback(newExtractorLink(
+                val link = newExtractorLink(
                     source = "AnimeQ",
                     name = "$name ($qualityLabel)",
                     url = videoUrl,
@@ -222,7 +222,8 @@ object AnimeQVideoExtractor {
                     this.referer = referer
                     this.quality = quality
                     this.headers = mapOf("Referer" to referer, "User-Agent" to USER_AGENT)
-                })
+                }
+                callback(link)
                 return true
             }
             return false
@@ -232,6 +233,7 @@ object AnimeQVideoExtractor {
         }
     }
     
+    // 🔟 handleBlogger AGORA É SUSPEND
     private suspend fun handleBlogger(
         bloggerUrl: String,
         referer: String,
@@ -262,7 +264,7 @@ object AnimeQVideoExtractor {
                     val itag = itagPattern.find(videoUrl)?.groupValues?.get(1)?.toIntOrNull() ?: 18
                     val quality = itagQualityMap[itag] ?: 360
                     
-                    callback(newExtractorLink(
+                    val link = newExtractorLink(
                         source = "AnimeQ",
                         name = "$name (${getQualityLabel(quality)})",
                         url = videoUrl,
@@ -271,7 +273,8 @@ object AnimeQVideoExtractor {
                         this.referer = bloggerUrl
                         this.quality = quality
                         this.headers = mapOf("Referer" to bloggerUrl, "User-Agent" to USER_AGENT)
-                    })
+                    }
+                    callback(link)
                     found = true
                 }
                 return found
