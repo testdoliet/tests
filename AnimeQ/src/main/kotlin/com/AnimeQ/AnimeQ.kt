@@ -7,7 +7,6 @@ import org.jsoup.nodes.Element
 import org.jsoup.nodes.Document
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.withTimeoutOrNull
 import java.net.URI
 
 class AnimeQ : MainAPI() {
@@ -27,8 +26,6 @@ class AnimeQ : MainAPI() {
         private var isInitialized = false
         private val posterLock = Mutex()
         private var requestCounter = 0
-        
-        // ⚠️ REMOVER: const val REQUEST_TIMEOUT_MS = 30000L
         
         private const val SEARCH_PATH = "/?s="
         private const val EPISODE_PAGE_ITEM = ".item.se.episodes"
@@ -61,7 +58,7 @@ class AnimeQ : MainAPI() {
             "Cookie" to (persistedCookies ?: "")
         )
 
-    // 1️⃣ MUDANÇA: APENAS 2 CATEGORIAS (Dublados e Legendados)
+    // Apenas 2 categorias igual ao AnimesCloud
     private val mainCategories = mapOf(
         "Dublado" to "$mainUrl/tipo/dublado",
         "Legendado" to "$mainUrl/tipo/legendado"
@@ -71,8 +68,7 @@ class AnimeQ : MainAPI() {
         *mainCategories.map { (name, url) -> url to name }.toTypedArray()
     )
 
-    // 2️⃣ MUDANÇA: FUNÇÃO DE POSTER IGUAL AO ANIMESCLOUD
-    // delay(111) e APENAS APIs (sem fallback)
+    // Função para buscar poster em APIs externas (Kitsu/Jikan)
     private suspend fun getPosterFromApi(title: String?): String? {
         if (title.isNullOrBlank()) return null
         
@@ -85,7 +81,6 @@ class AnimeQ : MainAPI() {
         if (cleanTitle.length < 3) return null
 
         return posterLock.withLock {
-            // ✅ delay(111) igual ao AnimesCloud
             kotlinx.coroutines.delay(111)
             
             val turn = requestCounter % 9
@@ -114,9 +109,8 @@ class AnimeQ : MainAPI() {
         }
     }
 
-    // 3️⃣ MUDANÇA: REQUEST SEM withTimeout (timeout 60 segundos direto no app.get)
+    // Função request simplificada (igual AnimesCloud)
     private suspend fun request(url: String, debugTag: String = "REQUEST"): Document {
-        val startTime = System.currentTimeMillis()
         println("🔵 [$debugTag] Iniciando requisição para: $url")
         
         try {
@@ -126,7 +120,6 @@ class AnimeQ : MainAPI() {
                         try {
                             println("🟡 [$debugTag] Primeira requisição - tentando resolver Cloudflare para: $mainUrl")
                             
-                            // ✅ SEM withTimeout, timeout 60 igual ao AnimesCloud
                             val resMain = app.get(
                                 url = mainUrl, 
                                 headers = mapOf("User-Agent" to USER_AGENT), 
@@ -159,7 +152,6 @@ class AnimeQ : MainAPI() {
 
             println("🟡 [$debugTag] Fazendo requisição principal: $url")
             
-            // ✅ SEM withTimeout, timeout 60 igual ao AnimesCloud
             val response = app.get(
                 url = url, 
                 headers = defaultHeaders, 
@@ -167,10 +159,7 @@ class AnimeQ : MainAPI() {
                 timeout = 60
             )
             
-            val elapsed = System.currentTimeMillis() - startTime
-            println("⏱️ [$debugTag] Tempo total: ${elapsed}ms")
             println("🟢 [$debugTag] Resposta OK - Código: ${response.code}, Tamanho: ${response.text.length} chars")
-            
             return response.document
             
         } catch (e: Exception) {
@@ -228,7 +217,6 @@ class AnimeQ : MainAPI() {
                title.contains("dubladas", true)
     }
 
-    // 4️⃣ MUDANÇA: Usar apenas API, SEM fallback para site
     private suspend fun Element.toEpisodeSearchResponse(): AnimeSearchResponse? {
         val href = selectFirst(ITEM_LINK)?.attr("href") ?: return null
         val episodeTitle = selectFirst(ITEM_TITLE)?.text()?.trim() ?: return null
@@ -238,19 +226,16 @@ class AnimeQ : MainAPI() {
         val serieName = selectFirst(EPISODE_SERIE)?.text()?.trim() ?: animeTitle
 
         val cleanTitle = cleanTitle(serieName)
-        
-        // ✅ APENAS API, sem fallback
-        val posterUrl = getPosterFromApi(cleanTitle)
+        val poster = getPosterFromApi(cleanTitle)
 
         return newAnimeSearchResponse(cleanTitle, fixUrl(href)) {
-            this.posterUrl = posterUrl
+            this.posterUrl = poster
             this.type = TvType.Anime
             val dubStatus = if (isDubbed) DubStatus.Dubbed else DubStatus.Subbed
             addDubStatus(dubStatus, episodeNumber)
         }
     }
 
-    // 5️⃣ MUDANÇA: Usar apenas API, SEM fallback para site
     private suspend fun Element.toAnimeSearchResponse(): AnimeSearchResponse? {
         val href = selectFirst(ITEM_LINK)?.attr("href") ?: return null
         val rawTitle = selectFirst(ITEM_TITLE)?.text()?.trim() ?: return null
@@ -266,11 +251,10 @@ class AnimeQ : MainAPI() {
         val isMovie = href.contains("/filme/") || cleanedTitle.contains("filme", true)
         val type = if (isMovie) TvType.AnimeMovie else TvType.Anime
         
-        // ✅ APENAS API, sem fallback
-        val posterUrl = getPosterFromApi(cleanedTitle)
+        val poster = getPosterFromApi(cleanedTitle)
 
         return newAnimeSearchResponse(cleanedTitle, fixUrl(href)) {
-            this.posterUrl = posterUrl
+            this.posterUrl = poster
             this.type = type
             this.year = year
             this.score = score
@@ -278,10 +262,7 @@ class AnimeQ : MainAPI() {
         }
     }
 
-    override suspend fun getMainPage(
-        page: Int,
-        request: MainPageRequest
-    ): HomePageResponse {
+    override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val baseUrl = request.data
         var url = baseUrl
         val tag = "MAINPAGE-${request.name}"
@@ -374,170 +355,170 @@ class AnimeQ : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-    if (query.length < 2) return emptyList()
-    
-    println("🔍 [SEARCH] Buscando por: $query")
-    
-    val searchUrl = "$mainUrl/?s=${query.replace(" ", "+")}"
-    val document = request(searchUrl, "SEARCH")
+        if (query.length < 2) return emptyList()
+        
+        println("🔍 [SEARCH] Buscando por: $query")
+        
+        val searchUrl = "$mainUrl/?s=${query.replace(" ", "+")}"
+        val document = request(searchUrl, "SEARCH")
 
-    if (document.text().isBlank()) {
-        println("⚠️ [SEARCH] Documento vazio")
-        return emptyList()
-    }
+        if (document.text().isBlank()) {
+            println("⚠️ [SEARCH] Documento vazio")
+            return emptyList()
+        }
 
-    return document.select("div.search-page div.result-item article").mapNotNull { item ->
-        try {
-            val titleElement = item.selectFirst("div.details div.title a") ?: return@mapNotNull null
-            val title = titleElement.text().trim()
-            val href = fixUrl(titleElement.attr("href"))
-            
-            val year = item.selectFirst("div.details div.meta span.year")?.text()?.trim()?.toIntOrNull()
-            
-            val poster = getPosterFromApi(title)
-            
-            val isMovie = href.contains("/filme/")
-            val type = if (isMovie) TvType.AnimeMovie else TvType.Anime
+        return document.select("div.search-page div.result-item article").mapNotNull { item ->
+            try {
+                val titleElement = item.selectFirst("div.details div.title a") ?: return@mapNotNull null
+                val title = titleElement.text().trim()
+                val href = fixUrl(titleElement.attr("href"))
+                
+                val year = item.selectFirst("div.details div.meta span.year")?.text()?.trim()?.toIntOrNull()
+                
+                val poster = getPosterFromApi(title)
+                
+                val isMovie = href.contains("/filme/")
+                val type = if (isMovie) TvType.AnimeMovie else TvType.Anime
 
-            newAnimeSearchResponse(title, href, type) {
-                this.posterUrl = poster
-                this.year = year
-                // 👇 REMOVA ESTA LINHA: addSub(SubtitleFile(...))
+                newAnimeSearchResponse(title, href, type) {
+                    this.posterUrl = poster
+                    this.year = year
+                }
+            } catch (e: Exception) {
+                println("⚠️ [SEARCH] Erro ao processar item: ${e.message}")
+                null
             }
-        } catch (e: Exception) {
-            println("⚠️ [SEARCH] Erro ao processar item: ${e.message}")
-            null
-        }
-    }.distinctBy { it.url }
-}
-    
-override suspend fun load(url: String): LoadResponse {
-    println("📺 [LOAD] Carregando detalhes de: $url")
-    
-    val document = request(url, "LOAD")
-    
-    if (document.text().isBlank()) {
-        return newAnimeLoadResponse("Erro ao carregar", url, TvType.Anime) {
-            this.plot = "Não foi possível carregar os detalhes."
-        }
+        }.distinctBy { it.url }
     }
 
-    val rawTitle = document.selectFirst(DETAIL_TITLE)?.text()?.trim() ?: "Sem Título"
-    val title = cleanTitle(rawTitle)
-
-    // 👇 PEGA O POSTER DO TMDB DIRETO DO HTML (igual você pediu)
-    val poster = document.selectFirst("meta[property=og:image][content*=tmdb]")?.attr("content")?.trim()
-        ?.replace("https://image.tmdb.org/t/p/w780", "https://image.tmdb.org/t/p/w500")
-        ?.let { fixUrlOutside(it) }
-
-    var synopsis = "Sinopse não disponível."
-    val wpContent = document.selectFirst(".wp-content")
-    wpContent?.let { content ->
-        val synopsisElements = content.select("p")
-        for (element in synopsisElements) {
-            val text = element.text()
-            if (text.contains("Sinopse:", true)) {
-                synopsis = text.replace("Sinopse:", "").trim()
-                break
-            } else if (text.contains("Sinopse", true) && text.length > 50) {
-                synopsis = text.trim()
-                break
+    override suspend fun load(url: String): LoadResponse {
+        println("📺 [LOAD] Carregando detalhes de: $url")
+        
+        val document = request(url, "LOAD")
+        
+        if (document.text().isBlank()) {
+            return newAnimeLoadResponse("Erro ao carregar", url, TvType.Anime) {
+                this.plot = "Não foi possível carregar os detalhes."
             }
         }
 
-        if (synopsis == "Sinopse não disponível." && synopsisElements.isNotEmpty()) {
+        val rawTitle = document.selectFirst(DETAIL_TITLE)?.text()?.trim() ?: "Sem Título"
+        val title = cleanTitle(rawTitle)
+
+        // Pega o poster do TMDB direto do HTML (sem erro 403!)
+        val poster = document.selectFirst("meta[property=og:image]")?.attr("content")?.trim()
+            ?.replace("https://image.tmdb.org/t/p/w780", "https://image.tmdb.org/t/p/w500")
+            ?.let { fixUrl(it) }
+
+        var synopsis = "Sinopse não disponível."
+
+        val wpContent = document.selectFirst(".wp-content")
+        wpContent?.let { content ->
+            val synopsisElements = content.select("p")
             for (element in synopsisElements) {
-                val text = element.text().trim()
-                if (text.length > 50 && !text.contains("Título Alternativo") && 
-                    !text.contains("Ano de Lançamento")) {
-                    synopsis = text
+                val text = element.text()
+                if (text.contains("Sinopse:", true)) {
+                    synopsis = text.replace("Sinopse:", "").trim()
+                    break
+                } else if (text.contains("Sinopse", true) && text.length > 50) {
+                    synopsis = text.trim()
                     break
                 }
             }
-        }
-    }
 
-    val genres = document.select(DETAIL_GENRES)
-        .mapNotNull { it.text().trim() }
-        .filter { !it.contains("Letra") && !it.contains("tipo") }
-
-    var year: Int? = null
-    val yearText = document.selectFirst(DETAIL_YEAR)?.text()?.trim()
-    if (yearText != null) {
-        val yearMatch = "\\b(\\d{4})\\b".toRegex().find(yearText)
-        year = yearMatch?.groupValues?.get(1)?.toIntOrNull()
-    }
-
-    var score: Score? = null
-    val scoreText = document.selectFirst(DETAIL_SCORE)?.text()?.trim()
-    if (scoreText != null) {
-        val scoreValue = scoreText.toFloatOrNull()
-        score = scoreValue?.let { Score.from10(it) }
-    }
-
-    val isDubbed = rawTitle.contains("dublado", true) || url.contains("dublado", true)
-    val isMovie = url.contains("/filme/") || rawTitle.contains("filme", true)
-
-    val episodesList = if (!isMovie) {
-        val episodeElements = document.select(EPISODE_LIST)
-        val episodeImages = document.select(EPISODE_IMAGES)
-        val episodeNumbers = document.select(EPISODE_NUMBER)
-
-        episodeElements.mapIndexed { index, element ->
-            val episodeTitle = element.text().trim()
-            val episodeUrl = element.attr("href")
-
-            var epNumber = extractEpisodeNumber(episodeTitle) ?: (index + 1)
-
-            if (index < episodeNumbers.size) {
-                val numberText = episodeNumbers[index].text().trim()
-                val numberMatch = "\\d+".toRegex().findAll(numberText).lastOrNull()
-                numberMatch?.let {
-                    val extractedNumber = it.value.toIntOrNull()
-                    if (extractedNumber != null) {
-                        epNumber = extractedNumber
+            if (synopsis == "Sinopse não disponível." && synopsisElements.isNotEmpty()) {
+                for (element in synopsisElements) {
+                    val text = element.text().trim()
+                    if (text.length > 50 && !text.contains("Título Alternativo") && 
+                        !text.contains("Ano de Lançamento")) {
+                        synopsis = text
+                        break
                     }
                 }
             }
+        }
 
-            var episodePoster: String? = null
-            if (index < episodeImages.size) {
-                episodePoster = episodeImages[index].attr("src")?.let { fixUrl(it) }
-            }
+        val genres = document.select(DETAIL_GENRES)
+            .mapNotNull { it.text().trim() }
+            .filter { !it.contains("Letra") && !it.contains("tipo") }
 
-            newEpisode(episodeUrl) {
-                this.name = "Episódio $epNumber"
-                this.episode = epNumber
-                this.posterUrl = episodePoster ?: poster
-            }
-        }.sortedBy { it.episode }
-    } else {
-        listOf(newEpisode(url) {
-            this.name = "Filme Completo"
-            this.episode = 1
+        var year: Int? = null
+        val yearText = document.selectFirst(DETAIL_YEAR)?.text()?.trim()
+        if (yearText != null) {
+            val yearMatch = "\\b(\\d{4})\\b".toRegex().find(yearText)
+            year = yearMatch?.groupValues?.get(1)?.toIntOrNull()
+        }
+
+        var score: Score? = null
+        val scoreText = document.selectFirst(DETAIL_SCORE)?.text()?.trim()
+        if (scoreText != null) {
+            val scoreValue = scoreText.toFloatOrNull()
+            score = scoreValue?.let { Score.from10(it) }
+        }
+
+        val isDubbed = rawTitle.contains("dublado", true) || url.contains("dublado", true)
+        val isMovie = url.contains("/filme/") || rawTitle.contains("filme", true)
+
+        val episodesList = if (!isMovie) {
+            val episodeElements = document.select(EPISODE_LIST)
+            val episodeImages = document.select(EPISODE_IMAGES)
+            val episodeNumbers = document.select(EPISODE_NUMBER)
+
+            episodeElements.mapIndexed { index, element ->
+                val episodeTitle = element.text().trim()
+                val episodeUrl = element.attr("href")
+
+                var epNumber = extractEpisodeNumber(episodeTitle) ?: (index + 1)
+
+                if (index < episodeNumbers.size) {
+                    val numberText = episodeNumbers[index].text().trim()
+                    val numberMatch = "\\d+".toRegex().findAll(numberText).lastOrNull()
+                    numberMatch?.let {
+                        val extractedNumber = it.value.toIntOrNull()
+                        if (extractedNumber != null) {
+                            epNumber = extractedNumber
+                        }
+                    }
+                }
+
+                var episodePoster: String? = null
+                if (index < episodeImages.size) {
+                    episodePoster = episodeImages[index].attr("src")?.let { fixUrl(it) }
+                }
+
+                newEpisode(episodeUrl) {
+                    this.name = "Episódio $epNumber"
+                    this.episode = epNumber
+                    this.posterUrl = episodePoster ?: poster
+                }
+            }.sortedBy { it.episode }
+        } else {
+            listOf(newEpisode(url) {
+                this.name = "Filme Completo"
+                this.episode = 1
+                this.posterUrl = poster
+            })
+        }
+
+        val showStatus = if (isMovie || episodesList.size >= 50) {
+            ShowStatus.Completed
+        } else {
+            ShowStatus.Ongoing
+        }
+
+        return newAnimeLoadResponse(title, url, if (isMovie) TvType.AnimeMovie else TvType.Anime) {
             this.posterUrl = poster
-        })
-    }
+            this.year = year
+            this.plot = synopsis
+            this.tags = genres
+            this.score = score
+            this.showStatus = showStatus
 
-    val showStatus = if (isMovie || episodesList.size >= 50) {
-        ShowStatus.Completed
-    } else {
-        ShowStatus.Ongoing
-    }
-
-    return newAnimeLoadResponse(title, url, if (isMovie) TvType.AnimeMovie else TvType.Anime) {
-        this.posterUrl = poster
-        this.year = year
-        this.plot = synopsis
-        this.tags = genres
-        this.score = score
-        this.showStatus = showStatus
-
-        if (episodesList.isNotEmpty()) {
-            addEpisodes(if (isDubbed) DubStatus.Dubbed else DubStatus.Subbed, episodesList)
+            if (episodesList.isNotEmpty()) {
+                addEpisodes(if (isDubbed) DubStatus.Dubbed else DubStatus.Subbed, episodesList)
+            }
         }
     }
-}
 
     override suspend fun loadLinks(
         data: String,
