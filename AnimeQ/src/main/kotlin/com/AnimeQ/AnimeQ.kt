@@ -8,8 +8,6 @@ import org.jsoup.nodes.Document
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.util.EnumSet
-import coil3.request.headers as coilHeaders
-import okhttp3.Headers
 
 class AnimeQ : MainAPI() {
     override var mainUrl = "https://animeq.net"
@@ -323,7 +321,7 @@ class AnimeQ : MainAPI() {
         println("🏠 [MAINPAGE-${request.name}] Carregando página principal - Página: $page, URL base: $baseUrl")
         if (page > 1) println("🏠 [MAINPAGE-${request.name}] URL com paginação: $url")
         
-        val document = request(url, request.name)
+        val document = this.request(url, request.name)
 
         return when (request.name) {
             "Últimos Episódios" -> {
@@ -483,7 +481,7 @@ class AnimeQ : MainAPI() {
             val scoreValue = scoreText.toFloatOrNull()
             score = scoreValue?.let { Score.from10(it) }
         }
-        println("📺 [LOAD] Nota: ${score?.value}")
+        println("📺 [LOAD] Nota: ${scoreValue}")
 
         val isDubbed = rawTitle.contains("dublado", true) || url.contains("dublado", true)
         val isMovie = url.contains("/filme/") || rawTitle.contains("filme", true)
