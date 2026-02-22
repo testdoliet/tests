@@ -3,13 +3,11 @@ package com.AnimeQ
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.network.CloudflareKiller
-import com.lagradost.cloudstream3.network.get
 import org.jsoup.nodes.Element
 import org.jsoup.nodes.Document
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
-import java.net.URI
 
 class AnimeQ : MainAPI() {
     override var mainUrl = "https://animeq.net"
@@ -89,42 +87,21 @@ class AnimeQ : MainAPI() {
             "Cookie" to (persistedCookies ?: "")
         )
 
-    // Função para carregar imagem com headers
-    private suspend fun loadImageWithHeaders(imageUrl: String): String? {
-        return try {
-            val response = app.get(
-                url = imageUrl,
-                headers = imageHeaders,
-                interceptor = cloudflareInterceptor,
-                timeout = 15
-            )
-            
-            if (response.isSuccessful) {
-                // Retorna a URL original, mas o Cloudstream3 vai usar os headers
-                imageUrl
-            } else {
-                println("⚠️ [IMAGE] Falha ao carregar imagem: ${response.code} - $imageUrl")
-                null
-            }
-        } catch (e: Exception) {
-            println("🔴 [IMAGE] Erro ao carregar imagem: ${e.message}")
-            null
-        }
-    }
-
-    // Sobrescreve o método fixUrl para adicionar headers às imagens
-    override fun fixUrl(url: String): String {
-        return if (url.startsWith("http")) {
-            // Adiciona headers inline para imagens (formato aceito pelo Cloudstream3)
-            if (url.contains(".jpg") || url.contains(".png") || url.contains(".jpeg") || url.contains(".webp")) {
-                url + "|headers=" + imageHeaders.entries.joinToString("&") { 
-                    "${it.key}=${it.value}" 
+    // Função para fixar URL com headers para imagens
+    private fun fixImageUrl(url: String?): String? {
+        return url?.let {
+            if (it.startsWith("http")) {
+                // Adiciona headers inline para imagens
+                if (it.contains(".jpg") || it.contains(".png") || it.contains(".jpeg") || it.contains(".webp") || it.contains(".gif")) {
+                    it + "|headers=" + imageHeaders.entries.joinToString("&") { 
+                        "${it.key}=${it.value}" 
+                    }
+                } else {
+                    it
                 }
             } else {
-                url
+                super.fixUrl(it)
             }
-        } else {
-            super.fixUrl(url)
         }
     }
 
@@ -286,7 +263,7 @@ class AnimeQ : MainAPI() {
         val episodeTitle = selectFirst(ITEM_TITLE)?.text()?.trim() ?: return null
         val episodeNumber = extractEpisodeNumber(episodeTitle)
         val animeTitle = extractAnimeTitleFromEpisode(episodeTitle)
-        val posterUrl = selectFirst(ITEM_POSTER)?.attr("src")?.let { fixUrl(it) }
+        val posterUrl = selectFirst(ITEM_POSTER)?.attr("src")?.let { fixImageUrl(it) }
         val isDubbed = isDubbed(episodeTitle)
         val serieName = selectFirst(EPISODE_SERIE)?.text()?.trim() ?: animeTitle
 
@@ -305,7 +282,7 @@ class AnimeQ : MainAPI() {
         val href = selectFirst(ITEM_LINK)?.attr("href") ?: return null
         val rawTitle = selectFirst(ITEM_TITLE)?.text()?.trim() ?: return null
         val cleanedTitle = cleanTitle(rawTitle).ifBlank { return null }
-        val posterUrl = selectFirst(ITEM_POSTER)?.attr("src")?.let { fixUrl(it) }
+        val posterUrl = selectFirst(ITEM_POSTER)?.attr("src")?.let { fixImageUrl(it) }
         val isDubbed = isDubbed(rawTitle)
         val year = selectFirst(ANIME_YEAR)?.text()?.trim()?.toIntOrNull()
         val scoreText = selectFirst(ANIME_SCORE)?.text()?.trim()
@@ -484,7 +461,7 @@ class AnimeQ : MainAPI() {
         val title = cleanTitle(rawTitle)
         println("📺 [LOAD] Título: $title")
 
-        val poster = document.selectFirst(DETAIL_POSTER)?.attr("src")?.let { fixUrl(it) }
+        val poster = document.selectFirst(DETAIL_POSTER)?.attr("src")?.let { fixImageUrl(it) }
         println("📺 [LOAD] Poster: $poster")
 
         var synopsis = "Sinopse não disponível."
@@ -571,7 +548,7 @@ class AnimeQ : MainAPI() {
 
                 var episodePoster: String? = null
                 if (index < episodeImages.size) {
-                    episodePoster = episodeImages[index].attr("src")?.let { fixUrl(it) }
+                    episodePoster = episodeImages[index].attr("src")?.let { fixImageUrl(it) }
                 }
 
                 newEpisode(episodeUrl) {
