@@ -5,32 +5,13 @@ import com.lagradost.cloudstream3.network.CloudflareKiller
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
-import com.lagradost.cloudstream3.extractors.VidStack
 import org.json.JSONObject
 import java.net.URLDecoder
 
-// Extractors para diferentes fontes
-class AnimesSTRP : VidStack() {
-    override var name = "Animes STRP"
-    override var mainUrl = "https://animes.strp2p.com"
-    override var requiresReferer = true
-}
-
-class AniPlay : VidStack() {
-    override var name = "AniPlay"
-    override var mainUrl = "https://aniplay.online"
-    override var requiresReferer = true
-}
-
 object AnimeQVideoExtractor {
+    // 1️⃣ ADICIONAR CLOUDFLAREKILLER
     private val cfKiller = CloudflareKiller()
     private val USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-    
-    private val itagQualityMap = mapOf(
-        18 to 360, 22 to 720, 37 to 1080, 59 to 480,
-        43 to 360, 44 to 480, 45 to 720, 46 to 1080,
-        38 to 3072, 266 to 2160, 138 to 2160, 313 to 2160,
-    )
 
     suspend fun extractVideoLinks(
         url: String,
@@ -40,7 +21,7 @@ object AnimeQVideoExtractor {
         println("[AnimeQ] 🚀 Iniciando extração para: $url")
         
         return try {
-            // Pegar página com CloudflareKiller
+            // 2️⃣ USAR CLOUDFLAREKILLER NA REQUISIÇÃO
             println("[AnimeQ] 📄 Obtendo página com CloudflareKiller...")
             val pageResponse = app.get(
                 url = url,
@@ -58,29 +39,42 @@ object AnimeQVideoExtractor {
                 return false
             }
 
-            // 🔥 TESTAR TODOS OS PLAYERS (1,2,3,4) SEM PARAR
-            println("[AnimeQ] 🔍 Tentando players 1, 2, 3, 4...")
+            // 3️⃣ PRIORIDADE: Player 4 (FHD) primeiro, depois Player 2 (HD)
+            println("[AnimeQ] 🔍 Tentando players por prioridade: 4 (FHD) → 2 (HD) → 1 (Mobile ignorado)")
             var foundAny = false
 
-            for (player in 1..4) {
-                println("[AnimeQ] 🎯 Tentando player option $player...")
-                
-                val success = tryPlayerApi(postId, player, url, name) { extractorLink ->
-                    println("[AnimeQ] ✅ Adicionando link do player $player")
+            // Player 4 (FHD) - PRIORIDADE MÁXIMA
+            println("[AnimeQ] 🎯 [PRIORIDADE 1] Tentando player option 4 (FHD)...")
+            val success4 = tryPlayerApi(postId, 4, url, name) { extractorLink ->
+                println("[AnimeQ] ✅ Adicionando link do player 4 (FHD)")
+                callback(extractorLink)
+            }
+            if (success4) {
+                foundAny = true
+                println("[AnimeQ] ✅ Player 4 (FHD) encontrou links")
+            } else {
+                println("[AnimeQ] ❌ Player 4 (FHD) não encontrou links")
+            }
+
+            // Player 2 (FullHD/HLS) - SEGUNDA PRIORIDADE
+            if (!success4) { // Só tenta player 2 se player 4 falhou
+                println("[AnimeQ] 🎯 [PRIORIDADE 2] Tentando player option 2 (HD)...")
+                val success2 = tryPlayerApi(postId, 2, url, name) { extractorLink ->
+                    println("[AnimeQ] ✅ Adicionando link do player 2 (HD)")
                     callback(extractorLink)
                 }
-                
-                if (success) {
+                if (success2) {
                     foundAny = true
-                    println("[AnimeQ] ✅ Player $player encontrou links")
-                    // CONTINUA para o próximo player! Não para aqui
+                    println("[AnimeQ] ✅ Player 2 (HD) encontrou links")
                 } else {
-                    println("[AnimeQ] ❌ Player $player não encontrou links")
+                    println("[AnimeQ] ❌ Player 2 (HD) não encontrou links")
                 }
             }
 
+            // Player 1 (Mobile) - IGNORADO (não tentamos)
+
             if (foundAny) {
-                println("[AnimeQ] 🎉 Extração concluída! Pelo menos um player funcionou")
+                println("[AnimeQ] 🎉 Extração concluída! Links encontrados")
                 return true
             } else {
                 println("[AnimeQ] ❌ Nenhum player encontrou links")
@@ -139,6 +133,7 @@ object AnimeQVideoExtractor {
 
         try {
             println("[AnimeQ] 🔄 Acessando API Dooplay...")
+            // USAR CLOUDFLAREKILLER NA API TAMBÉM
             val response = app.get(apiUrl, interceptor = cfKiller, headers = headers)
             println("[AnimeQ] 📊 Status da API: ${response.code}")
 
@@ -150,9 +145,8 @@ object AnimeQVideoExtractor {
                 val embedUrl = json.optString("embed_url", "")
                 println("[AnimeQ] 🔍 Embed URL: $embedUrl")
 
-                // Processar baseado no tipo de URL
                 return when {
-                    // Source direto
+                    // Source direto (MP4/M3U8)
                     embedUrl.contains("source=") && (embedUrl.contains(".mp4") || embedUrl.contains(".m3u8")) -> {
                         handleDirectSource(embedUrl, playerOption, referer, name, callback)
                     }
@@ -162,26 +156,8 @@ object AnimeQVideoExtractor {
                         handleBlogger(embedUrl, referer, name, callback)
                     }
                     
-                    // AnimesSTRP
-                    embedUrl.contains("animes.strp2p.com") -> {
-                        println("[AnimeQ] 🎬 Usando extractor AnimesSTRP")
-                        val extractor = AnimesSTRP()
-                        extractor.name = "AnimeQ STR"
-                        extractor.getUrl(embedUrl, referer, { }, callback)
-                        true
-                    }
-                    
-                    // AniPlay
-                    embedUrl.contains("aniplay.online") -> {
-                        println("[AnimeQ] 🎬 Usando extractor AniPlay")
-                        val extractor = AniPlay()
-                        extractor.name = "AnimeQ Play"
-                        extractor.getUrl(embedUrl, referer, { }, callback)
-                        true
-                    }
-                    
                     else -> {
-                        println("[AnimeQ] ❌ Tipo de resposta não suportado: ${embedUrl.take(50)}...")
+                        println("[AnimeQ] ❌ Tipo de resposta não suportado")
                         false
                     }
                 }
@@ -213,20 +189,35 @@ object AnimeQVideoExtractor {
                 val encodedSource = match.groupValues[1]
                 val videoUrl = URLDecoder.decode(encodedSource, "UTF-8")
                 
-                val quality = determineQualityFromUrl(videoUrl, playerOption)
-                val qualityLabel = getQualityLabel(quality)
+                // 4️⃣ QUALIDADE BASEADA NO PLAYER (simplificado)
+                val qualityLabel = when (playerOption) {
+                    4 -> "FHD 🔥"
+                    2 -> "HD ⭐"
+                    else -> "SD 📺"
+                }
                 
-                val link = newExtractorLink(
+                println("[AnimeQ] ✅ URL de vídeo extraída: $videoUrl")
+                println("[AnimeQ] 📊 Qualidade: $qualityLabel")
+                
+                val extractorLink = newExtractorLink(
                     source = "AnimeQ",
                     name = "$name ($qualityLabel)",
                     url = videoUrl,
                     type = ExtractorLinkType.VIDEO
                 ) {
                     this.referer = referer
-                    this.quality = quality
-                    this.headers = mapOf("Referer" to referer, "User-Agent" to USER_AGENT)
+                    this.quality = when (playerOption) {
+                        4 -> 1080
+                        2 -> 720
+                        else -> 480
+                    }
+                    this.headers = mapOf(
+                        "Referer" to referer,
+                        "User-Agent" to USER_AGENT
+                    )
                 }
-                callback(link)
+                
+                callback(extractorLink)
                 return true
             }
             return false
@@ -243,7 +234,8 @@ object AnimeQVideoExtractor {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         println("[AnimeQ] 🎬 Processando Blogger...")
-        
+        println("[AnimeQ] 🔗 URL: $bloggerUrl")
+
         return try {
             val response = app.get(
                 url = bloggerUrl,
@@ -258,59 +250,40 @@ object AnimeQVideoExtractor {
             val matches = videoPattern.findAll(response.text).toList()
             
             if (matches.isNotEmpty()) {
-                val distinctUrls = matches.map { it.value }.distinct()
+                println("[AnimeQ] ✅ ${matches.size} vídeos encontrados no Blogger!")
+
                 var found = false
+                val distinctUrls = matches.map { it.value }.distinct()
 
                 for (videoUrl in distinctUrls) {
-                    val itagPattern = """[?&]itag=(\d+)""".toRegex()
-                    val itag = itagPattern.find(videoUrl)?.groupValues?.get(1)?.toIntOrNull() ?: 18
-                    val quality = itagQualityMap[itag] ?: 360
+                    println("[AnimeQ] 🎬 Vídeo encontrado: ${videoUrl.take(80)}...")
                     
-                    val link = newExtractorLink(
+                    val extractorLink = newExtractorLink(
                         source = "AnimeQ",
-                        name = "$name (${getQualityLabel(quality)})",
+                        name = "$name (SD 📺)",
                         url = videoUrl,
                         type = ExtractorLinkType.VIDEO
                     ) {
                         this.referer = bloggerUrl
-                        this.quality = quality
-                        this.headers = mapOf("Referer" to bloggerUrl, "User-Agent" to USER_AGENT)
+                        this.quality = 480
+                        this.headers = mapOf(
+                            "Referer" to bloggerUrl,
+                            "User-Agent" to USER_AGENT
+                        )
                     }
-                    callback(link)
+                    
+                    callback(extractorLink)
                     found = true
                 }
                 return found
             }
+
+            println("[AnimeQ] ⚠️ Nenhum vídeo encontrado no Blogger")
             return false
+
         } catch (e: Exception) {
             println("[AnimeQ] ❌ Erro no Blogger: ${e.message}")
             return false
-        }
-    }
-    
-    private fun determineQualityFromUrl(url: String, playerOption: Int): Int {
-        return when {
-            url.contains("hd.mp4", ignoreCase = true) -> 720
-            url.contains("fhd", ignoreCase = true) -> 1080
-            url.contains("1080", ignoreCase = true) -> 1080
-            url.contains("720", ignoreCase = true) -> 720
-            url.contains("480", ignoreCase = true) -> 480
-            url.contains("360", ignoreCase = true) -> 360
-            else -> when (playerOption) {
-                1 -> 360
-                2 -> 720
-                3 -> 1080
-                4 -> 720
-                else -> 720
-            }
-        }
-    }
-    
-    private fun getQualityLabel(quality: Int): String {
-        return when {
-            quality >= 1080 -> "FHD 🔥"
-            quality >= 720 -> "HD ⭐"
-            else -> "SD 📺"
         }
     }
 }
