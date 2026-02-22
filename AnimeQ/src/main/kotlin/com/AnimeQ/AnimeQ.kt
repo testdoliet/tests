@@ -394,7 +394,6 @@ class AnimeQ : MainAPI() {
             
             val year = item.selectFirst("div.details div.meta span.year")?.text()?.trim()?.toIntOrNull()
             
-            // Pega poster da API (igual ao AnimesCloud)
             val poster = getPosterFromApi(title)
             
             val isMovie = href.contains("/filme/")
@@ -403,16 +402,14 @@ class AnimeQ : MainAPI() {
             newAnimeSearchResponse(title, href, type) {
                 this.posterUrl = poster
                 this.year = year
-                if (isMovie) {
-                    addSub(SubtitleFile("Legendado", "$mainUrl/leg/${href.substringAfterLast("/")}"))
-                }
+                // 👇 REMOVA ESTA LINHA: addSub(SubtitleFile(...))
             }
         } catch (e: Exception) {
             println("⚠️ [SEARCH] Erro ao processar item: ${e.message}")
             null
         }
     }.distinctBy { it.url }
-    }
+}
     
     // 6️⃣ MUDANÇA: Usar apenas API no load também
     override suspend fun load(url: String): LoadResponse {
