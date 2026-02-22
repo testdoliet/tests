@@ -9,15 +9,20 @@ import com.lagradost.cloudstream3.extractors.VidStack
 import org.json.JSONObject
 import java.net.URLDecoder
 
-// 1️⃣ ADICIONAR SÓ O ANIMESTRP (igual AnimesCloud)
+// Extractors para diferentes fontes
 class AnimesSTRP : VidStack() {
     override var name = "Animes STRP"
     override var mainUrl = "https://animes.strp2p.com"
     override var requiresReferer = true
 }
 
+class AniPlay : VidStack() {
+    override var name = "AniPlay"
+    override var mainUrl = "https://aniplay.online"
+    override var requiresReferer = true
+}
+
 object AnimeQVideoExtractor {
-    // 2️⃣ ADICIONAR CLOUDFLAREKILLER
     private val cfKiller = CloudflareKiller()
     private val USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
     
@@ -35,7 +40,7 @@ object AnimeQVideoExtractor {
         println("[AnimeQ] 🚀 Iniciando extração para: $url")
         
         return try {
-            // 3️⃣ USAR CLOUDFLAREKILLER (igual classe principal)
+            // Pegar página com CloudflareKiller
             println("[AnimeQ] 📄 Obtendo página com CloudflareKiller...")
             val pageResponse = app.get(
                 url = url,
@@ -44,7 +49,7 @@ object AnimeQVideoExtractor {
             )
             val html = pageResponse.text
 
-            // 4️⃣ EXTRAIR ID DO POST (SEU CÓDIGO)
+            // Extrair ID do post
             val postId = extractPostId(html)
             println("[AnimeQ] 🔍 ID do post encontrado: $postId")
             
@@ -53,38 +58,29 @@ object AnimeQVideoExtractor {
                 return false
             }
 
-            // 5️⃣ TENTAR PLAYERS 1 E 2 (SEU CÓDIGO)
-            println("[AnimeQ] 🔍 Tentando players 1 e 2...")
+            // 🔥 TESTAR TODOS OS PLAYERS (1,2,3,4) SEM PARAR
+            println("[AnimeQ] 🔍 Tentando players 1, 2, 3, 4...")
             var foundAny = false
 
-            // Player 1 
-            println("[AnimeQ] 🎯 Tentando player option 1...")
-            val success1 = tryPlayerApi(postId, 1, url, name) { extractorLink ->
-                println("[AnimeQ] ✅ Adicionando link do player 1")
-                callback(extractorLink)
-            }
-            if (success1) {
-                foundAny = true
-                println("[AnimeQ] ✅ Player 1 encontrou links")
-            } else {
-                println("[AnimeQ] ❌ Player 1 não encontrou links")
-            }
-
-            // Player 2
-            println("[AnimeQ] 🎯 Tentando player option 2...")
-            val success2 = tryPlayerApi(postId, 2, url, name) { extractorLink ->
-                println("[AnimeQ] ✅ Adicionando link do player 2")
-                callback(extractorLink)
-            }
-            if (success2) {
-                foundAny = true
-                println("[AnimeQ] ✅ Player 2 encontrou links")
-            } else {
-                println("[AnimeQ] ❌ Player 2 não encontrou links")
+            for (player in 1..4) {
+                println("[AnimeQ] 🎯 Tentando player option $player...")
+                
+                val success = tryPlayerApi(postId, player, url, name) { extractorLink ->
+                    println("[AnimeQ] ✅ Adicionando link do player $player")
+                    callback(extractorLink)
+                }
+                
+                if (success) {
+                    foundAny = true
+                    println("[AnimeQ] ✅ Player $player encontrou links")
+                    // CONTINUA para o próximo player! Não para aqui
+                } else {
+                    println("[AnimeQ] ❌ Player $player não encontrou links")
+                }
             }
 
             if (foundAny) {
-                println("[AnimeQ] 🎉 Extração concluída!")
+                println("[AnimeQ] 🎉 Extração concluída! Pelo menos um player funcionou")
                 return true
             } else {
                 println("[AnimeQ] ❌ Nenhum player encontrou links")
@@ -143,7 +139,6 @@ object AnimeQVideoExtractor {
 
         try {
             println("[AnimeQ] 🔄 Acessando API Dooplay...")
-            // 6️⃣ USAR CLOUDFLAREKILLER NA API TAMBÉM
             val response = app.get(apiUrl, interceptor = cfKiller, headers = headers)
             println("[AnimeQ] 📊 Status da API: ${response.code}")
 
@@ -155,19 +150,19 @@ object AnimeQVideoExtractor {
                 val embedUrl = json.optString("embed_url", "")
                 println("[AnimeQ] 🔍 Embed URL: $embedUrl")
 
-                // 7️⃣ TRATAR OS MESMOS CASOS DE SEMPRE + ANIMESTRP
+                // Processar baseado no tipo de URL
                 return when {
-                    // CASO 1: Source direto (SEU CÓDIGO)
+                    // Source direto
                     embedUrl.contains("source=") && (embedUrl.contains(".mp4") || embedUrl.contains(".m3u8")) -> {
                         handleDirectSource(embedUrl, playerOption, referer, name, callback)
                     }
                     
-                    // CASO 2: Blogger (SEU CÓDIGO)
+                    // Blogger
                     embedUrl.contains("blogger.com") -> {
                         handleBlogger(embedUrl, referer, name, callback)
                     }
                     
-                    // 8️⃣ CASO 3: ANIMESTRP (NOVO - igual AnimesCloud)
+                    // AnimesSTRP
                     embedUrl.contains("animes.strp2p.com") -> {
                         println("[AnimeQ] 🎬 Usando extractor AnimesSTRP")
                         val extractor = AnimesSTRP()
@@ -176,8 +171,17 @@ object AnimeQVideoExtractor {
                         true
                     }
                     
+                    // AniPlay
+                    embedUrl.contains("aniplay.online") -> {
+                        println("[AnimeQ] 🎬 Usando extractor AniPlay")
+                        val extractor = AniPlay()
+                        extractor.name = "AnimeQ Play"
+                        extractor.getUrl(embedUrl, referer, { }, callback)
+                        true
+                    }
+                    
                     else -> {
-                        println("[AnimeQ] ❌ Tipo de resposta não suportado")
+                        println("[AnimeQ] ❌ Tipo de resposta não suportado: ${embedUrl.take(50)}...")
                         false
                     }
                 }
@@ -192,7 +196,6 @@ object AnimeQVideoExtractor {
         }
     }
     
-    // 9️⃣ handleDirectSource AGORA É SUSPEND
     private suspend fun handleDirectSource(
         embedUrl: String,
         playerOption: Int,
@@ -233,7 +236,6 @@ object AnimeQVideoExtractor {
         }
     }
     
-    // 🔟 handleBlogger AGORA É SUSPEND
     private suspend fun handleBlogger(
         bloggerUrl: String,
         referer: String,
@@ -297,6 +299,8 @@ object AnimeQVideoExtractor {
             else -> when (playerOption) {
                 1 -> 360
                 2 -> 720
+                3 -> 1080
+                4 -> 720
                 else -> 720
             }
         }
