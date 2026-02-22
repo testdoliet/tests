@@ -1,4 +1,4 @@
-package com.hinatasoul
+package com.HinataSoul
 
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
