@@ -411,133 +411,133 @@ class AnimeQ : MainAPI() {
     }.distinctBy { it.url }
 }
     
-    // 6️⃣ MUDANÇA: Usar apenas API no load também
-    override suspend fun load(url: String): LoadResponse {
-        println("📺 [LOAD] Carregando detalhes de: $url")
-        
-        val document = request(url, "LOAD")
-        
-        if (document.text().isBlank()) {
-            return newAnimeLoadResponse("Erro ao carregar", url, TvType.Anime) {
-                this.plot = "Não foi possível carregar os detalhes."
+override suspend fun load(url: String): LoadResponse {
+    println("📺 [LOAD] Carregando detalhes de: $url")
+    
+    val document = request(url, "LOAD")
+    
+    if (document.text().isBlank()) {
+        return newAnimeLoadResponse("Erro ao carregar", url, TvType.Anime) {
+            this.plot = "Não foi possível carregar os detalhes."
+        }
+    }
+
+    val rawTitle = document.selectFirst(DETAIL_TITLE)?.text()?.trim() ?: "Sem Título"
+    val title = cleanTitle(rawTitle)
+
+    // 👇 PEGA O POSTER DO TMDB DIRETO DO HTML (igual você pediu)
+    val poster = document.selectFirst("meta[property=og:image][content*=tmdb]")?.attr("content")?.trim()
+        ?.replace("https://image.tmdb.org/t/p/w780", "https://image.tmdb.org/t/p/w500")
+        ?.let { fixUrlOutside(it) }
+
+    var synopsis = "Sinopse não disponível."
+    val wpContent = document.selectFirst(".wp-content")
+    wpContent?.let { content ->
+        val synopsisElements = content.select("p")
+        for (element in synopsisElements) {
+            val text = element.text()
+            if (text.contains("Sinopse:", true)) {
+                synopsis = text.replace("Sinopse:", "").trim()
+                break
+            } else if (text.contains("Sinopse", true) && text.length > 50) {
+                synopsis = text.trim()
+                break
             }
         }
 
-        val rawTitle = document.selectFirst(DETAIL_TITLE)?.text()?.trim() ?: "Sem Título"
-        val title = cleanTitle(rawTitle)
-
-        // ✅ APENAS API, sem fallback
-        val poster = getPosterFromApi(title)
-
-        var synopsis = "Sinopse não disponível."
-
-        val wpContent = document.selectFirst(".wp-content")
-        wpContent?.let { content ->
-            val synopsisElements = content.select("p")
+        if (synopsis == "Sinopse não disponível." && synopsisElements.isNotEmpty()) {
             for (element in synopsisElements) {
-                val text = element.text()
-                if (text.contains("Sinopse:", true)) {
-                    synopsis = text.replace("Sinopse:", "").trim()
-                    break
-                } else if (text.contains("Sinopse", true) && text.length > 50) {
-                    synopsis = text.trim()
+                val text = element.text().trim()
+                if (text.length > 50 && !text.contains("Título Alternativo") && 
+                    !text.contains("Ano de Lançamento")) {
+                    synopsis = text
                     break
                 }
-            }
-
-            if (synopsis == "Sinopse não disponível." && synopsisElements.isNotEmpty()) {
-                for (element in synopsisElements) {
-                    val text = element.text().trim()
-                    if (text.length > 50 && !text.contains("Título Alternativo") && 
-                        !text.contains("Ano de Lançamento")) {
-                        synopsis = text
-                        break
-                    }
-                }
-            }
-        }
-
-        val genres = document.select(DETAIL_GENRES)
-            .mapNotNull { it.text().trim() }
-            .filter { !it.contains("Letra") && !it.contains("tipo") }
-
-        var year: Int? = null
-        val yearText = document.selectFirst(DETAIL_YEAR)?.text()?.trim()
-        if (yearText != null) {
-            val yearMatch = "\\b(\\d{4})\\b".toRegex().find(yearText)
-            year = yearMatch?.groupValues?.get(1)?.toIntOrNull()
-        }
-
-        var score: Score? = null
-        val scoreText = document.selectFirst(DETAIL_SCORE)?.text()?.trim()
-        if (scoreText != null) {
-            val scoreValue = scoreText.toFloatOrNull()
-            score = scoreValue?.let { Score.from10(it) }
-        }
-
-        val isDubbed = rawTitle.contains("dublado", true) || url.contains("dublado", true)
-        val isMovie = url.contains("/filme/") || rawTitle.contains("filme", true)
-
-        val episodesList = if (!isMovie) {
-            val episodeElements = document.select(EPISODE_LIST)
-            val episodeImages = document.select(EPISODE_IMAGES)
-            val episodeNumbers = document.select(EPISODE_NUMBER)
-
-            episodeElements.mapIndexed { index, element ->
-                val episodeTitle = element.text().trim()
-                val episodeUrl = element.attr("href")
-
-                var epNumber = extractEpisodeNumber(episodeTitle) ?: (index + 1)
-
-                if (index < episodeNumbers.size) {
-                    val numberText = episodeNumbers[index].text().trim()
-                    val numberMatch = "\\d+".toRegex().findAll(numberText).lastOrNull()
-                    numberMatch?.let {
-                        val extractedNumber = it.value.toIntOrNull()
-                        if (extractedNumber != null) {
-                            epNumber = extractedNumber
-                        }
-                    }
-                }
-
-                var episodePoster: String? = null
-                if (index < episodeImages.size) {
-                    episodePoster = episodeImages[index].attr("src")?.let { fixUrl(it) }
-                }
-
-                newEpisode(episodeUrl) {
-                    this.name = "Episódio $epNumber"
-                    this.episode = epNumber
-                    this.posterUrl = episodePoster ?: poster
-                }
-            }.sortedBy { it.episode }
-        } else {
-            listOf(newEpisode(url) {
-                this.name = "Filme Completo"
-                this.episode = 1
-                this.posterUrl = poster
-            })
-        }
-
-        val showStatus = if (isMovie || episodesList.size >= 50) {
-            ShowStatus.Completed
-        } else {
-            ShowStatus.Ongoing
-        }
-
-        return newAnimeLoadResponse(title, url, if (isMovie) TvType.AnimeMovie else TvType.Anime) {
-            this.posterUrl = poster
-            this.year = year
-            this.plot = synopsis
-            this.tags = genres
-            this.score = score
-            this.showStatus = showStatus
-
-            if (episodesList.isNotEmpty()) {
-                addEpisodes(if (isDubbed) DubStatus.Dubbed else DubStatus.Subbed, episodesList)
             }
         }
     }
+
+    val genres = document.select(DETAIL_GENRES)
+        .mapNotNull { it.text().trim() }
+        .filter { !it.contains("Letra") && !it.contains("tipo") }
+
+    var year: Int? = null
+    val yearText = document.selectFirst(DETAIL_YEAR)?.text()?.trim()
+    if (yearText != null) {
+        val yearMatch = "\\b(\\d{4})\\b".toRegex().find(yearText)
+        year = yearMatch?.groupValues?.get(1)?.toIntOrNull()
+    }
+
+    var score: Score? = null
+    val scoreText = document.selectFirst(DETAIL_SCORE)?.text()?.trim()
+    if (scoreText != null) {
+        val scoreValue = scoreText.toFloatOrNull()
+        score = scoreValue?.let { Score.from10(it) }
+    }
+
+    val isDubbed = rawTitle.contains("dublado", true) || url.contains("dublado", true)
+    val isMovie = url.contains("/filme/") || rawTitle.contains("filme", true)
+
+    val episodesList = if (!isMovie) {
+        val episodeElements = document.select(EPISODE_LIST)
+        val episodeImages = document.select(EPISODE_IMAGES)
+        val episodeNumbers = document.select(EPISODE_NUMBER)
+
+        episodeElements.mapIndexed { index, element ->
+            val episodeTitle = element.text().trim()
+            val episodeUrl = element.attr("href")
+
+            var epNumber = extractEpisodeNumber(episodeTitle) ?: (index + 1)
+
+            if (index < episodeNumbers.size) {
+                val numberText = episodeNumbers[index].text().trim()
+                val numberMatch = "\\d+".toRegex().findAll(numberText).lastOrNull()
+                numberMatch?.let {
+                    val extractedNumber = it.value.toIntOrNull()
+                    if (extractedNumber != null) {
+                        epNumber = extractedNumber
+                    }
+                }
+            }
+
+            var episodePoster: String? = null
+            if (index < episodeImages.size) {
+                episodePoster = episodeImages[index].attr("src")?.let { fixUrl(it) }
+            }
+
+            newEpisode(episodeUrl) {
+                this.name = "Episódio $epNumber"
+                this.episode = epNumber
+                this.posterUrl = episodePoster ?: poster
+            }
+        }.sortedBy { it.episode }
+    } else {
+        listOf(newEpisode(url) {
+            this.name = "Filme Completo"
+            this.episode = 1
+            this.posterUrl = poster
+        })
+    }
+
+    val showStatus = if (isMovie || episodesList.size >= 50) {
+        ShowStatus.Completed
+    } else {
+        ShowStatus.Ongoing
+    }
+
+    return newAnimeLoadResponse(title, url, if (isMovie) TvType.AnimeMovie else TvType.Anime) {
+        this.posterUrl = poster
+        this.year = year
+        this.plot = synopsis
+        this.tags = genres
+        this.score = score
+        this.showStatus = showStatus
+
+        if (episodesList.isNotEmpty()) {
+            addEpisodes(if (isDubbed) DubStatus.Dubbed else DubStatus.Subbed, episodesList)
+        }
+    }
+}
 
     override suspend fun loadLinks(
         data: String,
