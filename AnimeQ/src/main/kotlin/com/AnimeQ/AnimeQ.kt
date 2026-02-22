@@ -374,28 +374,46 @@ class AnimeQ : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        if (query.length < 2) return emptyList()
-        
-        println("🔍 [SEARCH] Buscando por: $query")
-        
-        val searchUrl = "$mainUrl$SEARCH_PATH${query.replace(" ", "+")}"
-        val document = request(searchUrl, "SEARCH")
+    if (query.length < 2) return emptyList()
+    
+    println("🔍 [SEARCH] Buscando por: $query")
+    
+    val searchUrl = "$mainUrl/?s=${query.replace(" ", "+")}"
+    val document = request(searchUrl, "SEARCH")
 
-        if (document.text().isBlank()) {
-            return emptyList()
-        }
-
-        return document.select(".item.tvshows, .item.movies, .item.se.episodes")
-            .mapNotNull { element ->
-                if (element.hasClass("episodes")) {
-                    element.toEpisodeSearchResponse()
-                } else {
-                    element.toAnimeSearchResponse()
-                }
-            }
-            .distinctBy { it.url }
+    if (document.text().isBlank()) {
+        println("⚠️ [SEARCH] Documento vazio")
+        return emptyList()
     }
 
+    return document.select("div.search-page div.result-item article").mapNotNull { item ->
+        try {
+            val titleElement = item.selectFirst("div.details div.title a") ?: return@mapNotNull null
+            val title = titleElement.text().trim()
+            val href = fixUrl(titleElement.attr("href"))
+            
+            val year = item.selectFirst("div.details div.meta span.year")?.text()?.trim()?.toIntOrNull()
+            
+            // Pega poster da API (igual ao AnimesCloud)
+            val poster = getPosterFromApi(title)
+            
+            val isMovie = href.contains("/filme/")
+            val type = if (isMovie) TvType.AnimeMovie else TvType.Anime
+
+            newAnimeSearchResponse(title, href, type) {
+                this.posterUrl = poster
+                this.year = year
+                if (isMovie) {
+                    addSub(SubtitleFile("Legendado", "$mainUrl/leg/${href.substringAfterLast("/")}"))
+                }
+            }
+        } catch (e: Exception) {
+            println("⚠️ [SEARCH] Erro ao processar item: ${e.message}")
+            null
+        }
+    }.distinctBy { it.url }
+    }
+    
     // 6️⃣ MUDANÇA: Usar apenas API no load também
     override suspend fun load(url: String): LoadResponse {
         println("📺 [LOAD] Carregando detalhes de: $url")
