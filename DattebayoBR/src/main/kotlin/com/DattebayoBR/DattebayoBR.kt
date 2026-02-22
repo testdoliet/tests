@@ -23,7 +23,11 @@ class DattebayoBR : MainAPI() {
     override val hasMainPage = true
     override var lang = "pt-br"
     override val hasDownloadSupport = true
-    override val supportedTypes = setOf(TvType.Anime, TvType.AnimeMovie, TvType.TvSeries)
+    override val supportedTypes = setOf(
+        TvType.Anime, 
+        TvType.AnimeMovie,
+        TvType.TvSeries
+    )
     override val usesWebView = false
 
     companion object {
@@ -34,7 +38,6 @@ class DattebayoBR : MainAPI() {
         private const val HOME_EP_NUM = ".ultimosEpisodiosHomeItemInfosNum"
         private const val HOME_EP_TOTAL = ".ultimosAnimesHomeItemQntEps"
         private const val HOME_TIPO = ".ultimosAnimesHomeItemTipo"
-
         private const val DETAIL_TITLE = "h1"
         private const val DETAIL_POSTER = ".aniInfosSingleCapa img"
         private const val DETAIL_SYNOPSIS = ".aniInfosSingleSinopse p"
@@ -45,7 +48,6 @@ class DattebayoBR : MainAPI() {
         private const val EPISODE_ITEM = ".ultimosEpisodiosHomeItem"
         private const val EPISODE_LINK = "a"
         private const val EPISODE_TITLE_ATTR = "title"
-
         private const val OUTBRAIN_URL = "https://widgets.outbrain.com/outbrain.js"
         private const val ADS_API_URL = "https://ads.animeyabu.net/"
     }
@@ -60,7 +62,7 @@ class DattebayoBR : MainAPI() {
     )
 
     private fun isDub(title: String, url: String? = null): Boolean {
-        return title.contains("Dublado", ignoreCase = true) ||
+        return title.contains("Dublado", ignoreCase = true) || 
                url?.contains("dublado", ignoreCase = true) == true ||
                url?.contains("anime-dublado", ignoreCase = true) == true
     }
@@ -77,11 +79,12 @@ class DattebayoBR : MainAPI() {
         val fromEpisodio = "ep(?:is[oó]dio)?\\s*(\\d+)".toRegex(RegexOption.IGNORE_CASE)
             .find(title)?.groupValues?.get(1)?.toIntOrNull()
         if (fromEpisodio != null) return fromEpisodio
-        
+
         val fromDash = "-\\s*(\\d+)".toRegex().find(title)?.groupValues?.get(1)?.toIntOrNull()
         if (fromDash != null) return fromDash
-        
-        return "\\b(\\d+)\\s*$".toRegex().find(title)?.groupValues?.get(1)?.toIntOrNull()
+
+        val numberAtEnd = "\\b(\\d+)\\s*$".toRegex().find(title)?.groupValues?.get(1)?.toIntOrNull()
+        return numberAtEnd
     }
 
     private fun extractTotalEpisodes(text: String): Pair<Int?, Int?> {
@@ -95,11 +98,13 @@ class DattebayoBR : MainAPI() {
 
     private fun findAllVideoUrls(document: Document): List<Pair<String, String>> {
         val videoUrls = mutableListOf<Pair<String, String>>()
-
+        
         document.select("script").forEach { script ->
             val content = script.data()
             val regex = "var vid = '(https?://[a-zA-Z0-9]+\\.r2\\.cloudflarestorage\\.com/[^']+\\.mp4)'".toRegex()
-            regex.findAll(content).forEach { match ->
+            val matches = regex.findAll(content)
+            
+            matches.forEach { match ->
                 val url = match.groupValues[1]
                 val quality = when {
                     script.parent()?.id() == "jwContainer_2" -> "FULLHD"
@@ -115,7 +120,7 @@ class DattebayoBR : MainAPI() {
                 videoUrls.add(Pair(url, quality))
             }
         }
-
+        
         val html = document.html()
         val cloudflareRegex = "https?://[a-zA-Z0-9]+\\.r2\\.cloudflarestorage\\.com/[a-zA-Z0-9]+/[0-9]+\\.mp4".toRegex()
         cloudflareRegex.findAll(html).forEach { match ->
@@ -132,7 +137,7 @@ class DattebayoBR : MainAPI() {
                 videoUrls.add(Pair(url, quality))
             }
         }
-
+        
         return videoUrls.distinctBy { it.first }
     }
 
@@ -142,6 +147,7 @@ class DattebayoBR : MainAPI() {
         val title = selectFirst(HOME_TITLE)?.text()?.trim() ?: return null
         val poster = selectFirst(HOME_IMG)?.attr("src")?.let { fixUrl(it) }
         val episodeNum = selectFirst(HOME_EP_NUM)
+        val tipo = selectFirst(HOME_TIPO)?.text()?.trim()
         val isDub = isDub(title, href)
         val isDorama = href.contains("/doramas/")
         val urlWithPoster = if (poster != null) "$href|poster=$poster" else href
@@ -149,16 +155,23 @@ class DattebayoBR : MainAPI() {
         return if (episodeNum != null) {
             val epNumber = extractEpisodeNumber(title) ?: 1
             val animeName = cleanTitle(title)
+            
             newAnimeSearchResponse(animeName, urlWithPoster, if (isDorama) TvType.TvSeries else TvType.Anime) {
                 this.posterUrl = poster
-                if (isDub) addDubStatus(DubStatus.Dubbed, epNumber)
-                else addDubStatus(DubStatus.Subbed, epNumber)
+                if (isDub) {
+                    addDubStatus(DubStatus.Dubbed, epNumber)
+                } else {
+                    addDubStatus(DubStatus.Subbed, epNumber)
+                }
             }
         } else {
             newAnimeSearchResponse(cleanTitle(title), urlWithPoster, if (isDorama) TvType.TvSeries else TvType.Anime) {
                 this.posterUrl = poster
-                if (isDub) addDubStatus(DubStatus.Dubbed, null)
-                else addDubStatus(DubStatus.Subbed, null)
+                if (isDub) {
+                    addDubStatus(DubStatus.Dubbed, null)
+                } else {
+                    addDubStatus(DubStatus.Subbed, null)
+                }
             }
         }
     }
@@ -167,13 +180,16 @@ class DattebayoBR : MainAPI() {
         if (request.name == "Últimos Episódios") {
             val document = app.get("$mainUrl/", referer = mainUrl).document
             val episodeElements = document.select(".epiContainer .ultimosEpisodiosHomeItem")
-            val items = episodeElements.mapNotNull { it.toSearchResponse() }.distinctBy { it.url }
+            val items = episodeElements
+                .mapNotNull { it.toSearchResponse() }
+                .distinctBy { it.url }
+            
             return newHomePageResponse(
                 list = HomePageList(request.name, items, isHorizontalImages = true),
                 hasNext = false
             )
         }
-
+        
         val maxPage = when {
             request.data.contains("/animes/letra/todos") -> 218
             request.data.contains("/anime-dublado") -> 51
@@ -182,7 +198,7 @@ class DattebayoBR : MainAPI() {
             request.data.contains("/donghua") -> 10
             else -> 50
         }
-
+        
         val randomPage = (1..maxPage).random()
         val baseUrl = request.data.removeSuffix("/")
         val url = if (baseUrl.contains("/letra/todos")) {
@@ -190,7 +206,7 @@ class DattebayoBR : MainAPI() {
         } else {
             "$baseUrl/page/$randomPage"
         }
-
+        
         val document = try {
             app.get(url, referer = mainUrl).document
         } catch (e: Exception) {
@@ -201,23 +217,23 @@ class DattebayoBR : MainAPI() {
             }
             app.get(fallbackUrl, referer = mainUrl).document
         }
-
+        
         val items = document.select(HOME_ITEM)
             .mapNotNull { it.toSearchResponse() }
             .distinctBy { it.url }
-
-        return newHomePageResponse(request.name, items, hasNext = true)
+        
+        return newHomePageResponse(request.name, items, true)
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
         if (query.length < 2) return emptyList()
-        val searchUrl = "\( mainUrl/busca?busca= \){query.replace(" ", "+")}"
+        val searchUrl = "$mainUrl/busca?busca=${query.replace(" ", "+")}"
         val document = app.get(searchUrl).document
         return document.select(HOME_ITEM).mapNotNull { it.toSearchResponse() }
     }
 
     override suspend fun load(url: String): LoadResponse {
-        val (actualUrl, thumbPoster) = url.split("|poster=").let {
+        val (actualUrl, thumbPoster) = url.split("|poster=").let { 
             it[0] to it.getOrNull(1)?.takeIf { it.isNotBlank() }?.let { fixUrl(it) }
         }
 
@@ -228,7 +244,7 @@ class DattebayoBR : MainAPI() {
         val poster = thumbPoster ?: document.selectFirst(DETAIL_POSTER)?.attr("src")?.let { fixUrl(it) }
         val synopsis = document.selectFirst(DETAIL_SYNOPSIS)?.text()?.trim() ?: "Sinopse não disponível"
         val genres = document.select(DETAIL_GENRES).map { it.text() }.filter { it.isNotBlank() }
-
+        
         var year: Int? = null
         var totalEpisodes: Int? = null
         var tvType = if (isDorama) TvType.TvSeries else TvType.Anime
@@ -238,7 +254,7 @@ class DattebayoBR : MainAPI() {
             when {
                 text.contains("Ano") -> year = text.substringAfter("Ano").trim().toIntOrNull()
                 text.contains("Episódios") -> {
-                    val (_, total) = extractTotalEpisodes(text)
+                    val (current, total) = extractTotalEpisodes(text)
                     totalEpisodes = total
                 }
                 !isDorama && text.contains("Tipo") && text.contains("Filme", ignoreCase = true) -> {
@@ -254,19 +270,20 @@ class DattebayoBR : MainAPI() {
         }
 
         val episodes = mutableListOf<Episode>()
-
+        
         document.select(EPISODE_CONTAINER).select(EPISODE_ITEM).forEachIndexed { index, element ->
             val link = element.selectFirst(EPISODE_LINK) ?: return@forEachIndexed
             val episodeUrl = fixUrl(link.attr("href"))
-            val episodeTitle = link.attr(EPISODE_TITLE_ATTR).takeIf { it.isNotBlank() }
+            val episodeTitle = link.attr(EPISODE_TITLE_ATTR).takeIf { it.isNotBlank() } 
                 ?: element.selectFirst(HOME_TITLE)?.text()?.trim() ?: return@forEachIndexed
-
+            
             val episodeNumber = extractEpisodeNumber(episodeTitle) ?: (index + 1)
             val episodePoster = element.selectFirst("img")?.attr("src")?.let { fixUrl(it) }
 
             episodes.add(
                 newEpisode(episodeUrl) {
-                    name = if (tvType == TvType.AnimeMovie) "Filme" else "Episódio $episodeNumber"
+                    name = if (tvType == TvType.AnimeMovie) "Filme" 
+                           else "Episódio $episodeNumber"
                     episode = episodeNumber
                     posterUrl = episodePoster ?: poster
                 }
@@ -281,8 +298,11 @@ class DattebayoBR : MainAPI() {
             this.plot = synopsis
             this.tags = genres
             this.showStatus = showStatus
-            if (isDub) addEpisodes(DubStatus.Dubbed, episodes)
-            else addEpisodes(DubStatus.Subbed, episodes)
+            if (isDub) {
+                addEpisodes(DubStatus.Dubbed, episodes)
+            } else {
+                addEpisodes(DubStatus.Subbed, episodes)
+            }
         }
     }
 
@@ -303,21 +323,24 @@ class DattebayoBR : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val episodePageUrl = data.split("|poster=")[0]
-
+        
         val document = try {
             app.get(episodePageUrl, referer = mainUrl).document
         } catch (e: Exception) {
             return false
         }
-
+        
         val baseUrls = findAllVideoUrls(document)
-        if (baseUrls.isEmpty()) return false
-
+        
+        if (baseUrls.isEmpty()) {
+            return false
+        }
+        
         val priority = mapOf("FULLHD" to 4, "HD" to 3, "SD" to 2, "Unknown" to 1)
         val sortedUrls = baseUrls.sortedByDescending { priority[it.second] ?: 0 }
-
+        
         var linksFound = false
-
+        
         sortedUrls.forEach { (baseUrl, quality) ->
             try {
                 val outbrainJs = app.get(
@@ -327,7 +350,7 @@ class DattebayoBR : MainAPI() {
                         "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
                     )
                 ).text
-
+                
                 val firstResponse = app.post(
                     url = ADS_API_URL,
                     data = mapOf(
@@ -341,10 +364,15 @@ class DattebayoBR : MainAPI() {
                         "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
                     )
                 ).text
-
-                val token = extractTokenFromJson(firstResponse) ?: return@forEach
-
+                
+                val token = extractTokenFromJson(firstResponse)
+                
+                if (token.isNullOrBlank()) {
+                    return@forEach
+                }
+                
                 val secondUrl = "$ADS_API_URL?token=$token&url=$baseUrl"
+                
                 val secondResponse = app.get(
                     secondUrl,
                     headers = mapOf(
@@ -352,40 +380,45 @@ class DattebayoBR : MainAPI() {
                         "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
                     )
                 ).text
-
-                val authParams = extractTokenFromJson(secondResponse) ?: return@forEach
-
+                
+                val authParams = extractTokenFromJson(secondResponse)
+                
+                if (authParams.isNullOrBlank()) {
+                    return@forEach
+                }
+                
                 val finalUrl = baseUrl + authParams
-
+                
                 val qualityValue = when (quality) {
                     "FULLHD" -> 1080
                     "HD" -> 720
                     "SD" -> 480
                     else -> 720
                 }
-
+                
                 callback.invoke(
                     newExtractorLink(
                         source = name,
                         name = "Cloudflare $quality",
                         url = finalUrl,
-                        referer = mainUrl,
+                        type = ExtractorLinkType.VIDEO
+                    ) {
+                        this.quality = qualityValue
+                        referer = mainUrl
                         headers = mapOf(
                             "Referer" to mainUrl,
                             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
                         )
-                    ) {
-                        this.quality = qualityValue
                     }
                 )
-
+                
                 linksFound = true
-
+                
             } catch (e: Exception) {
-                // silent fail
+                continue
             }
         }
-
+        
         return linksFound
     }
 }
