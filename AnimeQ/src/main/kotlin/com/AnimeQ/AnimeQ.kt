@@ -3,11 +3,13 @@ package com.AnimeQ
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.network.CloudflareKiller
+import com.lagradost.cloudstream3.network.get
 import org.jsoup.nodes.Element
 import org.jsoup.nodes.Document
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import java.util.EnumSet
+import kotlinx.coroutines.withTimeoutOrNull
+import java.net.URI
 
 class AnimeQ : MainAPI() {
     override var mainUrl = "https://animeq.net"
@@ -15,194 +17,220 @@ class AnimeQ : MainAPI() {
     override val hasMainPage = true
     override var lang = "pt-br"
     override val hasDownloadSupport = true
-    override val hasQuickSearch = true
     override val supportedTypes = setOf(TvType.Anime, TvType.AnimeMovie)
+    override val usesWebView = false
 
-    // Usa o mesmo interceptor do AnimesCloud
+    // CloudflareKiller instance
     private val cloudflareInterceptor = CloudflareKiller()
 
     companion object {
-        // USER-AGENT DESKTOP igual ao AnimesCloud
         private const val USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-        
+
+        // Mutex para controle de inicialização
         private val locker = Mutex()
         private var isInitialized = false
+
+        // Timeout global para requisições
+        private const val REQUEST_TIMEOUT_MS = 30000L
         
         // Página de busca
         private const val SEARCH_PATH = "/?s="
-        
+
         // Página de episódios
-        private const val EPISODE_PAGE_ITEM = ".item.se.episodes, article.item.se, div.item.se, .episodes article"
-        
+        private const val EPISODE_PAGE_ITEM = ".item.se.episodes"
+
         // Página de gêneros/categorias
-        private const val GENRE_PAGE_ITEM = ".item.tvshows, .item.movies, article.item, div.item, .post, .anime-item"
-        
+        private const val GENRE_PAGE_ITEM = ".items.full .item.tvshows, .items.full .item.movies"
+
         // Elementos comuns
-        private const val ITEM_TITLE = ".data h3 a, h3 a, .title a, a h3"
-        private const val ITEM_POSTER = ".poster img, img.poster, .thumb img, img[src*=.jpg], img[src*=.png]"
+        private const val ITEM_TITLE = ".data h3 a"
+        private const val ITEM_POSTER = ".poster img"
         private const val ITEM_LINK = "a[href]"
-        private const val EPISODE_SERIE = ".data .serie, .serie, .anime-title"
-        private const val ANIME_YEAR = ".data span, .year, span.year, .date"
-        private const val ANIME_SCORE = ".rating, .score, .imdb, [class*=rating]"
-        
+        private const val EPISODE_SERIE = ".data .serie"
+        private const val ANIME_YEAR = ".data span"
+        private const val ANIME_SCORE = ".rating"
+
         // Página de detalhes do anime
         private const val DETAIL_TITLE = "h1"
-        private const val DETAIL_POSTER = ".poster img, .thumbnail img, img.poster"
-        private const val DETAIL_SYNOPSIS = ".wp-content p, .sinopse, .description, .entry-content p"
-        private const val DETAIL_GENRES = ".sgeneros a[rel=tag], a[rel=tag], .genres a, .tags a"
-        private const val DETAIL_YEAR = ".date, .year, span.date"
-        private const val DETAIL_SCORE = ".dt_rating_vgs, .rating, .score"
-        private const val EPISODE_LIST = ".episodios li .episodiotitle a, .episode-list a, .episodios a"
-        private const val EPISODE_IMAGES = ".episodios li .imagen img, .episode-img img"
-        private const val EPISODE_NUMBER = ".episodios li .numerando, .episode-number, .number"
+        private const val DETAIL_POSTER = ".poster img"
+        private const val DETAIL_SYNOPSIS = ".wp-content p"
+        private const val DETAIL_GENRES = ".sgeneros a[rel=tag]"
+        private const val DETAIL_YEAR = ".date"
+        private const val DETAIL_SCORE = ".dt_rating_vgs"
+        private const val EPISODE_LIST = ".episodios li .episodiotitle a"
+        private const val EPISODE_IMAGES = ".episodios li .imagen img"
+        private const val EPISODE_NUMBER = ".episodios li .numerando"
     }
 
+    // Cookies persistidos após bypass do Cloudflare
     private var persistedCookies: String? = null
 
-    // Headers IDÊNTICOS ao AnimesCloud (DESKTOP)
+    // Headers padrão para todas as requisições
     private val defaultHeaders: Map<String, String>
         get() = mapOf(
             "User-Agent" to USER_AGENT,
-            "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-            "Accept-Language" to "pt-BR,pt;q=0.9,en;q=0.8",
-            "Accept-Encoding" to "gzip, deflate, br",
-            "Connection" to "keep-alive",
-            "Upgrade-Insecure-Requests" to "1",
-            "Sec-Fetch-Dest" to "document",
-            "Sec-Fetch-Mode" to "navigate",
-            "Sec-Fetch-Site" to "same-origin",
-            "Sec-Fetch-User" to "?1",
-            "Cache-Control" to "max-age=0",
-            "Referer" to "$mainUrl/"
+            "Referer" to "$mainUrl/",
+            "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            "Accept-Language" to "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+            "Cookie" to (persistedCookies ?: "")
         )
 
-    // Headers para imagens (para evitar 403)
+    // Headers específicos para imagens (para evitar 403)
     private val imageHeaders: Map<String, String>
         get() = mapOf(
             "User-Agent" to USER_AGENT,
-            "Referer" to mainUrl,
+            "Referer" to "$mainUrl/",
             "Accept" to "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
-            "Accept-Language" to "pt-BR,pt;q=0.9,en;q=0.8",
-            "Cache-Control" to "no-cache"
+            "Accept-Language" to "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+            "Sec-Fetch-Dest" to "image",
+            "Sec-Fetch-Mode" to "no-cors",
+            "Sec-Fetch-Site" to "same-origin",
+            "Cache-Control" to "no-cache",
+            "Cookie" to (persistedCookies ?: "")
         )
 
-    // Função para fixar URL de imagem com headers
-    private fun fixImageUrl(url: String?): String? {
-        return url?.let {
-            if (it.startsWith("http")) {
-                // Adiciona headers inline para evitar 403
-                it + "|headers=" + imageHeaders.entries.joinToString("&") { 
+    // Função para carregar imagem com headers
+    private suspend fun loadImageWithHeaders(imageUrl: String): String? {
+        return try {
+            val response = app.get(
+                url = imageUrl,
+                headers = imageHeaders,
+                interceptor = cloudflareInterceptor,
+                timeout = 15
+            )
+            
+            if (response.isSuccessful) {
+                // Retorna a URL original, mas o Cloudstream3 vai usar os headers
+                imageUrl
+            } else {
+                println("⚠️ [IMAGE] Falha ao carregar imagem: ${response.code} - $imageUrl")
+                null
+            }
+        } catch (e: Exception) {
+            println("🔴 [IMAGE] Erro ao carregar imagem: ${e.message}")
+            null
+        }
+    }
+
+    // Sobrescreve o método fixUrl para adicionar headers às imagens
+    override fun fixUrl(url: String): String {
+        return if (url.startsWith("http")) {
+            // Adiciona headers inline para imagens (formato aceito pelo Cloudstream3)
+            if (url.contains(".jpg") || url.contains(".png") || url.contains(".jpeg") || url.contains(".webp")) {
+                url + "|headers=" + imageHeaders.entries.joinToString("&") { 
                     "${it.key}=${it.value}" 
                 }
             } else {
-                fixUrl(it)
+                url
             }
+        } else {
+            super.fixUrl(url)
         }
     }
 
-    // Mapeamento de categorias
+    // Categorias principais
     private val mainCategories = mapOf(
         "Últimos Episódios" to "$mainUrl/episodio/",
         "Animes Mais Vistos" to "$mainUrl/",
-    )
-
-    private val genresMap = mapOf(
-        "Ação" to "genre/acao",
-        "Aventura" to "genre/aventura", 
-        "Animação" to "genre/animacao",
-        "Drama" to "genre/drama",
-        "Crime" to "genre/crime",
-        "Mistério" to "genre/misterio",
-        "Fantasia" to "genre/fantasia",
-        "Terror" to "genre/terror",
-        "Comédia" to "genre/comedia",
-        "Romance" to "genre/romance",
-        "Sci-Fi" to "genre/ficcao-cientifica",
-        "Seinen" to "genre/seinen",
-        "Shounen" to "genre/shounen",
-        "Ecchi" to "genre/ecchi",
-        "Esporte" to "genre/esporte",
-        "Sobrenatural" to "genre/sobrenatural",
-        "Vida Escolar" to "genre/vida-escolar"
-    )
-
-    private val typeMap = mapOf(
-        "Legendado" to "tipo/legendado",
-        "Dublado" to "tipo/dublado"
-    )
-
-    private val specialCategories = mapOf(
-        "Filmes" to "filme",
-        "Manhwa" to "genre/Manhwa",
-        "Donghua" to "genre/Donghua"
+        "Dublado" to "$mainUrl/tipo/dublado",
+        "Legendado" to "$mainUrl/tipo/legendado",
+        "Filmes" to "$mainUrl/filme"
     )
 
     override val mainPage = mainPageOf(
-        *mainCategories.map { (name, url) -> url to name }.toTypedArray(),
-        *genresMap.map { (genre, slug) -> "$mainUrl/$slug" to genre }.toTypedArray(),
-        *typeMap.map { (type, slug) -> "$mainUrl/$slug" to type }.toTypedArray(),
-        *specialCategories.map { (cat, slug) -> "$mainUrl/$slug" to cat }.toTypedArray()
+        *mainCategories.map { (name, url) -> url to name }.toTypedArray()
     )
 
-    // FUNÇÃO DE REQUEST COM DEBUG
-    private suspend fun request(url: String, debugName: String = ""): Document {
-        println("🔗 Request to: $url ($debugName)")
-        
-        // Inicialização
-        if (!isInitialized) {
-            locker.withLock {
-                if (!isInitialized) {
-                    try {
-                        println("🔄 Inicializando cookies...")
-                        val resMain = app.get(
-                            mainUrl, 
-                            headers = defaultHeaders, 
-                            interceptor = cloudflareInterceptor, 
-                            timeout = 60
-                        )
-                        
-                        if (resMain.code == 200) {
-                            println("✅ Cookies inicializados")
-                            val cookieList = mutableListOf<String>()
-                            resMain.okhttpResponse.headers("Set-Cookie").forEach { 
-                                cookieList.add(it.split(";")[0]) 
+    /**
+     * Função centralizada para fazer requisições com tratamento Cloudflare
+     */
+    private suspend fun request(url: String, debugTag: String = "REQUEST"): Document {
+        val startTime = System.currentTimeMillis()
+        println("🔵 [$debugTag] Iniciando requisição para: $url")
+
+        try {
+            // Inicialização do Cloudflare (apenas na primeira vez)
+            if (!isInitialized) {
+                locker.withLock {
+                    if (!isInitialized) {
+                        try {
+                            println("🟡 [$debugTag] Primeira requisição - tentando resolver Cloudflare para: $mainUrl")
+
+                            val resMain = withTimeoutOrNull(REQUEST_TIMEOUT_MS) {
+                                app.get(
+                                    url = mainUrl, 
+                                    headers = mapOf(
+                                        "User-Agent" to USER_AGENT,
+                                        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
+                                    ), 
+                                    interceptor = cloudflareInterceptor, 
+                                    timeout = 30
+                                )
                             }
-                            resMain.okhttpResponse.request.header("Cookie")?.let { 
-                                cookieList.add(it) 
+
+                            if (resMain == null) {
+                                println("⚠️ [$debugTag] TIMEOUT na requisição inicial após ${REQUEST_TIMEOUT_MS}ms")
+                                return@withLock
                             }
-                            persistedCookies = cookieList.distinct().joinToString("; ")
-                            isInitialized = true
-                            
-                            println("🍪 Cookies persistidos: $persistedCookies")
+
+                            if (resMain.code == 200) {
+                                val cookieList = mutableListOf<String>()
+                                resMain.okhttpResponse.headers("Set-Cookie").forEach { 
+                                    val cookiePart = it.split(";")[0]
+                                    cookieList.add(cookiePart)
+                                    println("🍪 [$debugTag] Set-Cookie recebido: $cookiePart")
+                                }
+                                
+                                if (cookieList.isNotEmpty()) {
+                                    persistedCookies = cookieList.distinct().joinToString("; ")
+                                    println("🍪 [$debugTag] Cookies persistidos: $persistedCookies")
+                                }
+                                
+                                isInitialized = true
+                                println("🟢 [$debugTag] Cloudflare resolvido com sucesso!")
+                            } else {
+                                println("⚠️ [$debugTag] Resposta inicial com código ${resMain.code}")
+                            }
+                        } catch (e: Exception) {
+                            println("🔴 [$debugTag] Erro ao resolver Cloudflare: ${e.message}")
                         }
-                    } catch (e: Exception) {
-                        println("❌ Erro inicialização: ${e.message}")
                     }
                 }
+            } else {
+                println("🟢 [$debugTag] Já inicializado, usando cookies existentes")
             }
-        }
 
-        // Headers com cookies
-        val finalHeaders = defaultHeaders.toMutableMap()
-        persistedCookies?.takeIf { it.isNotBlank() }?.let {
-            finalHeaders["Cookie"] = it
-        }
+            // Requisição principal
+            println("🟡 [$debugTag] Fazendo requisição principal: $url")
+            
+            val response = withTimeoutOrNull(REQUEST_TIMEOUT_MS) {
+                app.get(
+                    url = url, 
+                    headers = defaultHeaders, 
+                    interceptor = cloudflareInterceptor,
+                    timeout = 30
+                )
+            }
+            
+            val elapsed = System.currentTimeMillis() - startTime
+            println("⏱️ [$debugTag] Tempo total: ${elapsed}ms")
+            
+            if (response == null) {
+                println("⚠️ [$debugTag] TIMEOUT após ${REQUEST_TIMEOUT_MS}ms")
+                return Document("")
+            }
 
-        println("📡 Fazendo request para: $url")
-        val response = app.get(
-            url, 
-            headers = finalHeaders, 
-            interceptor = cloudflareInterceptor,
-            timeout = 45
-        )
-        
-        println("📊 Response code: ${response.code}")
-        println("📄 Response length: ${response.text.length} chars")
-        
-        return response.document
+            println("🟢 [$debugTag] Resposta OK - Código: ${response.code}, Tamanho: ${response.text.length} chars")
+
+            return response.document
+            
+        } catch (e: Exception) {
+            val elapsed = System.currentTimeMillis() - startTime
+            println("🔴 [$debugTag] Erro após ${elapsed}ms: ${e.message}")
+            return Document("")
+        }
     }
 
-    // Funções auxiliares
     private fun cleanTitle(dirtyTitle: String): String {
         return dirtyTitle
             .replace("(?i)\\s*–\\s*todos os epis[oó]dios".toRegex(), "")
@@ -256,8 +284,9 @@ class AnimeQ : MainAPI() {
     private fun Element.toEpisodeSearchResponse(): SearchResponse? {
         val href = selectFirst(ITEM_LINK)?.attr("href") ?: return null
         val episodeTitle = selectFirst(ITEM_TITLE)?.text()?.trim() ?: return null
+        val episodeNumber = extractEpisodeNumber(episodeTitle)
         val animeTitle = extractAnimeTitleFromEpisode(episodeTitle)
-        val posterUrl = selectFirst(ITEM_POSTER)?.attr("src")?.let { fixImageUrl(it) }
+        val posterUrl = selectFirst(ITEM_POSTER)?.attr("src")?.let { fixUrl(it) }
         val isDubbed = isDubbed(episodeTitle)
         val serieName = selectFirst(EPISODE_SERIE)?.text()?.trim() ?: animeTitle
 
@@ -266,6 +295,9 @@ class AnimeQ : MainAPI() {
         return newAnimeSearchResponse(cleanTitle, fixUrl(href)) {
             this.posterUrl = posterUrl
             this.type = TvType.Anime
+
+            val dubStatus = if (isDubbed) DubStatus.Dubbed else DubStatus.Subbed
+            addDubStatus(dubStatus, episodeNumber)
         }
     }
 
@@ -273,7 +305,7 @@ class AnimeQ : MainAPI() {
         val href = selectFirst(ITEM_LINK)?.attr("href") ?: return null
         val rawTitle = selectFirst(ITEM_TITLE)?.text()?.trim() ?: return null
         val cleanedTitle = cleanTitle(rawTitle).ifBlank { return null }
-        val posterUrl = selectFirst(ITEM_POSTER)?.attr("src")?.let { fixImageUrl(it) }
+        val posterUrl = selectFirst(ITEM_POSTER)?.attr("src")?.let { fixUrl(it) }
         val isDubbed = isDubbed(rawTitle)
         val year = selectFirst(ANIME_YEAR)?.text()?.trim()?.toIntOrNull()
         val scoreText = selectFirst(ANIME_SCORE)?.text()?.trim()
@@ -290,15 +322,7 @@ class AnimeQ : MainAPI() {
             this.type = type
             this.year = year
             this.score = score
-            if (isDubbed) {
-                this.dubStatus = EnumSet.noneOf(DubStatus::class.java).apply {
-                    add(DubStatus.Dubbed)
-                }
-            } else {
-                this.dubStatus = EnumSet.noneOf(DubStatus::class.java).apply {
-                    add(DubStatus.Subbed)
-                }
-            }
+            addDubStatus(isDubbed, null)
         }
     }
 
@@ -308,6 +332,9 @@ class AnimeQ : MainAPI() {
     ): HomePageResponse {
         val baseUrl = request.data
         var url = baseUrl
+        val tag = "MAINPAGE-${request.name}"
+
+        println("🏠 [$tag] Carregando página principal - Página: $page, URL base: $baseUrl")
 
         if (page > 1) {
             url = when {
@@ -316,121 +343,148 @@ class AnimeQ : MainAPI() {
                 baseUrl.contains("/?s=") -> baseUrl.replace("/?s=", "/page/$page/?s=")
                 else -> "$baseUrl/page/$page/"
             }
+            println("🏠 [$tag] URL com paginação: $url")
         }
 
-        println("🏠 [MAINPAGE-${request.name}] Carregando página principal - Página: $page, URL base: $baseUrl")
-        if (page > 1) println("🏠 [MAINPAGE-${request.name}] URL com paginação: $url")
-        
-        val document = this.request(url, request.name)
-
-        return when (request.name) {
-            "Últimos Episódios" -> {
-                val episodeElements = document.select(EPISODE_PAGE_ITEM)
-                println("🏠 [MAINPAGE-${request.name}] Encontrados ${episodeElements.size} episódios")
-                
-                val items = episodeElements
-                    .mapNotNull { it.toEpisodeSearchResponse() }
-                    .distinctBy { it.url }
-
-                println("🏠 [MAINPAGE-${request.name}] Processados ${items.size} itens")
-                newHomePageResponse(
-                    list = HomePageList(request.name, items, isHorizontalImages = true),
-                    hasNext = episodeElements.isNotEmpty()
-                )
+        return try {
+            val document = request(url, tag)
+            
+            if (document.text().isBlank()) {
+                println("⚠️ [$tag] Documento vazio recebido")
+                return newHomePageResponse(HomePageList(request.name, emptyList(), false), false)
             }
-            "Animes Mais Vistos" -> {
-                val popularItems = mutableListOf<SearchResponse>()
 
-                val sliderItems = document.select("#genre_acao .item.tvshows, #genre_acao .item.movies")
-                println("🏠 [MAINPAGE-${request.name}] Encontrados ${sliderItems.size} itens no slider")
-                
-                popularItems.addAll(sliderItems.take(10).mapNotNull { it.toAnimeSearchResponse() })
+            when (request.name) {
+                "Últimos Episódios" -> {
+                    println("🏠 [$tag] Processando Últimos Episódios")
+                    val episodeElements = document.select(EPISODE_PAGE_ITEM)
+                    println("🏠 [$tag] Encontrados ${episodeElements.size} episódios")
+                    
+                    val items = episodeElements
+                        .mapNotNull { it.toEpisodeSearchResponse() }
+                        .distinctBy { it.url }
+                    
+                    println("🏠 [$tag] Processados ${items.size} itens")
 
-                if (popularItems.isEmpty()) {
-                    println("🏠 [MAINPAGE-${request.name}] Nenhum item no slider, buscando itens gerais")
-                    val allItems = document.select(".item.tvshows, .item.movies")
-                        .take(10)
-                        .mapNotNull { it.toAnimeSearchResponse() }
-                    popularItems.addAll(allItems)
+                    newHomePageResponse(
+                        list = HomePageList(request.name, items, isHorizontalImages = true),
+                        hasNext = episodeElements.isNotEmpty()
+                    )
                 }
+                "Animes Mais Vistos" -> {
+                    println("🏠 [$tag] Processando Animes Mais Vistos")
+                    val popularItems = mutableListOf<SearchResponse>()
 
-                println("🏠 [MAINPAGE-${request.name}] Processados ${popularItems.size} itens populares")
-                newHomePageResponse(
-                    list = HomePageList(request.name, popularItems.distinctBy { it.url }, isHorizontalImages = false),
-                    hasNext = false
-                )
+                    val sliderItems = document.select("#genre_acao .item.tvshows, #genre_acao .item.movies")
+                    println("🏠 [$tag] Encontrados ${sliderItems.size} itens no slider")
+                    
+                    popularItems.addAll(sliderItems.take(10).mapNotNull { it.toAnimeSearchResponse() })
+
+                    if (popularItems.isEmpty()) {
+                        println("🏠 [$tag] Nenhum item no slider, buscando itens gerais")
+                        val allItems = document.select(".item.tvshows, .item.movies")
+                            .take(10)
+                            .mapNotNull { it.toAnimeSearchResponse() }
+                        popularItems.addAll(allItems)
+                    }
+                    
+                    println("🏠 [$tag] Processados ${popularItems.size} itens populares")
+
+                    newHomePageResponse(
+                        list = HomePageList(request.name, popularItems.distinctBy { it.url }, isHorizontalImages = false),
+                        hasNext = false
+                    )
+                }
+                else -> {
+                    val isEpisodePage = baseUrl.contains("/episodio/")
+                    val isGenrePage = baseUrl.contains("/genre/") || 
+                                      baseUrl.contains("/tipo/") || 
+                                      baseUrl == "$mainUrl/filme/"
+
+                    println("🏠 [$tag] Processando categoria: ${request.name}")
+                    println("🏠 [$tag] É página de episódio? $isEpisodePage")
+                    println("🏠 [$tag] É página de gênero? $isGenrePage")
+
+                    val items = if (isEpisodePage) {
+                        document.select(EPISODE_PAGE_ITEM)
+                            .mapNotNull { it.toEpisodeSearchResponse() }
+                            .distinctBy { it.url }
+                    } else if (isGenrePage) {
+                        document.select(GENRE_PAGE_ITEM)
+                            .mapNotNull { it.toAnimeSearchResponse() }
+                            .distinctBy { it.url }
+                    } else {
+                        document.select(".item.tvshows, .item.movies")
+                            .mapNotNull { it.toAnimeSearchResponse() }
+                            .distinctBy { it.url }
+                    }
+
+                    println("🏠 [$tag] Encontrados ${items.size} itens")
+
+                    val hasNext = when {
+                        isEpisodePage -> document.select(".pagination a").isNotEmpty()
+                        isGenrePage -> document.select(".pagination a").isNotEmpty()
+                        else -> false
+                    }
+                    
+                    println("🏠 [$tag] Tem próxima página? $hasNext")
+
+                    newHomePageResponse(
+                        list = HomePageList(request.name, items, isHorizontalImages = false),
+                        hasNext = hasNext
+                    )
+                }
             }
-            else -> {
-                val isEpisodePage = baseUrl.contains("/episodio/")
-                val isGenrePage = baseUrl.contains("/genre/") || 
-                                 baseUrl.contains("/tipo/") || 
-                                 baseUrl == "$mainUrl/filme/"
-
-                println("🏠 [MAINPAGE-${request.name}] É página de episódio? $isEpisodePage")
-                println("🏠 [MAINPAGE-${request.name}] É página de gênero? $isGenrePage")
-
-                val items = if (isEpisodePage) {
-                    val elements = document.select(EPISODE_PAGE_ITEM)
-                    println("🏠 [MAINPAGE-${request.name}] Encontrados ${elements.size} episódios")
-                    elements.mapNotNull { it.toEpisodeSearchResponse() }
-                        .distinctBy { it.url }
-                } else if (isGenrePage) {
-                    val elements = document.select(GENRE_PAGE_ITEM)
-                    println("🏠 [MAINPAGE-${request.name}] Encontrados ${elements.size} itens")
-                    elements.mapNotNull { it.toAnimeSearchResponse() }
-                        .distinctBy { it.url }
-                } else {
-                    val elements = document.select(".item.tvshows, .item.movies")
-                    println("🏠 [MAINPAGE-${request.name}] Encontrados ${elements.size} itens gerais")
-                    elements.mapNotNull { it.toAnimeSearchResponse() }
-                        .distinctBy { it.url }
-                }
-
-                val hasNext = when {
-                    isEpisodePage -> document.select(".pagination a").isNotEmpty()
-                    isGenrePage -> document.select(".pagination a").isNotEmpty()
-                    else -> false
-                }
-
-                println("🏠 [MAINPAGE-${request.name}] Tem próxima página? $hasNext")
-                newHomePageResponse(
-                    list = HomePageList(request.name, items, isHorizontalImages = false),
-                    hasNext = hasNext
-                )
-            }
+        } catch (e: Exception) {
+            println("🔴 [$tag] Erro ao carregar página: ${e.message}")
+            newHomePageResponse(HomePageList(request.name, emptyList(), false), false)
         }
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
         if (query.length < 2) return emptyList()
 
-        println("🔍 Pesquisando por: '$query'")
-        val document = request("$mainUrl$SEARCH_PATH${query.replace(" ", "+")}", "search_$query")
+        println("🔍 [SEARCH] Buscando por: $query")
 
-        val elements = document.select(".item.tvshows, .item.movies, .item.se.episodes, article, .post")
-        println("🔎 Encontrados ${elements.size} elementos na pesquisa")
-        
-        return elements
+        val searchUrl = "$mainUrl$SEARCH_PATH${query.replace(" ", "+")}"
+        val document = request(searchUrl, "SEARCH")
+
+        if (document.text().isBlank()) {
+            println("⚠️ [SEARCH] Documento vazio para busca: $query")
+            return emptyList()
+        }
+
+        val results = document.select(".item.tvshows, .item.movies, .item.se.episodes")
             .mapNotNull { element ->
-                if (element.hasClass("episodes") || element.html().contains("episodio", true)) {
+                if (element.hasClass("episodes")) {
                     element.toEpisodeSearchResponse()
                 } else {
                     element.toAnimeSearchResponse()
                 }
             }
             .distinctBy { it.url }
-            .also { println("✅ Gerados ${it.size} resultados de pesquisa") }
+
+        println("🔍 [SEARCH] Encontrados ${results.size} resultados para '$query'")
+        return results
     }
 
     override suspend fun load(url: String): LoadResponse {
         println("📺 [LOAD] Carregando detalhes de: $url")
-        val document = request(url, "details")
+
+        val document = request(url, "LOAD")
+        
+        if (document.text().isBlank()) {
+            println("⚠️ [LOAD] Documento vazio para URL: $url")
+            return newAnimeLoadResponse("Erro ao carregar", url, TvType.Anime) {
+                this.plot = "Não foi possível carregar os detalhes. O site pode estar lento ou indisponível."
+            }
+        }
 
         val rawTitle = document.selectFirst(DETAIL_TITLE)?.text()?.trim() ?: "Sem Título"
         val title = cleanTitle(rawTitle)
-
-        val poster = document.selectFirst(DETAIL_POSTER)?.attr("src")?.let { fixImageUrl(it) }
         println("📺 [LOAD] Título: $title")
+
+        val poster = document.selectFirst(DETAIL_POSTER)?.attr("src")?.let { fixUrl(it) }
         println("📺 [LOAD] Poster: $poster")
 
         var synopsis = "Sinopse não disponível."
@@ -460,11 +514,13 @@ class AnimeQ : MainAPI() {
                 }
             }
         }
+
         println("📺 [LOAD] Sinopse: ${synopsis.take(100)}...")
 
         val genres = document.select(DETAIL_GENRES)
             .mapNotNull { it.text().trim() }
             .filter { !it.contains("Letra") && !it.contains("tipo") }
+
         println("📺 [LOAD] Gêneros: $genres")
 
         var year: Int? = null
@@ -480,13 +536,12 @@ class AnimeQ : MainAPI() {
         if (scoreText != null) {
             val scoreValue = scoreText.toFloatOrNull()
             score = scoreValue?.let { Score.from10(it) }
-            println("📺 [LOAD] Nota: $scoreValue")
-        } else {
-            println("📺 [LOAD] Nota: não disponível")
         }
+        println("📺 [LOAD] Nota: $score")
 
         val isDubbed = rawTitle.contains("dublado", true) || url.contains("dublado", true)
         val isMovie = url.contains("/filme/") || rawTitle.contains("filme", true)
+
         println("📺 [LOAD] É filme? $isMovie")
         println("📺 [LOAD] É dublado? $isDubbed")
 
@@ -496,7 +551,7 @@ class AnimeQ : MainAPI() {
             val episodeNumbers = document.select(EPISODE_NUMBER)
 
             println("📺 [LOAD] Encontrados ${episodeElements.size} episódios")
-            
+
             episodeElements.mapIndexed { index, element ->
                 val episodeTitle = element.text().trim()
                 val episodeUrl = element.attr("href")
@@ -516,7 +571,7 @@ class AnimeQ : MainAPI() {
 
                 var episodePoster: String? = null
                 if (index < episodeImages.size) {
-                    episodePoster = episodeImages[index].attr("src")?.let { fixImageUrl(it) }
+                    episodePoster = episodeImages[index].attr("src")?.let { fixUrl(it) }
                 }
 
                 newEpisode(episodeUrl) {
@@ -539,6 +594,7 @@ class AnimeQ : MainAPI() {
         } else {
             ShowStatus.Ongoing
         }
+
         println("📺 [LOAD] Status: $showStatus")
         println("📺 [LOAD] Total de episódios: ${episodesList.size}")
 
@@ -562,7 +618,7 @@ class AnimeQ : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // Chama o extractor original do AnimeQ
+        println("🔗 [LINKS] Extraindo links de: $data")
         return AnimeQVideoExtractor.extractVideoLinks(data, callback = callback)
     }
 }
