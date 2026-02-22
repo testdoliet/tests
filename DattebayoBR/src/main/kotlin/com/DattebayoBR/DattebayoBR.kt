@@ -415,7 +415,7 @@ class DattebayoBR : MainAPI() {
                 linksFound = true
                 
             } catch (e: Exception) {
-                continue
+                // Apenas ignora e continua para o próximo
             }
         }
         
