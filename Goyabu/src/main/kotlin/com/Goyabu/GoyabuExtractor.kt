@@ -195,7 +195,11 @@ object GoyabuExtractor {
         )
         
         val urlWithParams = "$apiUrl?rpcids=WcwnYd&source-path=%2Fvideo.g&f.sid=$f_sid&bl=$bl&hl=pt-BR&_reqid=$reqid&rt=c"
-        val body = "f.req=%5B%5B%5B%22WcwnYd%22%2C%22%5B%5C%22$token%5C%22%2C%5C%22%5C%22%2C0%5D%22%2Cnull%2C%22generic%22%5D%5D%5D"
+        
+        // 🔥 CORREÇÃO AQUI: body como Map, não String
+        val body = mapOf(
+            "f.req" to "%5B%5B%5B%22WcwnYd%22%2C%22%5B%5C%22$token%5C%22%2C%5C%22%5C%22%2C0%5D%22%2Cnull%2C%22generic%22%5D%5D%5D"
+        )
         
         println("📡 Chamando API batch execute...")
         println("   URL: $urlWithParams")
@@ -203,7 +207,7 @@ object GoyabuExtractor {
         val response = app.post(
             urlWithParams,
             headers = headers,
-            data = body
+            data = body  // Agora é um Map, não String
         )
         
         println("✅ Resposta da API - Status: ${response.code}, Tamanho: ${response.text.length} bytes")
