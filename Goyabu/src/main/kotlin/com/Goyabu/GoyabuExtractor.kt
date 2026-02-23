@@ -418,226 +418,7 @@ object GoyabuExtractor {
         }
     }
 
-    private suspend fun extractBloggerUrls(
-        doc: org.jsoup.nodes.Document,
-        originalUrl: String,
-        name: String,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        debugInfo("🎯 Iniciando extração Blogger...")
-        var found = false
-
-        debugInfo("🔍 Procurando iframes do Blogger...")
-        val iframes = doc.select("iframe[src*='blogger.com'], iframe[src*='video.g']")
-        debugInfo("   Encontrados ${iframes.size} iframes do Blogger")
-        
-        iframes.forEachIndexed { index, iframe ->
-            val src = iframe.attr("src").trim()
-            debugInfo("   Iframe $index: $src")
-            if (src.isNotBlank() && (src.contains("blogger.com") || src.contains("video.g"))) {
-                debugInfo("      ✅ Iframe válido do Blogger detectado")
-                if (processBloggerIframe(src, originalUrl, name, callback)) {
-                    debugSuccess("Iframe do Blogger processado com sucesso")
-                    found = true
-                } else {
-                    debugError("Falha ao processar iframe do Blogger")
-                }
-            } else {
-                debugWarning("      Iframe inválido ou vazio")
-            }
-        }
-
-        debugInfo("🔍 Procurando URLs do Blogger em scripts...")
-        val scripts = doc.select("script")
-        debugInfo("   Analisando ${scripts.size} scripts...")
-        
-        scripts.forEachIndexed { sIndex, script ->
-            val scriptContent = script.html()
-            
-            if (scriptContent.contains("blogger") || scriptContent.contains("googlevideo")) {
-                debugInfo("   Script $sIndex contém termos relacionados ao Blogger")
-
-                val patterns = listOf(
-                    """https?://[^"'\s]*blogger\.com/video\.g\?[^"'\s]*""".toRegex(),
-                    """video\.g\?[^"'\s]*token=[^"'\s]*""".toRegex(),
-                    """https?://[^"'\s]*\.googlevideo\.com/[^"'\s]*videoplayback[^"'\s]*""".toRegex(),
-                    """https?://[^"'\s]*\.googlevideo\.com/[^"'\s]*itag=\d+[^"'\s]*""".toRegex()
-                )
-
-                patterns.forEachIndexed { pIndex, pattern ->
-                    val matches = pattern.findAll(scriptContent)
-                    val matchCount = matches.count()
-                    
-                    if (matchCount > 0) {
-                        debugInfo("      Pattern $pIndex encontrou $matchCount correspondências")
-                        matches.forEach { match ->
-                            var videoUrl = match.value
-                            debugInfo("         URL encontrada: ${videoUrl.take(100)}...")
-
-                            if (videoUrl.startsWith("//")) {
-                                videoUrl = "https:$videoUrl"
-                                debugInfo("         URL ajustada (// → https:): $videoUrl")
-                            } else if (videoUrl.startsWith("/") || videoUrl.startsWith("./")) {
-                                videoUrl = "https://www.blogger.com$videoUrl"
-                                debugInfo("         URL ajustada (caminho relativo): $videoUrl")
-                            } else if (videoUrl.startsWith("video.g")) {
-                                videoUrl = "https://www.blogger.com/$videoUrl"
-                                debugInfo("         URL ajustada (video.g): $videoUrl")
-                            }
-
-                            if (isBloggerUrl(videoUrl)) {
-                                debugInfo("         ✅ URL Blogger válida detectada")
-                                if (processBloggerVideoUrl(videoUrl, originalUrl, name, callback)) {
-                                    debugSuccess("URL do Blogger processada com sucesso")
-                                    found = true
-                                } else {
-                                    debugError("Falha ao processar URL do Blogger")
-                                }
-                            } else {
-                                debugWarning("         URL não é do Blogger válida")
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        debugInfo("🏁 Extração Blogger finalizada. Encontrou vídeos: $found")
-        return found
-    }
-
-    private suspend fun processBloggerIframe(
-        iframeUrl: String,
-        referer: String,
-        name: String,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        debugInfo("🔄 Processando iframe do Blogger: $iframeUrl")
-        return try {
-            debugNetwork("📡 Fazendo requisição para iframe: $iframeUrl")
-            val response = app.get(
-                iframeUrl,
-                headers = mapOf(
-                    "Referer" to referer,
-                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-                )
-            )
-
-            debugNetwork("✅ Resposta do iframe - Status: ${response.code}, Tamanho: ${response.text.length} bytes")
-
-            val html = response.text
-            val videoPattern = """https?://[^"'\s]*\.googlevideo\.com/[^"'\s]*""".toRegex()
-            val matches = videoPattern.findAll(html)
-            val matchCount = matches.count()
-
-            debugInfo("   Encontradas $matchCount URLs de video no iframe")
-
-            var found = false
-            matches.forEachIndexed { index, match ->
-                val videoUrl = match.value
-                debugInfo("   Video $index: ${videoUrl.take(100)}...")
-                
-                if (isBloggerUrl(videoUrl)) {
-                    debugInfo("      ✅ URL válida do Blogger")
-                    val itag = extractItagFromUrl(videoUrl)
-                    debugInfo("      Itag: $itag")
-                    
-                    val quality = itagQualityMap[itag] ?: 360
-                    debugInfo("      Qualidade: ${quality}p")
-                    
-                    val qualityLabel = getQualityLabel(quality)
-                    debugInfo("      Label: $qualityLabel")
-
-                    val extractorLink = newExtractorLink(
-                        source = "Goyabu Blogger",
-                        name = "$name ($qualityLabel)",
-                        url = videoUrl,
-                        type = ExtractorLinkType.VIDEO
-                    ) {
-                        this.referer = iframeUrl
-                        this.quality = quality
-                        this.headers = mapOf(
-                            "Referer" to iframeUrl,
-                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                            "Origin" to "https://www.blogger.com"
-                        )
-                    }
-
-                    debugSuccess("✅ Link do iframe extraído com sucesso: ${extractorLink.name}")
-                    callback(extractorLink)
-                    found = true
-                } else {
-                    debugWarning("      URL não é do Blogger válida")
-                }
-            }
-
-            if (!found) {
-                debugWarning("⚠ Nenhuma URL válida encontrada no iframe")
-            }
-
-            found
-
-        } catch (e: Exception) {
-            debugError("❌ Erro ao processar iframe do Blogger: ${e.message}")
-            false
-        }
-    }
-
-    private suspend fun processBloggerVideoUrl(
-        videoUrl: String,
-        referer: String,
-        name: String,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        debugInfo("🔄 Processando URL do Blogger: ${videoUrl.take(100)}...")
-        return try {
-            var url = videoUrl
-
-            if (url.contains("blogger.com/video.g")) {
-                debugInfo("   URL contém video.g, redirecionando para processamento de iframe")
-                return processBloggerIframe(url, referer, name, callback)
-            }
-
-            if (url.contains("googlevideo.com")) {
-                debugInfo("   URL direta do Google Video detectada")
-                val itag = extractItagFromUrl(url)
-                debugInfo("   Itag: $itag")
-                
-                val quality = itagQualityMap[itag] ?: 360
-                debugInfo("   Qualidade: ${quality}p")
-                
-                val qualityLabel = getQualityLabel(quality)
-                debugInfo("   Label: $qualityLabel")
-
-                val extractorLink = newExtractorLink(
-                    source = "Goyabu Blogger",
-                    name = "$name ($qualityLabel)",
-                    url = url,
-                    type = ExtractorLinkType.VIDEO
-                ) {
-                    this.referer = referer
-                    this.quality = quality
-                    this.headers = mapOf(
-                        "Referer" to referer,
-                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                        "Origin" to "https://www.blogger.com"
-                    )
-                }
-
-                debugSuccess("✅ URL do Blogger processada com sucesso: ${extractorLink.name}")
-                callback(extractorLink)
-                return true
-            }
-
-            debugWarning("⚠ URL não contém padrões reconhecidos do Blogger")
-            false
-
-        } catch (e: Exception) {
-            debugError("❌ Erro ao processar URL do Blogger: ${e.message}")
-            false
-        }
-    }
-
+    
     private fun cleanUrl(url: String): String {
         var cleaned = url.trim()
         val original = cleaned
@@ -719,3 +500,194 @@ object GoyabuExtractor {
         return result
     }
 }
+
+private suspend fun extractBloggerUrls(
+    doc: org.jsoup.nodes.Document,
+    originalUrl: String,
+    name: String,
+    callback: (ExtractorLink) -> Unit
+): Boolean {
+    debugInfo("🎯 Iniciando extração Blogger (via batch execute)...")
+    var found = false
+
+    // PASSO 1: Extrair o token da página
+    debugInfo("🔍 Procurando token do Blogger nos scripts...")
+    val token = extractBloggerToken(doc)
+    
+    if (token == null) {
+        debugError("❌ Token do Blogger não encontrado!")
+        return false
+    }
+    
+    debugSuccess("✅ Token encontrado: $token")
+    
+    // PASSO 2: Parâmetros FIXOS do Blogger (do HTML que você forneceu)
+    val f_sid = "-7535563745894756252"  // FdrFJe
+    val bl = "boq_bloggeruiserver_20260218.01_p0"  // cfb2h
+    val reqid = (10000..99999).random()  // Gerar request ID aleatório
+    
+    debugInfo("📋 Parâmetros da API:")
+    debugInfo("   - f.sid: $f_sid")
+    debugInfo("   - bl: $bl")
+    debugInfo("   - _reqid: $reqid")
+    
+    // PASSO 3: Chamar API batch execute
+    val videos = callBloggerBatchApi(token, f_sid, bl, reqid)
+    
+    if (videos.isEmpty()) {
+        debugError("❌ Nenhum vídeo encontrado na resposta da API")
+        return false
+    }
+    
+    debugSuccess("✅ Encontrados ${videos.size} links de vídeo!")
+    
+    // PASSO 4: Processar cada URL encontrada
+    videos.forEach { (videoUrl, itag) ->
+        val quality = itagQualityMap[itag] ?: 360
+        val qualityLabel = getQualityLabel(quality)
+        
+        debugInfo("🎬 Processando vídeo - Qualidade: ${quality}p (itag: $itag)")
+        
+        val extractorLink = newExtractorLink(
+            source = "Goyabu Blogger",
+            name = "$name ($qualityLabel)",
+            url = videoUrl,
+            type = ExtractorLinkType.VIDEO
+        ) {
+            this.referer = "https://www.blogger.com/"
+            this.quality = quality
+            this.headers = mapOf(
+                "Referer" to "https://www.blogger.com/",
+                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Origin" to "https://www.blogger.com"
+            )
+        }
+        
+        debugSuccess("✅ Link adicionado: $qualityLabel")
+        callback(extractorLink)
+        found = true
+    }
+    
+    return found
+}
+
+// NOVAS FUNÇÕES AUXILIARES:
+
+private fun extractBloggerToken(doc: org.jsoup.nodes.Document): String? {
+    val pattern = """video\.g\?token=([a-zA-Z0-9_\-]+)""".toRegex()
+    
+    doc.select("script").forEach { script ->
+        val match = pattern.find(script.html())
+        if (match != null) {
+            val token = match.groupValues[1]
+            debugInfo("   Token extraído: $token")
+            return token
+        }
+    }
+    
+    // Tentar também em elementos iframe
+    doc.select("iframe[src*='video.g']").forEach { iframe ->
+        val src = iframe.attr("src")
+        val match = pattern.find(src)
+        if (match != null) {
+            val token = match.groupValues[1]
+            debugInfo("   Token extraído do iframe: $token")
+            return token
+        }
+    }
+    
+    return null
+}
+
+private suspend fun callBloggerBatchApi(
+    token: String,
+    f_sid: String,
+    bl: String,
+    reqid: Int
+): List<Pair<String, Int>> {
+    
+    val apiUrl = "https://www.blogger.com/_/BloggerVideoPlayerUi/data/batchexecute"
+    
+    // Headers baseados na sua requisição curl
+    val headers = mapOf(
+        "authority" to "www.blogger.com",
+        "accept" to "*/*",
+        "accept-language" to "pt-BR",
+        "content-type" to "application/x-www-form-urlencoded;charset=UTF-8",
+        "origin" to "https://www.blogger.com",
+        "referer" to "https://www.blogger.com/",
+        "sec-ch-ua" to "\"Chromium\";v=\"127\", \"Not)A;Brand\";v=\"99\"",
+        "sec-ch-ua-mobile" to "?1",
+        "sec-ch-ua-platform" to "\"Android\"",
+        "user-agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
+        "x-same-domain" to "1"
+    )
+    
+    // Construir URL com parâmetros
+    val urlWithParams = "$apiUrl?rpcids=WcwnYd&source-path=%2Fvideo.g&f.sid=$f_sid&bl=$bl&hl=pt-BR&_reqid=$reqid&rt=c"
+    
+    // Body no formato exato que você usou
+    val body = "f.req=%5B%5B%5B%22WcwnYd%22%2C%22%5B%5C%22$token%5C%22%2C%5C%22%5C%22%2C0%5D%22%2Cnull%2C%22generic%22%5D%5D%5D"
+    
+    debugNetwork("📡 Chamando API batch execute...")
+    debugNetwork("   URL: $urlWithParams")
+    debugNetwork("   Body: $body")
+    
+    val response = app.post(
+        urlWithParams,
+        headers = headers,
+        data = body
+    )
+    
+    debugNetwork("✅ Resposta da API - Status: ${response.code}, Tamanho: ${response.text.length} bytes")
+    
+    if (!response.isSuccessful) {
+        debugError("❌ API retornou erro: ${response.code}")
+        return emptyList()
+    }
+    
+    val responseText = response.text
+    debugInfo("📄 Resposta (primeiros 500 chars): ${responseText.take(500)}")
+    
+    // Extrair URLs da resposta
+    return extractVideoUrlsFromResponse(responseText)
+}
+
+private fun extractVideoUrlsFromResponse(response: String): List<Pair<String, Int>> {
+    val videos = mutableListOf<Pair<String, Int>>()
+    
+    // Padrão para encontrar URLs do Google Video
+    // Ex: "https:\\/\\/rr2---sn-45mucg-jo4e.googlevideo.com\\/videoplayback?expire=..."
+    val urlPattern = """(https?:\\/\\/[^"\\]+\.googlevideo\.com\\/[^"\\]+videoplayback[^"\\]+)""".toRegex()
+    
+    val matches = urlPattern.findAll(response)
+    var matchCount = 0
+    
+    matches.forEach { match ->
+        matchCount++
+        var url = match.value
+            .replace("\\u003d", "=")
+            .replace("\\/", "/")
+            .replace("\\", "")
+        
+        debugInfo("   URL encontrada: ${url.take(100)}...")
+        
+        // Extrair itag da URL
+        val itagPattern = """itag[=?&](\d+)""".toRegex()
+        val itag = itagPattern.find(url)?.groupValues?.get(1)?.toIntOrNull() ?: 18
+        
+        debugInfo("      itag: $itag")
+        
+        // Limpar URL (remover caracteres estranhos)
+        url = url.trim()
+        
+        videos.add(Pair(url, itag))
+    }
+    
+    debugInfo("📊 Total de URLs encontradas: $matchCount")
+    debugInfo("📊 URLs únicas por qualidade: ${videos.distinctBy { it.second }.size}")
+    
+    // Retornar URLs únicas por qualidade (itag)
+    return videos.distinctBy { it.second }
+}
+,}
