@@ -196,7 +196,7 @@ object GoyabuExtractor {
         
         val urlWithParams = "$apiUrl?rpcids=WcwnYd&source-path=%2Fvideo.g&f.sid=$f_sid&bl=$bl&hl=pt-BR&_reqid=$reqid&rt=c"
         
-        // 🔥 CORREÇÃO AQUI: body como Map, não String
+        // Body como Map
         val body = mapOf(
             "f.req" to "%5B%5B%5B%22WcwnYd%22%2C%22%5B%5C%22$token%5C%22%2C%5C%22%5C%22%2C0%5D%22%2Cnull%2C%22generic%22%5D%5D%5D"
         )
@@ -207,7 +207,7 @@ object GoyabuExtractor {
         val response = app.post(
             urlWithParams,
             headers = headers,
-            data = body  // Agora é um Map, não String
+            data = body
         )
         
         println("✅ Resposta da API - Status: ${response.code}, Tamanho: ${response.text.length} bytes")
@@ -217,35 +217,78 @@ object GoyabuExtractor {
             return emptyList()
         }
         
-        return extractVideoUrlsFromResponse(response.text)
+        val responseText = response.text
+        
+        // DEBUG: Mostrar a resposta COMPLETA
+        println("\n" + "="*50)
+        println("📄 RESPOSTA COMPLETA DA API:")
+        println("="*50)
+        println(responseText)
+        println("="*50 + "\n")
+        
+        return extractVideoUrlsFromResponse(responseText)
     }
 
     private fun extractVideoUrlsFromResponse(response: String): List<Pair<String, Int>> {
         val videos = mutableListOf<Pair<String, Int>>()
         
-        val urlPattern = """(https?:\\/\\/[^"\\]+\.googlevideo\.com\\/[^"\\]+videoplayback[^"\\]+)""".toRegex()
-        val matches = urlPattern.findAll(response)
+        // Diferentes padrões para encontrar URLs
+        val patterns = listOf(
+            // Padrão 1: URLs completas com escape (formato mais comum)
+            """(https?:\\/\\/[^"\\]+\.googlevideo\.com\\/[^"\\]+videoplayback[^"\\]*)""".toRegex(),
+            // Padrão 2: URLs sem escape
+            """(https?://[^"'\s]+\.googlevideo\.com/[^"'\s]+videoplayback[^"'\s]*)""".toRegex(),
+            // Padrão 3: URLs em formato JSON string
+            """"(https?:\\/\\/[^"]+videoplayback[^"]+)"""".toRegex(),
+            // Padrão 4: URLs com itag explícito
+            """(https?:\\/\\/[^"\\]+itag[^"\\]*)""".toRegex(),
+            // Padrão 5: Qualquer URL do googlevideo
+            """(https?:\\/\\/[^"\\]+\.googlevideo\.com\\/[^"\\]+)""".toRegex()
+        )
         
-        var count = 0
-        matches.forEach { match ->
-            count++
-            var url = match.value
-                .replace("\\u003d", "=")
-                .replace("\\/", "/")
-                .replace("\\", "")
-            
-            val itagPattern = """itag[=?&](\d+)""".toRegex()
-            val itag = itagPattern.find(url)?.groupValues?.get(1)?.toIntOrNull() ?: 18
-            
-            url = url.trim()
-            videos.add(Pair(url, itag))
+        var totalMatches = 0
+        
+        patterns.forEachIndexed { index, pattern ->
+            val matches = pattern.findAll(response)
+            val count = matches.count()
+            if (count > 0) {
+                println("   Padrão $index encontrou $count correspondências")
+                totalMatches += count
+                
+                matches.forEach { match ->
+                    var url = match.value
+                        .replace("\\u003d", "=")
+                        .replace("\\/", "/")
+                        .replace("\\\"", "\"")
+                        .replace("\\", "")
+                        .trim()
+                    
+                    // Remover aspas extras no início/fim
+                    if (url.startsWith("\"") && url.endsWith("\"")) {
+                        url = url.substring(1, url.length - 1)
+                    }
+                    
+                    // Limpar caracteres estranhos
+                    url = url.replace(Regex("""[\[\]\(\)]"""), "")
+                    
+                    println("      URL encontrada: ${url.take(100)}...")
+                    
+                    // Extrair itag
+                    val itag = extractItagFromUrl(url)
+                    println("         itag: $itag")
+                    
+                    videos.add(Pair(url, itag))
+                }
+            }
         }
         
-        println("📊 Total de URLs encontradas: $count")
+        println("📊 Total de URLs encontradas: $totalMatches")
+        println("📊 URLs únicas por qualidade: ${videos.distinctBy { it.second }.size}")
+        
         return videos.distinctBy { it.second }
     }
 
-    // ==================== MÉTODOS EXISTENTES (NÃO MEXI) ====================
+    // ==================== MÉTODOS EXISTENTES ====================
 
     private suspend fun extractJwPlayerUrls(
         doc: org.jsoup.nodes.Document,
