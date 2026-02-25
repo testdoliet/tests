@@ -194,15 +194,17 @@ object GoyabuExtractor {
         
         val urlWithParams = "$apiUrl?rpcids=WcwnYd&source-path=%2Fvideo.g&f.sid=$f_sid&bl=$bl&hl=pt-BR&_reqid=$reqid&rt=c"
         
-        // Body no formato correto (URL encoded)
-        val body = "f.req=%5B%5B%5B%22WcwnYd%22%2C%22%5B%5C%22$token%5C%22%2C%5C%22%5C%22%2C0%5D%22%2Cnull%2C%22generic%22%5D%5D%5D"
+        // Body no formato correto - AGORA COMO MAP
+        val body = mapOf(
+            "f.req" to "%5B%5B%5B%22WcwnYd%22%2C%22%5B%5C%22$token%5C%22%2C%5C%22%5C%22%2C0%5D%22%2Cnull%2C%22generic%22%5D%5D%5D"
+        )
         
         println("📡 Chamando API batch execute...")
         
         val response = app.post(
-            urlWithParams,
+            url = urlWithParams,
             headers = headers,
-            data = body
+            data = body  // Agora é um Map<String, String>
         )
         
         println("✅ Resposta da API recebida, status: ${response.code}")
@@ -217,13 +219,10 @@ object GoyabuExtractor {
         // Primeiro, tentar extrair o JSON real do formato do Google
         val jsonData = extractGoogleJson(response)
         
-        // Padrões para encontrar URLs (agora suportando ambos os formatos de escape)
+        // Padrões para encontrar URLs
         val patterns = listOf(
-            // Formato com escapes Unicode: \\u003d, \\u0026
             """https?:\\/\\/[^"\\]+\.googlevideo\.com\\/[^"\\]+videoplayback[^"\\]*""".toRegex(),
-            // Formato com escapes de barra: \=, \&, \/
             """https?:\\?/\\?/[^"\\]+\.googlevideo\.com\\?/[^"\\]+videoplayback[^"\\]*""".toRegex(),
-            // Formato sem escapes (URL limpa)
             """https?://[^"'\s]+\.googlevideo\.com/[^"'\s]+videoplayback[^"'\s]*""".toRegex()
         )
         
