@@ -104,11 +104,19 @@ object GoyabuExtractor {
                         this.quality = quality
                         this.headers = mapOf(
                             "Referer" to "https://www.blogger.com/",
-                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                            "Accept" to "video/webm,video/ogg,video/*;q=0.9,application/ogg;q=0.7,audio/*;q=0.6,*/*;q=0.5",
+                            "Accept-Language" to "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+                            "Origin" to "https://www.blogger.com",
+                            "Connection" to "keep-alive",
+                            "Sec-Fetch-Dest" to "video",
+                            "Sec-Fetch-Mode" to "no-cors",
+                            "Sec-Fetch-Site" to "cross-site",
+                            "Range" to "bytes=0-"
                         )
                     }
                 )
-                println("✅ Link adicionado: $qualityLabel")
+                println("✅ Link adicionado: $qualityLabel (${quality}p)")
             }
             
             true
@@ -276,7 +284,6 @@ object GoyabuExtractor {
         if (videos.isEmpty()) {
             println("\n⚠️ Nenhuma URL encontrada com padrões, tentando busca manual...")
             
-            // CORREÇÃO: Chamar como função de extensão
             val googleVideoIndices = response.indicesOf("googlevideo")
             println("   Encontradas ${googleVideoIndices.size} ocorrências de 'googlevideo'")
             
@@ -299,7 +306,7 @@ object GoyabuExtractor {
             }
         }
         
-        // Ordenar por qualidade
+        // Ordenar por qualidade (melhor primeiro)
         val qualityOrder = listOf(37, 22, 18, 59)
         val result = videos
             .distinctBy { it.second }
