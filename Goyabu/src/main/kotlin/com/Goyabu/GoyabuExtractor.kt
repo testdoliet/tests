@@ -228,15 +228,11 @@ object GoyabuExtractor {
             println(jsonData.take(300))
         }
         
-        // Padrões para encontrar URLs - VERSÃO MELHORADA
+        // Padrões para encontrar URLs
         val patterns = listOf(
-            // Formato com escapes Unicode: \\u003d, \\u0026
             """https?:\\/\\/[^"\\]+?\.googlevideo\.com\\/[^"\\]+?videoplayback[^"\\]*""".toRegex(),
-            // Formato com escapes de barra: \=, \&, \/
             """https?:\\?/\\?/[^"\\]+?\.googlevideo\.com\\?/[^"\\]+?videoplayback[^"\\]*""".toRegex(),
-            // Formato sem escapes (URL limpa)
             """https?://[^"'\s]+?\.googlevideo\.com/[^"'\s]+?videoplayback[^"'\s]*""".toRegex(),
-            // Padrão mais simples
             """googlevideo\.com/[^"'\s]+?videoplayback[^"'\s]*""".toRegex()
         )
         
@@ -260,18 +256,13 @@ object GoyabuExtractor {
                         var url = match.value
                         println("   📹 URL bruta: ${url.take(100)}...")
                         
-                        // Se não começa com http, adicionar
                         if (!url.startsWith("http")) {
                             url = "https://$url"
                         }
                         
-                        // Decodificar escapes
                         url = decodeUrl(url)
-                        
-                        // Extrair itag da URL
                         val itag = extractItagFromUrl(url)
                         
-                        // Evitar duplicatas
                         if (!videos.any { it.first == url }) {
                             videos.add(Pair(url, itag))
                             println("   ✅ URL adicionada: itag=$itag")
@@ -285,8 +276,8 @@ object GoyabuExtractor {
         if (videos.isEmpty()) {
             println("\n⚠️ Nenhuma URL encontrada com padrões, tentando busca manual...")
             
-            // Procurar por "googlevideo" na string
-            val googleVideoIndices = indicesOf(response, "googlevideo")
+            // CORREÇÃO: Chamar como função de extensão
+            val googleVideoIndices = response.indicesOf("googlevideo")
             println("   Encontradas ${googleVideoIndices.size} ocorrências de 'googlevideo'")
             
             // Procurar manualmente por URLs
@@ -308,10 +299,10 @@ object GoyabuExtractor {
             }
         }
         
-        // Ordenar por qualidade (melhor primeiro)
+        // Ordenar por qualidade
         val qualityOrder = listOf(37, 22, 18, 59)
         val result = videos
-            .distinctBy { it.second } // Uma URL por itag
+            .distinctBy { it.second }
             .sortedBy { qualityOrder.indexOf(it.second) }
         
         println("\n📊 Total de URLs encontradas: ${result.size}")
@@ -325,12 +316,10 @@ object GoyabuExtractor {
     
     private fun extractGoogleJson(response: String): String {
         try {
-            // Remover o prefixo )]}'
             var data = response.replace(Regex("""^\)\]\}'\s*\n?"""), "")
             
             println("📄 Após remover prefixo: ${data.take(100)}...")
             
-            // Procurar pelo padrão ["wrb.fr","WcwnYd","..."]
             val pattern = """\[\s*\[\s*"wrb\.fr"\s*,\s*"[^"]*"\s*,\s*"(.+?)"\s*\]""".toRegex(RegexOption.DOT_MATCHES_ALL)
             val match = pattern.find(data)
             
@@ -339,11 +328,8 @@ object GoyabuExtractor {
                 var jsonStr = match.groupValues[1]
                 println("📄 JSON string bruta: ${jsonStr.take(200)}...")
                 
-                // Decodificar aspas escapadas
                 jsonStr = jsonStr.replace("\\\"", "\"")
                 jsonStr = jsonStr.replace("\\\\", "\\")
-                
-                // Decodificar escapes Unicode manualmente
                 jsonStr = decodeUnicodeEscapes(jsonStr)
                 
                 return jsonStr
@@ -359,16 +345,11 @@ object GoyabuExtractor {
     
     private fun decodeUrl(url: String): String {
         var decoded = url
-        
-        // Decodificar escapes Unicode
         decoded = decodeUnicodeEscapes(decoded)
-        
-        // Decodificar escapes com barra
         decoded = decoded.replace("\\/", "/")
         decoded = decoded.replace("\\\\", "\\")
         decoded = decoded.replace("\\=", "=")
         decoded = decoded.replace("\\&", "&")
-        
         return decoded
     }
     
@@ -381,7 +362,7 @@ object GoyabuExtractor {
             try {
                 hexCode.toInt(16).toChar().toString()
             } catch (e: Exception) {
-                "?" // Caractere inválido
+                "?"
             }
         }
         
@@ -401,7 +382,6 @@ object GoyabuExtractor {
             }
         }
         
-        // Fallback baseado na URL
         return when {
             "itag=22" in url || "itag%3D22" in url || "itag\\u003d22" in url -> 22
             "itag=18" in url || "itag%3D18" in url || "itag\\u003d18" in url -> 18
@@ -411,7 +391,7 @@ object GoyabuExtractor {
         }
     }
     
-    // Função auxiliar para encontrar todas as ocorrências de uma substring
+    // Função de extensão para encontrar índices de substring
     private fun String.indicesOf(substr: String, ignoreCase: Boolean = true): List<Int> {
         val indices = mutableListOf<Int>()
         var index = 0
