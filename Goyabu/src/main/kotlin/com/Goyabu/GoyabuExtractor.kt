@@ -194,7 +194,7 @@ object GoyabuExtractor {
         
         val urlWithParams = "$apiUrl?rpcids=WcwnYd&source-path=%2Fvideo.g&f.sid=$f_sid&bl=$bl&hl=pt-BR&_reqid=$reqid&rt=c"
         
-        // Body no formato correto - AGORA COMO MAP
+        // Body no formato correto
         val body = mapOf(
             "f.req" to "%5B%5B%5B%22WcwnYd%22%2C%22%5B%5C%22$token%5C%22%2C%5C%22%5C%22%2C0%5D%22%2Cnull%2C%22generic%22%5D%5D%5D"
         )
@@ -204,7 +204,7 @@ object GoyabuExtractor {
         val response = app.post(
             url = urlWithParams,
             headers = headers,
-            data = body  // Agora é um Map<String, String>
+            data = body
         )
         
         println("✅ Resposta da API recebida, status: ${response.code}")
@@ -216,34 +216,93 @@ object GoyabuExtractor {
     private fun extractVideoUrlsFromResponse(response: String): List<Pair<String, Int>> {
         val videos = mutableListOf<Pair<String, Int>>()
         
+        println("\n📄 Resposta da API (primeiros 500 chars):")
+        println(response.take(500))
+        
         // Primeiro, tentar extrair o JSON real do formato do Google
         val jsonData = extractGoogleJson(response)
         
-        // Padrões para encontrar URLs
+        if (jsonData != response) {
+            println("✅ JSON extraído do wrapper, tamanho: ${jsonData.length} bytes")
+            println("📄 JSON extraído (primeiros 300 chars):")
+            println(jsonData.take(300))
+        }
+        
+        // Padrões para encontrar URLs - VERSÃO MELHORADA
         val patterns = listOf(
-            """https?:\\/\\/[^"\\]+\.googlevideo\.com\\/[^"\\]+videoplayback[^"\\]*""".toRegex(),
-            """https?:\\?/\\?/[^"\\]+\.googlevideo\.com\\?/[^"\\]+videoplayback[^"\\]*""".toRegex(),
-            """https?://[^"'\s]+\.googlevideo\.com/[^"'\s]+videoplayback[^"'\s]*""".toRegex()
+            // Formato com escapes Unicode: \\u003d, \\u0026
+            """https?:\\/\\/[^"\\]+?\.googlevideo\.com\\/[^"\\]+?videoplayback[^"\\]*""".toRegex(),
+            // Formato com escapes de barra: \=, \&, \/
+            """https?:\\?/\\?/[^"\\]+?\.googlevideo\.com\\?/[^"\\]+?videoplayback[^"\\]*""".toRegex(),
+            // Formato sem escapes (URL limpa)
+            """https?://[^"'\s]+?\.googlevideo\.com/[^"'\s]+?videoplayback[^"'\s]*""".toRegex(),
+            // Padrão mais simples
+            """googlevideo\.com/[^"'\s]+?videoplayback[^"'\s]*""".toRegex()
         )
         
         // Procurar em ambos: resposta original e JSON extraído
         val sources = listOf(response, jsonData).distinct()
         
-        for (source in sources) {
-            for (pattern in patterns) {
-                pattern.findAll(source).forEach { match ->
-                    var url = match.value
+        for (sourceIndex in sources.indices) {
+            val source = sources[sourceIndex]
+            val sourceName = if (sourceIndex == 0) "Resposta original" else "JSON extraído"
+            
+            println("\n🔍 Buscando em: $sourceName")
+            
+            for (patternIndex in patterns.indices) {
+                val pattern = patterns[patternIndex]
+                val matches = pattern.findAll(source).toList()
+                
+                if (matches.isNotEmpty()) {
+                    println("   ✅ Padrão ${patternIndex + 1} encontrou ${matches.size} URLs")
                     
-                    // Decodificar escapes
-                    url = decodeUrl(url)
-                    
-                    // Extrair itag da URL
-                    val itag = extractItagFromUrl(url)
-                    
-                    // Evitar duplicatas
-                    if (!videos.any { it.first == url }) {
-                        videos.add(Pair(url, itag))
-                        println("   📹 URL encontrada: itag=$itag")
+                    matches.forEach { match ->
+                        var url = match.value
+                        println("   📹 URL bruta: ${url.take(100)}...")
+                        
+                        // Se não começa com http, adicionar
+                        if (!url.startsWith("http")) {
+                            url = "https://$url"
+                        }
+                        
+                        // Decodificar escapes
+                        url = decodeUrl(url)
+                        
+                        // Extrair itag da URL
+                        val itag = extractItagFromUrl(url)
+                        
+                        // Evitar duplicatas
+                        if (!videos.any { it.first == url }) {
+                            videos.add(Pair(url, itag))
+                            println("   ✅ URL adicionada: itag=$itag")
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Se ainda não encontrou, tentar busca manual na string
+        if (videos.isEmpty()) {
+            println("\n⚠️ Nenhuma URL encontrada com padrões, tentando busca manual...")
+            
+            // Procurar por "googlevideo" na string
+            val googleVideoIndices = indicesOf(response, "googlevideo")
+            println("   Encontradas ${googleVideoIndices.size} ocorrências de 'googlevideo'")
+            
+            // Procurar manualmente por URLs
+            val urlStartPattern = """https?://""".toRegex()
+            urlStartPattern.findAll(response).forEach { match ->
+                val start = match.range.first
+                val end = response.indexOf('"', start)
+                if (end > start) {
+                    val url = response.substring(start, end)
+                    if ("googlevideo" in url && "videoplayback" in url) {
+                        println("   📹 URL manual: ${url.take(100)}...")
+                        val decodedUrl = decodeUrl(url)
+                        val itag = extractItagFromUrl(decodedUrl)
+                        if (!videos.any { it.first == decodedUrl }) {
+                            videos.add(Pair(decodedUrl, itag))
+                        }
                     }
                 }
             }
@@ -251,9 +310,17 @@ object GoyabuExtractor {
         
         // Ordenar por qualidade (melhor primeiro)
         val qualityOrder = listOf(37, 22, 18, 59)
-        return videos
+        val result = videos
             .distinctBy { it.second } // Uma URL por itag
             .sortedBy { qualityOrder.indexOf(it.second) }
+        
+        println("\n📊 Total de URLs encontradas: ${result.size}")
+        result.forEach { (url, itag) ->
+            val quality = itagQualityMap[itag] ?: 0
+            println("   📹 itag=$itag (${quality}p) -> ${url.take(100)}...")
+        }
+        
+        return result
     }
     
     private fun extractGoogleJson(response: String): String {
@@ -261,12 +328,16 @@ object GoyabuExtractor {
             // Remover o prefixo )]}'
             var data = response.replace(Regex("""^\)\]\}'\s*\n?"""), "")
             
+            println("📄 Após remover prefixo: ${data.take(100)}...")
+            
             // Procurar pelo padrão ["wrb.fr","WcwnYd","..."]
             val pattern = """\[\s*\[\s*"wrb\.fr"\s*,\s*"[^"]*"\s*,\s*"(.+?)"\s*\]""".toRegex(RegexOption.DOT_MATCHES_ALL)
             val match = pattern.find(data)
             
             if (match != null) {
+                println("✅ Encontrado padrão wrb.fr")
                 var jsonStr = match.groupValues[1]
+                println("📄 JSON string bruta: ${jsonStr.take(200)}...")
                 
                 // Decodificar aspas escapadas
                 jsonStr = jsonStr.replace("\\\"", "\"")
@@ -276,6 +347,8 @@ object GoyabuExtractor {
                 jsonStr = decodeUnicodeEscapes(jsonStr)
                 
                 return jsonStr
+            } else {
+                println("⚠️ Padrão wrb.fr não encontrado")
             }
         } catch (e: Exception) {
             println("⚠️ Erro ao extrair JSON: ${e.message}")
@@ -305,7 +378,11 @@ object GoyabuExtractor {
         
         result = pattern.replace(result) { matchResult ->
             val hexCode = matchResult.groupValues[1]
-            hexCode.toInt(16).toChar().toString()
+            try {
+                hexCode.toInt(16).toChar().toString()
+            } catch (e: Exception) {
+                "?" // Caractere inválido
+            }
         }
         
         return result
@@ -314,7 +391,8 @@ object GoyabuExtractor {
     private fun extractItagFromUrl(url: String): Int {
         val patterns = listOf(
             """itag[=?&](\d+)""".toRegex(),
-            """itag%3D(\d+)""".toRegex()
+            """itag%3D(\d+)""".toRegex(),
+            """itag\\u003d(\d+)""".toRegex()
         )
         
         for (pattern in patterns) {
@@ -325,10 +403,24 @@ object GoyabuExtractor {
         
         // Fallback baseado na URL
         return when {
-            "itag=22" in url || "itag%3D22" in url -> 22
-            "itag=18" in url || "itag%3D18" in url -> 18
-            "itag=37" in url || "itag%3D37" in url -> 37
+            "itag=22" in url || "itag%3D22" in url || "itag\\u003d22" in url -> 22
+            "itag=18" in url || "itag%3D18" in url || "itag\\u003d18" in url -> 18
+            "itag=37" in url || "itag%3D37" in url || "itag\\u003d37" in url -> 37
+            "itag=59" in url || "itag%3D59" in url || "itag\\u003d59" in url -> 59
             else -> 18
         }
+    }
+    
+    // Função auxiliar para encontrar todas as ocorrências de uma substring
+    private fun String.indicesOf(substr: String, ignoreCase: Boolean = true): List<Int> {
+        val indices = mutableListOf<Int>()
+        var index = 0
+        while (index < length) {
+            index = indexOf(substr, index, ignoreCase)
+            if (index < 0) break
+            indices.add(index)
+            index += substr.length
+        }
+        return indices
     }
 }
