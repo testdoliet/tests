@@ -99,10 +99,16 @@ object GoyabuExtractor {
                     nonce = cachedNonce ?: generateRandomString(32)
                 )
                 
+                // Decodificar a URL base primeiro
+                val urlBase = decodeUrl(videoUrl)
+                
+                // CORREÇÃO CRÍTICA: Remover qualquer \ antes de &
+                val urlLimpa = urlBase.replace("\\&", "&")
+                
                 // Adicionar parâmetros anti-bot à URL
                 val finalUrl = buildString {
-                    append(videoUrl)
-                    if (videoUrl.contains("?")) {
+                    append(urlLimpa)
+                    if (urlLimpa.contains("?")) {
                         append("&cpn=$cpn&c=WEB_EMBEDDED_PLAYER&cver=1.20260224.08.00")
                     } else {
                         append("?cpn=$cpn&c=WEB_EMBEDDED_PLAYER&cver=1.20260224.08.00")
@@ -162,9 +168,6 @@ object GoyabuExtractor {
         
         // Extrair CSS Row Key
         val cssRowKey = extractCssRowKey(bloggerHtml)
-        
-        // Baixar scripts para completar o contexto
-        downloadScripts(wizData, combinedSignature, cssRowKey)
         
         val result = WizData(
             fSid = wizData["FdrFJe"] ?: "-7535563745894756252",
@@ -226,33 +229,13 @@ object GoyabuExtractor {
         return pattern.find(html)?.groupValues?.get(1) ?: "boq-blogger.BloggerVideoPlayerUi.XKA1asAesHc.L.B1.O"
     }
     
-    private suspend fun downloadScripts(wizData: Map<String, String>, signature: String, cssKey: String) {
-        val bl = wizData["cfb2h"] ?: return
-        val baseUrl = "https://www.blogger.com/_/scs/mss-static/_/js/"
-        
-        // Primeiro script
-        val script1Url = "$baseUrl/k=$bl/am=AAAAwA4/d=1/excm=_b,_tp,videoplayerview/ed=1/dg=0/wt=2/ujg=1/rs=$signature/dti=1/m=_b,_tp"
-        
-        // Segundo script (com ee)
-        val script2Url = "$baseUrl/k=$bl/ck=$cssKey/am=AAAAwA4/d=1/exm=_b,_tp/excm=_b,_tp,videoplayerview/ed=1/wt=2/ujg=1/rs=$signature/ee=EVNhjf:pw70Gc;EmZ2Bf:zr1jrb;JsbNhc:Xd8iUd;K5nYTd:ZDZcre;LBgRLc:XVMNvd;Me32dd:MEeYgc;NJ1rfe:qTnoBf;NPKaK:PVlQOd;Pjplud:EEDORb;QGR0gd:Mlhmy;SNUn3:ZwDk9d;ScI3Yc:e7Hzgb;Uvc8o:VDovNc;YIZmRd:A1yn5d;a56pNe:JEfCwb;cEt90b:ws9Tlc;dIoSBb:SpsfSb;dowIGb:ebZ3mb;eBAeSb:zbML3c;iFQyKf:QIhFr;lOO0Vd:OTA3Ae;oGtAuc:sOXFj;qQEoOc:KUM7Z;qafBPd:yDVVkb;qddgKe:xQtZb;wR5FRb:siKnQd;yxTchf:KUM7Z/dti=1/m=OXnWq"
-        
-        // Baixar scripts (não precisamos do conteúdo, apenas simular)
-        try {
-            app.get(script1Url, headers = mobileHeaders())
-            app.get(script2Url, headers = mobileHeaders())
-            println("✅ Scripts baixados com sucesso")
-        } catch (e: Exception) {
-            println("⚠️ Erro ao baixar scripts: ${e.message}")
-        }
-    }
-    
     private fun generateCpn(
         wizData: WizData,
         videoId: String,
         timestamp: Long,
         nonce: String
     ): String {
-        try {
+        return try {
             // Construir a seed
             val seed = buildString {
                 append(wizData.cfb2h)
@@ -268,17 +251,16 @@ object GoyabuExtractor {
             val hash = digest.digest(seed.toByteArray())
             
             // Converter para Base64 e pegar primeiros 16 caracteres
-            val cpn = Base64.getEncoder().encodeToString(hash)
+            Base64.getEncoder().encodeToString(hash)
                 .substring(0, 16)
                 .replace("+", "")
                 .replace("/", "")
                 .replace("=", "")
             
-            return cpn
         } catch (e: Exception) {
             println("⚠️ Erro ao gerar cpn: ${e.message}")
             // Fallback: cpn aleatório
-            return generateRandomString(16)
+            generateRandomString(16)
         }
     }
     
@@ -526,7 +508,14 @@ object GoyabuExtractor {
         decoded = decoded.replace("\\/", "/")
         decoded = decoded.replace("\\\\", "\\")
         decoded = decoded.replace("\\=", "=")
-        decoded = decoded.replace("\\&", "&")
+        decoded = decoded.replace("\\&", "&")  // ← CORREÇÃO CRÍTICA!
+        
+        // Remove barra invertida no final (caso ainda exista)
+        if (decoded.endsWith("\\")) {
+            decoded = decoded.dropLast(1)
+        }
+        
+        decoded = decoded.trim('"')
         return decoded
     }
     
