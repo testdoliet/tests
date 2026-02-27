@@ -22,7 +22,6 @@ object AnimeFireVideoExtractor {
         46 to 1080,
     )
 
-    // Cache para dados da sessão do Blogger
     private var cachedBloggerData: BloggerData? = null
     private var lastBloggerRefresh = 0L
 
@@ -64,36 +63,27 @@ object AnimeFireVideoExtractor {
             val iframe = doc.selectFirst("iframe[src*='blogger.com/video.g']") ?: return false
             val iframeUrl = iframe.attr("src")
 
-            // Extrair token da URL do iframe
             val token = extractTokenFromUrl(iframeUrl) ?: return false
             
-            // Obter dados da sessão do Blogger (com cache)
             val bloggerData = getBloggerSessionData(token, originalUrl)
             
-            // Chamar API batch execute
             val videos = callBloggerBatchApi(bloggerData)
             
             if (videos.isEmpty()) return false
             
-            // Timestamp para cpn
             val timestamp = System.currentTimeMillis()
             
-            // Processar cada URL
             videos.forEach { (videoUrl, itag) ->
                 val quality = itagQualityMap[itag] ?: 360
                 val qualityLabel = getQualityLabel(quality)
                 
-                // Extrair videoId
                 val videoId = extractVideoId(videoUrl)
                 
-                // Gerar cpn
                 val cpn = generateCpn(bloggerData, videoId, timestamp)
                 
-                // Decodificar URL e remover caracteres problemáticos
                 val urlBase = decodeUrl(videoUrl)
                 val urlLimpa = urlBase.replace("\\&", "&")
                 
-                // Adicionar parâmetros anti-bot
                 val urlFinal = buildString {
                     append(urlLimpa)
                     if (urlLimpa.contains("?")) {
@@ -120,20 +110,17 @@ object AnimeFireVideoExtractor {
             true
 
         } catch (e: Exception) {
-            e.printStackTrace()
             false
         }
     }
 
     private suspend fun getBloggerSessionData(token: String, referer: String): BloggerData {
-        // Usar cache se disponível (5 minutos)
         if (cachedBloggerData != null && 
             cachedBloggerData?.token == token && 
             System.currentTimeMillis() - lastBloggerRefresh < 300000) {
             return cachedBloggerData!!
         }
         
-        // Acessar página do Blogger
         val bloggerResponse = app.get(
             "https://www.blogger.com/video.g?token=$token",
             headers = mapOf(
@@ -147,10 +134,8 @@ object AnimeFireVideoExtractor {
         
         val html = bloggerResponse.text
         
-        // Extrair WIZ_global_data
         val wizData = extractWizData(html)
         
-        // Extrair nonce
         val nonce = extractNonce(html) ?: generateRandomString(32)
         
         val data = BloggerData(
@@ -238,17 +223,8 @@ object AnimeFireVideoExtractor {
     private fun extractVideoUrlsFromResponse(response: String): List<Pair<String, Int>> {
         val videos = mutableListOf<Pair<String, Int>>()
         
-        println("\n📄 Resposta da API (primeiros 500 chars):")
-        println(response.take(500))
-        
-        // Extrair JSON real do formato do Google
         val jsonData = extractGoogleJson(response)
         
-        if (jsonData != response) {
-            println("✅ JSON extraído do wrapper")
-        }
-        
-        // Padrão específico para URLs com itag
         val urlPattern = """\"((?:https?:\\/\\/)?[^"]+?googlevideo[^"]+?)\",\[(\d+)\]""".toRegex()
         val urlMatches = urlPattern.findAll(jsonData)
         
@@ -260,11 +236,9 @@ object AnimeFireVideoExtractor {
             
             if (!videos.any { it.first == url }) {
                 videos.add(Pair(url, itag))
-                println("   📹 URL encontrada: itag=$itag")
             }
         }
         
-        // Fallback: busca por URLs brutas
         if (videos.isEmpty()) {
             val urlPattern2 = """https?:\\?/\\?/[^"'\s]+?googlevideo[^"'\s]+""".toRegex()
             val rawMatches = urlPattern2.findAll(jsonData)
@@ -282,7 +256,6 @@ object AnimeFireVideoExtractor {
             }
         }
         
-        // Ordenar por qualidade (melhor primeiro)
         val qualityOrder = listOf(37, 22, 18, 59)
         return videos
             .distinctBy { it.second }
@@ -328,7 +301,7 @@ object AnimeFireVideoExtractor {
         decoded = decoded.replace("\\/", "/")
         decoded = decoded.replace("\\\\", "\\")
         decoded = decoded.replace("\\=", "=")
-        decoded = decoded.replace("\\&", "&")  // CORREÇÃO CRÍTICA
+        decoded = decoded.replace("\\&", "&")
         
         if (decoded.endsWith("\\")) {
             decoded = decoded.dropLast(1)
