@@ -4,14 +4,12 @@ import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
-import com.lagradost.cloudstream3.utils.Qualities
 import org.jsoup.Jsoup
 import java.security.MessageDigest
 import java.util.*
 
 object AniTubeVideoExtractor {
     
-    // Cache para dados da sessão do Blogger
     private var cachedBloggerData: BloggerData? = null
     private var lastBloggerRefresh = 0L
 
@@ -33,7 +31,7 @@ object AniTubeVideoExtractor {
     )
     
     private fun getRandomUserAgent(): String {
-        return "Mozilla/5.0 (Linux; Android 13; SM-S901B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
+        return "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36"
     }
     
     suspend fun extractVideoLinks(
@@ -45,7 +43,7 @@ object AniTubeVideoExtractor {
         println("🔍 AniTubeExtractor: Iniciando extração para: $url")
         
         return try {
-            // Primeiro, verificar se é Blogger
+            // 1. Pegar página do episódio
             val pageResponse = app.get(url, headers = mapOf(
                 "User-Agent" to getRandomUserAgent(),
                 "Referer" to mainUrl
@@ -53,133 +51,164 @@ object AniTubeVideoExtractor {
             
             val doc = Jsoup.parse(pageResponse.text)
             
-            // Procurar por iframe do Blogger
-            val bloggerIframe = doc.selectFirst("iframe[src*='blogger.com/video.g']")
+            // 2. Procurar pelo iframe com classe metaframe
+            val iframe = doc.selectFirst("iframe.metaframe")
             
-            if (bloggerIframe != null) {
-                println("✅ AniTubeExtractor: Detectado iframe do Blogger")
-                return extractBloggerVideo(bloggerIframe.attr("src"), url, name, callback)
+            if (iframe != null) {
+                val proxyUrl = iframe.attr("src")
+                println("✅ Encontrou iframe proxy: $proxyUrl")
+                
+                // 3. Seguir o proxy (requisição para api.anivideo.net)
+                return extractFromProxy(proxyUrl, url, name, callback)
             }
             
-            // Se não for Blogger, tentar outras estratégias
-            println("⚠️ AniTubeExtractor: Não é Blogger, tentando outras estratégias...")
-            
-            val webViewResult = extractWithWebView(url, mainUrl, name, callback)
-            if (webViewResult) return true
-            
-            val directResult = extractWithDirectHtml(url, mainUrl, name, callback)
-            if (directResult) return true
-            
+            println("❌ Nenhum iframe encontrado")
             false
             
         } catch (e: Exception) {
-            println("❌ AniTubeExtractor: Erro: ${e.message}")
+            println("❌ Erro: ${e.message}")
             e.printStackTrace()
             false
         }
     }
     
-    private suspend fun extractBloggerVideo(
-        iframeUrl: String,
+    private suspend fun extractFromProxy(
+        proxyUrl: String,
         referer: String,
         name: String,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        return try {
-            // Extrair token da URL do iframe
-            val token = extractTokenFromUrl(iframeUrl) ?: return false
+        // Construir URL completa do proxy
+        val fullProxyUrl = if (proxyUrl.startsWith("http")) {
+            proxyUrl
+        } else {
+            "https://www.anitube.news$proxyUrl"
+        }
+        
+        println("🔍 Acessando proxy: $fullProxyUrl")
+        
+        // Fazer requisição para o proxy (api.anivideo.net)
+        val proxyResponse = app.get(
+            fullProxyUrl,
+            headers = mapOf(
+                "User-Agent" to getRandomUserAgent(),
+                "Referer" to "https://www.anitube.news/",
+                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language" to "pt-BR",
+                "sec-ch-ua" to "\"Chromium\";v=\"127\", \"Not)A;Brand\";v=\"99\", \"Microsoft Edge Simulate\";v=\"127\", \"Lemur\";v=\"127\"",
+                "sec-ch-ua-mobile" to "?1",
+                "sec-ch-ua-platform" to "\"Android\"",
+                "sec-fetch-dest" to "iframe",
+                "sec-fetch-mode" to "navigate",
+                "sec-fetch-site" to "cross-site",
+                "upgrade-insecure-requests" to "1"
+            )
+        )
+        
+        val proxyHtml = proxyResponse.text
+        val proxyDoc = Jsoup.parse(proxyHtml)
+        
+        // 4. Extrair iframe do Blogger da resposta do proxy
+        val bloggerIframe = proxyDoc.selectFirst("iframe[src*='blogger.com/video.g']")
+        
+        if (bloggerIframe == null) {
+            println("❌ Iframe do Blogger não encontrado na resposta do proxy")
+            return false
+        }
+        
+        val bloggerUrl = bloggerIframe.attr("src")
+        println("✅ URL do Blogger encontrada: $bloggerUrl")
+        
+        // 5. Extrair token da URL do Blogger
+        val token = extractTokenFromUrl(bloggerUrl)
+        if (token == null) {
+            println("❌ Token não encontrado na URL")
+            return false
+        }
+        
+        println("✅ Token extraído: ${token.take(20)}...")
+        
+        // 6. Obter dados da sessão do Blogger
+        val bloggerData = getBloggerSessionData(token, bloggerUrl)
+        
+        // 7. Chamar API batch execute
+        val videos = callBloggerBatchApi(bloggerData)
+        
+        if (videos.isEmpty()) {
+            println("❌ Nenhum vídeo encontrado na API")
+            return false
+        }
+        
+        println("✅ Encontradas ${videos.size} URLs de vídeo!")
+        
+        // 8. Timestamp para cpn
+        val timestamp = System.currentTimeMillis()
+        
+        // 9. Processar cada URL
+        videos.forEach { (videoUrl, itag) ->
+            val quality = itagQualityMap[itag] ?: 480
             
-            // Obter dados da sessão do Blogger
-            val bloggerData = getBloggerSessionData(token, referer)
+            val videoId = extractVideoId(videoUrl)
+            val cpn = generateCpn(bloggerData, videoId, timestamp)
             
-            // Chamar API batch execute
-            val videos = callBloggerBatchApi(bloggerData)
+            val urlBase = decodeUrl(videoUrl)
+            val urlLimpa = urlBase.replace("\\&", "&")
             
-            if (videos.isEmpty()) return false
-            
-            // Timestamp para cpn
-            val timestamp = System.currentTimeMillis()
-            
-            // Processar cada URL
-            videos.forEach { (videoUrl, itag) ->
-                val quality = itagQualityMap[itag] ?: 480
-                
-                // Extrair videoId
-                val videoId = extractVideoId(videoUrl)
-                
-                // Gerar cpn
-                val cpn = generateCpn(bloggerData, videoId, timestamp)
-                
-                // Decodificar URL e remover caracteres problemáticos
-                val urlBase = decodeUrl(videoUrl)
-                val urlLimpa = urlBase.replace("\\&", "&")
-                
-                // Adicionar parâmetros anti-bot
-                val urlFinal = buildString {
-                    append(urlLimpa)
-                    if (urlLimpa.contains("?")) {
-                        append("&cpn=$cpn&c=WEB_EMBEDDED_PLAYER&cver=1.20260224.08.00")
-                    } else {
-                        append("?cpn=$cpn&c=WEB_EMBEDDED_PLAYER&cver=1.20260224.08.00")
-                    }
+            val urlFinal = buildString {
+                append(urlLimpa)
+                if (urlLimpa.contains("?")) {
+                    append("&cpn=$cpn&c=WEB_EMBEDDED_PLAYER&cver=1.20260224.08.00")
+                } else {
+                    append("?cpn=$cpn&c=WEB_EMBEDDED_PLAYER&cver=1.20260224.08.00")
                 }
-                
-                val qualityLabel = when(quality) {
-                    1080 -> "FHD"
-                    720 -> "HD"
-                    480 -> "SD"
-                    360 -> "SD"
-                    else -> "SD"
-                }
-                
-                callback(
-                    newExtractorLink(
-                        source = "AniTube",
-                        name = "$name ($qualityLabel)",
-                        url = urlFinal,
-                        type = ExtractorLinkType.VIDEO
-                    ) {
-                        this.referer = "https://youtube.googleapis.com/"
-                        this.quality = quality
-                        this.headers = videoHeaders()
-                    }
-                )
             }
             
-            true
-
-        } catch (e: Exception) {
-            println("❌ AniTubeExtractor: Erro no Blogger: ${e.message}")
-            false
+            val qualityLabel = when(quality) {
+                1080 -> "FHD"
+                720 -> "HD"
+                480 -> "SD"
+                360 -> "SD"
+                else -> "SD"
+            }
+            
+            callback(
+                newExtractorLink(
+                    source = "AniTube",
+                    name = "$name ($qualityLabel)",
+                    url = urlFinal,
+                    type = ExtractorLinkType.VIDEO
+                ) {
+                    this.referer = "https://youtube.googleapis.com/"
+                    this.quality = quality
+                    this.headers = videoHeaders()
+                }
+            )
+            println("✅ Link adicionado: $qualityLabel com cpn=$cpn")
         }
+        
+        return true
     }
 
     private suspend fun getBloggerSessionData(token: String, referer: String): BloggerData {
-        // Usar cache se disponível (5 minutos)
         if (cachedBloggerData != null && 
             cachedBloggerData?.token == token && 
             System.currentTimeMillis() - lastBloggerRefresh < 300000) {
             return cachedBloggerData!!
         }
         
-        // Acessar página do Blogger
         val bloggerResponse = app.get(
             "https://www.blogger.com/video.g?token=$token",
             headers = mapOf(
                 "Referer" to referer,
                 "User-Agent" to getRandomUserAgent(),
-                "sec-ch-ua" to "\"Chromium\";v=\"120\", \"Not)A;Brand\";v=\"99\"",
+                "sec-ch-ua" to "\"Chromium\";v=\"127\", \"Not)A;Brand\";v=\"99\", \"Microsoft Edge Simulate\";v=\"127\", \"Lemur\";v=\"127\"",
                 "sec-ch-ua-mobile" to "?1",
                 "sec-ch-ua-platform" to "\"Android\""
             )
         )
         
         val html = bloggerResponse.text
-        
-        // Extrair WIZ_global_data
         val wizData = extractWizData(html)
-        
-        // Extrair nonce
         val nonce = extractNonce(html) ?: generateRandomString(32)
         
         val data = BloggerData(
@@ -200,19 +229,16 @@ object AniTubeVideoExtractor {
 
     private fun extractWizData(html: String): Map<String, String> {
         val wizData = HashMap<String, String>()
-        
         val pattern = """window\.WIZ_global_data\s*=\s*\{([^}]+)\}""".toRegex()
         val match = pattern.find(html)
         
         if (match != null) {
             val wizStr = match.groupValues[1]
-            
             extractField(wizStr, "FdrFJe")?.let { wizData["FdrFJe"] = it }
             extractField(wizStr, "cfb2h")?.let { wizData["cfb2h"] = it }
             extractField(wizStr, "UUFaWc")?.let { wizData["UUFaWc"] = it }
             extractField(wizStr, "hsFLT")?.let { wizData["hsFLT"] = it }
         }
-        
         return wizData
     }
 
@@ -242,7 +268,7 @@ object AniTubeVideoExtractor {
             "origin" to "https://www.blogger.com",
             "referer" to "https://www.blogger.com/",
             "user-agent" to getRandomUserAgent(),
-            "sec-ch-ua" to "\"Chromium\";v=\"120\", \"Not)A;Brand\";v=\"99\"",
+            "sec-ch-ua" to "\"Chromium\";v=\"127\", \"Not)A;Brand\";v=\"99\", \"Microsoft Edge Simulate\";v=\"127\", \"Lemur\";v=\"127\"",
             "sec-ch-ua-mobile" to "?1",
             "sec-ch-ua-platform" to "\"Android\"",
             "x-client-data" to "COjuygE=",
@@ -266,54 +292,23 @@ object AniTubeVideoExtractor {
 
     private fun extractVideoUrlsFromResponse(response: String): List<Pair<String, Int>> {
         val videos = mutableListOf<Pair<String, Int>>()
-        
-        // Extrair JSON real do formato do Google
         val jsonData = extractGoogleJson(response)
         
-        // Padrão específico para URLs com itag
         val urlPattern = """\"((?:https?:\\/\\/)?[^"]+?googlevideo[^"]+?)\",\[(\d+)\]""".toRegex()
-        val urlMatches = urlPattern.findAll(jsonData)
-        
-        for (match in urlMatches) {
+        urlPattern.findAll(jsonData).forEach { match ->
             var url = match.groupValues[1]
             val itag = match.groupValues[2].toIntOrNull() ?: 18
-            
             url = decodeUrl(url)
-            
-            if (!videos.any { it.first == url }) {
-                videos.add(Pair(url, itag))
-            }
+            videos.add(Pair(url, itag))
         }
         
-        // Fallback: busca por URLs brutas
-        if (videos.isEmpty()) {
-            val urlPattern2 = """https?:\\?/\\?/[^"'\s]+?googlevideo[^"'\s]+""".toRegex()
-            val rawMatches = urlPattern2.findAll(jsonData)
-            
-            for (match in rawMatches) {
-                var url = match.value
-                if (!url.startsWith("http")) url = "https://$url"
-                
-                url = decodeUrl(url)
-                val itag = extractItagFromUrl(url)
-                
-                if (!videos.any { it.first == url }) {
-                    videos.add(Pair(url, itag))
-                }
-            }
-        }
-        
-        // Ordenar por qualidade (melhor primeiro)
         val qualityOrder = listOf(37, 22, 18, 59)
-        return videos
-            .distinctBy { it.second }
-            .sortedBy { qualityOrder.indexOf(it.second) }
+        return videos.distinctBy { it.second }.sortedBy { qualityOrder.indexOf(it.second) }
     }
 
     private fun extractGoogleJson(response: String): String {
         try {
             var data = response.replace(Regex("""^\)\]\}'\s*\n?"""), "")
-            
             val pattern = """\[\s*\[\s*"wrb\.fr"\s*,\s*"[^"]*"\s*,\s*"(.+?)"\s*\]""".toRegex(RegexOption.DOT_MATCHES_ALL)
             val match = pattern.find(data)
             
@@ -324,8 +319,7 @@ object AniTubeVideoExtractor {
                 jsonStr = decodeUnicodeEscapes(jsonStr)
                 return jsonStr
             }
-        } catch (e: Exception) {
-        }
+        } catch (e: Exception) {}
         return response
     }
 
@@ -334,11 +328,7 @@ object AniTubeVideoExtractor {
         val pattern = """\\u([0-9a-fA-F]{4})""".toRegex()
         result = pattern.replace(result) { matchResult ->
             val hexCode = matchResult.groupValues[1]
-            try {
-                hexCode.toInt(16).toChar().toString()
-            } catch (e: Exception) {
-                "?"
-            }
+            try { hexCode.toInt(16).toChar().toString() } catch (e: Exception) { "?" }
         }
         return result
     }
@@ -349,36 +339,13 @@ object AniTubeVideoExtractor {
         decoded = decoded.replace("\\/", "/")
         decoded = decoded.replace("\\\\", "\\")
         decoded = decoded.replace("\\=", "=")
-        decoded = decoded.replace("\\&", "&")  // CORREÇÃO CRÍTICA
+        decoded = decoded.replace("\\&", "&")
         
         if (decoded.endsWith("\\")) {
             decoded = decoded.dropLast(1)
         }
         
-        decoded = decoded.trim('"')
-        return decoded
-    }
-
-    private fun extractItagFromUrl(url: String): Int {
-        val patterns = listOf(
-            """itag[=?&](\d+)""".toRegex(),
-            """itag%3D(\d+)""".toRegex(),
-            """itag\\u003d(\d+)""".toRegex()
-        )
-        
-        for (pattern in patterns) {
-            pattern.find(url)?.let {
-                return it.groupValues[1].toIntOrNull() ?: 18
-            }
-        }
-        
-        return when {
-            "itag=22" in url -> 22
-            "itag=18" in url -> 18
-            "itag=37" in url -> 37
-            "itag=59" in url -> 59
-            else -> 18
-        }
+        return decoded.trim('"')
     }
 
     private fun extractVideoId(url: String): String {
@@ -423,7 +390,7 @@ object AniTubeVideoExtractor {
             "Accept" to "*/*",
             "Accept-Language" to "pt-BR",
             "Range" to "bytes=0-",
-            "sec-ch-ua" to "\"Chromium\";v=\"120\", \"Not)A;Brand\";v=\"99\"",
+            "sec-ch-ua" to "\"Chromium\";v=\"127\", \"Not)A;Brand\";v=\"99\", \"Microsoft Edge Simulate\";v=\"127\", \"Lemur\";v=\"127\"",
             "sec-ch-ua-mobile" to "?1",
             "sec-ch-ua-platform" to "\"Android\"",
             "sec-fetch-dest" to "video",
@@ -431,27 +398,5 @@ object AniTubeVideoExtractor {
             "sec-fetch-site" to "cross-site",
             "x-client-data" to "COjuygE="
         )
-    }
-
-    private suspend fun extractWithWebView(
-        url: String,
-        mainUrl: String,
-        name: String,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        // Seu código existente do WebView
-        // ... (mantido igual)
-        return false
-    }
-    
-    private suspend fun extractWithDirectHtml(
-        url: String,
-        mainUrl: String,
-        name: String,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        // Seu código existente de fallback
-        // ... (mantido igual)
-        return false
     }
 }
