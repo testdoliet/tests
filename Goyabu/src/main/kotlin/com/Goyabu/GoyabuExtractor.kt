@@ -6,9 +6,6 @@ import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import org.jsoup.Jsoup
 import kotlinx.coroutines.delay
-import java.security.MessageDigest
-import java.util.*
-import kotlin.collections.HashMap
 
 object GoyabuExtractor {
     private val itagQualityMap = mapOf(
@@ -16,21 +13,6 @@ object GoyabuExtractor {
         133 to 240, 134 to 360, 135 to 480, 136 to 720,
         137 to 1080, 160 to 144, 242 to 240, 243 to 360,
         244 to 480, 247 to 720, 248 to 1080
-    )
-
-    // Cache para dados da sessão
-    private var cachedWizData: WizData? = null
-    private var cachedNonce: String? = null
-    private var lastSessionRefresh = 0L
-
-    data class WizData(
-        val fSid: String,
-        val bl: String,
-        val cfb2h: String,
-        val UUFaWc: String,
-        val hsFLT: String,
-        val combinedSignature: String,
-        val cssRowKey: String
     )
 
     suspend fun extractVideoLinks(
@@ -44,7 +26,10 @@ object GoyabuExtractor {
             // PASSO 1: Pegar HTML da página do Goyabu
             val response = app.get(
                 url,
-                headers = mobileHeaders()
+                headers = mapOf(
+                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                    "Referer" to "https://goyabu.io/"
+                )
             )
 
             val html = response.text
@@ -62,11 +47,34 @@ object GoyabuExtractor {
             
             println("✅ Token encontrado: ${token.take(50)}...")
             
-            // PASSO 3: Acessar Blogger e extrair dados da sessão
-            val wizData = extractSessionData(token)
+            // PASSO 3: Construir URL do Blogger
+            val bloggerUrl = "https://www.blogger.com/video.g?token=$token"
+            println("📡 Acessando Blogger URL")
             
-            // PASSO 4: Chamar API batch execute
-            val videos = callBloggerBatchApi(token, wizData)
+            // PASSO 4: Fazer requisição para o Blogger
+            val bloggerResponse = app.get(
+                bloggerUrl,
+                headers = mapOf(
+                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                    "Referer" to "https://goyabu.io/"
+                )
+            )
+            
+            val bloggerHtml = bloggerResponse.text
+            println("📄 HTML do Blogger recebido, tamanho: ${bloggerHtml.length} bytes")
+            
+            // PASSO 5: Extrair parâmetros do HTML do Blogger
+            val (f_sid, bl) = extractBloggerParams(bloggerHtml)
+            
+            println("📋 Parâmetros encontrados:")
+            println("   f.sid: $f_sid")
+            println("   bl: $bl")
+            
+            // Pequena pausa para evitar rate limiting
+            delay(500)
+            
+            // PASSO 6: Chamar API batch execute
+            val videos = callBloggerBatchApi(token, f_sid, bl)
             
             if (videos.isEmpty()) {
                 println("❌ Nenhum vídeo encontrado na resposta da API")
@@ -75,10 +83,7 @@ object GoyabuExtractor {
             
             println("✅ Encontradas ${videos.size} URLs de vídeo!")
             
-            // PASSO 5: Gerar timestamp único para esta sessão
-            val timestamp = System.currentTimeMillis()
-            
-            // PASSO 6: Processar cada URL encontrada e adicionar parâmetros anti-bot
+            // PASSO 7: Processar cada URL encontrada
             videos.forEach { (videoUrl, itag) ->
                 val quality = itagQualityMap[itag] ?: 360
                 val qualityLabel = when(quality) {
@@ -88,46 +93,35 @@ object GoyabuExtractor {
                     else -> "SD"
                 }
                 
-                // Extrair videoId da URL
-                val videoId = extractVideoId(videoUrl)
-                
-                // Gerar cpn para esta URL
-                val cpn = generateCpn(
-                    wizData = wizData,
-                    videoId = videoId,
-                    timestamp = timestamp,
-                    nonce = cachedNonce ?: generateRandomString(32)
-                )
-                
-                // Decodificar a URL base primeiro
-                val urlBase = decodeUrl(videoUrl)
+                // DECODIFICAR A URL PRIMEIRO
+                val urlDecodificada = decodeUrl(videoUrl)
                 
                 // CORREÇÃO CRÍTICA: Remover qualquer \ antes de &
-                val urlLimpa = urlBase.replace("\\&", "&")
+                val urlLimpa = urlDecodificada.replace("\\&", "&")
                 
-                // Adicionar parâmetros anti-bot à URL
-                val finalUrl = buildString {
-                    append(urlLimpa)
-                    if (urlLimpa.contains("?")) {
-                        append("&cpn=$cpn&c=WEB_EMBEDDED_PLAYER&cver=1.20260224.08.00")
-                    } else {
-                        append("?cpn=$cpn&c=WEB_EMBEDDED_PLAYER&cver=1.20260224.08.00")
-                    }
+                // Remover barra invertida no final se existir
+                val urlFinal = if (urlLimpa.endsWith("\\")) {
+                    urlLimpa.dropLast(1)
+                } else {
+                    urlLimpa
                 }
                 
                 callback(
                     newExtractorLink(
                         source = "Goyabu",
                         name = "$name ($qualityLabel)",
-                        url = finalUrl,
+                        url = urlFinal,
                         type = ExtractorLinkType.VIDEO
                     ) {
-                        this.referer = "https://youtube.googleapis.com/"
+                        this.referer = "https://www.blogger.com/"
                         this.quality = quality
-                        this.headers = videoHeaders()
+                        this.headers = mapOf(
+                            "Referer" to "https://www.blogger.com/",
+                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                        )
                     }
                 )
-                println("✅ Link adicionado: $qualityLabel (${quality}p) com cpn=$cpn")
+                println("✅ Link adicionado: $qualityLabel (${quality}p)")
             }
             
             true
@@ -137,172 +131,6 @@ object GoyabuExtractor {
             e.printStackTrace()
             false
         }
-    }
-    
-    private suspend fun extractSessionData(token: String): WizData {
-        // Se já temos sessão recente (menos de 5 minutos), reutilizar
-        if (cachedWizData != null && System.currentTimeMillis() - lastSessionRefresh < 300000) {
-            println("📋 Usando dados de sessão em cache")
-            return cachedWizData!!
-        }
-        
-        println("📡 Acessando Blogger para obter dados da sessão...")
-        
-        // Requisição para o Blogger
-        val bloggerResponse = app.get(
-            "https://www.blogger.com/video.g?token=$token",
-            headers = mobileHeaders()
-        )
-        
-        val bloggerHtml = bloggerResponse.text
-        println("📄 HTML do Blogger recebido, tamanho: ${bloggerHtml.length} bytes")
-        
-        // Extrair WIZ_global_data
-        val wizData = extractWizData(bloggerHtml)
-        
-        // Extrair nonce da página
-        cachedNonce = extractNonce(bloggerHtml)
-        
-        // Extrair assinatura combinada
-        val combinedSignature = extractCombinedSignature(bloggerHtml)
-        
-        // Extrair CSS Row Key
-        val cssRowKey = extractCssRowKey(bloggerHtml)
-        
-        val result = WizData(
-            fSid = wizData["FdrFJe"] ?: "-7535563745894756252",
-            bl = wizData["cfb2h"] ?: "boq_bloggeruiserver_20260223.02_p0",
-            cfb2h = wizData["cfb2h"] ?: "",
-            UUFaWc = wizData["UUFaWc"] ?: "%.@.null,1000,2]",
-            hsFLT = wizData["hsFLT"] ?: "%.@.null,1000,2]",
-            combinedSignature = combinedSignature,
-            cssRowKey = cssRowKey
-        )
-        
-        cachedWizData = result
-        lastSessionRefresh = System.currentTimeMillis()
-        
-        println("📋 Dados da sessão extraídos:")
-        println("   f.sid: ${result.fSid}")
-        println("   bl: ${result.bl}")
-        println("   nonce: ${cachedNonce?.take(20)}...")
-        
-        return result
-    }
-    
-    private fun extractWizData(html: String): Map<String, String> {
-        val wizData = HashMap<String, String>()
-        
-        val pattern = """window\.WIZ_global_data\s*=\s*\{([^}]+)\}""".toRegex()
-        val match = pattern.find(html)
-        
-        if (match != null) {
-            val wizStr = match.groupValues[1]
-            
-            // Extrair campos importantes
-            extractField(wizStr, "FdrFJe")?.let { wizData["FdrFJe"] = it }
-            extractField(wizStr, "cfb2h")?.let { wizData["cfb2h"] = it }
-            extractField(wizStr, "UUFaWc")?.let { wizData["UUFaWc"] = it }
-            extractField(wizStr, "hsFLT")?.let { wizData["hsFLT"] = it }
-        }
-        
-        return wizData
-    }
-    
-    private fun extractField(data: String, field: String): String? {
-        val pattern = """"$field":"([^"]+)"""".toRegex()
-        return pattern.find(data)?.groupValues?.get(1)
-    }
-    
-    private fun extractNonce(html: String): String? {
-        val pattern = """script[^>]*nonce="([^"]+)"""".toRegex()
-        return pattern.find(html)?.groupValues?.get(1)
-    }
-    
-    private fun extractCombinedSignature(html: String): String {
-        val pattern = """_F_combinedSignature\s*=\s*'([^']*)'""".toRegex()
-        return pattern.find(html)?.groupValues?.get(1) ?: "AEy-KP0QB8hC39tFP1M5MbDoKPIrbaS1kQ"
-    }
-    
-    private fun extractCssRowKey(html: String): String {
-        val pattern = """_F_cssRowKey\s*=\s*'([^']*)'""".toRegex()
-        return pattern.find(html)?.groupValues?.get(1) ?: "boq-blogger.BloggerVideoPlayerUi.XKA1asAesHc.L.B1.O"
-    }
-    
-    private fun generateCpn(
-        wizData: WizData,
-        videoId: String,
-        timestamp: Long,
-        nonce: String
-    ): String {
-        return try {
-            // Construir a seed
-            val seed = buildString {
-                append(wizData.cfb2h)
-                append(wizData.UUFaWc)
-                append(wizData.hsFLT)
-                append(videoId)
-                append(timestamp.toString())
-                append(nonce)
-            }
-            
-            // Calcular SHA-256
-            val digest = MessageDigest.getInstance("SHA-256")
-            val hash = digest.digest(seed.toByteArray())
-            
-            // Converter para Base64 e pegar primeiros 16 caracteres
-            Base64.getEncoder().encodeToString(hash)
-                .substring(0, 16)
-                .replace("+", "")
-                .replace("/", "")
-                .replace("=", "")
-            
-        } catch (e: Exception) {
-            println("⚠️ Erro ao gerar cpn: ${e.message}")
-            // Fallback: cpn aleatório
-            generateRandomString(16)
-        }
-    }
-    
-    private fun generateRandomString(length: Int): String {
-        val chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
-        return (1..length).map { chars.random() }.joinToString("")
-    }
-    
-    private fun extractVideoId(url: String): String {
-        val pattern = """id=([a-f0-9]+)""".toRegex()
-        return pattern.find(url)?.groupValues?.get(1) ?: "picasacid"
-    }
-    
-    private fun mobileHeaders(): Map<String, String> {
-        return mapOf(
-            "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
-            "Accept" to "*/*",
-            "Accept-Language" to "pt-BR",
-            "sec-ch-ua" to "\"Chromium\";v=\"127\", \"Not)A;Brand\";v=\"99\", \"Microsoft Edge Simulate\";v=\"127\", \"Lemur\";v=\"127\"",
-            "sec-ch-ua-mobile" to "?1",
-            "sec-ch-ua-platform" to "\"Android\"",
-            "x-client-data" to "COjuygE="
-        )
-    }
-    
-    private fun videoHeaders(): Map<String, String> {
-        return mapOf(
-            "Referer" to "https://youtube.googleapis.com/",
-            "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
-            "Accept" to "*/*",
-            "Accept-Language" to "pt-BR",
-            "Priority" to "i",
-            "Range" to "bytes=0-",
-            "sec-ch-ua" to "\"Chromium\";v=\"127\", \"Not)A;Brand\";v=\"99\", \"Microsoft Edge Simulate\";v=\"127\", \"Lemur\";v=\"127\"",
-            "sec-ch-ua-mobile" to "?1",
-            "sec-ch-ua-platform" to "\"Android\"",
-            "sec-fetch-dest" to "video",
-            "sec-fetch-mode" to "no-cors",
-            "sec-fetch-site" to "cross-site",
-            "x-client-data" to "COjuygE=",
-            "Connection" to "keep-alive"
-        )
     }
     
     private fun extractBloggerToken(doc: org.jsoup.nodes.Document): String? {
@@ -330,9 +158,38 @@ object GoyabuExtractor {
         return null
     }
     
+    private fun extractBloggerParams(html: String): Pair<String, String> {
+        // Valores padrão (fallback)
+        var f_sid = "-7535563745894756252"
+        var bl = "boq_bloggeruiserver_20260223.02_p0"
+        
+        // Procurar por WIZ_global_data no HTML
+        val wizPattern = """window\.WIZ_global_data\s*=\s*\{([^}]+)\}""".toRegex()
+        val wizMatch = wizPattern.find(html)
+        
+        if (wizMatch != null) {
+            val wizData = wizMatch.groupValues[1]
+            
+            // Extrair FdrFJe (f.sid)
+            val sidPattern = """"FdrFJe":"([^"]+)"""".toRegex()
+            sidPattern.find(wizData)?.let {
+                f_sid = it.groupValues[1]
+            }
+            
+            // Extrair cfb2h (bl)
+            val blPattern = """"cfb2h":"([^"]+)"""".toRegex()
+            blPattern.find(wizData)?.let {
+                bl = it.groupValues[1]
+            }
+        }
+        
+        return Pair(f_sid, bl)
+    }
+    
     private suspend fun callBloggerBatchApi(
         token: String,
-        wizData: WizData
+        f_sid: String,
+        bl: String
     ): List<Pair<String, Int>> {
         
         val apiUrl = "https://www.blogger.com/_/BloggerVideoPlayerUi/data/batchexecute"
@@ -344,15 +201,11 @@ object GoyabuExtractor {
             "content-type" to "application/x-www-form-urlencoded;charset=UTF-8",
             "origin" to "https://www.blogger.com",
             "referer" to "https://www.blogger.com/",
-            "user-agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
-            "sec-ch-ua" to "\"Chromium\";v=\"127\", \"Not)A;Brand\";v=\"99\", \"Microsoft Edge Simulate\";v=\"127\", \"Lemur\";v=\"127\"",
-            "sec-ch-ua-mobile" to "?1",
-            "sec-ch-ua-platform" to "\"Android\"",
-            "x-client-data" to "COjuygE=",
+            "user-agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
             "x-same-domain" to "1"
         )
         
-        val urlWithParams = "$apiUrl?rpcids=WcwnYd&source-path=%2Fvideo.g&f.sid=${wizData.fSid}&bl=${wizData.bl}&hl=pt-BR&_reqid=$reqid&rt=c"
+        val urlWithParams = "$apiUrl?rpcids=WcwnYd&source-path=%2Fvideo.g&f.sid=$f_sid&bl=$bl&hl=pt-BR&_reqid=$reqid&rt=c"
         
         // Body no formato correto
         val body = mapOf(
@@ -510,11 +363,12 @@ object GoyabuExtractor {
         decoded = decoded.replace("\\=", "=")
         decoded = decoded.replace("\\&", "&")  // ← CORREÇÃO CRÍTICA!
         
-        // Remove barra invertida no final (caso ainda exista)
+        // Remover barra invertida no final
         if (decoded.endsWith("\\")) {
             decoded = decoded.dropLast(1)
         }
         
+        // Remover aspas extras
         decoded = decoded.trim('"')
         return decoded
     }
