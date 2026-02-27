@@ -93,6 +93,24 @@ object GoyabuExtractor {
                     else -> "SD"
                 }
                 
+                // Headers completos copiados do navegador
+                val headers = mapOf(
+                    "Referer" to "https://youtube.googleapis.com/",
+                    "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
+                    "Accept" to "*/*",
+                    "Accept-Language" to "pt-BR",
+                    "Priority" to "i",
+                    "Range" to "bytes=0-",
+                    "sec-ch-ua" to "\"Chromium\";v=\"127\", \"Not)A;Brand\";v=\"99\", \"Microsoft Edge Simulate\";v=\"127\", \"Lemur\";v=\"127\"",
+                    "sec-ch-ua-mobile" to "?1",
+                    "sec-ch-ua-platform" to "\"Android\"",
+                    "sec-fetch-dest" to "video",
+                    "sec-fetch-mode" to "no-cors",
+                    "sec-fetch-site" to "cross-site",
+                    "x-client-data" to "COjuygE=",
+                    "Connection" to "keep-alive"
+                )
+                
                 callback(
                     newExtractorLink(
                         source = "Goyabu",
@@ -100,20 +118,9 @@ object GoyabuExtractor {
                         url = videoUrl,
                         type = ExtractorLinkType.VIDEO
                     ) {
-                        this.referer = "https://www.blogger.com/"
+                        this.referer = "https://youtube.googleapis.com/"
                         this.quality = quality
-                        this.headers = mapOf(
-                            "Referer" to "https://www.blogger.com/",
-                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                            "Accept" to "video/webm,video/ogg,video/*;q=0.9,application/ogg;q=0.7,audio/*;q=0.6,*/*;q=0.5",
-                            "Accept-Language" to "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
-                            "Origin" to "https://www.blogger.com",
-                            "Connection" to "keep-alive",
-                            "Sec-Fetch-Dest" to "video",
-                            "Sec-Fetch-Mode" to "no-cors",
-                            "Sec-Fetch-Site" to "cross-site",
-                            "Range" to "bytes=0-"
-                        )
+                        this.headers = headers
                     }
                 )
                 println("✅ Link adicionado: $qualityLabel (${quality}p)")
