@@ -150,17 +150,19 @@ object AniTubeVideoExtractor {
                 else -> "SD"
             }
             
-            // Gerar links M3U8
-            M3u8Helper.generateM3u8(
+            // CORREÇÃO: Usar a sintaxe correta do M3u8Helper
+            val m3u8Links = M3u8Helper.generateM3u8(
                 source = "AniTube - $tabName",
-                url = hlsUrl,
+                streamUrl = hlsUrl,
                 referer = referer,
                 headers = mapOf(
                     "Referer" to referer,
                     "User-Agent" to getRandomUserAgent(),
                     "Accept" to "*/*"
                 )
-            ).forEach { m3u8Link ->
+            )
+            
+            m3u8Links.forEach { m3u8Link ->
                 callback(
                     newExtractorLink(
                         source = "AniTube",
