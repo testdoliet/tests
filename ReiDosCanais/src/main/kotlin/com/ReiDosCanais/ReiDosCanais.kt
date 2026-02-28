@@ -4,17 +4,8 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.newExtractorLink
-import com.lagradost.cloudstream3.utils.Base64
-import com.lagradost.cloudstream3.plugins.BasePlugin
-import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
 import okhttp3.Headers
-
-@CloudstreamPlugin
-class ReiDosCanaisProvider : BasePlugin() {
-    override fun load() {
-        registerMainAPI(ReiDosCanais())
-    }
-}
+import org.jsoup.nodes.Element
 
 class ReiDosCanais : MainAPI() {
     override var name = "Rei dos Canais"
@@ -25,7 +16,6 @@ class ReiDosCanais : MainAPI() {
     override val supportedTypes = setOf(TvType.Live)
     
     private val baseUrl = "https://reidoscanais.io"
-    private val apiUrl = "https://api.reidoscanais.io"
     private val playerDomain = "p2player.live"
     
     // Constante mágica para decodificação (encontrada no HTML)
@@ -80,7 +70,7 @@ class ReiDosCanais : MainAPI() {
         
         return newLiveSearchResponse(title, "$channelId|$title|$imgUrl|$category", TvType.Live) {
             this.posterUrl = fixUrl(imgUrl)
-            this.posterHeaders = Headers.headersOf("Referer", baseUrl)
+            this.posterHeaders = mapOf("Referer" to baseUrl)
         }
     }
 
@@ -100,8 +90,6 @@ class ReiDosCanais : MainAPI() {
         return newMovieLoadResponse(channelName, channelUrl, TvType.Live, channelUrl) {
             this.posterUrl = posterUrl
             this.plot = "Assista $channelName ao vivo no Rei dos Canais. Categoria: $category"
-            this.year = null
-            this.duration = null
         }
     }
 
@@ -141,7 +129,6 @@ class ReiDosCanais : MainAPI() {
             .firstOrNull { it.contains(playerDomain) }
         
         if (iframeSrc.isNullOrEmpty()) {
-            logger.e("ReiDosCanais", "Iframe não encontrado em $channelUrl")
             return false
         }
         
@@ -153,34 +140,21 @@ class ReiDosCanais : MainAPI() {
             iframeSrc
         }
         
-        logger.i("ReiDosCanais", "URL do iframe: $absoluteIframeUrl")
-        
         // 3. Acessar página do iframe
         val iframeDoc = app.get(absoluteIframeUrl, referer = channelUrl).document
         val iframeHtml = iframeDoc.html()
         
         // 4. Extrair array hNO do JavaScript
-        val hnoArray = extractHNOArray(iframeHtml) ?: run {
-            logger.e("ReiDosCanais", "Array hNO não encontrado")
-            return false
-        }
-        
-        logger.i("ReiDosCanais", "Array hNO encontrado com ${hnoArray.size} itens")
+        val hnoArray = extractHNOArray(iframeHtml) ?: return false
         
         // 5. Decodificar array para obter HTML real
         val decodedHtml = decodeHNOArray(hnoArray)
         if (decodedHtml.isEmpty()) {
-            logger.e("ReiDosCanais", "Falha ao decodificar HTML")
             return false
         }
         
         // 6. Procurar link .m3u8 no HTML decodificado
-        val finalUrl = extractM3u8Url(decodedHtml) ?: run {
-            logger.e("ReiDosCanais", "Link .m3u8 não encontrado")
-            return false
-        }
-        
-        logger.i("ReiDosCanais", "Link encontrado: $finalUrl")
+        val finalUrl = extractM3u8Url(decodedHtml) ?: return false
         
         // 7. Retornar link para o player
         callback(
@@ -231,18 +205,20 @@ class ReiDosCanais : MainAPI() {
             for (encoded in items) {
                 try {
                     // 1. Decodificar Base64
-                    val base64Decoded = Base64.decode(encoded)
+                    val base64Decoded = String(Base64.decode(encoded))
                     
                     // 2. Remover tudo que não é dígito
                     val numbersOnly = base64Decoded.replace(Regex("\\D"), "")
                     
                     // 3. Converter para número e subtrair o magic number
-                    val charCode = numbersOnly.toInt() - magicNumber
+                    val charCode = numbersOnly.toIntOrNull()?.minus(magicNumber)
                     
                     // 4. Converter para caractere e anexar
-                    append(charCode.toChar())
+                    if (charCode != null) {
+                        append(charCode.toChar())
+                    }
                 } catch (e: Exception) {
-                    logger.e("ReiDosCanais", "Erro ao processar item: $encoded", e)
+                    // Ignorar erros
                 }
             }
         }
@@ -270,10 +246,11 @@ class ReiDosCanais : MainAPI() {
         Pair(baseUrl, "Todos os Canais")
     )
     
-    // ================== MÉTODOS DE FIX ==================
+    // ================== MÉTODO DE FIX ==================
     override fun fixUrl(url: String): String {
         return if (url.startsWith("//")) "https:$url" 
                else if (url.startsWith("http")) url 
-               else "$baseUrl/$url".replace("//", "/")
+               else if (url.startsWith("/")) "$baseUrl$url"
+               else "$baseUrl/$url"
     }
 }
