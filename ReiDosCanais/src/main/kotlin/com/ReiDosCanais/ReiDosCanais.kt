@@ -164,7 +164,7 @@ class ReiDosCanais : MainAPI() {
         val event = sportsResponse.data.find { it.id == eventId }
             ?: throw ErrorLoadingException("Evento não encontrado")
         
-        // Usar newMovieLoadResponse para evento esportivo ao vivo - SEGUINDO O PADRÃO DO GOYABU
+        // Usar newMovieLoadResponse para evento esportivo ao vivo
         return newMovieLoadResponse(
             event.title,
             "sport|${event.id}",
@@ -188,7 +188,7 @@ class ReiDosCanais : MainAPI() {
         val channel = channelsResponse.data.find { it.id == channelId }
             ?: throw ErrorLoadingException("Canal não encontrado")
         
-        // Usar newMovieLoadResponse para canal ao vivo - SEGUINDO O PADRÃO DO GOYABU
+        // Usar newMovieLoadResponse para canal ao vivo
         return newMovieLoadResponse(
             channel.name,
             "channel|${channel.id}|${channel.embedUrl}",
@@ -349,7 +349,22 @@ class ReiDosCanais : MainAPI() {
                 // Se não encontrar hNO, tentar encontrar o link diretamente
                 val directUrl = extractM3u8Url(iframeHtml)
                 if (directUrl != null) {
-                    callback.invoke(createExtractorLink(directUrl, absoluteIframeUrl))
+                    // Criar e enviar o link diretamente
+                    val link = newExtractorLink(
+                        source = "Rei dos Canais",
+                        name = "Rei dos Canais",
+                        url = directUrl,
+                        type = ExtractorLinkType.M3U8
+                    ) {
+                        this.referer = absoluteIframeUrl
+                        this.quality = Qualities.Unknown.value
+                        this.headers = mapOf(
+                            "User-Agent" to USER_AGENT,
+                            "Referer" to absoluteIframeUrl,
+                            "Origin" to "https://reidoscanais.io"
+                        )
+                    }
+                    callback.invoke(link)
                     return true
                 }
                 return false
@@ -367,30 +382,27 @@ class ReiDosCanais : MainAPI() {
                 return false
             }
             
-            // 7. Retornar link para o player
-            callback.invoke(createExtractorLink(finalM3u8Url, absoluteIframeUrl))
+            // 7. Criar e enviar o link
+            val link = newExtractorLink(
+                source = "Rei dos Canais",
+                name = "Rei dos Canais",
+                url = finalM3u8Url,
+                type = ExtractorLinkType.M3U8
+            ) {
+                this.referer = absoluteIframeUrl
+                this.quality = Qualities.Unknown.value
+                this.headers = mapOf(
+                    "User-Agent" to USER_AGENT,
+                    "Referer" to absoluteIframeUrl,
+                    "Origin" to "https://reidoscanais.io"
+                )
+            }
+            callback.invoke(link)
             return true
             
         } catch (e: Exception) {
             e.printStackTrace()
             return false
-        }
-    }
-    
-    private fun createExtractorLink(url: String, referer: String): ExtractorLink {
-        return newExtractorLink(
-            source = "Rei dos Canais",
-            name = "Rei dos Canais",
-            url = url,
-            type = ExtractorLinkType.M3U8
-        ) {
-            this.referer = referer
-            this.quality = Qualities.Unknown.value
-            this.headers = mapOf(
-                "User-Agent" to USER_AGENT,
-                "Referer" to referer,
-                "Origin" to "https://reidoscanais.io"
-            )
         }
     }
     
