@@ -149,19 +149,22 @@ class ReiDosCanais : MainAPI() {
         // 6. Procurar link .m3u8 no HTML decodificado
         val finalUrl = extractM3u8Url(decodedHtml) ?: return false
         
-        // 7. Retornar link para o player - SEM parâmetros extras
-        callback.invoke(
-            newExtractorLink(
-                source = "ReiDosCanais",
-                name = "Rei dos Canais",
-                url = finalUrl,
-                referer = absoluteIframeUrl,
-                headers = mapOf(
-                    "User-Agent" to USER_AGENT
-                )
+        // 7. Retornar link para o player - SEGUINDO O PADRÃO DO GOYABU
+        val extractorLink = newExtractorLink(
+            source = "ReiDosCanais",
+            name = "Rei dos Canais",
+            url = finalUrl,
+            type = ExtractorLinkType.M3U8
+        ) {
+            this.referer = absoluteIframeUrl
+            this.quality = Qualities.Unknown.value
+            this.headers = mapOf(
+                "User-Agent" to USER_AGENT,
+                "Referer" to absoluteIframeUrl
             )
-        )
+        }
         
+        callback.invoke(extractorLink)
         return true
     }
     
