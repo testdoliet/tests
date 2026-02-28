@@ -4,8 +4,17 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.newExtractorLink
+import com.lagradost.cloudstream3.plugins.BasePlugin
+import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
 import org.jsoup.nodes.Element
 import java.util.Base64
+
+@CloudstreamPlugin
+class ReiDosCanaisProvider : BasePlugin() {
+    override fun load() {
+        registerMainAPI(ReiDosCanais())
+    }
+}
 
 class ReiDosCanais : MainAPI() {
     override var name = "Rei dos Canais"
