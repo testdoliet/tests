@@ -7,6 +7,7 @@ import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.plugins.BasePlugin
 import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
 import com.fasterxml.jackson.annotation.JsonProperty
+import okhttp3.Request
 import java.util.Base64
 
 @CloudstreamPlugin
@@ -87,14 +88,13 @@ class ReiDosCanais : MainAPI() {
             val sportsResponse = app.get(sportsLiveEndpoint, timeout = 30).parsed<ApiResponse<List<SportEvent>>>()
             if (sportsResponse.success && sportsResponse.data.isNotEmpty()) {
                 val liveEvents = sportsResponse.data.map { event ->
-                    newLiveSearchResponse(
-                        event.title,
-                        "sport|${event.id}",
-                        TvType.Live
-                    ) {
-                        this.posterUrl = fixUrl(event.poster)
-                        this.plot = event.description
-                    }
+                    LiveSearchResponse(
+                        name = event.title,
+                        url = "sport|${event.id}",
+                        apiName = this.name,
+                        type = TvType.Live,
+                        posterUrl = fixUrl(event.poster)
+                    )
                 }
                 if (liveEvents.isNotEmpty()) {
                     homePageList.add(HomePageList("Eventos Ao Vivo", liveEvents, isHorizontalImages = true))
@@ -113,13 +113,13 @@ class ReiDosCanais : MainAPI() {
                 // Para cada categoria, criar uma HomePageList
                 channelsByCategory.forEach { (categoryName, channels) ->
                     val channelList = channels.map { channel ->
-                        newLiveSearchResponse(
-                            channel.name,
-                            "channel|${channel.id}|${channel.embedUrl}",
-                            TvType.Live
-                        ) {
-                            this.posterUrl = fixUrl(channel.logoUrl)
-                        }
+                        LiveSearchResponse(
+                            name = channel.name,
+                            url = "channel|${channel.id}|${channel.embedUrl}",
+                            apiName = this.name,
+                            type = TvType.Live,
+                            posterUrl = fixUrl(channel.logoUrl)
+                        )
                     }
                     
                     if (channelList.isNotEmpty()) {
@@ -137,7 +137,7 @@ class ReiDosCanais : MainAPI() {
             throw ErrorLoadingException("Nenhum canal encontrado.")
         }
         
-        return newHomePageResponse(homePageList)
+        return HomePageResponse(homePageList)
     }
 
     // ================== CARREGAR STREAM ==================
@@ -174,13 +174,15 @@ class ReiDosCanais : MainAPI() {
             ?: throw ErrorLoadingException("Evento não encontrado")
         
         // Criar um LoadResponse para o evento
-        return newMovieLoadResponse(event.title, "sport|${event.id}", TvType.Live, "sport|${event.id}") {
-            this.posterUrl = fixUrl(event.poster)
-            this.plot = event.description
-            this.year = null
-            this.tags = listOf(event.category, event.status)
-            this.duration = null
-        }
+        return LiveStreamLoadResponse(
+            name = event.title,
+            url = "sport|${event.id}",
+            apiName = this.name,
+            dataUrl = "sport|${event.id}",
+            posterUrl = fixUrl(event.poster),
+            plot = event.description ?: "Evento esportivo ao vivo",
+            tags = listOf(event.category, event.status)
+        )
     }
     
     private suspend fun loadChannel(channelId: String, embedUrl: String): LoadResponse {
@@ -194,11 +196,15 @@ class ReiDosCanais : MainAPI() {
         val channel = channelsResponse.data.find { it.id == channelId }
             ?: throw ErrorLoadingException("Canal não encontrado")
         
-        return newMovieLoadResponse(channel.name, "channel|${channel.id}|${channel.embedUrl}", TvType.Live, channel.embedUrl) {
-            this.posterUrl = fixUrl(channel.logoUrl)
-            this.plot = channel.description ?: "Assista ao canal ${channel.name} ao vivo"
-            this.tags = listOf(channel.category)
-        }
+        return LiveStreamLoadResponse(
+            name = channel.name,
+            url = "channel|${channel.id}|${channel.embedUrl}",
+            apiName = this.name,
+            dataUrl = channel.embedUrl,
+            posterUrl = fixUrl(channel.logoUrl),
+            plot = channel.description ?: "Assista ao canal ${channel.name} ao vivo",
+            tags = listOf(channel.category)
+        )
     }
 
     // ================== BUSCA ==================
@@ -212,13 +218,13 @@ class ReiDosCanais : MainAPI() {
                 val matchingChannels = channelsResponse.data
                     .filter { it.isActive && it.name.contains(query, ignoreCase = true) }
                     .map { channel ->
-                        newLiveSearchResponse(
-                            channel.name,
-                            "channel|${channel.id}|${channel.embedUrl}",
-                            TvType.Live
-                        ) {
-                            this.posterUrl = fixUrl(channel.logoUrl)
-                        }
+                        LiveSearchResponse(
+                            name = channel.name,
+                            url = "channel|${channel.id}|${channel.embedUrl}",
+                            apiName = this.name,
+                            type = TvType.Live,
+                            posterUrl = fixUrl(channel.logoUrl)
+                        )
                     }
                 results.addAll(matchingChannels)
             }
@@ -229,14 +235,13 @@ class ReiDosCanais : MainAPI() {
                 val matchingEvents = sportsResponse.data
                     .filter { it.title.contains(query, ignoreCase = true) || (it.description?.contains(query, ignoreCase = true) == true) }
                     .map { event ->
-                        newLiveSearchResponse(
-                            event.title,
-                            "sport|${event.id}",
-                            TvType.Live
-                        ) {
-                            this.posterUrl = fixUrl(event.poster)
-                            this.plot = event.description
-                        }
+                        LiveSearchResponse(
+                            name = event.title,
+                            url = "sport|${event.id}",
+                            apiName = this.name,
+                            type = TvType.Live,
+                            posterUrl = fixUrl(event.poster)
+                        )
                     }
                 results.addAll(matchingEvents)
             }
@@ -261,23 +266,22 @@ class ReiDosCanais : MainAPI() {
         return when (parts[0]) {
             "sport" -> {
                 val eventId = parts[1]
-                loadSportLinks(eventId, subtitleCallback, callback)
+                loadSportLinks(eventId, callback)
             }
             "channel" -> {
                 if (parts.size < 3) return false
                 val embedUrl = parts[2]
-                loadChannelLinks(embedUrl, subtitleCallback, callback)
+                loadChannelLinks(embedUrl, callback)
             }
             else -> {
                 // Compatibilidade com versões antigas (se o data for apenas a URL)
-                loadChannelLinks(data, subtitleCallback, callback)
+                loadChannelLinks(data, callback)
             }
         }
     }
     
     private suspend fun loadSportLinks(
         eventId: String,
-        subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         // Buscar detalhes atualizados do evento
@@ -309,7 +313,6 @@ class ReiDosCanais : MainAPI() {
     
     private suspend fun loadChannelLinks(
         embedUrl: String,
-        subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         return extractFromEmbedUrl(embedUrl, callback)
@@ -353,7 +356,7 @@ class ReiDosCanais : MainAPI() {
                 // Se não encontrar hNO, tentar encontrar o link diretamente
                 val directUrl = extractM3u8Url(iframeHtml)
                 if (directUrl != null) {
-                    callback.invoke(createExtractorLink(directUrl, absoluteIframeUrl))
+                    createAndSendExtractorLink(directUrl, absoluteIframeUrl, callback)
                     return true
                 }
                 return false
@@ -372,7 +375,7 @@ class ReiDosCanais : MainAPI() {
             }
             
             // 7. Retornar link para o player
-            callback.invoke(createExtractorLink(finalM3u8Url, absoluteIframeUrl))
+            createAndSendExtractorLink(finalM3u8Url, absoluteIframeUrl, callback)
             return true
             
         } catch (e: Exception) {
@@ -381,8 +384,12 @@ class ReiDosCanais : MainAPI() {
         }
     }
     
-    private fun createExtractorLink(url: String, referer: String): ExtractorLink {
-        return newExtractorLink(
+    private suspend fun createAndSendExtractorLink(
+        url: String, 
+        referer: String, 
+        callback: (ExtractorLink) -> Unit
+    ) {
+        val link = newExtractorLink(
             source = "Rei dos Canais",
             name = "Rei dos Canais",
             url = url,
@@ -396,6 +403,7 @@ class ReiDosCanais : MainAPI() {
                 "Origin" to "https://reidoscanais.io"
             )
         }
+        callback.invoke(link)
     }
     
     // ================== FUNÇÕES AUXILIARES PARA DECODIFICAÇÃO ==================
