@@ -6,6 +6,7 @@ import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import okhttp3.Headers
 import org.jsoup.nodes.Element
+import java.util.Base64
 
 class ReiDosCanais : MainAPI() {
     override var name = "Rei dos Canais"
@@ -120,8 +121,8 @@ class ReiDosCanais : MainAPI() {
     ): Boolean {
         val channelUrl = data.ifEmpty { return false }
         
-        // 1. Acessar página do canal
-        val doc = app.get(channelUrl, referer = baseUrl).document
+        // 1. Acessar página do canal - SEM o parâmetro 'referer'
+        val doc = app.get(channelUrl).document
         
         // 2. Extrair URL do iframe do player
         val iframeSrc = doc.select("iframe")
@@ -140,8 +141,8 @@ class ReiDosCanais : MainAPI() {
             iframeSrc
         }
         
-        // 3. Acessar página do iframe
-        val iframeDoc = app.get(absoluteIframeUrl, referer = channelUrl).document
+        // 3. Acessar página do iframe - SEM o parâmetro 'referer'
+        val iframeDoc = app.get(absoluteIframeUrl).document
         val iframeHtml = iframeDoc.html()
         
         // 4. Extrair array hNO do JavaScript
@@ -204,8 +205,8 @@ class ReiDosCanais : MainAPI() {
         return buildString {
             for (encoded in items) {
                 try {
-                    // 1. Decodificar Base64
-                    val base64Decoded = String(Base64.decode(encoded))
+                    // 1. Decodificar Base64 usando java.util.Base64
+                    val base64Decoded = String(Base64.getDecoder().decode(encoded))
                     
                     // 2. Remover tudo que não é dígito
                     val numbersOnly = base64Decoded.replace(Regex("\\D"), "")
@@ -247,7 +248,7 @@ class ReiDosCanais : MainAPI() {
     )
     
     // ================== MÉTODO DE FIX ==================
-    override fun fixUrl(url: String): String {
+    fun fixUrl(url: String): String {
         return if (url.startsWith("//")) "https:$url" 
                else if (url.startsWith("http")) url 
                else if (url.startsWith("/")) "$baseUrl$url"
