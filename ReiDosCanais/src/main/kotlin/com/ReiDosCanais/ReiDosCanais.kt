@@ -28,11 +28,6 @@ data class ApiChannel(
     @JsonProperty("is_active") val isActive: Boolean
 )
 
-data class ApiCategory(
-    @JsonProperty("id") val id: String,
-    @JsonProperty("name") val name: String
-)
-
 data class ApiResponse<T>(
     @JsonProperty("success") val success: Boolean,
     @JsonProperty("data") val data: T,
@@ -68,9 +63,7 @@ class ReiDosCanais : MainAPI() {
     // URLs da API
     private val apiBaseUrl = "https://api.reidoscanais.io"
     private val channelsEndpoint = "$apiBaseUrl/channels"
-    private val categoriesEndpoint = "$apiBaseUrl/channels/categories"
     private val sportsLiveEndpoint = "$apiBaseUrl/sports?status=live"
-    private val mainSiteUrl = "https://reidoscanais.io"
     
     // Domínio do player (para o embed)
     private val playerDomain = "p2player.live"
@@ -90,9 +83,10 @@ class ReiDosCanais : MainAPI() {
                     newLiveSearchResponse(
                         event.title,
                         "sport|${event.id}",
-                        TvType.Live,
-                        fixUrl(event.poster)
-                    )
+                        TvType.Live
+                    ) {
+                        this.posterUrl = fixUrl(event.poster)
+                    }
                 }
                 if (liveEvents.isNotEmpty()) {
                     homePageList.add(HomePageList("Eventos Ao Vivo", liveEvents, isHorizontalImages = true))
@@ -114,9 +108,10 @@ class ReiDosCanais : MainAPI() {
                         newLiveSearchResponse(
                             channel.name,
                             "channel|${channel.id}|${channel.embedUrl}",
-                            TvType.Live,
-                            fixUrl(channel.logoUrl)
-                        )
+                            TvType.Live
+                        ) {
+                            this.posterUrl = fixUrl(channel.logoUrl)
+                        }
                     }
                     
                     if (channelList.isNotEmpty()) {
@@ -169,7 +164,7 @@ class ReiDosCanais : MainAPI() {
         val event = sportsResponse.data.find { it.id == eventId }
             ?: throw ErrorLoadingException("Evento não encontrado")
         
-        // Usar newMovieLoadResponse para evento esportivo ao vivo
+        // Usar newMovieLoadResponse para evento esportivo ao vivo - SEGUINDO O PADRÃO DO GOYABU
         return newMovieLoadResponse(
             event.title,
             "sport|${event.id}",
@@ -193,7 +188,7 @@ class ReiDosCanais : MainAPI() {
         val channel = channelsResponse.data.find { it.id == channelId }
             ?: throw ErrorLoadingException("Canal não encontrado")
         
-        // Usar newMovieLoadResponse para canal ao vivo
+        // Usar newMovieLoadResponse para canal ao vivo - SEGUINDO O PADRÃO DO GOYABU
         return newMovieLoadResponse(
             channel.name,
             "channel|${channel.id}|${channel.embedUrl}",
@@ -220,9 +215,10 @@ class ReiDosCanais : MainAPI() {
                         newLiveSearchResponse(
                             channel.name,
                             "channel|${channel.id}|${channel.embedUrl}",
-                            TvType.Live,
-                            fixUrl(channel.logoUrl)
-                        )
+                            TvType.Live
+                        ) {
+                            this.posterUrl = fixUrl(channel.logoUrl)
+                        }
                     }
                 results.addAll(matchingChannels)
             }
@@ -236,9 +232,10 @@ class ReiDosCanais : MainAPI() {
                         newLiveSearchResponse(
                             event.title,
                             "sport|${event.id}",
-                            TvType.Live,
-                            fixUrl(event.poster)
-                        )
+                            TvType.Live
+                        ) {
+                            this.posterUrl = fixUrl(event.poster)
+                        }
                     }
                 results.addAll(matchingEvents)
             }
@@ -322,7 +319,6 @@ class ReiDosCanais : MainAPI() {
         try {
             // 1. Acessar a URL do embed (pode ser um redirect)
             val response = app.get(embedUrl, allowRedirects = true)
-            val finalUrl = response.url
             val doc = response.document
             val html = doc.html()
             
@@ -353,7 +349,7 @@ class ReiDosCanais : MainAPI() {
                 // Se não encontrar hNO, tentar encontrar o link diretamente
                 val directUrl = extractM3u8Url(iframeHtml)
                 if (directUrl != null) {
-                    createAndSendExtractorLink(directUrl, absoluteIframeUrl, callback)
+                    callback.invoke(createExtractorLink(directUrl, absoluteIframeUrl))
                     return true
                 }
                 return false
@@ -372,7 +368,7 @@ class ReiDosCanais : MainAPI() {
             }
             
             // 7. Retornar link para o player
-            createAndSendExtractorLink(finalM3u8Url, absoluteIframeUrl, callback)
+            callback.invoke(createExtractorLink(finalM3u8Url, absoluteIframeUrl))
             return true
             
         } catch (e: Exception) {
@@ -381,12 +377,8 @@ class ReiDosCanais : MainAPI() {
         }
     }
     
-    private suspend fun createAndSendExtractorLink(
-        url: String, 
-        referer: String, 
-        callback: (ExtractorLink) -> Unit
-    ) {
-        val link = newExtractorLink(
+    private fun createExtractorLink(url: String, referer: String): ExtractorLink {
+        return newExtractorLink(
             source = "Rei dos Canais",
             name = "Rei dos Canais",
             url = url,
@@ -400,45 +392,29 @@ class ReiDosCanais : MainAPI() {
                 "Origin" to "https://reidoscanais.io"
             )
         }
-        callback.invoke(link)
     }
     
     // ================== FUNÇÕES AUXILIARES PARA DECODIFICAÇÃO ==================
     
-    /**
-     * Extrai o array hNO do JavaScript ofuscado
-     */
     private fun extractHNOArray(html: String): List<String>? {
-        // Procurar pelo padrão: var hNO = [ ... ];
         val regex = Regex("""var\s+hNO\s*=\s*(\[.*?\]);""", RegexOption.DOT_MATCHES_ALL)
         val match = regex.find(html) ?: return null
         
         val arrayContent = match.groupValues[1]
-        
-        // Extrair cada string entre aspas
         val itemRegex = Regex("""["']([^"']+)["']""")
         return itemRegex.findAll(arrayContent)
             .map { it.groupValues[1] }
             .toList()
     }
     
-    /**
-     * Decodifica o array hNO usando a lógica do site
-     */
     private fun decodeHNOArray(items: List<String>): String {
         return buildString {
             for (encoded in items) {
                 try {
-                    // 1. Decodificar Base64
                     val base64Decoded = String(Base64.getDecoder().decode(encoded))
-                    
-                    // 2. Remover tudo que não é dígito
                     val numbersOnly = base64Decoded.replace(Regex("\\D"), "")
-                    
-                    // 3. Converter para número e subtrair o magic number
                     val charCode = numbersOnly.toIntOrNull()?.minus(magicNumber)
                     
-                    // 4. Converter para caractere e anexar
                     if (charCode != null && charCode in 0..0xFFFF) {
                         append(charCode.toChar())
                     }
@@ -449,23 +425,16 @@ class ReiDosCanais : MainAPI() {
         }
     }
     
-    /**
-     * Encontra URL .m3u8 no HTML
-     */
     private fun extractM3u8Url(html: String): String? {
-        // Procurar em iframe src
         val iframePattern = Regex("""<iframe.*?src=["']([^"']+\.m3u8[^"']*)["']""", RegexOption.IGNORE_CASE)
         iframePattern.find(html)?.let { return it.groupValues[1] }
         
-        // Procurar em video src
         val videoPattern = Regex("""<video.*?src=["']([^"']+\.m3u8[^"']*)["']""", RegexOption.IGNORE_CASE)
         videoPattern.find(html)?.let { return it.groupValues[1] }
         
-        // Procurar em source src
         val sourcePattern = Regex("""<source.*?src=["']([^"']+\.m3u8[^"']*)["']""", RegexOption.IGNORE_CASE)
         sourcePattern.find(html)?.let { return it.groupValues[1] }
         
-        // Procurar qualquer URL .m3u8
         val urlPattern = Regex("""https?://[^\s"'<>]+\.m3u8[^\s"'<>]*""")
         return urlPattern.find(html)?.value
     }
@@ -476,7 +445,7 @@ class ReiDosCanais : MainAPI() {
             url.startsWith("//") -> "https:$url"
             url.startsWith("http") -> url
             url.startsWith("/") -> "$apiBaseUrl$url"
-            else -> url // Assume que já é uma URL completa
+            else -> url
         }
     }
 }
