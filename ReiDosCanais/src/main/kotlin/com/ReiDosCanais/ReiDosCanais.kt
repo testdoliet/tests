@@ -4,7 +4,6 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.newExtractorLink
-import okhttp3.Headers
 import org.jsoup.nodes.Element
 import java.util.Base64
 
@@ -58,10 +57,6 @@ class ReiDosCanais : MainAPI() {
         val imgElement = card.selectFirst("img")
         val imgUrl = imgElement?.attr("src") ?: return null
         
-        // Categoria do canal
-        val categoryElement = card.selectFirst("p.text-xs")
-        val category = categoryElement?.text()?.trim() ?: "Canais"
-        
         // Criar um ID único para o canal baseado no título
         val channelId = title.lowercase()
             .replace(Regex("[^a-z0-9]"), "")
@@ -69,28 +64,25 @@ class ReiDosCanais : MainAPI() {
             .replace(Regex("-+"), "-")
             .trim('-')
         
-        return newLiveSearchResponse(title, "$channelId|$title|$imgUrl|$category", TvType.Live) {
+        return newLiveSearchResponse(title, "$channelId|$title|$imgUrl", TvType.Live) {
             this.posterUrl = fixUrl(imgUrl)
-            this.posterHeaders = mapOf("Referer" to baseUrl)
         }
     }
 
     // ================== CARREGAR STREAM ==================
     override suspend fun load(data: String): LoadResponse {
-        val parts = data.split("|", limit = 4)
+        val parts = data.split("|", limit = 3)
         if (parts.size < 2) throw ErrorLoadingException("Formato de dados inválido")
         
         val channelId = parts[0]
         val channelName = parts[1]
         val posterUrl = if (parts.size >= 3) parts[2] else null
-        val category = if (parts.size >= 4) parts[3] else "Canais"
         
         // Construir URL do canal
         val channelUrl = "$baseUrl/$channelId"
         
         return newMovieLoadResponse(channelName, channelUrl, TvType.Live, channelUrl) {
             this.posterUrl = posterUrl
-            this.plot = "Assista $channelName ao vivo no Rei dos Canais. Categoria: $category"
         }
     }
 
@@ -121,7 +113,7 @@ class ReiDosCanais : MainAPI() {
     ): Boolean {
         val channelUrl = data.ifEmpty { return false }
         
-        // 1. Acessar página do canal - SEM o parâmetro 'referer'
+        // 1. Acessar página do canal
         val doc = app.get(channelUrl).document
         
         // 2. Extrair URL do iframe do player
@@ -141,7 +133,7 @@ class ReiDosCanais : MainAPI() {
             iframeSrc
         }
         
-        // 3. Acessar página do iframe - SEM o parâmetro 'referer'
+        // 3. Acessar página do iframe
         val iframeDoc = app.get(absoluteIframeUrl).document
         val iframeHtml = iframeDoc.html()
         
@@ -198,8 +190,7 @@ class ReiDosCanais : MainAPI() {
     }
     
     /**
-     * Decodifica o array hNO usando a lógica do site:
-     * atob() -> remover não-dígitos -> parseInt() - magicNumber -> toChar()
+     * Decodifica o array hNO usando a lógica do site
      */
     private fun decodeHNOArray(items: List<String>): String {
         return buildString {
@@ -248,7 +239,7 @@ class ReiDosCanais : MainAPI() {
     )
     
     // ================== MÉTODO DE FIX ==================
-    fun fixUrl(url: String): String {
+    private fun fixUrl(url: String): String {
         return if (url.startsWith("//")) "https:$url" 
                else if (url.startsWith("http")) url 
                else if (url.startsWith("/")) "$baseUrl$url"
