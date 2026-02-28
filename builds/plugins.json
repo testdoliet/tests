@@ -44,10 +44,10 @@
     },
     {
         "iconUrl": "https://www.anitube.news/wp-content/uploads/cropped-Favicon6-192x192.png",
-        "jarFileSize": 124412,
+        "jarFileSize": 116640,
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/lawlietbt/lietrepo",
-        "fileSize": 39299,
+        "fileSize": 35486,
         "status": 1,
         "language": "pt-br",
         "authors": [
@@ -286,6 +286,27 @@
         "description": "Assistir filmes online, Assistir s\u00e9ries online, Lan\u00e7amentos de filmes, Filmes 1080p, S\u00e9ries, Animes e Doramas gr\u00e1tis.",
         "url": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/Nexflix.cs3",
         "name": "Nexflix"
+    },
+    {
+        "iconUrl": "https://reidoscanais.io/favicon.png",
+        "jarFileSize": 39606,
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/lawlietbt/lietrepo",
+        "fileSize": 12708,
+        "status": 1,
+        "language": "pt-br",
+        "authors": [
+            "lawlietbr"
+        ],
+        "tvTypes": [
+            "Live"
+        ],
+        "version": 1,
+        "internalName": "ReiDosCanais",
+        "jarUrl": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/ReiDosCanais.jar",
+        "description": "Assista TV ao vivo gratuitamente no Rei dos Canais. Canais de esportes, entretenimento, not\u00edcias, filmes e s\u00e9ries gratuitos. Eventos esportivos ao vivo sem cadastro, direto do seu navegador.",
+        "url": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/ReiDosCanais.cs3",
+        "name": "ReiDosCanais"
     },
     {
         "iconUrl": "https://superflix1.cloud/wp-content/uploads/2024/07/FAVIFLIX-1-300x300.png",
