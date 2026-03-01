@@ -884,10 +884,10 @@ override suspend fun loadLinks(
     subtitleCallback: (SubtitleFile) -> Unit,
     callback: (ExtractorLink) -> Unit
 ): Boolean {
-    println("=" * 60)
+    println("=".repeat(60))
     println("🎯 LOADLINKS INICIADO")
     println("📌 Data: $data")
-    println("=" * 60)
+    println("=".repeat(60))
     
     // Usa o UnifiedExtractor que tenta todos em sequência
     val success = UnifiedExtractor.extractVideoLinks(
