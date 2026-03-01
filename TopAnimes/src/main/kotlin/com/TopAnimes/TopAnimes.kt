@@ -884,37 +884,24 @@ override suspend fun loadLinks(
     subtitleCallback: (SubtitleFile) -> Unit,
     callback: (ExtractorLink) -> Unit
 ): Boolean {
-    println("🎯 LOADLINKS: OdaCDN → FileMoon → ChPlay → ZUPLAY")
+    println("=" * 60)
+    println("🎯 LOADLINKS INICIADO")
+    println("📌 Data: $data")
+    println("=" * 60)
     
-    // Tenta OdaCDN primeiro
-    println("🔍 Tentando OdaCDN...")
-    if (OdaCDNExtractor.extractVideoLinks(data, "OdaCDN", callback)) {
-        println("✅ OdaCDN funcionou!")
-        return true
-    }
-
-    // Se não, tenta FileMoon
-    println("🔍 Tentando FileMoon...")
-    if (FileMoonExtractor.extractVideoLinks(data, "FileMoon", callback)) {
-        println("✅ FileMoon funcionou!")
-        return true
-    }
-
-    // Tenta ChPlay
-    println("🔍 Tentando ChPlay...")
-    if (ChPlayExtractor.extractVideoLinks(data, "ChPlay", callback)) {
-        println("✅ ChPlay funcionou!")
-        return true
+    // Usa o UnifiedExtractor que tenta todos em sequência
+    val success = UnifiedExtractor.extractVideoLinks(
+        episodeUrl = data,
+        name = "Episódio",
+        callback = callback
+    )
+    
+    if (success) {
+        println("✅ LOADLINKS finalizado com SUCESSO")
+    } else {
+        println("❌ LOADLINKS finalizado com FALHA")
     }
     
-    // Por último, tenta ZUPLAY
-    println("🔍 Tentando ZUPLAY...")
-    if (ZuPlayExtractor.extractVideoLinks(data, "ZUPLAY", callback)) {
-        println("✅ ZUPLAY funcionou!")
-        return true
-    }
-    
-    println("❌ Nenhum player funcionou")
-    return false
+    return success
 }
 }
