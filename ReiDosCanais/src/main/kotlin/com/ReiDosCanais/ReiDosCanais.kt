@@ -6,7 +6,8 @@ import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.plugins.BasePlugin
 import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
-import com.fasterxml.jackson.annotation.JsonProperty
+import com.fasterxml.jackson.databind.JsonNode
+import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import java.util.Base64
 
 @CloudstreamPlugin
@@ -15,42 +16,6 @@ class ReiDosCanaisProvider : BasePlugin() {
         registerMainAPI(ReiDosCanais())
     }
 }
-
-// ================== DATA CLASSES PARA A API ==================
-
-data class ApiChannel(
-    @JsonProperty("id") val id: String,
-    @JsonProperty("name") val name: String,
-    @JsonProperty("description") val description: String? = null,
-    @JsonProperty("logo_url") val logoUrl: String,
-    @JsonProperty("embed_url") val embedUrl: String,
-    @JsonProperty("category") val category: String,
-    @JsonProperty("is_active") val isActive: Boolean
-)
-
-data class ApiResponse<T>(
-    @JsonProperty("success") val success: Boolean,
-    @JsonProperty("data") val data: T,
-    @JsonProperty("total") val total: Int? = null
-)
-
-data class SportEvent(
-    @JsonProperty("id") val id: String,
-    @JsonProperty("title") val title: String,
-    @JsonProperty("description") val description: String? = null,
-    @JsonProperty("poster") val poster: String,
-    @JsonProperty("start_time") val startTime: String,
-    @JsonProperty("end_time") val endTime: String,
-    @JsonProperty("status") val status: String,
-    @JsonProperty("category") val category: String,
-    @JsonProperty("embeds") val embeds: List<SportEmbed>
-)
-
-data class SportEmbed(
-    @JsonProperty("provider") val provider: String,
-    @JsonProperty("quality") val quality: String,
-    @JsonProperty("embed_url") val embedUrl: String
-)
 
 class ReiDosCanais : MainAPI() {
     override var name = "Rei dos Canais"
@@ -70,6 +35,8 @@ class ReiDosCanais : MainAPI() {
     
     // Constante mágica para decodificação
     private val magicNumber = 10659686
+    
+    private val mapper = jacksonObjectMapper()
 
     // ================== PÁGINA PRINCIPAL ==================
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
@@ -77,45 +44,58 @@ class ReiDosCanais : MainAPI() {
 
         try {
             // 1. Buscar eventos esportivos ao vivo (primeira seção)
-            val sportsResponse = app.get(sportsLiveEndpoint, timeout = 30).parsed<ApiResponse<List<SportEvent>>>()
-            if (sportsResponse.success && sportsResponse.data.isNotEmpty()) {
-                val liveEvents = sportsResponse.data.map { event ->
-                    newLiveSearchResponse(
-                        event.title,
-                        "sport|${event.id}",
-                        TvType.Live
-                    ) {
-                        this.posterUrl = fixUrl(event.poster)
+            val sportsResponse = app.get(sportsLiveEndpoint, timeout = 30).text
+            val sportsJson = mapper.readTree(sportsResponse)
+            
+            if (sportsJson.has("success") && sportsJson["success"].asBoolean()) {
+                val sportsData = sportsJson["data"]
+                if (sportsData.isArray) {
+                    val liveEvents = sportsData.mapNotNull { node ->
+                        parseSportEvent(node)
+                    }.map { event ->
+                        newLiveSearchResponse(
+                            event.title,
+                            "sport|${event.id}",
+                            TvType.Live
+                        ) {
+                            this.posterUrl = fixUrl(event.poster)
+                            this.plot = event.description
+                        }
                     }
-                }
-                if (liveEvents.isNotEmpty()) {
-                    homePageList.add(HomePageList("Eventos Ao Vivo", liveEvents, isHorizontalImages = true))
+                    if (liveEvents.isNotEmpty()) {
+                        homePageList.add(HomePageList("Eventos Ao Vivo", liveEvents, isHorizontalImages = true))
+                    }
                 }
             }
 
             // 2. Buscar todos os canais
-            val channelsResponse = app.get(channelsEndpoint, timeout = 30).parsed<ApiResponse<List<ApiChannel>>>()
+            val channelsResponse = app.get(channelsEndpoint, timeout = 30).text
+            val channelsJson = mapper.readTree(channelsResponse)
             
-            if (channelsResponse.success) {
-                // Agrupar canais por categoria
-                val channelsByCategory = channelsResponse.data
-                    .filter { it.isActive }
+            if (channelsJson.has("success") && channelsJson["success"].asBoolean()) {
+                val channelsData = channelsJson["data"]
+                if (channelsData.isArray) {
+                    // Agrupar canais por categoria
+                    val channelsByCategory = channelsData.mapNotNull { node ->
+                        parseChannel(node)
+                    }.filter { it.isActive }
                     .groupBy { it.category }
-                
-                // Para cada categoria, criar uma HomePageList
-                channelsByCategory.forEach { (categoryName, channels) ->
-                    val channelList = channels.map { channel ->
-                        newLiveSearchResponse(
-                            channel.name,
-                            "channel|${channel.id}|${channel.embedUrl}",
-                            TvType.Live
-                        ) {
-                            this.posterUrl = fixUrl(channel.logoUrl)
-                        }
-                    }
                     
-                    if (channelList.isNotEmpty()) {
-                        homePageList.add(HomePageList(categoryName, channelList, isHorizontalImages = true))
+                    // Para cada categoria, criar uma HomePageList
+                    channelsByCategory.forEach { (categoryName, channels) ->
+                        val channelList = channels.map { channel ->
+                            newLiveSearchResponse(
+                                channel.name,
+                                "channel|${channel.id}|${channel.embedUrl}",
+                                TvType.Live
+                            ) {
+                                this.posterUrl = fixUrl(channel.logoUrl)
+                            }
+                        }
+                        
+                        if (channelList.isNotEmpty()) {
+                            homePageList.add(HomePageList(categoryName, channelList, isHorizontalImages = true))
+                        }
                     }
                 }
             }
@@ -131,6 +111,53 @@ class ReiDosCanais : MainAPI() {
         
         return newHomePageResponse(homePageList)
     }
+    
+    private fun parseChannel(node: JsonNode): ApiChannel? {
+        return try {
+            ApiChannel(
+                id = node["id"]?.asText() ?: return null,
+                name = node["name"]?.asText() ?: return null,
+                description = node["description"]?.asText(),
+                logoUrl = node["logo_url"]?.asText() ?: "",
+                embedUrl = node["embed_url"]?.asText() ?: return null,
+                category = node["category"]?.asText() ?: "Sem Categoria",
+                isActive = node["is_active"]?.asBoolean() ?: true
+            )
+        } catch (e: Exception) {
+            null
+        }
+    }
+    
+    private fun parseSportEvent(node: JsonNode): SportEvent? {
+        return try {
+            val embeds = mutableListOf<SportEmbed>()
+            val embedsNode = node["embeds"]
+            if (embedsNode.isArray) {
+                for (embedNode in embedsNode) {
+                    val embed = SportEmbed(
+                        provider = embedNode["provider"]?.asText() ?: "Desconhecido",
+                        quality = embedNode["quality"]?.asText() ?: "HD",
+                        embedUrl = embedNode["embed_url"]?.asText() ?: continue
+                    )
+                    embeds.add(embed)
+                }
+            }
+            
+            SportEvent(
+                id = node["id"]?.asText() ?: return null,
+                title = node["title"]?.asText() ?: return null,
+                description = node["description"]?.asText(),
+                poster = node["poster"]?.asText() ?: "",
+                startTime = node["start_time"]?.asText() ?: "",
+                endTime = node["end_time"]?.asText() ?: "",
+                status = node["status"]?.asText() ?: "live",
+                category = node["category"]?.asText() ?: "Esportes",
+                embeds = embeds
+            )
+        } catch (e: Exception) {
+            null
+        }
+    }
 
     // ================== CARREGAR STREAM ==================
     override suspend fun load(data: String): LoadResponse {
@@ -138,12 +165,10 @@ class ReiDosCanais : MainAPI() {
         
         return when (parts[0]) {
             "sport" -> {
-                // É um evento esportivo
                 val eventId = parts[1]
                 loadSportEvent(eventId)
             }
             "channel" -> {
-                // É um canal normal
                 if (parts.size < 3) throw ErrorLoadingException("Formato de dados inválido")
                 val channelId = parts[1]
                 val embedUrl = parts[2]
@@ -154,50 +179,72 @@ class ReiDosCanais : MainAPI() {
     }
     
     private suspend fun loadSportEvent(eventId: String): LoadResponse {
-        // Para eventos esportivos, precisamos buscar os detalhes atualizados
-        val sportsResponse = app.get(sportsLiveEndpoint, timeout = 30).parsed<ApiResponse<List<SportEvent>>>()
+        val sportsResponse = app.get(sportsLiveEndpoint, timeout = 30).text
+        val sportsJson = mapper.readTree(sportsResponse)
         
-        if (!sportsResponse.success) {
+        if (!sportsJson.has("success") || !sportsJson["success"].asBoolean()) {
             throw ErrorLoadingException("Não foi possível carregar o evento")
         }
         
-        val event = sportsResponse.data.find { it.id == eventId }
-            ?: throw ErrorLoadingException("Evento não encontrado")
+        val sportsData = sportsJson["data"]
+        var event: SportEvent? = null
         
-        // Usar newMovieLoadResponse para evento esportivo ao vivo
+        if (sportsData.isArray) {
+            for (node in sportsData) {
+                val id = node["id"]?.asText()
+                if (id == eventId) {
+                    event = parseSportEvent(node)
+                    break
+                }
+            }
+        }
+        
+        val foundEvent = event ?: throw ErrorLoadingException("Evento não encontrado")
+        
         return newMovieLoadResponse(
-            event.title,
-            "sport|${event.id}",
+            foundEvent.title,
+            "sport|${foundEvent.id}",
             TvType.Live,
-            "sport|${event.id}"
+            "sport|${foundEvent.id}"
         ) {
-            this.posterUrl = fixUrl(event.poster)
-            this.plot = event.description ?: "Evento esportivo ao vivo"
-            this.tags = listOf(event.category, event.status)
+            this.posterUrl = fixUrl(foundEvent.poster)
+            this.plot = foundEvent.description ?: "Evento esportivo ao vivo"
+            this.tags = listOf(foundEvent.category, foundEvent.status)
         }
     }
     
     private suspend fun loadChannel(channelId: String, embedUrl: String): LoadResponse {
-        // Buscar detalhes atualizados do canal
-        val channelsResponse = app.get(channelsEndpoint, timeout = 30).parsed<ApiResponse<List<ApiChannel>>>()
+        val channelsResponse = app.get(channelsEndpoint, timeout = 30).text
+        val channelsJson = mapper.readTree(channelsResponse)
         
-        if (!channelsResponse.success) {
+        if (!channelsJson.has("success") || !channelsJson["success"].asBoolean()) {
             throw ErrorLoadingException("Não foi possível carregar o canal")
         }
         
-        val channel = channelsResponse.data.find { it.id == channelId }
-            ?: throw ErrorLoadingException("Canal não encontrado")
+        val channelsData = channelsJson["data"]
+        var channel: ApiChannel? = null
         
-        // Usar newMovieLoadResponse para canal ao vivo
+        if (channelsData.isArray) {
+            for (node in channelsData) {
+                val id = node["id"]?.asText()
+                if (id == channelId) {
+                    channel = parseChannel(node)
+                    break
+                }
+            }
+        }
+        
+        val foundChannel = channel ?: throw ErrorLoadingException("Canal não encontrado")
+        
         return newMovieLoadResponse(
-            channel.name,
-            "channel|${channel.id}|${channel.embedUrl}",
+            foundChannel.name,
+            "channel|${foundChannel.id}|${foundChannel.embedUrl}",
             TvType.Live,
-            channel.embedUrl
+            foundChannel.embedUrl
         ) {
-            this.posterUrl = fixUrl(channel.logoUrl)
-            this.plot = channel.description ?: "Assista ao canal ${channel.name} ao vivo"
-            this.tags = listOf(channel.category)
+            this.posterUrl = fixUrl(foundChannel.logoUrl)
+            this.plot = foundChannel.description ?: "Assista ao canal ${foundChannel.name} ao vivo"
+            this.tags = listOf(foundChannel.category)
         }
     }
 
@@ -207,10 +254,15 @@ class ReiDosCanais : MainAPI() {
         
         try {
             // Buscar em canais
-            val channelsResponse = app.get(channelsEndpoint, timeout = 30).parsed<ApiResponse<List<ApiChannel>>>()
-            if (channelsResponse.success) {
-                val matchingChannels = channelsResponse.data
-                    .filter { it.isActive && it.name.contains(query, ignoreCase = true) }
+            val channelsResponse = app.get(channelsEndpoint, timeout = 30).text
+            val channelsJson = mapper.readTree(channelsResponse)
+            
+            if (channelsJson.has("success") && channelsJson["success"].asBoolean()) {
+                val channelsData = channelsJson["data"]
+                if (channelsData.isArray) {
+                    val matchingChannels = channelsData.mapNotNull { node ->
+                        parseChannel(node)
+                    }.filter { it.isActive && it.name.contains(query, ignoreCase = true) }
                     .map { channel ->
                         newLiveSearchResponse(
                             channel.name,
@@ -220,14 +272,23 @@ class ReiDosCanais : MainAPI() {
                             this.posterUrl = fixUrl(channel.logoUrl)
                         }
                     }
-                results.addAll(matchingChannels)
+                    results.addAll(matchingChannels)
+                }
             }
             
             // Buscar em eventos esportivos
-            val sportsResponse = app.get(sportsLiveEndpoint, timeout = 30).parsed<ApiResponse<List<SportEvent>>>()
-            if (sportsResponse.success) {
-                val matchingEvents = sportsResponse.data
-                    .filter { it.title.contains(query, ignoreCase = true) || (it.description?.contains(query, ignoreCase = true) == true) }
+            val sportsResponse = app.get(sportsLiveEndpoint, timeout = 30).text
+            val sportsJson = mapper.readTree(sportsResponse)
+            
+            if (sportsJson.has("success") && sportsJson["success"].asBoolean()) {
+                val sportsData = sportsJson["data"]
+                if (sportsData.isArray) {
+                    val matchingEvents = sportsData.mapNotNull { node ->
+                        parseSportEvent(node)
+                    }.filter { 
+                        it.title.contains(query, ignoreCase = true) || 
+                        (it.description?.contains(query, ignoreCase = true) == true) 
+                    }
                     .map { event ->
                         newLiveSearchResponse(
                             event.title,
@@ -237,7 +298,8 @@ class ReiDosCanais : MainAPI() {
                             this.posterUrl = fixUrl(event.poster)
                         }
                     }
-                results.addAll(matchingEvents)
+                    results.addAll(matchingEvents)
+                }
             }
             
         } catch (e: Exception) {
@@ -268,7 +330,6 @@ class ReiDosCanais : MainAPI() {
                 loadChannelLinks(embedUrl, callback)
             }
             else -> {
-                // Compatibilidade com versões antigas (se o data for apenas a URL)
                 loadChannelLinks(data, callback)
             }
         }
@@ -278,27 +339,37 @@ class ReiDosCanais : MainAPI() {
         eventId: String,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // Buscar detalhes atualizados do evento
-        val sportsResponse = app.get(sportsLiveEndpoint, timeout = 30).parsed<ApiResponse<List<SportEvent>>>()
+        val sportsResponse = app.get(sportsLiveEndpoint, timeout = 30).text
+        val sportsJson = mapper.readTree(sportsResponse)
         
-        if (!sportsResponse.success) {
+        if (!sportsJson.has("success") || !sportsJson["success"].asBoolean()) {
             return false
         }
         
-        val event = sportsResponse.data.find { it.id == eventId }
-            ?: return false
+        val sportsData = sportsJson["data"]
+        var event: SportEvent? = null
         
+        if (sportsData.isArray) {
+            for (node in sportsData) {
+                val id = node["id"]?.asText()
+                if (id == eventId) {
+                    event = parseSportEvent(node)
+                    break
+                }
+            }
+        }
+        
+        val foundEvent = event ?: return false
         var foundAny = false
         
-        // Para cada embed do evento, tentar extrair o link
-        for (embed in event.embeds) {
+        for (embed in foundEvent.embeds) {
             try {
                 val success = extractFromEmbedUrl(embed.embedUrl, callback)
                 if (success) {
                     foundAny = true
                 }
             } catch (e: Exception) {
-                // Ignorar erro em um embed específico e tentar o próximo
+                // Ignorar erro em um embed específico
             }
         }
         
@@ -317,12 +388,10 @@ class ReiDosCanais : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         try {
-            // 1. Acessar a URL do embed (pode ser um redirect)
             val response = app.get(embedUrl, allowRedirects = true)
             val doc = response.document
             val html = doc.html()
             
-            // 2. Extrair URL do iframe do player
             val iframeSrc = doc.select("iframe")
                 .map { it.attr("src") }
                 .firstOrNull { it.contains(playerDomain) || it.contains("player") || it.contains("embed") }
@@ -339,17 +408,13 @@ class ReiDosCanais : MainAPI() {
                 iframeSrc
             }
             
-            // 3. Acessar página do iframe
             val iframeDoc = app.get(absoluteIframeUrl, referer = embedUrl).document
             val iframeHtml = iframeDoc.html()
             
-            // 4. Extrair array hNO do JavaScript
             val hnoArray = extractHNOArray(iframeHtml)
             if (hnoArray == null) {
-                // Se não encontrar hNO, tentar encontrar o link diretamente
                 val directUrl = extractM3u8Url(iframeHtml)
                 if (directUrl != null) {
-                    // Criar e enviar o link diretamente
                     val link = newExtractorLink(
                         source = "Rei dos Canais",
                         name = "Rei dos Canais",
@@ -370,19 +435,16 @@ class ReiDosCanais : MainAPI() {
                 return false
             }
             
-            // 5. Decodificar array para obter HTML real
             val decodedHtml = decodeHNOArray(hnoArray)
             if (decodedHtml.isEmpty()) {
                 return false
             }
             
-            // 6. Procurar link .m3u8 no HTML decodificado
             val finalM3u8Url = extractM3u8Url(decodedHtml)
             if (finalM3u8Url == null) {
                 return false
             }
             
-            // 7. Criar e enviar o link
             val link = newExtractorLink(
                 source = "Rei dos Canais",
                 name = "Rei dos Canais",
@@ -406,7 +468,7 @@ class ReiDosCanais : MainAPI() {
         }
     }
     
-    // ================== FUNÇÕES AUXILIARES PARA DECODIFICAÇÃO ==================
+    // ================== FUNÇÕES AUXILIARES ==================
     
     private fun extractHNOArray(html: String): List<String>? {
         val regex = Regex("""var\s+hNO\s*=\s*(\[.*?\]);""", RegexOption.DOT_MATCHES_ALL)
@@ -451,7 +513,6 @@ class ReiDosCanais : MainAPI() {
         return urlPattern.find(html)?.value
     }
     
-    // ================== MÉTODO DE FIX ==================
     private fun fixUrl(url: String): String {
         return when {
             url.startsWith("//") -> "https:$url"
@@ -461,3 +522,33 @@ class ReiDosCanais : MainAPI() {
         }
     }
 }
+
+// ================== DATA CLASSES ==================
+
+data class ApiChannel(
+    val id: String,
+    val name: String,
+    val description: String?,
+    val logoUrl: String,
+    val embedUrl: String,
+    val category: String,
+    val isActive: Boolean
+)
+
+data class SportEvent(
+    val id: String,
+    val title: String,
+    val description: String?,
+    val poster: String,
+    val startTime: String,
+    val endTime: String,
+    val status: String,
+    val category: String,
+    val embeds: List<SportEmbed>
+)
+
+data class SportEmbed(
+    val provider: String,
+    val quality: String,
+    val embedUrl: String
+)
