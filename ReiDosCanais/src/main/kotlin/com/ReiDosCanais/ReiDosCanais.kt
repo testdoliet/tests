@@ -53,12 +53,17 @@ class ReiDosCanais : MainAPI() {
                     val liveEvents = sportsData.mapNotNull { node ->
                         parseSportEvent(node)
                     }.map { event ->
+                        // URL personalizada que contém todas as informações
+                        val customUrl = "reidoscanais://sport/${event.id}"
+                        
                         newLiveSearchResponse(
                             event.title,
-                            "sport|${event.id}|${event.poster}",
+                            customUrl,
                             TvType.Live
                         ) {
                             this.posterUrl = fixUrl(event.poster)
+                            // Armazenar dados adicionais como parâmetros da URL
+                            this.url = "$customUrl?title=${event.title.encodeUrl()}&poster=${event.poster.encodeUrl()}"
                         }
                     }
                     if (liveEvents.isNotEmpty()) {
@@ -83,12 +88,17 @@ class ReiDosCanais : MainAPI() {
                     // Para cada categoria, criar uma HomePageList
                     channelsByCategory.forEach { (categoryName, channels) ->
                         val channelList = channels.map { channel ->
+                            // URL personalizada que contém todas as informações
+                            val customUrl = "reidoscanais://channel/${channel.id}"
+                            
                             newLiveSearchResponse(
                                 channel.name,
-                                "channel|${channel.id}|${channel.embedUrl}|${channel.logoUrl}",
+                                customUrl,
                                 TvType.Live
                             ) {
                                 this.posterUrl = fixUrl(channel.logoUrl)
+                                // Armazenar dados adicionais como parâmetros da URL
+                                this.url = "$customUrl?name=${channel.name.encodeUrl()}&poster=${channel.logoUrl.encodeUrl()}&embed=${channel.embedUrl.encodeUrl()}"
                             }
                         }
                         
@@ -158,102 +168,80 @@ class ReiDosCanais : MainAPI() {
         }
     }
 
-    // ================== CARREGAR STREAM (SIMPLIFICADO) ==================
-    override suspend fun load(data: String): LoadResponse {
-        val parts = data.split("|", limit = 4)
-        
-        return when (parts[0]) {
-            "sport" -> {
-                // Formato: sport|id|posterUrl
-                if (parts.size < 3) throw ErrorLoadingException("Formato de dados inválido")
-                val eventId = parts[1]
-                val posterUrl = parts[2]
+    // ================== CARREGAR STREAM (PÁGINA DE DETALHES FALSA) ==================
+    override suspend fun load(url: String): LoadResponse {
+        return when {
+            url.startsWith("reidoscanais://channel/") -> {
+                // Extrair parâmetros da URL
+                val params = extractUrlParams(url)
+                val name = params["name"] ?: "Canal"
+                val poster = params["poster"] ?: ""
+                val embedUrl = params["embed"] ?: ""
+                val id = url.substringAfter("reidoscanais://channel/").substringBefore("?")
                 
-                // Buscar título do evento
-                val title = getSportEventTitle(eventId) ?: "Evento Esportivo"
-                
-                // Retornar resposta simples
+                // Criar uma resposta de detalhes falsa
                 newMovieLoadResponse(
-                    title,
-                    "sport|${eventId}",
-                    TvType.Live,
-                    "sport|${eventId}"
-                ) {
-                    this.posterUrl = fixUrl(posterUrl)
-                    this.plot = "Evento esportivo ao vivo"
-                }
-            }
-            "channel" -> {
-                // Formato: channel|id|embedUrl|logoUrl
-                if (parts.size < 4) throw ErrorLoadingException("Formato de dados inválido")
-                val channelId = parts[1]
-                val embedUrl = parts[2]
-                val logoUrl = parts[3]
-                
-                // Buscar nome do canal
-                val channelName = getChannelName(channelId) ?: "Canal"
-                
-                // Retornar resposta simples
-                newMovieLoadResponse(
-                    channelName,
-                    "channel|${channelId}|${embedUrl}",
+                    name,
+                    "channel|${id}|${embedUrl}",
                     TvType.Live,
                     embedUrl
                 ) {
-                    this.posterUrl = fixUrl(logoUrl)
+                    this.posterUrl = fixUrl(poster)
                     this.plot = "Assista ao vivo"
                 }
             }
-            else -> throw ErrorLoadingException("Tipo de mídia desconhecido")
+            url.startsWith("reidoscanais://sport/") -> {
+                // Extrair parâmetros da URL
+                val params = extractUrlParams(url)
+                val title = params["title"] ?: "Evento Esportivo"
+                val poster = params["poster"] ?: ""
+                val id = url.substringAfter("reidoscanais://sport/").substringBefore("?")
+                
+                // Criar uma resposta de detalhes falsa
+                newMovieLoadResponse(
+                    title,
+                    "sport|${id}",
+                    TvType.Live,
+                    "sport|${id}"
+                ) {
+                    this.posterUrl = fixUrl(poster)
+                    this.plot = "Evento esportivo ao vivo"
+                }
+            }
+            else -> throw ErrorLoadingException("URL desconhecida: $url")
         }
     }
     
-    private suspend fun getSportEventTitle(eventId: String): String? {
-        return try {
-            val sportsResponse = app.get(sportsLiveEndpoint, timeout = 30).text
-            val sportsJson = mapper.readTree(sportsResponse)
+    // Função auxiliar para extrair parâmetros da URL
+    private fun extractUrlParams(url: String): Map<String, String> {
+        val params = mutableMapOf<String, String>()
+        
+        val queryStart = url.indexOf('?')
+        if (queryStart >= 0 && queryStart < url.length - 1) {
+            val query = url.substring(queryStart + 1)
+            val pairs = query.split('&')
             
-            if (!sportsJson.has("success") || !sportsJson["success"].asBoolean()) {
-                return null
-            }
-            
-            val sportsData = sportsJson["data"]
-            if (sportsData.isArray) {
-                for (node in sportsData) {
-                    val id = node["id"]?.asText()
-                    if (id == eventId) {
-                        return node["title"]?.asText()
-                    }
+            for (pair in pairs) {
+                val eq = pair.indexOf('=')
+                if (eq > 0) {
+                    val key = pair.substring(0, eq)
+                    val value = pair.substring(eq + 1).decodeUrl()
+                    params[key] = value
                 }
             }
-            null
-        } catch (e: Exception) {
-            null
         }
+        
+        return params
     }
     
-    private suspend fun getChannelName(channelId: String): String? {
-        return try {
-            val channelsResponse = app.get(channelsEndpoint, timeout = 30).text
-            val channelsJson = mapper.readTree(channelsResponse)
-            
-            if (!channelsJson.has("success") || !channelsJson["success"].asBoolean()) {
-                return null
-            }
-            
-            val channelsData = channelsJson["data"]
-            if (channelsData.isArray) {
-                for (node in channelsData) {
-                    val id = node["id"]?.asText()
-                    if (id == channelId) {
-                        return node["name"]?.asText()
-                    }
-                }
-            }
-            null
-        } catch (e: Exception) {
-            null
-        }
+    // Função auxiliar para codificar URL
+    private fun String.encodeUrl(): String {
+        return java.net.URLEncoder.encode(this, "UTF-8")
+    }
+    
+    // Função auxiliar para decodificar URL
+    private fun String.decodeUrl(): String {
+        return java.net.URLDecoder.decode(this, "UTF-8")
     }
 
     // ================== BUSCA ==================
@@ -272,12 +260,15 @@ class ReiDosCanais : MainAPI() {
                         parseChannel(node)
                     }.filter { it.isActive && it.name.contains(query, ignoreCase = true) }
                     .map { channel ->
+                        val customUrl = "reidoscanais://channel/${channel.id}"
+                        
                         newLiveSearchResponse(
                             channel.name,
-                            "channel|${channel.id}|${channel.embedUrl}|${channel.logoUrl}",
+                            customUrl,
                             TvType.Live
                         ) {
                             this.posterUrl = fixUrl(channel.logoUrl)
+                            this.url = "$customUrl?name=${channel.name.encodeUrl()}&poster=${channel.logoUrl.encodeUrl()}&embed=${channel.embedUrl.encodeUrl()}"
                         }
                     }
                     results.addAll(matchingChannels)
@@ -298,12 +289,15 @@ class ReiDosCanais : MainAPI() {
                         (it.description?.contains(query, ignoreCase = true) == true) 
                     }
                     .map { event ->
+                        val customUrl = "reidoscanais://sport/${event.id}"
+                        
                         newLiveSearchResponse(
                             event.title,
-                            "sport|${event.id}|${event.poster}",
+                            customUrl,
                             TvType.Live
                         ) {
                             this.posterUrl = fixUrl(event.poster)
+                            this.url = "$customUrl?title=${event.title.encodeUrl()}&poster=${event.poster.encodeUrl()}"
                         }
                     }
                     results.addAll(matchingEvents)
