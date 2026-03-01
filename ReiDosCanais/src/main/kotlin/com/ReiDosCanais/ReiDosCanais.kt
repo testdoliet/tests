@@ -2,8 +2,6 @@ package com.reidoscanais
 
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
-import com.lagradost.cloudstream3.utils.ExtractorLinkType
-import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.plugins.BasePlugin
 import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
 import com.fasterxml.jackson.annotation.JsonProperty
@@ -22,7 +20,7 @@ data class ApiChannel(
     @JsonProperty("id") val id: String,
     @JsonProperty("name") val name: String,
     @JsonProperty("logo_url") val logoUrl: String,
-    @JsonProperty("embed_url") val embedUrl: String,  // https://rdcanais.top/adultswim
+    @JsonProperty("embed_url") val embedUrl: String,
     @JsonProperty("category") val category: String
 )
 
@@ -70,7 +68,7 @@ class ReiDosCanais : MainAPI() {
                                 channel.embedUrl,  // URL: https://rdcanais.top/adultswim
                                 TvType.Live
                             ) {
-                                this.posterUrl = fixUrl(channel.logoUrl)  // Poster da página inicial
+                                this.posterUrl = fixUrl(channel.logoUrl)
                             }
                         }
                         
@@ -111,10 +109,7 @@ class ReiDosCanais : MainAPI() {
     override suspend fun load(url: String): LoadResponse {
         // url é o link da página de detalhes: https://rdcanais.top/adultswim
         
-        // Como essa página só tem o player, precisamos das informações
-        // que estavam na página inicial. Mas o Cloudstream não passa essas informações.
-        
-        // SOLUÇÃO: Extrair o ID da URL e buscar na API novamente
+        // Extrair o ID da URL
         val channelId = url.substringAfterLast("/")
         
         // Buscar informações do canal na API
@@ -143,10 +138,10 @@ class ReiDosCanais : MainAPI() {
             channelName,           // Nome do canal
             url,                   // A mesma URL (https://rdcanais.top/adultswim)
             TvType.Live,
-            url                    // URL para carregar os links
+            url                    // URL para carregar os links (vamos usar depois)
         ) {
-            this.posterUrl = fixUrl(channelPoster)  // Poster que buscamos da API
-            this.plot = "Assista ao vivo"  // Sinopse simples
+            this.posterUrl = fixUrl(channelPoster)
+            this.plot = "Assista ao vivo"
         }
     }
 
@@ -167,7 +162,7 @@ class ReiDosCanais : MainAPI() {
                     .map { channel ->
                         newLiveSearchResponse(
                             channel.name,
-                            channel.embedUrl,  // URL: https://rdcanais.top/adultswim
+                            channel.embedUrl,
                             TvType.Live
                         ) {
                             this.posterUrl = fixUrl(channel.logoUrl)
@@ -185,37 +180,15 @@ class ReiDosCanais : MainAPI() {
         return results
     }
 
-    // ================== EXTRAIR LINK (SIMPLIFICADO) ==================
+    // ================== LOAD LINKS (DESATIVADO POR ENQUANTO) ==================
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // data é a URL: https://rdcanais.top/adultswim
-        
-        try {
-            // Criar link para abrir em WebView
-            val link = newExtractorLink(
-                source = "Rei dos Canais",
-                name = "Assistir",
-                url = data,
-                type = ExtractorLinkType.WEBVIEW
-            ) {
-                this.referer = "https://reidoscanais.io"
-                this.quality = Qualities.Unknown.value
-                this.headers = mapOf(
-                    "User-Agent" to USER_AGENT,
-                    "Referer" to "https://reidoscanais.io"
-                )
-            }
-            callback.invoke(link)
-            return true
-            
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-        
+        // Por enquanto, retornar false para não tentar reproduzir
+        // Depois vamos implementar a extração correta dos links
         return false
     }
     
