@@ -209,7 +209,7 @@ class ReiDosCanais : MainAPI() {
                     source = "Rei dos Canais",
                     name = "Assistir",
                     url = iframeSrc,
-                    type = ExtractorLinkType.IFRAME  // Tipo IFRAME para abrir em WebView
+                    type = ExtractorLinkType.WEBVIEW  // Usar WEBVIEW em vez de IFRAME
                 ) {
                     this.referer = data
                     this.quality = Qualities.Unknown.value
@@ -221,6 +221,19 @@ class ReiDosCanais : MainAPI() {
                 callback.invoke(link)
                 return true
             }
+            
+            // Se não encontrar iframe, tentar abrir a própria página
+            val link = newExtractorLink(
+                source = "Rei dos Canais",
+                name = "Assistir",
+                url = data,
+                type = ExtractorLinkType.WEBVIEW
+            ) {
+                this.referer = data
+                this.quality = Qualities.Unknown.value
+            }
+            callback.invoke(link)
+            return true
             
         } catch (e: Exception) {
             e.printStackTrace()
