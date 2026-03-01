@@ -55,11 +55,10 @@ class ReiDosCanais : MainAPI() {
                     }.map { event ->
                         newLiveSearchResponse(
                             event.title,
-                            "sport|${event.id}",
+                            "sport|${event.id}|${event.poster}",
                             TvType.Live
                         ) {
                             this.posterUrl = fixUrl(event.poster)
-                            // plot não é suportado em LiveSearchResponse
                         }
                     }
                     if (liveEvents.isNotEmpty()) {
@@ -86,7 +85,7 @@ class ReiDosCanais : MainAPI() {
                         val channelList = channels.map { channel ->
                             newLiveSearchResponse(
                                 channel.name,
-                                "channel|${channel.id}|${channel.embedUrl}",
+                                "channel|${channel.id}|${channel.embedUrl}|${channel.logoUrl}",
                                 TvType.Live
                             ) {
                                 this.posterUrl = fixUrl(channel.logoUrl)
@@ -159,92 +158,101 @@ class ReiDosCanais : MainAPI() {
         }
     }
 
-    // ================== CARREGAR STREAM ==================
+    // ================== CARREGAR STREAM (SIMPLIFICADO) ==================
     override suspend fun load(data: String): LoadResponse {
-        val parts = data.split("|", limit = 3)
+        val parts = data.split("|", limit = 4)
         
         return when (parts[0]) {
             "sport" -> {
+                // Formato: sport|id|posterUrl
+                if (parts.size < 3) throw ErrorLoadingException("Formato de dados inválido")
                 val eventId = parts[1]
-                loadSportEvent(eventId)
+                val posterUrl = parts[2]
+                
+                // Buscar título do evento
+                val title = getSportEventTitle(eventId) ?: "Evento Esportivo"
+                
+                // Retornar resposta simples
+                newMovieLoadResponse(
+                    title,
+                    "sport|${eventId}",
+                    TvType.Live,
+                    "sport|${eventId}"
+                ) {
+                    this.posterUrl = fixUrl(posterUrl)
+                    this.plot = "Evento esportivo ao vivo"
+                }
             }
             "channel" -> {
-                if (parts.size < 3) throw ErrorLoadingException("Formato de dados inválido")
+                // Formato: channel|id|embedUrl|logoUrl
+                if (parts.size < 4) throw ErrorLoadingException("Formato de dados inválido")
                 val channelId = parts[1]
                 val embedUrl = parts[2]
-                loadChannel(channelId, embedUrl)
+                val logoUrl = parts[3]
+                
+                // Buscar nome do canal
+                val channelName = getChannelName(channelId) ?: "Canal"
+                
+                // Retornar resposta simples
+                newMovieLoadResponse(
+                    channelName,
+                    "channel|${channelId}|${embedUrl}",
+                    TvType.Live,
+                    embedUrl
+                ) {
+                    this.posterUrl = fixUrl(logoUrl)
+                    this.plot = "Assista ao vivo"
+                }
             }
             else -> throw ErrorLoadingException("Tipo de mídia desconhecido")
         }
     }
     
-    private suspend fun loadSportEvent(eventId: String): LoadResponse {
-        val sportsResponse = app.get(sportsLiveEndpoint, timeout = 30).text
-        val sportsJson = mapper.readTree(sportsResponse)
-        
-        if (!sportsJson.has("success") || !sportsJson["success"].asBoolean()) {
-            throw ErrorLoadingException("Não foi possível carregar o evento")
-        }
-        
-        val sportsData = sportsJson["data"]
-        var event: SportEvent? = null
-        
-        if (sportsData.isArray) {
-            for (node in sportsData) {
-                val id = node["id"]?.asText()
-                if (id == eventId) {
-                    event = parseSportEvent(node)
-                    break
+    private suspend fun getSportEventTitle(eventId: String): String? {
+        return try {
+            val sportsResponse = app.get(sportsLiveEndpoint, timeout = 30).text
+            val sportsJson = mapper.readTree(sportsResponse)
+            
+            if (!sportsJson.has("success") || !sportsJson["success"].asBoolean()) {
+                return null
+            }
+            
+            val sportsData = sportsJson["data"]
+            if (sportsData.isArray) {
+                for (node in sportsData) {
+                    val id = node["id"]?.asText()
+                    if (id == eventId) {
+                        return node["title"]?.asText()
+                    }
                 }
             }
-        }
-        
-        val foundEvent = event ?: throw ErrorLoadingException("Evento não encontrado")
-        
-        return newMovieLoadResponse(
-            foundEvent.title,
-            "sport|${foundEvent.id}",
-            TvType.Live,
-            "sport|${foundEvent.id}"
-        ) {
-            this.posterUrl = fixUrl(foundEvent.poster)
-            this.plot = foundEvent.description ?: "Evento esportivo ao vivo"
-            this.tags = listOf(foundEvent.category, foundEvent.status)
+            null
+        } catch (e: Exception) {
+            null
         }
     }
     
-    private suspend fun loadChannel(channelId: String, embedUrl: String): LoadResponse {
-        val channelsResponse = app.get(channelsEndpoint, timeout = 30).text
-        val channelsJson = mapper.readTree(channelsResponse)
-        
-        if (!channelsJson.has("success") || !channelsJson["success"].asBoolean()) {
-            throw ErrorLoadingException("Não foi possível carregar o canal")
-        }
-        
-        val channelsData = channelsJson["data"]
-        var channel: ApiChannel? = null
-        
-        if (channelsData.isArray) {
-            for (node in channelsData) {
-                val id = node["id"]?.asText()
-                if (id == channelId) {
-                    channel = parseChannel(node)
-                    break
+    private suspend fun getChannelName(channelId: String): String? {
+        return try {
+            val channelsResponse = app.get(channelsEndpoint, timeout = 30).text
+            val channelsJson = mapper.readTree(channelsResponse)
+            
+            if (!channelsJson.has("success") || !channelsJson["success"].asBoolean()) {
+                return null
+            }
+            
+            val channelsData = channelsJson["data"]
+            if (channelsData.isArray) {
+                for (node in channelsData) {
+                    val id = node["id"]?.asText()
+                    if (id == channelId) {
+                        return node["name"]?.asText()
+                    }
                 }
             }
-        }
-        
-        val foundChannel = channel ?: throw ErrorLoadingException("Canal não encontrado")
-        
-        return newMovieLoadResponse(
-            foundChannel.name,
-            "channel|${foundChannel.id}|${foundChannel.embedUrl}",
-            TvType.Live,
-            foundChannel.embedUrl
-        ) {
-            this.posterUrl = fixUrl(foundChannel.logoUrl)
-            this.plot = foundChannel.description ?: "Assista ao canal ${foundChannel.name} ao vivo"
-            this.tags = listOf(foundChannel.category)
+            null
+        } catch (e: Exception) {
+            null
         }
     }
 
@@ -266,7 +274,7 @@ class ReiDosCanais : MainAPI() {
                     .map { channel ->
                         newLiveSearchResponse(
                             channel.name,
-                            "channel|${channel.id}|${channel.embedUrl}",
+                            "channel|${channel.id}|${channel.embedUrl}|${channel.logoUrl}",
                             TvType.Live
                         ) {
                             this.posterUrl = fixUrl(channel.logoUrl)
@@ -292,7 +300,7 @@ class ReiDosCanais : MainAPI() {
                     .map { event ->
                         newLiveSearchResponse(
                             event.title,
-                            "sport|${event.id}",
+                            "sport|${event.id}|${event.poster}",
                             TvType.Live
                         ) {
                             this.posterUrl = fixUrl(event.poster)
