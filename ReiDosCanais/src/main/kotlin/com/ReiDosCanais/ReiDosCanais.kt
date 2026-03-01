@@ -53,8 +53,8 @@ class ReiDosCanais : MainAPI() {
                     val liveEvents = sportsData.mapNotNull { node ->
                         parseSportEvent(node)
                     }.map { event ->
-                        // URL personalizada que contém todas as informações
-                        val customUrl = "reidoscanais://sport/${event.id}"
+                        // Criar URL com parâmetros
+                        val customUrl = "reidoscanais://sport/${event.id}?title=${event.title.encodeUrl()}&poster=${event.poster.encodeUrl()}"
                         
                         newLiveSearchResponse(
                             event.title,
@@ -62,8 +62,6 @@ class ReiDosCanais : MainAPI() {
                             TvType.Live
                         ) {
                             this.posterUrl = fixUrl(event.poster)
-                            // Armazenar dados adicionais como parâmetros da URL
-                            this.url = "$customUrl?title=${event.title.encodeUrl()}&poster=${event.poster.encodeUrl()}"
                         }
                     }
                     if (liveEvents.isNotEmpty()) {
@@ -88,8 +86,8 @@ class ReiDosCanais : MainAPI() {
                     // Para cada categoria, criar uma HomePageList
                     channelsByCategory.forEach { (categoryName, channels) ->
                         val channelList = channels.map { channel ->
-                            // URL personalizada que contém todas as informações
-                            val customUrl = "reidoscanais://channel/${channel.id}"
+                            // Criar URL com parâmetros
+                            val customUrl = "reidoscanais://channel/${channel.id}?name=${channel.name.encodeUrl()}&poster=${channel.logoUrl.encodeUrl()}&embed=${channel.embedUrl.encodeUrl()}"
                             
                             newLiveSearchResponse(
                                 channel.name,
@@ -97,8 +95,6 @@ class ReiDosCanais : MainAPI() {
                                 TvType.Live
                             ) {
                                 this.posterUrl = fixUrl(channel.logoUrl)
-                                // Armazenar dados adicionais como parâmetros da URL
-                                this.url = "$customUrl?name=${channel.name.encodeUrl()}&poster=${channel.logoUrl.encodeUrl()}&embed=${channel.embedUrl.encodeUrl()}"
                             }
                         }
                         
@@ -260,7 +256,7 @@ class ReiDosCanais : MainAPI() {
                         parseChannel(node)
                     }.filter { it.isActive && it.name.contains(query, ignoreCase = true) }
                     .map { channel ->
-                        val customUrl = "reidoscanais://channel/${channel.id}"
+                        val customUrl = "reidoscanais://channel/${channel.id}?name=${channel.name.encodeUrl()}&poster=${channel.logoUrl.encodeUrl()}&embed=${channel.embedUrl.encodeUrl()}"
                         
                         newLiveSearchResponse(
                             channel.name,
@@ -268,7 +264,6 @@ class ReiDosCanais : MainAPI() {
                             TvType.Live
                         ) {
                             this.posterUrl = fixUrl(channel.logoUrl)
-                            this.url = "$customUrl?name=${channel.name.encodeUrl()}&poster=${channel.logoUrl.encodeUrl()}&embed=${channel.embedUrl.encodeUrl()}"
                         }
                     }
                     results.addAll(matchingChannels)
@@ -289,7 +284,7 @@ class ReiDosCanais : MainAPI() {
                         (it.description?.contains(query, ignoreCase = true) == true) 
                     }
                     .map { event ->
-                        val customUrl = "reidoscanais://sport/${event.id}"
+                        val customUrl = "reidoscanais://sport/${event.id}?title=${event.title.encodeUrl()}&poster=${event.poster.encodeUrl()}"
                         
                         newLiveSearchResponse(
                             event.title,
@@ -297,7 +292,6 @@ class ReiDosCanais : MainAPI() {
                             TvType.Live
                         ) {
                             this.posterUrl = fixUrl(event.poster)
-                            this.url = "$customUrl?title=${event.title.encodeUrl()}&poster=${event.poster.encodeUrl()}"
                         }
                     }
                     results.addAll(matchingEvents)
