@@ -22,7 +22,7 @@ data class ApiChannel(
     @JsonProperty("id") val id: String,
     @JsonProperty("name") val name: String,
     @JsonProperty("logo_url") val logoUrl: String,
-    @JsonProperty("embed_url") val embedUrl: String,
+    @JsonProperty("embed_url") val embedUrl: String,  // https://rdcanais.top/adultswim
     @JsonProperty("category") val category: String
 )
 
@@ -42,7 +42,6 @@ class ReiDosCanais : MainAPI() {
     // URLs
     private val apiBaseUrl = "https://api.reidoscanais.io"
     private val channelsEndpoint = "$apiBaseUrl/channels"
-    private val siteBaseUrl = "https://rdcanais.top"
     
     private val mapper = jacksonObjectMapper()
 
@@ -51,7 +50,7 @@ class ReiDosCanais : MainAPI() {
         val homePageList = mutableListOf<HomePageList>()
 
         try {
-            // Buscar todos os canais
+            // Buscar todos os canais da API
             val response = app.get(channelsEndpoint, timeout = 30).text
             val json = mapper.readTree(response)
             
@@ -68,10 +67,10 @@ class ReiDosCanais : MainAPI() {
                         val channelList = channels.map { channel ->
                             newLiveSearchResponse(
                                 channel.name,
-                                channel.embedUrl,  // URL direta do player
+                                channel.embedUrl,  // URL: https://rdcanais.top/adultswim
                                 TvType.Live
                             ) {
-                                this.posterUrl = fixUrl(channel.logoUrl)
+                                this.posterUrl = fixUrl(channel.logoUrl)  // Poster da página inicial
                             }
                         }
                         
@@ -110,9 +109,12 @@ class ReiDosCanais : MainAPI() {
 
     // ================== PÁGINA DE DETALHES ==================
     override suspend fun load(url: String): LoadResponse {
-        // A URL já é a página do player (ex: https://rdcanais.top/adultswim)
+        // url é o link da página de detalhes: https://rdcanais.top/adultswim
         
-        // Extrair o ID da URL
+        // Como essa página só tem o player, precisamos das informações
+        // que estavam na página inicial. Mas o Cloudstream não passa essas informações.
+        
+        // SOLUÇÃO: Extrair o ID da URL e buscar na API novamente
         val channelId = url.substringAfterLast("/")
         
         // Buscar informações do canal na API
@@ -136,14 +138,14 @@ class ReiDosCanais : MainAPI() {
             }
         }
         
-        // Retornar resposta simples com as informações que temos
+        // Retornar a resposta com as informações que buscamos
         return newMovieLoadResponse(
-            channelName,
-            url,
+            channelName,           // Nome do canal
+            url,                   // A mesma URL (https://rdcanais.top/adultswim)
             TvType.Live,
-            url  // A mesma URL será usada para carregar os links
+            url                    // URL para carregar os links
         ) {
-            this.posterUrl = fixUrl(channelPoster)
+            this.posterUrl = fixUrl(channelPoster)  // Poster que buscamos da API
             this.plot = "Assista ao vivo"  // Sinopse simples
         }
     }
@@ -165,7 +167,7 @@ class ReiDosCanais : MainAPI() {
                     .map { channel ->
                         newLiveSearchResponse(
                             channel.name,
-                            channel.embedUrl,
+                            channel.embedUrl,  // URL: https://rdcanais.top/adultswim
                             TvType.Live
                         ) {
                             this.posterUrl = fixUrl(channel.logoUrl)
@@ -183,54 +185,29 @@ class ReiDosCanais : MainAPI() {
         return results
     }
 
-    // ================== EXTRAIR LINK DO PLAYER ==================
+    // ================== EXTRAIR LINK (SIMPLIFICADO) ==================
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // data é a URL do player (ex: https://rdcanais.top/adultswim)
+        // data é a URL: https://rdcanais.top/adultswim
         
         try {
-            // Acessar a página do player
-            val response = app.get(data, allowRedirects = true)
-            val doc = response.document
-            val html = doc.html()
-            
-            // Procurar por iframe
-            val iframe = doc.selectFirst("iframe")
-            if (iframe != null) {
-                val iframeSrc = iframe.attr("src")
-                
-                // Criar link direto para o iframe
-                // O Cloudstream vai abrir este link em um WebView
-                val link = newExtractorLink(
-                    source = "Rei dos Canais",
-                    name = "Assistir",
-                    url = iframeSrc,
-                    type = ExtractorLinkType.WEBVIEW  // Usar WEBVIEW em vez de IFRAME
-                ) {
-                    this.referer = data
-                    this.quality = Qualities.Unknown.value
-                    this.headers = mapOf(
-                        "User-Agent" to USER_AGENT,
-                        "Referer" to data
-                    )
-                }
-                callback.invoke(link)
-                return true
-            }
-            
-            // Se não encontrar iframe, tentar abrir a própria página
+            // Criar link para abrir em WebView
             val link = newExtractorLink(
                 source = "Rei dos Canais",
                 name = "Assistir",
                 url = data,
                 type = ExtractorLinkType.WEBVIEW
             ) {
-                this.referer = data
+                this.referer = "https://reidoscanais.io"
                 this.quality = Qualities.Unknown.value
+                this.headers = mapOf(
+                    "User-Agent" to USER_AGENT,
+                    "Referer" to "https://reidoscanais.io"
+                )
             }
             callback.invoke(link)
             return true
