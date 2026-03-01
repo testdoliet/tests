@@ -39,14 +39,14 @@ object UnifiedExtractor {
         println("🔗 URL: $episodeUrl")
         println("=".repeat(60))
         
-        // Lista de extratores em ordem de tentativa
+        // Lista de extratores em ordem de tentativa - CORRIGIDA
         val extractors = listOf(
-            Pair("AniVideo (Player 1)") { extractAniVideo(episodeUrl, name, callback) },
-            Pair("Blogger (Player 2)") { extractBlogger(episodeUrl, name, callback) },
-            Pair("OdaCDN (/antivirus2/)") { extractOdaCDN(episodeUrl, name, callback) },
-            Pair("ZuPlay (/antivirus3/)") { extractZuPlay(episodeUrl, name, callback) },
-            Pair("FileMoon (filemoon.sx)") { extractFileMoon(episodeUrl, name, callback) },
-            Pair("ChPlay Original (Fallback)") { extractChPlayOriginal(episodeUrl, name, callback) }
+            "AniVideo (Player 1)" to { extractAniVideo(episodeUrl, name, callback) },
+            "Blogger (Player 2)" to { extractBlogger(episodeUrl, name, callback) },
+            "OdaCDN (/antivirus2/)" to { extractOdaCDN(episodeUrl, name, callback) },
+            "ZuPlay (/antivirus3/)" to { extractZuPlay(episodeUrl, name, callback) },
+            "FileMoon (filemoon.sx)" to { extractFileMoon(episodeUrl, name, callback) },
+            "ChPlay Original (Fallback)" to { extractChPlayOriginal(episodeUrl, name, callback) }
         )
         
         for ((extractorName, extractorFunction) in extractors) {
