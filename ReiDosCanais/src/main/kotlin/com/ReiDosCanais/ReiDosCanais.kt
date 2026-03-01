@@ -59,7 +59,7 @@ class ReiDosCanais : MainAPI() {
                             TvType.Live
                         ) {
                             this.posterUrl = fixUrl(event.poster)
-                            this.plot = event.description
+                            // plot não é suportado em LiveSearchResponse
                         }
                     }
                     if (liveEvents.isNotEmpty()) {
