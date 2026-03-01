@@ -33,26 +33,26 @@ object UnifiedExtractor {
         name: String,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        println("=" * 60)
+        println("=".repeat(60))
         println("🚀 UNIFIED EXTRACTOR INICIADO")
         println("📌 Episódio: $name")
         println("🔗 URL: $episodeUrl")
-        println("=" * 60)
+        println("=".repeat(60))
         
         // Lista de extratores em ordem de tentativa
         val extractors = listOf(
-            "AniVideo (Player 1)" to { extractAniVideo(episodeUrl, name, callback) },
-            "Blogger (Player 2)" to { extractBlogger(episodeUrl, name, callback) },
-            "OdaCDN (/antivirus2/)" to { extractOdaCDN(episodeUrl, name, callback) },
-            "ZuPlay (/antivirus3/)" to { extractZuPlay(episodeUrl, name, callback) },
-            "FileMoon (filemoon.sx)" to { extractFileMoon(episodeUrl, name, callback) },
-            "ChPlay Original (Fallback)" to { extractChPlayOriginal(episodeUrl, name, callback) }
+            Pair("AniVideo (Player 1)") { extractAniVideo(episodeUrl, name, callback) },
+            Pair("Blogger (Player 2)") { extractBlogger(episodeUrl, name, callback) },
+            Pair("OdaCDN (/antivirus2/)") { extractOdaCDN(episodeUrl, name, callback) },
+            Pair("ZuPlay (/antivirus3/)") { extractZuPlay(episodeUrl, name, callback) },
+            Pair("FileMoon (filemoon.sx)") { extractFileMoon(episodeUrl, name, callback) },
+            Pair("ChPlay Original (Fallback)") { extractChPlayOriginal(episodeUrl, name, callback) }
         )
         
         for ((extractorName, extractorFunction) in extractors) {
-            println("\n" + "-" * 40)
+            println("\n" + "-".repeat(40))
             println("🔄 Tentando: $extractorName")
-            println("-" * 40)
+            println("-".repeat(40))
             
             try {
                 val success = extractorFunction.invoke()
@@ -67,9 +67,9 @@ object UnifiedExtractor {
             println("❌ Falhou: $extractorName")
         }
         
-        println("\n" + "=" * 60)
+        println("\n" + "=".repeat(60))
         println("❌ TODOS OS EXTRATORES FALHARAM")
-        println("=" * 60)
+        println("=".repeat(60))
         return false
     }
     
@@ -458,7 +458,7 @@ object UnifiedExtractor {
         )
         
         val apiResponse = app.post(
-            apiUrl, 
+            url = apiUrl, 
             headers = headers, 
             json = requestBody,
             timeout = 30
