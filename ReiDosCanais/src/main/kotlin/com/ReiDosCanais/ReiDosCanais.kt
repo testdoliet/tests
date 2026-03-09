@@ -39,8 +39,8 @@ class ReiDosCanais : MainAPI() {
     
     private val mapper = jacksonObjectMapper()
     
-    // Constante mágica para decodificação
-    private val MAGIC_NUMBER = 45341212
+    // Número mágico NOVO (identificado no debug)
+    private val MAGIC_NUMBER = 38956356
 
     // ================== PÁGINA PRINCIPAL ==================
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
@@ -169,7 +169,7 @@ class ReiDosCanais : MainAPI() {
         return results
     }
 
-    // ================== LOAD LINKS COM DEBUG COMPLETO ==================
+    // ================== LOAD LINKS COM NOMES ATUALIZADOS ==================
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -181,7 +181,7 @@ class ReiDosCanais : MainAPI() {
         println("=".repeat(60))
 
         try {
-            // ===== HEADERS COMPLETOS (igual ao Python) =====
+            // Headers completos (igual ao Python)
             val headers = mapOf(
                 "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
                 "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
@@ -192,130 +192,82 @@ class ReiDosCanais : MainAPI() {
                 "Upgrade-Insecure-Requests" to "1"
             )
 
-            // ===== PASSO 1: Buscar página do canal =====
+            // PASSO 1: Buscar página do canal
             println("\n📥 [PASSO 1] Buscando página do canal: $data")
             val channelDocument = app.get(data, headers = headers).document
             println("✅ [PASSO 1] Página carregada com sucesso")
             
-            // ===== PASSO 2: Extrair iframe =====
+            // PASSO 2: Extrair iframe
             println("\n🖼️ [PASSO 2] Procurando iframe...")
-            val iframeElement = channelDocument.selectFirst("iframe")
-            if (iframeElement == null) {
-                println("❌ [PASSO 2] Nenhum iframe encontrado!")
-                return false
-            }
-            
+            val iframeElement = channelDocument.selectFirst("iframe") ?: return false
             var iframeSrc = iframeElement.attr("src")
             println("🔗 [PASSO 2] iframe src encontrado: $iframeSrc")
             
-            // Construir URL completa do iframe
             if (!iframeSrc.startsWith("http")) {
                 iframeSrc = "$mainSite$iframeSrc"
-                println("🔧 [PASSO 2] URL convertida para: $iframeSrc")
             }
             
-            // ===== PASSO 3: Headers para iframe com Referer =====
+            // PASSO 3: Headers para iframe com Referer
             println("\n🔧 [PASSO 3] Configurando headers para iframe...")
             val iframeHeaders = headers.toMutableMap()
             iframeHeaders["Referer"] = data
-            println("ℹ️ Headers enviados:")
-            iframeHeaders.forEach { (key, value) ->
-                println("   $key: $value")
-            }
             
-            // ===== PASSO 4: Buscar iframe =====
+            // PASSO 4: Buscar iframe
             println("\n📥 [PASSO 4] Buscando página do iframe: $iframeSrc")
             val iframeResponse = app.get(iframeSrc, headers = iframeHeaders)
             val iframeHtml = iframeResponse.text
             println("✅ [PASSO 4] Página do iframe carregada (${iframeHtml.length} caracteres)")
             
-            // ===== DEBUG: Salvar HTML para análise =====
-            println("\n🔍 [DEBUG] Primeiros 1000 caracteres do HTML do iframe:")
-            println("-".repeat(40))
-            val preview = iframeHtml.take(1000)
-            println(preview)
-            println("-".repeat(40))
+            // PASSO 5: Procurar o array (agora chamado SHi)
+            println("\n🔍 [PASSO 5] Procurando array 'SHi' no HTML...")
             
-            // ===== DEBUG: Procurar por "mCW" no HTML =====
-            println("\n🔍 [DEBUG] Procurando pela string 'mCW' no HTML...")
-            val containsMcw = iframeHtml.contains("mCW")
-            println("ℹ️ HTML contém 'mCW'? $containsMcw")
-            
-            if (containsMcw) {
-                val mcwIndex = iframeHtml.indexOf("mCW")
-                val contexto = iframeHtml.substring(maxOf(0, mcwIndex - 50), minOf(iframeHtml.length, mcwIndex + 50))
-                println("📌 Contexto ao redor de 'mCW': ...$contexto...")
-            }
-            
-            // ===== PASSO 5: Encontrar array mCW com múltiplos padrões =====
-            println("\n🔍 [PASSO 5] Procurando array 'mCW' no HTML...")
-            
-            val padroesMcw = listOf(
-                Regex("""var mCW = (\[.*?\]);""", setOf(RegexOption.DOT_MATCHES_ALL)),
-                Regex("""var mCW\s*=\s*(\[.*?\]);""", setOf(RegexOption.DOT_MATCHES_ALL)),
-                Regex("""mCW\s*=\s*(\[.*?\])""", setOf(RegexOption.DOT_MATCHES_ALL)),
-                Regex("""const mCW = (\[.*?\]);""", setOf(RegexOption.DOT_MATCHES_ALL)),
-                Regex("""let mCW = (\[.*?\]);""", setOf(RegexOption.DOT_MATCHES_ALL))
+            // Padrões para encontrar o array (agora SHi em vez de mCW)
+            val arrayPatterns = listOf(
+                Regex("""var SHi = (\[.*?\]);""", setOf(RegexOption.DOT_MATCHES_ALL)),
+                Regex("""var SHi\s*=\s*(\[.*?\]);""", setOf(RegexOption.DOT_MATCHES_ALL)),
+                Regex("""SHi\s*=\s*(\[.*?\])""", setOf(RegexOption.DOT_MATCHES_ALL)),
+                Regex("""const SHi = (\[.*?\]);""", setOf(RegexOption.DOT_MATCHES_ALL)),
+                Regex("""let SHi = (\[.*?\]);""", setOf(RegexOption.DOT_MATCHES_ALL))
             )
             
-            var mCWJsonString: String? = null
-            var padraoUsado = ""
+            var arrayJsonString: String? = null
             
-            for (padrao in padroesMcw) {
-                val match = padrao.find(iframeHtml)
+            for (pattern in arrayPatterns) {
+                val match = pattern.find(iframeHtml)
                 if (match != null) {
-                    mCWJsonString = match.groupValues[1]
-                    padraoUsado = padrao.pattern
-                    println("✅ Array mCW encontrado com padrão: $padraoUsado")
+                    arrayJsonString = match.groupValues[1]
+                    println("✅ Array SHi encontrado!")
                     break
                 }
             }
             
-            if (mCWJsonString == null) {
-                println("❌ [PASSO 5] Array mCW não encontrado com nenhum padrão!")
-                
-                // ===== DEBUG: Mostrar primeiras linhas do HTML =====
-                println("\n🔍 [DEBUG] Primeiras 20 linhas do HTML:")
-                val linhas = iframeHtml.split("\n").take(20)
-                linhas.forEachIndexed { i, linha ->
-                    if (linha.length > 100) {
-                        println("   ${i+1}: ${linha.take(100)}...")
-                    } else {
-                        println("   ${i+1}: $linha")
-                    }
-                }
+            if (arrayJsonString == null) {
+                println("❌ [PASSO 5] Array SHi não encontrado!")
                 return false
             }
             
-            println("ℹ️ Tamanho do array: ~${mCWJsonString.length} caracteres")
+            println("ℹ️ Tamanho do array: ~${arrayJsonString.length} caracteres")
             
-            // ===== PASSO 6: Parsear array mCW =====
-            println("\n🔨 [PASSO 6] Parseando array mCW para lista...")
-            val mCWList = try {
-                mapper.readTree(mCWJsonString).map { it.asText() }
+            // PASSO 6: Parsear array
+            println("\n🔨 [PASSO 6] Parseando array SHi para lista...")
+            val arrayList = try {
+                mapper.readTree(arrayJsonString).map { it.asText() }
             } catch (e: Exception) {
                 println("⚠️ Falha no parse JSON, usando método alternativo")
-                mCWJsonString.removeSurrounding("[", "]")
+                arrayJsonString.removeSurrounding("[", "]")
                     .split(",")
                     .map { it.trim().replace("\"", "").replace("'", "") }
                     .filter { it.isNotBlank() }
             }
             
-            println("✅ [PASSO 6] Lista criada com ${mCWList.size} itens")
+            println("✅ [PASSO 6] Lista criada com ${arrayList.size} itens")
             
-            // Mostrar primeiros itens
-            println("ℹ️ Primeiros 5 itens do array:")
-            for (i in 0 until minOf(5, mCWList.size)) {
-                val preview = if (mCWList[i].length > 50) "${mCWList[i].substring(0, 50)}..." else mCWList[i]
-                println("   ${i + 1}: $preview")
-            }
-            
-            // ===== PASSO 7: Decodificar =====
-            println("\n🔓 [PASSO 7] Decodificando ${mCWList.size} itens...")
+            // PASSO 7: Decodificar (usando o novo número mágico)
+            println("\n🔓 [PASSO 7] Decodificando ${arrayList.size} itens...")
             val generatedCode = StringBuilder()
             var processedCount = 0
             
-            mCWList.forEachIndexed { index, item ->
+            arrayList.forEachIndexed { index, item ->
                 try {
                     var base64Item = item
                     val missingPadding = base64Item.length % 4
@@ -335,10 +287,6 @@ class ReiDosCanais : MainAPI() {
                         }
                     }
                     
-                    if ((index + 1) % 20 == 0) {
-                        println("ℹ️ Processados ${index + 1}/${mCWList.size} itens...")
-                    }
-                    
                 } catch (e: Exception) {
                     // Ignora erros
                 }
@@ -346,18 +294,7 @@ class ReiDosCanais : MainAPI() {
             
             println("✅ [PASSO 7] Decodificação concluída! $processedCount itens processados")
             
-            // Mostrar preview do código gerado
-            val codePreview = if (generatedCode.length > 500) {
-                generatedCode.substring(0, 500) + "..."
-            } else {
-                generatedCode.toString()
-            }
-            println("\n📄 Código gerado (primeiros 500 caracteres):")
-            println("-".repeat(40))
-            println(codePreview)
-            println("-".repeat(40))
-            
-            // ===== PASSO 8: Procurar link .m3u8 =====
+            // PASSO 8: Procurar link .m3u8
             println("\n🔎 [PASSO 8] Procurando link .m3u8 no código gerado...")
             val linkPattern = Regex("(https?://[^\"]+\\.m3u8[^\"]*)")
             val match = linkPattern.find(generatedCode.toString())
@@ -370,7 +307,7 @@ class ReiDosCanais : MainAPI() {
             val videoUrl = match.groupValues[0]
             println("✅ [PASSO 8] Link encontrado: $videoUrl")
             
-            // ===== PASSO 9: Headers para o vídeo =====
+            // PASSO 9: Headers para o vídeo
             println("\n🔧 [PASSO 9] Configurando headers para o vídeo...")
             val videoHeaders = mapOf(
                 "Referer" to "https://p2player.live/",
@@ -378,7 +315,7 @@ class ReiDosCanais : MainAPI() {
                 "User-Agent" to headers["User-Agent"]!!
             )
             
-            // ===== PASSO 10: Retornar link =====
+            // PASSO 10: Retornar link
             println("\n🎬 [PASSO 10] Enviando link para o player...")
             callback.invoke(
                 newExtractorLink(name, "$name [HLS]", videoUrl) {
@@ -394,7 +331,6 @@ class ReiDosCanais : MainAPI() {
 
         } catch (e: Exception) {
             println("\n💥 [LOAD LINKS] EXCEÇÃO FATAL: ${e.message}")
-            println("📋 Stacktrace:")
             e.printStackTrace()
             println("=".repeat(60))
             return false
