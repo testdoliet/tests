@@ -39,7 +39,7 @@ class ReiDosCanais : MainAPI() {
     
     private val mapper = jacksonObjectMapper()
     
-    // Constante mágica para decodificação (descoberta na análise)
+    // Constante mágica para decodificação
     private val MAGIC_NUMBER = 45341212
 
     // ================== PÁGINA PRINCIPAL ==================
@@ -169,20 +169,18 @@ class ReiDosCanais : MainAPI() {
         return results
     }
 
-    // ================== LOAD LINKS (VERSÃO FINAL OTIMIZADA) ==================
+    // ================== LOAD LINKS (VERSÃO ESTÁVEL) ==================
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // Headers essenciais baseados na análise
+        // Headers essenciais (sem os sec-ch-ua que podem causar problemas)
         val headers = mapOf(
-            "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Accept-Language" to "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
-            "sec-ch-ua" to "\"Chromium\";v=\"127\", \"Not)A;Brand\";v=\"99\", \"Microsoft Edge Simulate\";v=\"127\", \"Lemur\";v=\"127\"",
-            "sec-ch-ua-mobile" to "?1",
-            "sec-ch-ua-platform" to "\"Android\"",
+            "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
             "Upgrade-Insecure-Requests" to "1"
         )
 
@@ -198,12 +196,12 @@ class ReiDosCanais : MainAPI() {
             val iframeUrl = if (iframeSrc.startsWith("http")) {
                 iframeSrc
             } else {
-                "${mainSite}${iframeSrc}"
+                "${mainSite}$iframeSrc"
             }
             
-            // ===== PASSO 3: Headers ESPECÍFICOS para o iframe (com Referer) =====
+            // ===== PASSO 3: Headers para o iframe (com Referer) =====
             val iframeHeaders = headers.toMutableMap()
-            iframeHeaders["Referer"] = data  // Referer é a página do canal!
+            iframeHeaders["Referer"] = data
             
             // ===== PASSO 4: Buscar página do iframe =====
             val iframeResponse = app.get(iframeUrl, headers = iframeHeaders)
@@ -215,12 +213,12 @@ class ReiDosCanais : MainAPI() {
             
             val mCWJsonString = mCWMatch.groupValues[1]
             
-            // ===== PASSO 6: Parsear array mCW (pode ter vírgula no final, então tratamos) =====
+            // ===== PASSO 6: Parsear array mCW =====
             val mCWList = try {
                 // Tentativa 1: Parse como JSON
                 mapper.readTree(mCWJsonString).map { it.asText() }
             } catch (e: Exception) {
-                // Tentativa 2: Parse manual (remove colchetes e aspas)
+                // Tentativa 2: Parse manual
                 mCWJsonString.removeSurrounding("[", "]")
                     .split(",")
                     .map { it.trim().replace("\"", "").replace("'", "") }
@@ -231,7 +229,7 @@ class ReiDosCanais : MainAPI() {
             val generatedCode = buildString {
                 mCWList.forEach { base64Item ->
                     try {
-                        // Ajustar padding do Base64 se necessário
+                        // Ajustar padding do Base64
                         var item = base64Item
                         val missingPadding = item.length % 4
                         if (missingPadding > 0) {
@@ -245,46 +243,36 @@ class ReiDosCanais : MainAPI() {
                         val numberPart = decodedString.replace(Regex("\\D"), "")
                         if (numberPart.isNotEmpty()) {
                             val charCode = numberPart.toInt() - MAGIC_NUMBER
-                            if (charCode in 32..126) { // Apenas caracteres imprimíveis
+                            if (charCode in 32..126) {
                                 append(charCode.toChar())
                             }
                         }
                     } catch (e: Exception) {
-                        // Ignora erros em itens individuais
+                        // Ignora erros
                     }
                 }
             }
             
             // ===== PASSO 8: Procurar link .m3u8 no código gerado =====
-            // Padrão específico que descobrimos na análise
             val m3u8Pattern = Regex("""(https?://[^\s"']+\.m3u8[^\s"']*)""")
             val match = m3u8Pattern.find(generatedCode) ?: return false
             
             val videoUrl = match.groupValues[0]
             
-            // ===== PASSO 9: Extrair ID do canal para confirmar o padrão =====
-            val channelId = data.substringAfterLast("/")
-            
-            // Headers para acessar o link do vídeo
-            val videoHeaders = mapOf(
-                "Referer" to "https://p2player.live/",
-                "Origin" to "https://p2player.live",
-                "User-Agent" to headers["User-Agent"]!!,
-                "sec-ch-ua" to headers["sec-ch-ua"]!!,
-                "sec-ch-ua-mobile" to headers["sec-ch-ua-mobile"]!!,
-                "sec-ch-ua-platform" to headers["sec-ch-ua-platform"]!!
-            )
-            
-            // Criar o link para o CloudStream reproduzir
+            // ===== PASSO 9: Criar link para o CloudStream =====
+            // Versão estável usa QUALITY_UNKNOWN e ExtractorLinkType.M3U8
             callback.invoke(
                 ExtractorLink(
                     source = name,
                     name = "$name [HLS]",
                     url = videoUrl,
                     referer = "https://p2player.live/",
-                    headers = videoHeaders,
-                    quality = Qualifier.Unknown.value,
-                    type = ExtractorLink.Type.M3U8
+                    headers = mapOf(
+                        "Referer" to "https://p2player.live/",
+                        "User-Agent" to headers["User-Agent"]!!
+                    ),
+                    quality = Qualities.Unknown.value,
+                    type = ExtractorLinkType.M3U8
                 )
             )
             
