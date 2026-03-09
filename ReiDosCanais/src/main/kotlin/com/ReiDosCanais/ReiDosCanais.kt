@@ -169,7 +169,7 @@ class ReiDosCanais : MainAPI() {
         return results
     }
 
-    // ================== LOAD LINKS (VERSÃO ESTÁVEL SIMPLIFICADA) ==================
+    // ================== LOAD LINKS (USANDO newExtractorLink IGUAL AO EXEMPLO) ==================
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -178,7 +178,7 @@ class ReiDosCanais : MainAPI() {
     ): Boolean {
         // Headers básicos
         val headers = mapOf(
-            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "User-Agent" to USER_AGENT,
             "Accept-Language" to "pt-BR,pt;q=0.9"
         )
 
@@ -249,17 +249,20 @@ class ReiDosCanais : MainAPI() {
             
             val videoUrl = match.groupValues[0]
             
-            // PASSO 9: Retornar link (sem usar APIs problemáticas)
+            // PASSO 9: Headers para o vídeo
+            val videoHeaders = mapOf(
+                "Referer" to "https://p2player.live/",
+                "Origin" to "https://p2player.live/",
+                "User-Agent" to USER_AGENT
+            )
+            
+            // USANDO newExtractorLink IGUAL AO SEU EXEMPLO QUE FUNCIONA!
             callback.invoke(
-                ExtractorLink(
-                    name,
-                    "$name [HLS]",
-                    videoUrl,
-                    "https://p2player.live/",
-                    Qualities.Unknown.value,
-                    type = ExtractorLinkType.M3U8,
-                    headers = mapOf("Referer" to "https://p2player.live/")
-                )
+                newExtractorLink(name, "$name [HLS]", videoUrl) {
+                    this.referer = iframeSrc
+                    this.type = ExtractorLinkType.M3U8
+                    this.headers = videoHeaders
+                }
             )
             
             return true
