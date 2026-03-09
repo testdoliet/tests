@@ -169,110 +169,96 @@ class ReiDosCanais : MainAPI() {
         return results
     }
 
-    // ================== LOAD LINKS (VERSÃO ESTÁVEL) ==================
+    // ================== LOAD LINKS (VERSÃO ESTÁVEL SIMPLIFICADA) ==================
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // Headers essenciais (sem os sec-ch-ua que podem causar problemas)
+        // Headers básicos
         val headers = mapOf(
-            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept-Language" to "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
-            "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-            "Upgrade-Insecure-Requests" to "1"
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Accept-Language" to "pt-BR,pt;q=0.9"
         )
 
         try {
-            // ===== PASSO 1: Buscar página do canal =====
+            // PASSO 1: Buscar página do canal
             val channelDocument = app.get(data, headers = headers).document
             
-            // ===== PASSO 2: Extrair iframe =====
+            // PASSO 2: Extrair iframe
             val iframeElement = channelDocument.selectFirst("iframe") ?: return false
-            val iframeSrc = iframeElement.attr("src")
+            var iframeSrc = iframeElement.attr("src")
             
             // Construir URL completa do iframe
-            val iframeUrl = if (iframeSrc.startsWith("http")) {
-                iframeSrc
-            } else {
-                "${mainSite}$iframeSrc"
+            if (!iframeSrc.startsWith("http")) {
+                iframeSrc = "$mainSite$iframeSrc"
             }
             
-            // ===== PASSO 3: Headers para o iframe (com Referer) =====
+            // PASSO 3: Headers para iframe com Referer
             val iframeHeaders = headers.toMutableMap()
             iframeHeaders["Referer"] = data
             
-            // ===== PASSO 4: Buscar página do iframe =====
-            val iframeResponse = app.get(iframeUrl, headers = iframeHeaders)
+            // PASSO 4: Buscar iframe
+            val iframeResponse = app.get(iframeSrc, headers = iframeHeaders)
             val iframeHtml = iframeResponse.text
             
-            // ===== PASSO 5: Encontrar array mCW =====
-            val mCWPattern = Regex("""var mCW = (\[.*?\]);""", setOf(RegexOption.DOT_MATCHES_ALL))
-            val mCWMatch = mCWPattern.find(iframeHtml) ?: return false
+            // PASSO 5: Encontrar e processar mCW
+            val mCWStart = iframeHtml.indexOf("var mCW = [")
+            if (mCWStart == -1) return false
             
-            val mCWJsonString = mCWMatch.groupValues[1]
+            val mCWEnd = iframeHtml.indexOf("];", mCWStart) + 1
+            if (mCWEnd == 0) return false
             
-            // ===== PASSO 6: Parsear array mCW =====
-            val mCWList = try {
-                // Tentativa 1: Parse como JSON
-                mapper.readTree(mCWJsonString).map { it.asText() }
-            } catch (e: Exception) {
-                // Tentativa 2: Parse manual
-                mCWJsonString.removeSurrounding("[", "]")
-                    .split(",")
-                    .map { it.trim().replace("\"", "").replace("'", "") }
-                    .filter { it.isNotBlank() }
-            }
+            val mCWJson = iframeHtml.substring(mCWStart + 10, mCWEnd)
             
-            // ===== PASSO 7: Decodificar array mCW =====
-            val generatedCode = buildString {
-                mCWList.forEach { base64Item ->
-                    try {
-                        // Ajustar padding do Base64
-                        var item = base64Item
-                        val missingPadding = item.length % 4
-                        if (missingPadding > 0) {
-                            item += "=".repeat(4 - missingPadding)
-                        }
-                        
-                        val decodedBytes = Base64.getDecoder().decode(item)
-                        val decodedString = String(decodedBytes, Charsets.UTF_8)
-                        
-                        // Extrair apenas números e decodificar
-                        val numberPart = decodedString.replace(Regex("\\D"), "")
-                        if (numberPart.isNotEmpty()) {
-                            val charCode = numberPart.toInt() - MAGIC_NUMBER
-                            if (charCode in 32..126) {
-                                append(charCode.toChar())
-                            }
-                        }
-                    } catch (e: Exception) {
-                        // Ignora erros
+            // PASSO 6: Parsear array
+            val mCWList = mCWJson.removeSurrounding("[", "]")
+                .split(",")
+                .map { it.trim().replace("\"", "").replace("'", "") }
+                .filter { it.isNotBlank() }
+            
+            // PASSO 7: Decodificar
+            val generatedCode = StringBuilder()
+            mCWList.forEach { item ->
+                try {
+                    var base64Item = item
+                    val missingPadding = base64Item.length % 4
+                    if (missingPadding > 0) {
+                        base64Item += "=".repeat(4 - missingPadding)
                     }
+                    
+                    val decoded = Base64.getDecoder().decode(base64Item)
+                    val decodedStr = String(decoded, Charsets.UTF_8)
+                    
+                    val numbers = decodedStr.replace(Regex("[^0-9]"), "")
+                    if (numbers.isNotEmpty()) {
+                        val charCode = numbers.toInt() - MAGIC_NUMBER
+                        if (charCode in 32..126) {
+                            generatedCode.append(charCode.toChar())
+                        }
+                    }
+                } catch (e: Exception) {
+                    // Ignora erros
                 }
             }
             
-            // ===== PASSO 8: Procurar link .m3u8 no código gerado =====
-            val m3u8Pattern = Regex("""(https?://[^\s"']+\.m3u8[^\s"']*)""")
-            val match = m3u8Pattern.find(generatedCode) ?: return false
+            // PASSO 8: Procurar link .m3u8
+            val linkPattern = Regex("(https?://[^\"]+\\.m3u8[^\"]*)")
+            val match = linkPattern.find(generatedCode.toString()) ?: return false
             
             val videoUrl = match.groupValues[0]
             
-            // ===== PASSO 9: Criar link para o CloudStream =====
-            // Versão estável usa QUALITY_UNKNOWN e ExtractorLinkType.M3U8
+            // PASSO 9: Retornar link (sem usar APIs problemáticas)
             callback.invoke(
                 ExtractorLink(
-                    source = name,
-                    name = "$name [HLS]",
-                    url = videoUrl,
-                    referer = "https://p2player.live/",
-                    headers = mapOf(
-                        "Referer" to "https://p2player.live/",
-                        "User-Agent" to headers["User-Agent"]!!
-                    ),
-                    quality = Qualities.Unknown.value,
-                    type = ExtractorLinkType.M3U8
+                    name,
+                    "$name [HLS]",
+                    videoUrl,
+                    "https://p2player.live/",
+                    Qualities.Unknown.value,
+                    type = ExtractorLinkType.M3U8,
+                    headers = mapOf("Referer" to "https://p2player.live/")
                 )
             )
             
