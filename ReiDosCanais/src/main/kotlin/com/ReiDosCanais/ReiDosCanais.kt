@@ -169,8 +169,7 @@ class ReiDosCanais : MainAPI() {
         return results
     }
 
-    // ================== LOAD LINKS COM NOMES ATUALIZADOS ==================
-    // ================== LOAD LINKS COM DETECÇÃO AUTOMÁTICA ==================
+    // ================== LOAD LINKS COM EXTRAÇÃO DIRETA DO CÓDIGO ==================
 override suspend fun loadLinks(
     data: String,
     isCasting: Boolean,
@@ -182,7 +181,7 @@ override suspend fun loadLinks(
     println("=".repeat(60))
 
     try {
-        // Headers completos (igual ao Python)
+        // Headers completos
         val headers = mapOf(
             "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
             "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
@@ -197,12 +196,15 @@ override suspend fun loadLinks(
         
         // PASSO 2: Extrair iframe
         println("\n🖼️ [PASSO 2] Procurando iframe...")
-        val iframeElement = channelDocument.selectFirst("iframe") ?: return false
+        val iframeElement = channelDocument.selectFirst("iframe") ?: run {
+            println("❌ [PASSO 2] Nenhum iframe encontrado!")
+            return false
+        }
         var iframeSrc = iframeElement.attr("src")
         println("🔗 [PASSO 2] iframe src encontrado: $iframeSrc")
         
         if (!iframeSrc.startsWith("http")) {
-            iframeSrc = "$mainSite$iframeSrc"
+            iframeSrc = "https:$iframeSrc".replace("//", "/").replace(":/", "://")
         }
         
         // PASSO 3: Headers para iframe com Referer
@@ -216,56 +218,48 @@ override suspend fun loadLinks(
         val iframeHtml = iframeResponse.text
         println("✅ [PASSO 4] Página do iframe carregada (${iframeHtml.length} caracteres)")
         
-        // PASSO 5: DETECÇÃO AUTOMÁTICA DO ARRAY
-        println("\n🔍 [PASSO 5] Detectando array automaticamente...")
+        // PASSO 5: Extrair dados DIRETAMENTE do JavaScript
+        println("\n🔍 [PASSO 5] Extraindo dados DIRETAMENTE do JavaScript...")
         
-        val arrayContent = extractArrayFromHtml(iframeHtml)
-        if (arrayContent == null) {
-            println("❌ [PASSO 5] Não foi possível detectar o array!")
+        val jsData = extractJavaScriptData(iframeHtml)
+        if (jsData == null) {
+            println("❌ [PASSO 5] Não foi possível extrair os dados do JavaScript!")
             return false
         }
         
-        println("✅ [PASSO 5] Array detectado!")
-        println("ℹ️ Tamanho do array: ~${arrayContent.length} caracteres")
+        val (arrayItems, magicNumber) = jsData
+        println("✅ [PASSO 5] Dados extraídos com sucesso!")
+        println("📊 Array: ${arrayItems.size} itens")
+        println("🔢 Número mágico: $magicNumber")
         
-        // PASSO 6: Parsear array
-        println("\n🔨 [PASSO 6] Parseando array para lista...")
-        val arrayList = try {
-            // Tenta parsear como JSON primeiro
-            mapper.readTree(arrayContent).map { it.asText() }
-        } catch (e: Exception) {
-            println("⚠️ Falha no parse JSON, usando método alternativo")
-            // Remove colchetes e divide por vírgulas
-            arrayContent.removeSurrounding("[", "]")
-                .split(",")
-                .map { it.trim().replace("\"", "").replace("'", "") }
-                .filter { it.isNotBlank() }
-        }
-        
-        println("✅ [PASSO 6] Lista criada com ${arrayList.size} itens")
-        
-        // PASSO 7: Decodificar usando o número mágico
-        println("\n🔓 [PASSO 7] Decodificando ${arrayList.size} itens...")
+        // PASSO 6: Decodificar usando o número mágico extraído
+        println("\n🔓 [PASSO 6] Decodificando ${arrayItems.size} itens...")
         val generatedCode = StringBuilder()
         var processedCount = 0
-        val magicNumber = 19667483  // Número mágico fixo (vem do código original)
         
-        arrayList.forEachIndexed { index, item ->
+        arrayItems.forEachIndexed { index, item ->
             try {
-                var base64Item = item
-                val missingPadding = base64Item.length % 4
+                // Limpa o item (remove aspas se houver)
+                var cleanItem = item.trim().replace("^\"|\"$".toRegex(), "").replace("^'|'$".toRegex(), "")
+                
+                // Corrige padding do Base64
+                val missingPadding = cleanItem.length % 4
                 if (missingPadding > 0) {
-                    base64Item += "=".repeat(4 - missingPadding)
+                    cleanItem += "=".repeat(4 - missingPadding)
                 }
                 
-                val decoded = Base64.getDecoder().decode(base64Item)
+                val decoded = Base64.getDecoder().decode(cleanItem)
                 val decodedStr = String(decoded, Charsets.UTF_8)
                 
+                // Extrai apenas os números da string decodificada
                 val numbers = decodedStr.replace(Regex("[^0-9]"), "")
                 if (numbers.isNotEmpty()) {
-                    val charCode = numbers.toInt() - magicNumber
-                    if (charCode in 32..126) {
-                        generatedCode.append(charCode.toChar())
+                    val charCode = numbers.toInt()
+                    val finalChar = charCode - magicNumber
+                    
+                    // Verifica se é um caractere válido
+                    if (finalChar in 32..126) {
+                        generatedCode.append(finalChar.toChar())
                         processedCount++
                     }
                 }
@@ -275,35 +269,42 @@ override suspend fun loadLinks(
             }
         }
         
-        println("✅ [PASSO 7] Decodificação concluída! $processedCount caracteres gerados")
+        println("✅ [PASSO 6] Decodificação concluída! $processedCount caracteres gerados")
         
-        // PASSO 8: Procurar link .m3u8
-        println("\n🔎 [PASSO 8] Procurando link .m3u8 no código gerado...")
+        // Mostra preview do código gerado
+        if (generatedCode.isNotEmpty()) {
+            println("📄 Preview do código (primeiros 200 chars):")
+            println(generatedCode.toString().take(200))
+        } else {
+            println("❌ Nenhum caractere foi decodificado!")
+            return false
+        }
+        
+        // PASSO 7: Procurar link .m3u8
+        println("\n🔎 [PASSO 7] Procurando link .m3u8 no código gerado...")
         val linkPattern = Regex("(https?://[^\"'\\s]+\\.m3u8[^\"'\\s]*)")
         val match = linkPattern.find(generatedCode.toString())
         
         if (match == null) {
-            println("❌ [PASSO 8] Nenhum link .m3u8 encontrado!")
-            println("📄 Primeiros 500 caracteres do código gerado:")
-            println(generatedCode.toString().take(500))
+            println("❌ [PASSO 7] Nenhum link .m3u8 encontrado!")
             return false
         }
         
         val videoUrl = match.groupValues[0]
-        println("✅ [PASSO 8] Link encontrado: $videoUrl")
+        println("✅ [PASSO 7] Link encontrado: $videoUrl")
         
-        // PASSO 9: Headers para o vídeo
-        println("\n🔧 [PASSO 9] Configurando headers para o vídeo...")
+        // PASSO 8: Headers para o vídeo
+        println("\n🔧 [PASSO 8] Configurando headers para o vídeo...")
         val videoHeaders = mapOf(
             "Referer" to "https://p2player.live/",
             "Origin" to "https://p2player.live/",
             "User-Agent" to headers["User-Agent"]!!
         )
         
-        // PASSO 10: Retornar link
-        println("\n🎬 [PASSO 10] Enviando link para o player...")
+        // PASSO 9: Retornar link
+        println("\n🎬 [PASSO 9] Enviando link para o player...")
         callback.invoke(
-            newExtractorLink(name, "$name [HLS]", videoUrl) {
+            newExtractorLink("Rei dos Canais", "Rei dos Canais [HLS]", videoUrl) {
                 this.referer = iframeSrc
                 this.type = ExtractorLinkType.M3U8
                 this.headers = videoHeaders
@@ -323,80 +324,85 @@ override suspend fun loadLinks(
 }
 
 /**
- * Extrai automaticamente o array do HTML, independente do nome da variável
+ * Extrai array e número mágico DIRETAMENTE do JavaScript
  */
-private fun extractArrayFromHtml(html: String): String? {
-    // Padrão 1: var NOME = [...] 
-    val varPattern = Regex("""var\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\s*=\s*(\[.*?\]);""", setOf(RegexOption.DOT_MATCHES_ALL))
-    val varMatch = varPattern.find(html)
-    if (varMatch != null) {
-        println("✅ Detectado padrão 'var nome = [...]'")
-        return varMatch.groupValues[2]
-    }
+private fun extractJavaScriptData(html: String): Pair<List<String>, Int>? {
+    // Encontra todos os scripts
+    val scriptPattern = Regex("""<script[^>]*>([\s\S]*?)</script>""", setOf(RegexOption.DOT_MATCHES_ALL))
+    val scriptMatches = scriptPattern.findAll(html)
     
-    // Padrão 2: let NOME = [...]
-    val letPattern = Regex("""let\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\s*=\s*(\[.*?\]);""", setOf(RegexOption.DOT_MATCHES_ALL))
-    val letMatch = letPattern.find(html)
-    if (letMatch != null) {
-        println("✅ Detectado padrão 'let nome = [...]'")
-        return letMatch.groupValues[2]
-    }
-    
-    // Padrão 3: const NOME = [...]
-    val constPattern = Regex("""const\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\s*=\s*(\[.*?\]);""", setOf(RegexOption.DOT_MATCHES_ALL))
-    val constMatch = constPattern.find(html)
-    if (constMatch != null) {
-        println("✅ Detectado padrão 'const nome = [...]'")
-        return constMatch.groupValues[2]
-    }
-    
-    // Padrão 4: NOME = [...] (sem declaração)
-    val assignPattern = Regex("""([a-zA-Z_$][a-zA-Z0-9_$]*)\s*=\s*(\[.*?\]);""", setOf(RegexOption.DOT_MATCHES_ALL))
-    val assignMatch = assignPattern.find(html)
-    if (assignMatch != null) {
-        println("✅ Detectado padrão 'nome = [...]'")
-        return assignMatch.groupValues[2]
-    }
-    
-    // Padrão 5: Procura por qualquer array grande (mais de 10 itens) com strings base64
-    val base64Pattern = Regex("""\[(\s*"[A-Za-z0-9+/=]+"\s*,?\s*)+\]""", setOf(RegexOption.DOT_MATCHES_ALL))
-    val matches = base64Pattern.findAll(html)
-    
-    for (match in matches) {
-        val arrayContent = match.value
-        // Verifica se tem muitos itens (provavelmente é o array que queremos)
-        val itemCount = arrayContent.split(",").size
-        if (itemCount > 10) {
-            println("✅ Detectado array grande com $itemCount itens")
-            return arrayContent
-        }
-    }
-    
-    // Padrão 6: Procura pelo padrão específico do site (com atob)
-    val scriptBlockPattern = Regex("""<script[^>]*>([\s\S]*?)</script>""", setOf(RegexOption.DOT_MATCHES_ALL))
-    val scriptMatches = scriptBlockPattern.findAll(html)
-    
-    for (scriptMatch in scriptMatches) {
-        val scriptContent = scriptMatch.groupValues[1]
+    for (match in scriptMatches) {
+        val scriptContent = match.groupValues[1]
         
-        // Procura por padrão: algo.forEach(function...
-        val forEachPattern = Regex("""([a-zA-Z_$][a-zA-Z0-9_$]*)\.forEach\(function""")
-        val forEachMatch = forEachPattern.find(scriptContent)
+        // PROCURA O ARRAY (qualquer nome de variável)
+        val arrayPattern = Regex("""(?:var|let|const)\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\s*=\s*(\[.*?\]);""", setOf(RegexOption.DOT_MATCHES_ALL))
+        val arrayMatch = arrayPattern.find(scriptContent)
         
-        if (forEachMatch != null) {
-            val arrayName = forEachMatch.groupValues[1]
-            println("✅ Detectado array pelo forEach: nome = '$arrayName'")
+        if (arrayMatch != null) {
+            val arrayName = arrayMatch.groupValues[1]
+            val arrayContent = arrayMatch.groupValues[2]
+            println("✅ Array encontrado: nome='$arrayName'")
             
-            // Agora procura pela declaração desse array
-            val arrayDeclPattern = Regex("""(?:var|let|const)\s+${Regex.escape(arrayName)}\s*=\s*(\[.*?\]);""", setOf(RegexOption.DOT_MATCHES_ALL))
-            val arrayDeclMatch = arrayDeclPattern.find(scriptContent)
-            if (arrayDeclMatch != null) {
-                return arrayDeclMatch.groupValues[1]
+            // PROCURA O NÚMERO MÁGICO na mesma função forEach
+            val magicNumberPattern = Regex("""- (\d+)""")
+            val magicMatch = magicNumberPattern.find(scriptContent)
+            
+            if (magicMatch != null) {
+                val magicNumber = magicMatch.groupValues[1].toInt()
+                println("✅ Número mágico encontrado: $magicNumber")
+                
+                // Parseia o array
+                val items = try {
+                    // Tenta parsear como JSON
+                    val mapper = jacksonObjectMapper()
+                    mapper.readTree(arrayContent).map { it.asText() }
+                } catch (e: Exception) {
+                    // Fallback: parse manual
+                    arrayContent.removeSurrounding("[", "]")
+                        .split(",")
+                        .map { it.trim().replace("\"", "").replace("'", "") }
+                        .filter { it.isNotBlank() }
+                }
+                
+                return Pair(items, magicNumber)
             }
         }
     }
     
-    println("❌ Nenhum array detectado!")
+    // Se não encontrou com o padrão completo, tenta encontrar o número mágico em qualquer lugar
+    println("⚠️ Tentando método alternativo...")
+    
+    // Procura por qualquer array grande
+    val anyArrayPattern = Regex("""(\[.*?\])""", setOf(RegexOption.DOT_MATCHES_ALL))
+    val arrayMatches = anyArrayPattern.findAll(html)
+    
+    for (arrayMatch in arrayMatches) {
+        val arrayContent = arrayMatch.groupValues[1]
+        // Verifica se parece um array de strings base64
+        if (arrayContent.contains("\"") && arrayContent.length > 100) {
+            println("✅ Possível array encontrado")
+            
+            // Procura o número mágico em qualquer lugar
+            val anyMagicPattern = Regex("""- (\d+)""")
+            val magicMatch = anyMagicPattern.find(html)
+            
+            if (magicMatch != null) {
+                val magicNumber = magicMatch.groupValues[1].toInt()
+                println("✅ Possível número mágico encontrado: $magicNumber")
+                
+                // Parseia o array
+                val items = arrayContent.removeSurrounding("[", "]")
+                    .split(",")
+                    .map { it.trim().replace("\"", "").replace("'", "") }
+                    .filter { it.isNotBlank() && it.length > 10 }
+                
+                if (items.size > 5) {
+                    return Pair(items, magicNumber)
+                }
+            }
+        }
+    }
+    
     return null
 }
 }
