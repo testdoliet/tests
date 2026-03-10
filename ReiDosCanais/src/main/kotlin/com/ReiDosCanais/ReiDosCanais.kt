@@ -186,34 +186,17 @@ class ReiDosCanais : MainAPI() {
                 "Upgrade-Insecure-Requests" to "1"
             )
 
-            // Cookies necessários (do curl)
-            val cookies = mapOf(
-                "HstCfa4965742" to "1773157398878",
-                "HstCmu4965742" to "1773157398878",
-                "HstCnv4965742" to "1",
-                "c_ref_4965742" to "https%3A%2F%2Freidoscanais.ooo%2F",
-                "__dtsu" to "51A01773157400480B826F24D01EF775",
-                "_pubcid" to "0ff87a18-6aee-4b4b-ba6e-7e74b924fe66",
-                "_cc_id" to "9514611886549b0cd2b229f8630adc83",
-                "panoramaId" to "48ae5276e40ef095a17b5a002aa0185ca02c2b50123f19905f96f252df3bd6f4",
-                "panoramaIdType" to "panoDevice",
-                "HstCns4965742" to "2",
-                "panoramaId_expiry" to "1773765064352",
-                "HstCla4965742" to "1773160470174",
-                "HstPn4965742" to "6",
-                "HstPt4965742" to "6"
+            // Cookies necessários (do curl) - como headers
+            val cookieHeaders = mapOf(
+                "Cookie" to "HstCfa4965742=1773157398878; HstCmu4965742=1773157398878; HstCnv4965742=1; c_ref_4965742=https%3A%2F%2Freidoscanais.ooo%2F; __dtsu=51A01773157400480B826F24D01EF775; _pubcid=0ff87a18-6aee-4b4b-ba6e-7e74b924fe66; _cc_id=9514611886549b0cd2b229f8630adc83; panoramaId=48ae5276e40ef095a17b5a002aa0185ca02c2b50123f19905f96f252df3bd6f4; panoramaIdType=panoDevice; HstCns4965742=2; panoramaId_expiry=1773765064352; HstCla4965742=1773160470174; HstPn4965742=6; HstPt4965742=6"
             )
 
-            // PASSO 1: Buscar página do canal com cookies
+            // Headers completos para página do canal
+            val pageHeaders = headers + cookieHeaders
+
+            // PASSO 1: Buscar página do canal
             println("\n📥 [PASSO 1] Buscando página do canal: $data")
-            
-            // Configurar cookies na sessão
-            val cookieClient = app.getClient()
-            cookies.forEach { (key, value) ->
-                cookieClient.cookieManager.setCookie(data, key, value)
-            }
-            
-            val channelDocument = app.get(data, headers = headers).document
+            val channelDocument = app.get(data, headers = pageHeaders).document
             println("✅ [PASSO 1] Página carregada com sucesso")
             
             // PASSO 2: Extrair iframe
