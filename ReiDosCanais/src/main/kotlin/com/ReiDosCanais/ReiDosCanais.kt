@@ -166,7 +166,7 @@ class ReiDosCanais : MainAPI() {
         return results
     }
 
-    // ================== LOAD LINKS COM EXTRAÇÃO DIRETA DO CÓDIGO ==================
+    // ================== LOAD LINKS COM DETECÇÃO AUTOMÁTICA ==================
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -178,7 +178,7 @@ class ReiDosCanais : MainAPI() {
         println("=".repeat(60))
 
         try {
-            // Headers completos
+            // Headers completos (igual ao Python)
             val headers = mapOf(
                 "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
                 "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
@@ -186,8 +186,33 @@ class ReiDosCanais : MainAPI() {
                 "Upgrade-Insecure-Requests" to "1"
             )
 
-            // PASSO 1: Buscar página do canal
+            // Cookies necessários (do curl)
+            val cookies = mapOf(
+                "HstCfa4965742" to "1773157398878",
+                "HstCmu4965742" to "1773157398878",
+                "HstCnv4965742" to "1",
+                "c_ref_4965742" to "https%3A%2F%2Freidoscanais.ooo%2F",
+                "__dtsu" to "51A01773157400480B826F24D01EF775",
+                "_pubcid" to "0ff87a18-6aee-4b4b-ba6e-7e74b924fe66",
+                "_cc_id" to "9514611886549b0cd2b229f8630adc83",
+                "panoramaId" to "48ae5276e40ef095a17b5a002aa0185ca02c2b50123f19905f96f252df3bd6f4",
+                "panoramaIdType" to "panoDevice",
+                "HstCns4965742" to "2",
+                "panoramaId_expiry" to "1773765064352",
+                "HstCla4965742" to "1773160470174",
+                "HstPn4965742" to "6",
+                "HstPt4965742" to "6"
+            )
+
+            // PASSO 1: Buscar página do canal com cookies
             println("\n📥 [PASSO 1] Buscando página do canal: $data")
+            
+            // Configurar cookies na sessão
+            val cookieClient = app.getClient()
+            cookies.forEach { (key, value) ->
+                cookieClient.cookieManager.setCookie(data, key, value)
+            }
+            
             val channelDocument = app.get(data, headers = headers).document
             println("✅ [PASSO 1] Página carregada com sucesso")
             
@@ -215,21 +240,21 @@ class ReiDosCanais : MainAPI() {
             val iframeHtml = iframeResponse.text
             println("✅ [PASSO 4] Página do iframe carregada (${iframeHtml.length} caracteres)")
             
-            // PASSO 5: Extrair dados DIRETAMENTE do JavaScript
-            println("\n🔍 [PASSO 5] Extraindo dados DIRETAMENTE do JavaScript...")
+            // PASSO 5: Extrair array e número mágico
+            println("\n🔍 [PASSO 5] Extraindo array e número mágico...")
             
-            val jsData = extractJavaScriptData(iframeHtml)
-            if (jsData == null) {
-                println("❌ [PASSO 5] Não foi possível extrair os dados do JavaScript!")
+            val extractionResult = extractJavaScriptData(iframeHtml)
+            if (extractionResult == null) {
+                println("❌ [PASSO 5] Não foi possível extrair os dados!")
                 return false
             }
             
-            val (arrayItems, magicNumber) = jsData
+            val (arrayItems, magicNumber) = extractionResult
             println("✅ [PASSO 5] Dados extraídos com sucesso!")
             println("📊 Array: ${arrayItems.size} itens")
             println("🔢 Número mágico: $magicNumber")
             
-            // PASSO 6: Decodificar usando o número mágico extraído
+            // PASSO 6: Decodificar
             println("\n🔓 [PASSO 6] Decodificando ${arrayItems.size} itens...")
             val generatedCode = StringBuilder()
             var processedCount = 0
@@ -254,7 +279,7 @@ class ReiDosCanais : MainAPI() {
                         val charCode = numbers.toInt()
                         val finalChar = charCode - magicNumber
                         
-                        // Verifica se é um caractere válido
+                        // Caracteres imprimíveis
                         if (finalChar in 32..126) {
                             generatedCode.append(finalChar.toChar())
                             processedCount++
@@ -268,17 +293,13 @@ class ReiDosCanais : MainAPI() {
             
             println("✅ [PASSO 6] Decodificação concluída! $processedCount caracteres gerados")
             
-            // Mostra preview do código gerado
-            if (generatedCode.isNotEmpty()) {
-                println("📄 Preview do código (primeiros 200 chars):")
-                println(generatedCode.toString().take(200))
-            } else {
+            if (generatedCode.isEmpty()) {
                 println("❌ Nenhum caractere foi decodificado!")
                 return false
             }
             
             // PASSO 7: Procurar link .m3u8
-            println("\n🔎 [PASSO 7] Procurando link .m3u8 no código gerado...")
+            println("\n🔎 [PASSO 7] Procurando link .m3u8...")
             val linkPattern = Regex("(https?://[^\"'\\s]+\\.m3u8[^\"'\\s]*)")
             val match = linkPattern.find(generatedCode.toString())
             
@@ -291,7 +312,7 @@ class ReiDosCanais : MainAPI() {
             println("✅ [PASSO 7] Link encontrado: $videoUrl")
             
             // PASSO 8: Headers para o vídeo
-            println("\n🔧 [PASSO 8] Configurando headers para o vídeo...")
+            println("\n🔧 [PASSO 8] Configurando headers...")
             val videoHeaders = mapOf(
                 "Referer" to "https://p2player.live/",
                 "Origin" to "https://p2player.live/",
@@ -305,15 +326,16 @@ class ReiDosCanais : MainAPI() {
                     this.referer = iframeSrc
                     this.type = ExtractorLinkType.M3U8
                     this.headers = videoHeaders
+                    this.quality = Qualities.Unknown.value
                 }
             )
             
-            println("\n🎉 [LOAD LINKS] SUCESSO! Link extraído e enviado")
+            println("\n🎉 [LOAD LINKS] SUCESSO!")
             println("=".repeat(60))
             return true
 
         } catch (e: Exception) {
-            println("\n💥 [LOAD LINKS] EXCEÇÃO FATAL: ${e.message}")
+            println("\n💥 [LOAD LINKS] EXCEÇÃO: ${e.message}")
             e.printStackTrace()
             println("=".repeat(60))
             return false
@@ -321,8 +343,8 @@ class ReiDosCanais : MainAPI() {
     }
 
     /**
-     * Extrai array e número mágico DIRETAMENTE do JavaScript
-     * O número mágico está na última linha do forEach
+     * Extrai array e número mágico do JavaScript
+     * Funciona com QUALQUER nome de variável!
      */
     private fun extractJavaScriptData(html: String): Pair<List<String>, Int>? {
         // Encontra todos os scripts
@@ -341,13 +363,11 @@ class ReiDosCanais : MainAPI() {
                 val arrayContent = arrayMatch.groupValues[2]
                 println("✅ Array encontrado: nome='$arrayName'")
                 
-                // PROCURA O NÚMERO MÁGICO - está no forEach, última linha
-                // Padrão: ... - 19667483 ... 
+                // PROCURA O NÚMERO MÁGICO (última ocorrência)
                 val magicNumberPattern = Regex("""- (\d+)""")
                 val magicMatches = magicNumberPattern.findAll(scriptContent).toList()
                 
                 if (magicMatches.isNotEmpty()) {
-                    // Pega o ÚLTIMO número encontrado (que é o do forEach)
                     val lastMagicMatch = magicMatches.last()
                     val magicNumber = lastMagicMatch.groupValues[1].toInt()
                     println("✅ Número mágico encontrado: $magicNumber")
@@ -357,6 +377,7 @@ class ReiDosCanais : MainAPI() {
                         // Tenta parsear como JSON
                         mapper.readTree(arrayContent).map { it.asText() }
                     } catch (e: Exception) {
+                        println("⚠️ Falha no parse JSON: ${e.message}")
                         // Fallback: parse manual
                         arrayContent.removeSurrounding("[", "]")
                             .split(",")
@@ -369,7 +390,7 @@ class ReiDosCanais : MainAPI() {
             }
         }
         
-        // Se não encontrou com o padrão completo, tenta encontrar o número mágico em qualquer lugar
+        // Se não encontrou, tenta método alternativo
         println("⚠️ Tentando método alternativo...")
         
         // Procura por qualquer array grande
@@ -382,14 +403,14 @@ class ReiDosCanais : MainAPI() {
             if (arrayContent.contains("\"") && arrayContent.length > 100) {
                 println("✅ Possível array encontrado")
                 
-                // Procura o número mágico (última ocorrência)
+                // Procura o número mágico
                 val anyMagicPattern = Regex("""- (\d+)""")
                 val magicMatches = anyMagicPattern.findAll(html).toList()
                 
                 if (magicMatches.isNotEmpty()) {
                     val lastMagicMatch = magicMatches.last()
                     val magicNumber = lastMagicMatch.groupValues[1].toInt()
-                    println("✅ Possível número mágico encontrado: $magicNumber")
+                    println("✅ Possível número mágico: $magicNumber")
                     
                     // Parseia o array
                     val items = arrayContent.removeSurrounding("[", "]")
