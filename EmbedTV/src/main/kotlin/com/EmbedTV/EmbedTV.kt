@@ -246,10 +246,10 @@ class EmbedTv : MainAPI() {
                 source = name,
                 name = "EmbedTv Live",
                 url = finalUrl,
-                referrer = baseUrl  // ← CORRIGIDO: 'referrer' com dois 'r's
+                quality = Qualities.Unknown.value
             ) {
+                this.referer = baseUrl  // ← AGORA É PROPRIEDADE DO BUILDER
                 this.type = ExtractorLinkType.M3U8
-                this.quality = Qualities.Unknown.value
                 this.headers = headers
                 this.isM3u8 = true
             }
@@ -260,5 +260,6 @@ class EmbedTv : MainAPI() {
     } catch (e: Exception) {
         return false
     }
-    }
 }
+}
+    
