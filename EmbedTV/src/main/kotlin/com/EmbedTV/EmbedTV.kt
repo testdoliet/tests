@@ -26,6 +26,9 @@ class EmbedTv : MainAPI() {
     private val baseUrl = "https://www3.embedtv.best"
     private val decryptionKey = "embedtv@123"
 
+    // Cache simples para armazenar os dados dos canais da página inicial
+    private var cachedChannels: Map<String, Pair<String, String>>? = null
+
     // Função para redimensionar imagens (adaptado do FilmesPK)
     private fun fixImageUrl(url: String): String {
         return when {
@@ -62,6 +65,60 @@ class EmbedTv : MainAPI() {
             println("❌ [EmbedTv] Erro na descriptografia: ${e.message}")
             null
         }
+    }
+
+    // Função para carregar e cachear todos os canais da página inicial
+    private suspend fun loadAllChannels(): Map<String, Pair<String, String>> {
+        // Se já temos cache, retorna ele
+        cachedChannels?.let { return it }
+
+        println("📥 [EmbedTv] Carregando cache de canais da página inicial...")
+        val doc = app.get(mainSite).document
+        val channelsMap = mutableMapOf<String, Pair<String, String>>()
+        
+        // Jogos de Hoje
+        val jogosSection = doc.selectFirst(".session.futebol")
+        jogosSection?.select(".card")?.forEach { card ->
+            val channelId = card.attr("data-channel")
+            if (channelId.isNotBlank()) {
+                val nameElement = card.selectFirst("h3")
+                val channelName = nameElement?.text()?.trim() ?: return@forEach
+                
+                val imgElement = card.selectFirst("img")
+                val imgSrc = imgElement?.attr("src")?.trim()
+                val imgDataSrc = imgElement?.attr("data-src")?.trim()
+                val imageUrl = if (!imgSrc.isNullOrBlank()) imgSrc else imgDataSrc ?: return@forEach
+                
+                val timeElement = card.selectFirst("span")
+                val time = timeElement?.text()?.trim()
+                val displayName = if (!time.isNullOrBlank()) "$channelName ($time)" else channelName
+                
+                channelsMap[channelId] = Pair(displayName, imageUrl)
+            }
+        }
+        
+        // Categorias
+        val categories = doc.select(".categorie")
+        categories.forEach { category ->
+            category.select(".card").forEach { card ->
+                val channelId = card.attr("data-channel")
+                if (channelId.isNotBlank() && !channelsMap.containsKey(channelId)) {
+                    val nameElement = card.selectFirst("h3")
+                    val channelName = nameElement?.text()?.trim() ?: return@forEach
+                    
+                    val imgElement = card.selectFirst("img")
+                    val imgSrc = imgElement?.attr("src")?.trim()
+                    val imgDataSrc = imgElement?.attr("data-src")?.trim()
+                    val imageUrl = if (!imgSrc.isNullOrBlank()) imgSrc else imgDataSrc ?: return@forEach
+                    
+                    channelsMap[channelId] = Pair(channelName, imageUrl)
+                }
+            }
+        }
+        
+        println("✅ [EmbedTv] Cache carregado com ${channelsMap.size} canais")
+        cachedChannels = channelsMap
+        return channelsMap
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
@@ -165,43 +222,28 @@ class EmbedTv : MainAPI() {
         val channelId = url.substringAfterLast("/")
         println("📥 [EmbedTv] Carregando detalhes do canal: $channelId")
         
-        var channelName = "Canal $channelId"
-        var channelImage = "https://embedtv.best/assets/icon.png"
+        // Carrega todos os canais do cache
+        val allChannels = loadAllChannels()
         
+        // Pega os dados do canal específico do cache
+        val channelData = allChannels[channelId]
+        val channelName = channelData?.first ?: "Canal $channelId"
+        val channelImage = channelData?.second ?: "https://embedtv.best/assets/icon.png"
+
+        // Tenta buscar informações adicionais da página do canal (opcional)
         try {
-            val doc = app.get(mainSite).document
+            val doc = app.get(url).document
             val card = doc.select(".card[data-channel=\"$channelId\"]").firstOrNull()
             
             if (card != null) {
-                println("✅ [EmbedTv] Card encontrado para $channelId")
-                
-                val nameElement = card.selectFirst("h3")
-                val name = nameElement?.text()?.trim()
-                if (!name.isNullOrBlank()) {
-                    channelName = name
-                }
-                
-                val imgElement = card.selectFirst("img")
-                if (imgElement != null) {
-                    val src = imgElement.attr("src").trim()
-                    val dataSrc = imgElement.attr("data-src").trim()
-                    val image = if (src.isNotBlank()) src else dataSrc
-                    if (image.isNotBlank()) {
-                        channelImage = fixImageUrl(image)
-                    }
-                }
-                
                 val timeElement = card.selectFirst("span")
                 val time = timeElement?.text()?.trim()
                 if (!time.isNullOrBlank()) {
-                    channelName = "$channelName ($time)"
                     println("⏰ [EmbedTv] Horário: $time")
                 }
-            } else {
-                println("⚠️ [EmbedTv] Card não encontrado para $channelId")
             }
         } catch (e: Exception) {
-            println("❌ [EmbedTv] Erro ao carregar detalhes: ${e.message}")
+            // Ignora erros, já temos os dados do cache
         }
 
         return newMovieLoadResponse(
@@ -210,46 +252,29 @@ class EmbedTv : MainAPI() {
             TvType.Live,
             url
         ) {
-            this.posterUrl = channelImage
+            this.posterUrl = fixImageUrl(channelImage)
             this.plot = "Assista $channelName ao vivo no EmbedTv"
         }
     }
 
     override suspend fun search(query: String): List<SearchResponse>? {
         println("🔍 [EmbedTv] Buscando por: $query")
-        val doc = app.get(mainSite).document
-        val allCards = doc.select(".card")
+        val allChannels = loadAllChannels()
         val results = mutableListOf<SearchResponse>()
         
-        println("📊 [EmbedTv] Total de ${allCards.size} cards para buscar")
-        
-        for (card in allCards) {
-            val channelId = card.attr("data-channel")
-            if (channelId.isBlank()) continue
-            
-            val nameElement = card.selectFirst("h3")
-            val channelName = nameElement?.text()?.trim() ?: continue
-            
-            if (!channelName.contains(query, ignoreCase = true)) continue
-            
-            val imgElement = card.selectFirst("img")
-            val imgSrc = imgElement?.attr("src")?.trim()
-            val imgDataSrc = imgElement?.attr("data-src")?.trim()
-            val imageUrl = if (!imgSrc.isNullOrBlank()) imgSrc else imgDataSrc ?: continue
-            
-            val timeElement = card.selectFirst("span")
-            val time = timeElement?.text()?.trim()
-            val displayName = if (!time.isNullOrBlank()) "$channelName ($time)" else channelName
-            
-            results.add(
-                newLiveSearchResponse(
-                    displayName,
-                    "$baseUrl/$channelId",
-                    TvType.Live
-                ) {
-                    this.posterUrl = fixImageUrl(imageUrl)
-                }
-            )
+        allChannels.forEach { (channelId, data) ->
+            val (channelName, imageUrl) = data
+            if (channelName.contains(query, ignoreCase = true)) {
+                results.add(
+                    newLiveSearchResponse(
+                        channelName,
+                        "$baseUrl/$channelId",
+                        TvType.Live
+                    ) {
+                        this.posterUrl = fixImageUrl(imageUrl)
+                    }
+                )
+            }
         }
         
         println("✅ [EmbedTv] ${results.size} resultados encontrados")
