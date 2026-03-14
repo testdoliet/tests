@@ -26,15 +26,6 @@ class EmbedTv : MainAPI() {
     private val baseUrl = "https://www3.embedtv.best"
     private val decryptionKey = "embedtv@123"
 
-    // Cache para armazenar os dados dos canais da página inicial
-    private var cachedChannels: Map<String, Pair<String, String>>? = null
-    
-    // Cache separado para jogos (com nomes diferentes)
-    private var cachedGames: MutableMap<String, Pair<String, String>> = mutableMapOf()
-    
-    private var cacheLoadTime: Long = 0
-    private val CACHE_DURATION = 5 * 60 * 1000 // 5 minutos
-
     // Função para redimensionar imagens
     private fun fixImageUrl(url: String): String {
         return when {
@@ -71,81 +62,13 @@ class EmbedTv : MainAPI() {
         }
     }
 
-    // Função para carregar e cachear todos os canais da página inicial
-    private suspend fun loadAllChannels(): Map<String, Pair<String, String>> {
-        // Se já temos cache e ele não expirou, retorna ele
-        cachedChannels?.let {
-            if (System.currentTimeMillis() - cacheLoadTime < CACHE_DURATION) {
-                println("📥 [EmbedTv] Usando cache existente (${it.size} canais)")
-                return it
-            }
-        }
-
-        println("📥 [EmbedTv] Carregando cache de canais da página inicial...")
-        val doc = app.get(mainSite).document
-        val channelsMap = mutableMapOf<String, Pair<String, String>>()
-        
-        // Limpar cache de jogos
-        cachedGames.clear()
-        
-        // Primeiro, carregar JOGOS (seção futebol) - esses têm nomes diferentes
-        val jogosSection = doc.selectFirst(".session.futebol")
-        jogosSection?.select(".card")?.forEach { card ->
-            val channelId = card.attr("data-channel")
-            if (channelId.isNotBlank()) {
-                val nameElement = card.selectFirst("h3")
-                val gameName = nameElement?.text()?.trim() ?: return@forEach
-                
-                val imgElement = card.selectFirst("img")
-                val imgSrc = imgElement?.attr("src")?.trim()
-                val imgDataSrc = imgElement?.attr("data-src")?.trim()
-                val imageUrl = if (!imgSrc.isNullOrBlank()) imgSrc else imgDataSrc ?: return@forEach
-                
-                val timeElement = card.selectFirst("span")
-                val time = timeElement?.text()?.trim()
-                val displayName = if (!time.isNullOrBlank()) "$gameName ($time)" else gameName
-                
-                // Guarda no cache de jogos (com o nome do jogo)
-                cachedGames[channelId] = Pair(displayName, imageUrl)
-                println("🎮 Jogo: $channelId -> $displayName")
-            }
-        }
-        
-        // Depois, carregar canais fixos das categorias (esses têm as logos oficiais)
-        val categories = doc.select(".categorie")
-        categories.forEach { category ->
-            val categoryTitle = category.selectFirst(".title")?.text()?.trim() ?: return@forEach
-            
-            category.select(".card").forEach { card ->
-                val channelId = card.attr("data-channel")
-                if (channelId.isNotBlank()) {
-                    val nameElement = card.selectFirst("h3")
-                    val channelName = nameElement?.text()?.trim() ?: return@forEach
-                    
-                    val imgElement = card.selectFirst("img")
-                    val imgSrc = imgElement?.attr("src")?.trim()
-                    val imgDataSrc = imgElement?.attr("data-src")?.trim()
-                    val imageUrl = if (!imgSrc.isNullOrBlank()) imgSrc else imgDataSrc ?: return@forEach
-                    
-                    channelsMap[channelId] = Pair(channelName, imageUrl)
-                    println("📺 Canal: $channelId -> $channelName")
-                }
-            }
-        }
-        
-        println("✅ [EmbedTv] Cache carregado: ${channelsMap.size} canais fixos, ${cachedGames.size} jogos")
-        cacheLoadTime = System.currentTimeMillis()
-        cachedChannels = channelsMap
-        return channelsMap
-    }
-
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         println("📥 [EmbedTv] Carregando página principal...")
         val doc = app.get(mainSite).document
         
         val allCategories = mutableListOf<HomePageList>()
         
-        // Jogos de Hoje (seção de eventos)
+        // Jogos de Hoje
         val jogosSection = doc.selectFirst(".session.futebol")
         if (jogosSection != null) {
             println("✅ [EmbedTv] Seção de jogos encontrada")
@@ -240,90 +163,68 @@ class EmbedTv : MainAPI() {
         val channelId = url.substringAfterLast("/")
         println("📥 [EmbedTv] Carregando detalhes do canal: $channelId")
         
-        // Carrega o cache (só carrega uma vez a cada 5 minutos)
-        loadAllChannels()
+        // Busca a imagem diretamente na página principal usando o data-channel
+        val mainPage = app.get(mainSite).document
+        val channelCard = mainPage.selectFirst(".card[data-channel=\"$channelId\"]")
         
-        // PRIORIDADE 1: É um jogo? (tem no cache de jogos)
-        val gameData = cachedGames[channelId]
-        if (gameData != null) {
-            println("🎮 É um jogo! Usando dados do jogo")
-            val (gameName, gameImage) = gameData
-            return newMovieLoadResponse(
-                gameName,
-                url,
-                TvType.Live,
-                url
-            ) {
-                this.posterUrl = fixImageUrl(gameImage)
-                this.plot = "Assista $gameName ao vivo no EmbedTv"
-            }
-        }
-        
-        // PRIORIDADE 2: É um canal fixo?
-        val channelData = cachedChannels?.get(channelId)
-        if (channelData != null) {
-            println("📺 É um canal fixo! Usando logo do canal")
-            val (channelName, channelImage) = channelData
-            return newMovieLoadResponse(
-                channelName,
-                url,
-                TvType.Live,
-                url
-            ) {
-                this.posterUrl = fixImageUrl(channelImage)
-                this.plot = "Assista $channelName ao vivo no EmbedTv"
-            }
-        }
-        
-        // FALLBACK: Se não encontrou em lugar nenhum
-        println("⚠️ Canal não encontrado no cache, usando fallback")
+        val channelName = channelCard?.selectFirst("h3")?.text()?.trim() ?: "Canal $channelId"
+        val channelImage = channelCard?.selectFirst("img")?.let { img ->
+            img.attr("src").ifEmpty { img.attr("data-src") }
+        } ?: "https://embedtv.best/assets/icon.png"
+
+        // Se tiver horário (jogo), adiciona ao nome
+        val time = channelCard?.selectFirst("span")?.text()?.trim()
+        val displayName = if (!time.isNullOrBlank()) "$channelName ($time)" else channelName
+
+        println("📺 Nome: $displayName")
+        println("🖼️ Imagem: $channelImage")
+
         return newMovieLoadResponse(
-            "Canal $channelId",
+            displayName,
             url,
             TvType.Live,
             url
         ) {
-            this.posterUrl = "https://embedtv.best/assets/icon.png"
-            this.plot = "Assista ao vivo no EmbedTv"
+            this.posterUrl = fixImageUrl(channelImage)
+            this.plot = "Assista $displayName ao vivo no EmbedTv"
         }
     }
 
     override suspend fun search(query: String): List<SearchResponse>? {
         println("🔍 [EmbedTv] Buscando por: $query")
-        loadAllChannels() // Carrega cache
+        val doc = app.get(mainSite).document
+        val allCards = doc.select(".card")
         val results = mutableListOf<SearchResponse>()
         
-        // Buscar primeiro nos jogos
-        cachedGames.forEach { (channelId, data) ->
-            val (name, imageUrl) = data
-            if (name.contains(query, ignoreCase = true)) {
-                results.add(
-                    newLiveSearchResponse(
-                        name,
-                        "$baseUrl/$channelId",
-                        TvType.Live
-                    ) {
-                        this.posterUrl = fixImageUrl(imageUrl)
-                    }
-                )
-            }
-        }
+        println("📊 [EmbedTv] Total de ${allCards.size} cards para buscar")
         
-        // Depois nos canais fixos
-        cachedChannels?.forEach { (channelId, data) ->
-            val (name, imageUrl) = data
-            if (name.contains(query, ignoreCase = true) && 
-                !results.any { it.url == "$baseUrl/$channelId" }) {
-                results.add(
-                    newLiveSearchResponse(
-                        name,
-                        "$baseUrl/$channelId",
-                        TvType.Live
-                    ) {
-                        this.posterUrl = fixImageUrl(imageUrl)
-                    }
-                )
-            }
+        for (card in allCards) {
+            val channelId = card.attr("data-channel")
+            if (channelId.isBlank()) continue
+            
+            val nameElement = card.selectFirst("h3")
+            val channelName = nameElement?.text()?.trim() ?: continue
+            
+            if (!channelName.contains(query, ignoreCase = true)) continue
+            
+            val imgElement = card.selectFirst("img")
+            val imgSrc = imgElement?.attr("src")?.trim()
+            val imgDataSrc = imgElement?.attr("data-src")?.trim()
+            val imageUrl = if (!imgSrc.isNullOrBlank()) imgSrc else imgDataSrc ?: continue
+            
+            val timeElement = card.selectFirst("span")
+            val time = timeElement?.text()?.trim()
+            val displayName = if (!time.isNullOrBlank()) "$channelName ($time)" else channelName
+            
+            results.add(
+                newLiveSearchResponse(
+                    displayName,
+                    "$baseUrl/$channelId",
+                    TvType.Live
+                ) {
+                    this.posterUrl = fixImageUrl(imageUrl)
+                }
+            )
         }
         
         println("✅ [EmbedTv] ${results.size} resultados encontrados")
