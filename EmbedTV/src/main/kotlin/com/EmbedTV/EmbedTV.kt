@@ -39,7 +39,7 @@ class EmbedTv : MainAPI() {
                 val jogosList = mutableListOf<SearchResponse>()
                 val jogosCards = jogosSection.select(".card")
                 
-                jogosCards.forEach { card ->
+                for (card in jogosCards) {
                     val channelId = card.attr("data-channel")
                     val channelNameElement = card.selectFirst("h3")
                     val channelName = channelNameElement?.text()
@@ -72,14 +72,15 @@ class EmbedTv : MainAPI() {
             // Todas as categorias
             val categories = document.select(".categorie")
             
-            categories.forEach { category ->
+            for (category in categories) {
                 val titleElement = category.selectFirst(".title")
                 val categoryTitle = titleElement?.text()
                 
                 if (!categoryTitle.isNullOrBlank()) {
                     val channelCards = category.select(".card")
+                    val channelList = mutableListOf<SearchResponse>()
                     
-                    val channelList = channelCards.mapNotNull { card ->
+                    for (card in channelCards) {
                         val channelId = card.attr("data-channel")
                         val channelNameElement = card.selectFirst("h3")
                         val channelName = channelNameElement?.text()
@@ -88,14 +89,16 @@ class EmbedTv : MainAPI() {
                             val imgElement = card.selectFirst("img")
                             val imageUrl = imgElement?.attr("src") ?: imgElement?.attr("data-src") ?: ""
                             
-                            newLiveSearchResponse(
-                                channelName,
-                                "$baseUrl/$channelId",
-                                TvType.Live
-                            ) {
-                                this.posterUrl = fixUrl(imageUrl)
-                            }
-                        } else null
+                            channelList.add(
+                                newLiveSearchResponse(
+                                    channelName,
+                                    "$baseUrl/$channelId",
+                                    TvType.Live
+                                ) {
+                                    this.posterUrl = fixUrl(imageUrl)
+                                }
+                            )
+                        }
                     }
                     
                     if (channelList.isNotEmpty()) {
@@ -172,7 +175,7 @@ class EmbedTv : MainAPI() {
             val document = app.get(mainSite).document
             val allCards = document.select(".card")
             
-            val matchingChannels = allCards.mapNotNull { card ->
+            for (card in allCards) {
                 val channelId = card.attr("data-channel")
                 val channelNameElement = card.selectFirst("h3")
                 val channelName = channelNameElement?.text()
@@ -187,17 +190,18 @@ class EmbedTv : MainAPI() {
                     
                     val displayName = if (time.isNotBlank()) "$channelName ($time)" else channelName
                     
-                    newLiveSearchResponse(
-                        displayName,
-                        "$baseUrl/$channelId",
-                        TvType.Live
-                    ) {
-                        this.posterUrl = fixUrl(imageUrl)
-                    }
-                } else null
+                    results.add(
+                        newLiveSearchResponse(
+                            displayName,
+                            "$baseUrl/$channelId",
+                            TvType.Live
+                        ) {
+                            this.posterUrl = fixUrl(imageUrl)
+                        }
+                    )
+                }
             }
             
-            results.addAll(matchingChannels)
         } catch (e: Exception) {
             e.printStackTrace()
             return null
