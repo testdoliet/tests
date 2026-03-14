@@ -226,10 +226,10 @@ class EmbedTv : MainAPI() {
         
         var finalUrl = dataMatch?.groupValues?.get(1)
         
-        // Se não encontrou, procura link direto .m3u8 (igual ao EmbedTVOnline)
+        // Se não encontrou, procura link direto .m3u8
         if (finalUrl == null) {
-            val regex = Regex("""https?://[^\s"'<>]+\.m3u8[^\s"'<>]*""")
-            finalUrl = regex.find(html)?.value
+            val directPattern = Regex("""https?://[^\s"'<>]+\.m3u8[^\s"'<>]*""")
+            finalUrl = directPattern.find(html)?.value
         }
         
         if (finalUrl == null) return false
@@ -241,18 +241,17 @@ class EmbedTv : MainAPI() {
             "accept" to "*/*"
         )
         
-        // EXATAMENTE igual ao EmbedTVOnline
+        // EXATAMENTE igual ao EmbedTVOnline - sem parâmetros extras
         callback.invoke(
             newExtractorLink(
                 source = name,
                 name = "EmbedTv Live",
-                url = finalUrl,
-                quality = Qualities.Unknown.value
+                url = finalUrl
             ) {
-                this.referer = baseUrl  // ← AGORA É PROPRIEDADE DO BUILDER
+                this.referer = baseUrl
                 this.type = ExtractorLinkType.M3U8
                 this.headers = headers
-                this.isM3u8 = true
+                this.quality = Qualities.Unknown.value
             }
         )
         
