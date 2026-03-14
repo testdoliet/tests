@@ -24,6 +24,7 @@ class EmbedTv : MainAPI() {
     private val baseUrl = "https://www3.embedtv.best"
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
+        println("📥 [EmbedTv] Carregando página principal...")
         val doc = app.get(mainSite).document
         
         // Jogos de Hoje
@@ -31,7 +32,9 @@ class EmbedTv : MainAPI() {
         val jogosList = mutableListOf<SearchResponse>()
         
         if (jogosSection != null) {
+            println("✅ [EmbedTv] Seção de jogos encontrada")
             val jogosCards = jogosSection.select(".card")
+            println("📊 [EmbedTv] ${jogosCards.size} jogos encontrados")
             
             for (card in jogosCards) {
                 val channelId = card.attr("data-channel")
@@ -63,10 +66,14 @@ class EmbedTv : MainAPI() {
                     )
                 }
             }
+        } else {
+            println("⚠️ [EmbedTv] Seção de jogos não encontrada")
         }
         
         // Categorias
         val categories = doc.select(".categorie")
+        println("📊 [EmbedTv] ${categories.size} categorias encontradas")
+        
         val allCategories = mutableListOf<HomePageList>()
         
         if (jogosList.isNotEmpty()) {
@@ -77,6 +84,8 @@ class EmbedTv : MainAPI() {
             val titleElement = category.selectFirst(".title")
             val categoryTitle = titleElement?.text()?.trim()
             if (categoryTitle.isNullOrBlank()) continue
+            
+            println("📁 [EmbedTv] Processando categoria: $categoryTitle")
             
             val channelList = mutableListOf<SearchResponse>()
             val cards = category.select(".card")
@@ -108,19 +117,23 @@ class EmbedTv : MainAPI() {
             }
             
             if (channelList.isNotEmpty()) {
+                println("✅ [EmbedTv] ${channelList.size} canais em $categoryTitle")
                 allCategories.add(HomePageList(categoryTitle, channelList))
             }
         }
         
         if (allCategories.isEmpty()) {
+            println("❌ [EmbedTv] Nenhum canal encontrado!")
             throw ErrorLoadingException("Nenhum canal encontrado.")
         }
         
+        println("✅ [EmbedTv] Total de ${allCategories.size} categorias carregadas")
         return newHomePageResponse(allCategories)
     }
 
     override suspend fun load(url: String): LoadResponse {
         val channelId = url.substringAfterLast("/")
+        println("📥 [EmbedTv] Carregando detalhes do canal: $channelId")
         
         var channelName = "Canal $channelId"
         var channelImage = "https://embedtv.best/assets/icon.png"
@@ -130,6 +143,8 @@ class EmbedTv : MainAPI() {
             val card = doc.select(".card[data-channel=\"$channelId\"]").firstOrNull()
             
             if (card != null) {
+                println("✅ [EmbedTv] Card encontrado para $channelId")
+                
                 val nameElement = card.selectFirst("h3")
                 val name = nameElement?.text()?.trim()
                 if (!name.isNullOrBlank()) {
@@ -150,10 +165,13 @@ class EmbedTv : MainAPI() {
                 val time = timeElement?.text()?.trim()
                 if (!time.isNullOrBlank()) {
                     channelName = "$channelName ($time)"
+                    println("⏰ [EmbedTv] Horário: $time")
                 }
+            } else {
+                println("⚠️ [EmbedTv] Card não encontrado para $channelId")
             }
         } catch (e: Exception) {
-            // Ignora
+            println("❌ [EmbedTv] Erro ao carregar detalhes: ${e.message}")
         }
 
         return newMovieLoadResponse(
@@ -168,9 +186,12 @@ class EmbedTv : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse>? {
+        println("🔍 [EmbedTv] Buscando por: $query")
         val doc = app.get(mainSite).document
         val allCards = doc.select(".card")
         val results = mutableListOf<SearchResponse>()
+        
+        println("📊 [EmbedTv] Total de ${allCards.size} cards para buscar")
         
         for (card in allCards) {
             val channelId = card.attr("data-channel")
@@ -205,60 +226,83 @@ class EmbedTv : MainAPI() {
             }
         }
         
+        println("✅ [EmbedTv] ${results.size} resultados encontrados")
         return results
     }
 
     override suspend fun loadLinks(
-    data: String,
-    isCasting: Boolean,
-    subtitleCallback: (SubtitleFile) -> Unit,
-    callback: (ExtractorLink) -> Unit
-): Boolean {
-    val channelUrl = data.ifEmpty { return false }
-    
-    try {
-        val doc = app.get(channelUrl).document
-        val html = doc.html()
+        data: String,
+        isCasting: Boolean,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        val channelUrl = data.ifEmpty { return false }
+        println("\n🎬 [EmbedTv] Carregando links para: $channelUrl")
         
-        // Procura data.channel.stream
-        val dataPattern = Regex("""data\.channel\.stream\s*=\s*"([^"]+\.m3u8[^"]*)""")
-        val dataMatch = dataPattern.find(html)
-        
-        var finalUrl = dataMatch?.groupValues?.get(1)
-        
-        // Se não encontrou, procura link direto .m3u8
-        if (finalUrl == null) {
-            val directPattern = Regex("""https?://[^\s"'<>]+\.m3u8[^\s"'<>]*""")
-            finalUrl = directPattern.find(html)?.value
-        }
-        
-        if (finalUrl == null) return false
-        
-        val headers = mapOf(
-            "referer" to baseUrl,
-            "origin" to baseUrl,
-            "user-agent" to USER_AGENT,
-            "accept" to "*/*"
-        )
-        
-        // EXATAMENTE igual ao EmbedTVOnline - sem parâmetros extras
-        callback.invoke(
-            newExtractorLink(
-                source = name,
-                name = "EmbedTv Live",
-                url = finalUrl
-            ) {
-                this.referer = baseUrl
-                this.type = ExtractorLinkType.M3U8
-                this.headers = headers
-                this.quality = Qualities.Unknown.value
+        try {
+            val doc = app.get(channelUrl).document
+            val html = doc.html()
+            
+            // Procura data.channel.stream
+            println("🔍 [EmbedTv] Procurando data.channel.stream...")
+            val dataPattern = Regex("""data\.channel\.stream\s*=\s*"([^"]+\.m3u8[^"]*)""")
+            val dataMatch = dataPattern.find(html)
+            
+            var finalUrl = dataMatch?.groupValues?.get(1)
+            
+            if (finalUrl != null) {
+                println("✅ [EmbedTv] Link encontrado em data.channel.stream")
+            } else {
+                println("⚠️ [EmbedTv] data.channel.stream não encontrado, procurando link direto...")
+                val directPattern = Regex("""https?://[^\s"'<>]+\.m3u8[^\s"'<>]*""")
+                finalUrl = directPattern.find(html)?.value
+                if (finalUrl != null) {
+                    println("✅ [EmbedTv] Link direto encontrado")
+                }
             }
-        )
-        
-        return true
-        
-    } catch (e: Exception) {
-        return false
+            
+            if (finalUrl == null) {
+                println("❌ [EmbedTv] Nenhum link encontrado!")
+                return false
+            }
+            
+            println("📺 [EmbedTv] URL encontrada: $finalUrl")
+            
+            val headers = mapOf(
+                "referer" to baseUrl,
+                "origin" to baseUrl,
+                "user-agent" to USER_AGENT,
+                "accept" to "*/*"
+            )
+            
+            callback.invoke(
+                newExtractorLink(
+                    source = name,
+                    name = "EmbedTv Live",
+                    url = finalUrl
+                ) {
+                    this.referer = baseUrl
+                    this.type = ExtractorLinkType.M3U8
+                    this.headers = headers
+                    this.quality = Qualities.Unknown.value
+                }
+            )
+            
+            println("✅ [EmbedTv] Link enviado com sucesso!")
+            return true
+            
+        } catch (e: Exception) {
+            println("❌ [EmbedTv] Erro: ${e.message}")
+            return false
+        }
     }
-}
+
+    private fun fixUrl(url: String): String {
+        return when {
+            url.startsWith("//") -> "https:$url"
+            url.startsWith("http") -> url
+            url.startsWith("/") -> "$mainSite$url"
+            else -> url
+        }
+    }
 }
