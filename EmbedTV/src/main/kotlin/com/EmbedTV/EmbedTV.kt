@@ -209,64 +209,56 @@ class EmbedTv : MainAPI() {
     }
 
     override suspend fun loadLinks(
-        data: String,
-        isCasting: Boolean,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        val channelUrl = data.ifEmpty { return false }
+    data: String,
+    isCasting: Boolean,
+    subtitleCallback: (SubtitleFile) -> Unit,
+    callback: (ExtractorLink) -> Unit
+): Boolean {
+    val channelUrl = data.ifEmpty { return false }
+    
+    try {
+        val doc = app.get(channelUrl).document
+        val html = doc.html()
         
-        try {
-            val doc = app.get(channelUrl).document
-            val html = doc.html()
-            
-            // Procura data.channel.stream
-            val dataPattern = Regex("""data\.channel\.stream\s*=\s*"([^"]+\.m3u8[^"]*)""")
-            val dataMatch = dataPattern.find(html)
-            
-            var finalUrl = dataMatch?.groupValues?.get(1)
-            
-            // Se não encontrou, procura link direto .m3u8
-            if (finalUrl == null) {
-                val directPattern = Regex("""(https?://[^"'\s]+\.m3u8[^"'\s]*)""")
-                finalUrl = directPattern.find(html)?.groupValues?.get(1)
+        // Procura data.channel.stream
+        val dataPattern = Regex("""data\.channel\.stream\s*=\s*"([^"]+\.m3u8[^"]*)""")
+        val dataMatch = dataPattern.find(html)
+        
+        var finalUrl = dataMatch?.groupValues?.get(1)
+        
+        // Se não encontrou, procura link direto .m3u8
+        if (finalUrl == null) {
+            val directPattern = Regex("""(https?://[^"'\s]+\.m3u8[^"'\s]*)""")
+            finalUrl = directPattern.find(html)?.groupValues?.get(1)
+        }
+        
+        if (finalUrl == null) return false
+        
+        val headers = mapOf(
+            "Referer" to baseUrl,
+            "Origin" to baseUrl,
+            "User-Agent" to USER_AGENT,
+            "Accept" to "*/*"
+        )
+        
+        callback.invoke(
+            newExtractorLink(
+                source = name,
+                name = "EmbedTv Live",
+                url = finalUrl,
+                referrer = baseUrl  // ← CORRIGIDO: 'referrer' com dois 'r's
+            ) {
+                this.type = ExtractorLinkType.M3U8
+                this.quality = Qualities.Unknown.value
+                this.headers = headers
+                this.isM3u8 = true
             }
-            
-            if (finalUrl == null) return false
-            
-            val headers = mapOf(
-                "Referer" to baseUrl,
-                "Origin" to baseUrl,
-                "User-Agent" to USER_AGENT,
-                "Accept" to "*/*"
-            )
-            
-            callback(
-                newExtractorLink(
-                    source = name,
-                    name = "EmbedTv Live",
-                    url = finalUrl,
-                    referer = baseUrl
-                ) {
-                    this.type = ExtractorLinkType.M3U8
-                    this.headers = headers
-                    this.quality = Qualities.Unknown.value
-                }
-            )
-            
-            return true
-            
-        } catch (e: Exception) {
-            return false
-        }
+        )
+        
+        return true
+        
+    } catch (e: Exception) {
+        return false
     }
-
-    private fun fixUrl(url: String): String {
-        return when {
-            url.startsWith("//") -> "https:$url"
-            url.startsWith("http") -> url
-            url.startsWith("/") -> "$mainSite$url"
-            else -> url
-        }
     }
 }
