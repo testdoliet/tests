@@ -1,10 +1,10 @@
 package com.EmbedTV
 
+import android.util.Base64
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.plugins.BasePlugin
 import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
-import android.util.Base64
 import java.io.ByteArrayOutputStream
 
 @CloudstreamPlugin
@@ -26,22 +26,12 @@ class EmbedTv : MainAPI() {
     private val baseUrl = "https://www3.embedtv.best"
     private val decryptionKey = "embedtv@123"
 
-    /**
-     * Replica a função dc() do JavaScript para descriptografar a URL do stream
-     * 1. Base64 decode
-     * 2. Inverter a string
-     * 3. XOR com a chave "embedtv@123"
-     */
     private fun decryptStreamUrl(encodedString: String): String? {
         return try {
-            // 1. Base64 decode
             val decodedBytes = Base64.decode(encodedString, Base64.DEFAULT)
-            val decodedString = String(decodedBytes, Charsets.ISO_8859_1) // Usar ISO-8859-1 (latin1)
-            
-            // 2. Inverter a string
+            val decodedString = String(decodedBytes, Charsets.ISO_8859_1)
             val reversedString = decodedString.reversed()
             
-            // 3. XOR byte a byte com a chave
             val keyBytes = decryptionKey.toByteArray(Charsets.ISO_8859_1)
             val inputBytes = reversedString.toByteArray(Charsets.ISO_8859_1)
             val outputStream = ByteArrayOutputStream()
@@ -62,63 +52,55 @@ class EmbedTv : MainAPI() {
         println("📥 [EmbedTv] Carregando página principal...")
         val doc = app.get(mainSite).document
         
-        // Jogos de Hoje
-        val jogosSection = doc.selectFirst(".session.futebol")
-        val jogosList = mutableListOf<SearchResponse>()
+        val allCategories = mutableListOf<HomePageList>()
         
+        // Jogos de Hoje (formato horizontal)
+        val jogosSection = doc.selectFirst(".session.futebol")
         if (jogosSection != null) {
             println("✅ [EmbedTv] Seção de jogos encontrada")
             val jogosCards = jogosSection.select(".card")
             println("📊 [EmbedTv] ${jogosCards.size} jogos encontrados")
             
+            val jogosList = mutableListOf<SearchResponse>()
             for (card in jogosCards) {
                 val channelId = card.attr("data-channel")
                 if (channelId.isBlank()) continue
                 
                 val nameElement = card.selectFirst("h3")
-                val channelName = nameElement?.text()?.trim()
-                if (channelName.isNullOrBlank()) continue
+                val channelName = nameElement?.text()?.trim() ?: continue
                 
                 val imgElement = card.selectFirst("img")
                 val imgSrc = imgElement?.attr("src")?.trim()
                 val imgDataSrc = imgElement?.attr("data-src")?.trim()
-                val imageUrl = if (!imgSrc.isNullOrBlank()) imgSrc else imgDataSrc
+                val imageUrl = if (!imgSrc.isNullOrBlank()) imgSrc else imgDataSrc ?: continue
                 
                 val timeElement = card.selectFirst("span")
                 val time = timeElement?.text()?.trim()
-                
                 val displayName = if (!time.isNullOrBlank()) "$channelName ($time)" else channelName
                 
-                if (channelId.isNotBlank() && imageUrl != null) {
-                    jogosList.add(
-                        newLiveSearchResponse(
-                            displayName,
-                            "$baseUrl/$channelId",
-                            TvType.Live
-                        ) {
-                            this.posterUrl = fixUrl(imageUrl)
-                        }
-                    )
-                }
+                jogosList.add(
+                    newLiveSearchResponse(
+                        displayName,
+                        "$baseUrl/$channelId",
+                        TvType.Live
+                    ) {
+                        this.posterUrl = fixUrl(imageUrl)
+                    }
+                )
             }
-        } else {
-            println("⚠️ [EmbedTv] Seção de jogos não encontrada")
+            
+            if (jogosList.isNotEmpty()) {
+                allCategories.add(HomePageList("📺 Jogos de Hoje", jogosList, isHorizontalImages = true))
+            }
         }
         
-        // Categorias
+        // Categorias (todas em formato horizontal)
         val categories = doc.select(".categorie")
         println("📊 [EmbedTv] ${categories.size} categorias encontradas")
         
-        val allCategories = mutableListOf<HomePageList>()
-        
-        if (jogosList.isNotEmpty()) {
-            allCategories.add(HomePageList("📺 Jogos de Hoje", jogosList))
-        }
-        
         for (category in categories) {
             val titleElement = category.selectFirst(".title")
-            val categoryTitle = titleElement?.text()?.trim()
-            if (categoryTitle.isNullOrBlank()) continue
+            val categoryTitle = titleElement?.text()?.trim() ?: continue
             
             println("📁 [EmbedTv] Processando categoria: $categoryTitle")
             
@@ -130,30 +112,27 @@ class EmbedTv : MainAPI() {
                 if (channelId.isBlank()) continue
                 
                 val nameElement = card.selectFirst("h3")
-                val channelName = nameElement?.text()?.trim()
-                if (channelName.isNullOrBlank()) continue
+                val channelName = nameElement?.text()?.trim() ?: continue
                 
                 val imgElement = card.selectFirst("img")
                 val imgSrc = imgElement?.attr("src")?.trim()
                 val imgDataSrc = imgElement?.attr("data-src")?.trim()
-                val imageUrl = if (!imgSrc.isNullOrBlank()) imgSrc else imgDataSrc
+                val imageUrl = if (!imgSrc.isNullOrBlank()) imgSrc else imgDataSrc ?: continue
                 
-                if (channelId.isNotBlank() && imageUrl != null) {
-                    channelList.add(
-                        newLiveSearchResponse(
-                            channelName,
-                            "$baseUrl/$channelId",
-                            TvType.Live
-                        ) {
-                            this.posterUrl = fixUrl(imageUrl)
-                        }
-                    )
-                }
+                channelList.add(
+                    newLiveSearchResponse(
+                        channelName,
+                        "$baseUrl/$channelId",
+                        TvType.Live
+                    ) {
+                        this.posterUrl = fixUrl(imageUrl)
+                    }
+                )
             }
             
             if (channelList.isNotEmpty()) {
                 println("✅ [EmbedTv] ${channelList.size} canais em $categoryTitle")
-                allCategories.add(HomePageList(categoryTitle, channelList))
+                allCategories.add(HomePageList(categoryTitle, channelList, isHorizontalImages = true))
             }
         }
         
@@ -233,32 +212,28 @@ class EmbedTv : MainAPI() {
             if (channelId.isBlank()) continue
             
             val nameElement = card.selectFirst("h3")
-            val channelName = nameElement?.text()?.trim()
-            if (channelName.isNullOrBlank()) continue
+            val channelName = nameElement?.text()?.trim() ?: continue
             
             if (!channelName.contains(query, ignoreCase = true)) continue
             
             val imgElement = card.selectFirst("img")
             val imgSrc = imgElement?.attr("src")?.trim()
             val imgDataSrc = imgElement?.attr("data-src")?.trim()
-            val imageUrl = if (!imgSrc.isNullOrBlank()) imgSrc else imgDataSrc
+            val imageUrl = if (!imgSrc.isNullOrBlank()) imgSrc else imgDataSrc ?: continue
             
             val timeElement = card.selectFirst("span")
             val time = timeElement?.text()?.trim()
-            
             val displayName = if (!time.isNullOrBlank()) "$channelName ($time)" else channelName
             
-            if (imageUrl != null) {
-                results.add(
-                    newLiveSearchResponse(
-                        displayName,
-                        "$baseUrl/$channelId",
-                        TvType.Live
-                    ) {
-                        this.posterUrl = fixUrl(imageUrl)
-                    }
-                )
-            }
+            results.add(
+                newLiveSearchResponse(
+                    displayName,
+                    "$baseUrl/$channelId",
+                    TvType.Live
+                ) {
+                    this.posterUrl = fixUrl(imageUrl)
+                }
+            )
         }
         
         println("✅ [EmbedTv] ${results.size} resultados encontrados")
@@ -278,8 +253,8 @@ class EmbedTv : MainAPI() {
             val doc = app.get(channelUrl).document
             val html = doc.html()
             
-            // ===== PASSO 1: Procurar pela string codificada no padrão dc("...") =====
-            println("🔍 [EmbedTv] Procurando string codificada em dc(\"...\")...")
+            // Procurar pela string codificada no padrão dc("...")
+            println("🔍 [EmbedTv] Procurando string codificada...")
             val encodedPattern = Regex("""dc\("([A-Za-z0-9+/=]+)"\)""")
             val encodedMatch = encodedPattern.find(html)
             val encodedString = encodedMatch?.groupValues?.get(1)
@@ -288,49 +263,30 @@ class EmbedTv : MainAPI() {
             
             if (encodedString != null) {
                 println("✅ [EmbedTv] String codificada encontrada!")
-                println("📦 Tamanho: ${encodedString.length} caracteres")
                 
-                // ===== PASSO 2: Descriptografar URL com XOR =====
-                println("🔓 [EmbedTv] Descriptografando com XOR (chave: $decryptionKey)...")
+                // Descriptografar URL com XOR
                 val tokenUrl = decryptStreamUrl(encodedString)
                 
                 if (tokenUrl != null) {
                     println("✅ [EmbedTv] Token URL obtido: $tokenUrl")
                     
-                    // ===== PASSO 3: Se for token .txt, buscar playlist =====
                     if (tokenUrl.endsWith(".txt", ignoreCase = true)) {
-                        println("📄 [EmbedTv] Token é um arquivo .txt, buscando playlist...")
+                        println("📄 [EmbedTv] Token é um arquivo .txt, usando como playlist...")
                         
-                        val tokenResponse = app.get(tokenUrl, headers = mapOf(
+                        // Verificar se a URL .txt retorna uma playlist válida
+                        val testResponse = app.get(tokenUrl, headers = mapOf(
                             "Referer" to baseUrl,
                             "Origin" to baseUrl,
                             "User-Agent" to USER_AGENT
                         )).text
                         
-                        println("✅ [EmbedTv] Playlist obtida (${tokenResponse.length} caracteres)")
-                        
-                        // ===== PASSO 4: Extrair URLs .ts da playlist =====
-                        val tsPattern = Regex("""(https?://[^\s]+\.ts)""")
-                        val tsUrls = tsPattern.findAll(tokenResponse).map { it.value }.toList()
-                        
-                        if (tsUrls.isNotEmpty()) {
-                            println("✅ [EmbedTv] Encontrados ${tsUrls.size} segmentos .ts")
-                            
-                            // Extrair o caminho base da primeira URL .ts
-                            val firstTs = tsUrls.first()
-                            val basePath = firstTs.substringBeforeLast("/") + "/"
-                            
-                            // Construir URL da playlist .m3u8
-                            val channelName = channelUrl.substringAfterLast("/")
-                            val playlistUrl = "$basePath$channelName.m3u8"
-                            
-                            println("📺 [EmbedTv] Playlist .m3u8 construída: $playlistUrl")
-                            finalUrl = playlistUrl
+                        if (testResponse.contains("#EXTM3U")) {
+                            println("✅ [EmbedTv] Playlist válida encontrada diretamente no .txt!")
+                            finalUrl = tokenUrl // USA A PRÓPRIA URL DO .TXT!
                         } else {
-                            println("⚠️ [EmbedTv] Nenhum segmento .ts encontrado na playlist")
+                            println("⚠️ [EmbedTv] Conteúdo não é uma playlist HLS")
                         }
                     } else {
-                        // URL já é direta
                         finalUrl = tokenUrl
                     }
                 }
@@ -341,10 +297,6 @@ class EmbedTv : MainAPI() {
                 println("⚠️ [EmbedTv] String codificada não encontrada, procurando link direto...")
                 val directPattern = Regex("""https?://[^\s"'<>]+\.m3u8[^\s"'<>]*""")
                 finalUrl = directPattern.find(html)?.value
-                
-                if (finalUrl != null) {
-                    println("✅ [EmbedTv] Link direto encontrado")
-                }
             }
             
             if (finalUrl == null) {
