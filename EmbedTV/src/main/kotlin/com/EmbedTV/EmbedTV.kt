@@ -130,28 +130,38 @@ class EmbedTv : MainAPI() {
         try {
             val mainDoc = app.get(mainSite).document
             val allCards = mainDoc.select(".card[data-channel=\"$channelId\"]")
-            
             if (allCards.isNotEmpty()) {
-                val card = allCards.first()
-                val nameElement = card.selectFirst("h3")
-                val name = nameElement?.text()
-                if (!name.isNullOrBlank()) {
-                    channelName = name
-                }
-                
-                val imgElement = card.selectFirst("img")
-                val image = imgElement?.attr("src") ?: imgElement?.attr("data-src")
-                if (!image.isNullOrBlank()) {
-                    channelImage = image
-                }
-                
-                // Se for jogo, adiciona horário
-                val timeElement = card.selectFirst("span")
-                val time = timeElement?.text()
-                if (!time.isNullOrBlank()) {
-                    channelName = "$channelName ($time)"
-                }
-            }
+    val card = allCards.first()
+    
+    // Nome do canal
+    val nameElement = card.selectFirst("h3")
+    val name = nameElement?.text()
+    if (!name.isNullOrBlank()) {
+        channelName = name
+    }
+    
+    // Imagem do canal
+    val imgElement = card.selectFirst("img")
+    val image = if (imgElement != null) {
+        imgElement.attr("src").ifEmpty { 
+            imgElement.attr("data-src") 
+        }
+    } else {
+        null
+    }
+    if (!image.isNullOrBlank()) {
+        channelImage = image
+    }
+    
+    // Horário do jogo (se existir)
+    val timeElement = card.selectFirst("span")
+    val time = timeElement?.text()
+    if (!time.isNullOrBlank()) {
+        channelName = "$channelName ($time)"
+    }
+}
+            
+            
         } catch (e: Exception) {
             // Ignora erro, usa valores padrão
         }
