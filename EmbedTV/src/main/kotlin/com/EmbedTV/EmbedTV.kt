@@ -161,23 +161,83 @@ class EmbedTv : MainAPI() {
 
     override suspend fun load(url: String): LoadResponse {
         val channelId = url.substringAfterLast("/")
+        println("\n" + "=".repeat(60))
         println("📥 [EmbedTv] Carregando detalhes do canal: $channelId")
+        println("=".repeat(60))
         
-        // Busca a imagem diretamente na página principal usando o data-channel
+        // Busca a página principal
         val mainPage = app.get(mainSite).document
-        val channelCard = mainPage.selectFirst(".card[data-channel=\"$channelId\"]")
         
-        val channelName = channelCard?.selectFirst("h3")?.text()?.trim() ?: "Canal $channelId"
-        val channelImage = channelCard?.selectFirst("img")?.let { img ->
-            img.attr("src").ifEmpty { img.attr("data-src") }
-        } ?: "https://embedtv.best/assets/icon.png"
-
-        // Se tiver horário (jogo), adiciona ao nome
-        val time = channelCard?.selectFirst("span")?.text()?.trim()
+        // DEBUG: Vamos ver todos os data-channel disponíveis
+        val allCards = mainPage.select(".card")
+        println("🔍 Total de cards encontrados na página principal: ${allCards.size}")
+        println("-".repeat(60))
+        
+        // Mostrar primeiros 20 cards para debug
+        allCards.take(20).forEachIndexed { index, card ->
+            val id = card.attr("data-channel")
+            val name = card.selectFirst("h3")?.text()?.trim() ?: "sem nome"
+            val hasSpan = card.selectFirst("span") != null
+            println("   Card $index: data-channel='$id' | nome='$name' | tem horário=$hasSpan")
+        }
+        println("-".repeat(60))
+        
+        // Tenta encontrar o card de várias formas
+        var channelCard = mainPage.selectFirst(".card[data-channel=\"$channelId\"]")
+        
+        if (channelCard == null) {
+            println("❌ Card não encontrado para data-channel exato '$channelId'")
+            
+            // Tenta encontrar por texto no nome
+            channelCard = mainPage.selectFirst(".card h3:contains($channelId)")?.parent()
+            if (channelCard != null) {
+                val foundId = channelCard.attr("data-channel")
+                println("✅ Encontrado por texto! data-channel='$foundId'")
+            } else {
+                // Tenta encontrar por qualquer card que contenha o ID no atributo
+                channelCard = mainPage.selectFirst(".card[data-channel*=\"$channelId\"]")
+                if (channelCard != null) {
+                    val foundId = channelCard.attr("data-channel")
+                    println("✅ Encontrado por contains! data-channel='$foundId'")
+                }
+            }
+        } else {
+            println("✅ Card encontrado com data-channel exato!")
+        }
+        
+        if (channelCard == null) {
+            println("❌ Nenhum card encontrado para o canal $channelId")
+            println("=".repeat(60))
+            
+            // Fallback para nome genérico
+            return newMovieLoadResponse(
+                "Canal $channelId",
+                url,
+                TvType.Live,
+                url
+            ) {
+                this.posterUrl = "https://embedtv.best/assets/icon.png"
+                this.plot = "Assista ao vivo no EmbedTv"
+            }
+        }
+        
+        // Extrair informações do card
+        val nameElement = channelCard.selectFirst("h3")
+        val channelName = nameElement?.text()?.trim() ?: "Canal $channelId"
+        
+        val imgElement = channelCard.selectFirst("img")
+        val imgSrc = imgElement?.attr("src")?.trim()
+        val imgDataSrc = imgElement?.attr("data-src")?.trim()
+        val channelImage = if (!imgSrc.isNullOrBlank()) imgSrc else imgDataSrc ?: "https://embedtv.best/assets/icon.png"
+        
+        val timeElement = channelCard.selectFirst("span")
+        val time = timeElement?.text()?.trim()
         val displayName = if (!time.isNullOrBlank()) "$channelName ($time)" else channelName
-
-        println("📺 Nome: $displayName")
-        println("🖼️ Imagem: $channelImage")
+        
+        println("📺 Nome encontrado: $displayName")
+        println("🖼️ Imagem encontrada: $channelImage")
+        if (time != null) println("⏰ Horário: $time")
+        println("=".repeat(60))
 
         return newMovieLoadResponse(
             displayName,
@@ -238,14 +298,16 @@ class EmbedTv : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val channelUrl = data.ifEmpty { return false }
-        println("\n🎬 [EmbedTv] Carregando links para: $channelUrl")
+        println("\n" + "=".repeat(60))
+        println("🎬 [EmbedTv] Carregando links para: $channelUrl")
+        println("=".repeat(60))
         
         try {
             val doc = app.get(channelUrl).document
             val html = doc.html()
             
             // Procurar pela string codificada no padrão dc("...")
-            println("🔍 [EmbedTv] Procurando string codificada...")
+            println("🔍 [PASSO 1] Procurando string codificada...")
             val encodedPattern = Regex("""dc\("([A-Za-z0-9+/=]+)"\)""")
             val encodedMatch = encodedPattern.find(html)
             val encodedString = encodedMatch?.groupValues?.get(1)
@@ -253,29 +315,33 @@ class EmbedTv : MainAPI() {
             var finalUrl: String? = null
             
             if (encodedString != null) {
-                println("✅ [EmbedTv] String codificada encontrada!")
+                println("✅ String codificada encontrada!")
+                println("📦 Tamanho: ${encodedString.length} caracteres")
                 
                 // Descriptografar URL com XOR
+                println("🔓 [PASSO 2] Descriptografando com XOR...")
                 val tokenUrl = decryptStreamUrl(encodedString)
                 
                 if (tokenUrl != null) {
-                    println("✅ [EmbedTv] Token URL obtido: $tokenUrl")
+                    println("✅ Token URL obtido: $tokenUrl")
                     
                     if (tokenUrl.endsWith(".txt", ignoreCase = true)) {
-                        println("📄 [EmbedTv] Token é um arquivo .txt, usando como playlist...")
+                        println("📄 [PASSO 3] Token é um arquivo .txt, buscando playlist...")
                         
-                        // Verificar se a URL .txt retorna uma playlist válida
-                        val testResponse = app.get(tokenUrl, headers = mapOf(
+                        // Buscar o arquivo .txt
+                        val tokenResponse = app.get(tokenUrl, headers = mapOf(
                             "Referer" to baseUrl,
                             "Origin" to baseUrl,
                             "User-Agent" to USER_AGENT
                         )).text
                         
-                        if (testResponse.contains("#EXTM3U")) {
-                            println("✅ [EmbedTv] Playlist válida encontrada diretamente no .txt!")
-                            finalUrl = tokenUrl // USA A PRÓPRIA URL DO .TXT!
+                        println("✅ Playlist obtida (${tokenResponse.length} caracteres)")
+                        
+                        if (tokenResponse.contains("#EXTM3U")) {
+                            println("✅ Playlist HLS válida encontrada!")
+                            finalUrl = tokenUrl
                         } else {
-                            println("⚠️ [EmbedTv] Conteúdo não é uma playlist HLS")
+                            println("⚠️ Conteúdo não é uma playlist HLS")
                         }
                     } else {
                         finalUrl = tokenUrl
@@ -285,17 +351,20 @@ class EmbedTv : MainAPI() {
             
             // Fallback: procurar link direto .m3u8
             if (finalUrl == null) {
-                println("⚠️ [EmbedTv] String codificada não encontrada, procurando link direto...")
+                println("⚠️ [FALLBACK] Procurando link direto .m3u8...")
                 val directPattern = Regex("""https?://[^\s"'<>]+\.m3u8[^\s"'<>]*""")
                 finalUrl = directPattern.find(html)?.value
+                if (finalUrl != null) {
+                    println("✅ Link direto encontrado!")
+                }
             }
             
             if (finalUrl == null) {
-                println("❌ [EmbedTv] Nenhum link encontrado!")
+                println("❌ Nenhum link encontrado!")
                 return false
             }
             
-            println("📺 [EmbedTv] URL final: $finalUrl")
+            println("📺 URL final: $finalUrl")
             
             val headers = mapOf(
                 "referer" to baseUrl,
@@ -317,12 +386,14 @@ class EmbedTv : MainAPI() {
                 }
             )
             
-            println("✅ [EmbedTv] Link enviado com sucesso!")
+            println("✅ Link enviado com sucesso!")
+            println("=".repeat(60))
             return true
             
         } catch (e: Exception) {
-            println("❌ [EmbedTv] Erro: ${e.message}")
+            println("❌ Erro: ${e.message}")
             e.printStackTrace()
+            println("=".repeat(60))
             return false
         }
     }
