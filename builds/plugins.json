@@ -155,10 +155,10 @@
     },
     {
         "iconUrl": "https://embedtv.best/assets/icon.png",
-        "jarFileSize": 43520,
+        "jarFileSize": 50862,
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/lawlietbt/lietrepo",
-        "fileSize": 15543,
+        "fileSize": 17426,
         "status": 1,
         "language": "pt-br",
         "authors": [
@@ -310,10 +310,10 @@
     },
     {
         "iconUrl": "https://reidoscanais.io/favicon.png",
-        "jarFileSize": 43600,
+        "jarFileSize": 61258,
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/lawlietbt/lietrepo",
-        "fileSize": 15539,
+        "fileSize": 21146,
         "status": 1,
         "language": "pt-br",
         "authors": [
