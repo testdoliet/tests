@@ -1,10 +1,9 @@
-package com.embedtv
+package com.EmbedTV
 
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.plugins.BasePlugin
 import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
-import org.jsoup.nodes.Element
 
 @CloudstreamPlugin
 class EmbedTvProvider : BasePlugin() {
@@ -24,40 +23,35 @@ class EmbedTv : MainAPI() {
     private val mainSite = "https://embedtv.best"
     private val baseUrl = "https://www3.embedtv.best"
 
-    override val mainPage = mainPageOf(
-        "$mainSite/" to "Canais"
-    )
-
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val homePageList = mutableListOf<HomePageList>()
-
-        try {
-            val document = app.get(mainSite).document
+        val doc = app.get(mainSite).document
+        
+        // Jogos de Hoje
+        val jogosSection = doc.selectFirst(".session.futebol")
+        val jogosList = mutableListOf<SearchResponse>()
+        
+        if (jogosSection != null) {
+            val jogosCards = jogosSection.select(".card")
             
-            // Seção de Jogos de Hoje
-            val jogosSection = document.selectFirst(".session.futebol")
-            if (jogosSection != null) {
-                val jogosList = mutableListOf<SearchResponse>()
-                val jogosCards = jogosSection.select(".card")
+            for (card in jogosCards) {
+                val channelId = card.attr("data-channel")
+                if (channelId.isBlank()) continue
                 
-                for (card in jogosCards) {
-                    val channelId = card.attr("data-channel")
-                    if (channelId.isBlank()) continue
-                    
-                    val nameElement = card.selectFirst("h3")
-                    val channelName = nameElement?.text()
-                    if (channelName.isNullOrBlank()) continue
-                    
-                    val imgElement = card.selectFirst("img")
-                    val imgSrc = imgElement?.attr("src")
-                    val imgDataSrc = imgElement?.attr("data-src")
-                    val imageUrl = if (!imgSrc.isNullOrBlank()) imgSrc else imgDataSrc ?: ""
-                    
-                    val timeElement = card.selectFirst("span")
-                    val time = timeElement?.text() ?: ""
-                    
-                    val displayName = if (time.isNotBlank()) "$channelName ($time)" else channelName
-                    
+                val nameElement = card.selectFirst("h3")
+                val channelName = nameElement?.text()?.trim()
+                if (channelName.isNullOrBlank()) continue
+                
+                val imgElement = card.selectFirst("img")
+                val imgSrc = imgElement?.attr("src")?.trim()
+                val imgDataSrc = imgElement?.attr("data-src")?.trim()
+                val imageUrl = if (!imgSrc.isNullOrBlank()) imgSrc else imgDataSrc
+                
+                val timeElement = card.selectFirst("span")
+                val time = timeElement?.text()?.trim()
+                
+                val displayName = if (!time.isNullOrBlank()) "$channelName ($time)" else channelName
+                
+                if (channelId.isNotBlank() && imageUrl != null) {
                     jogosList.add(
                         newLiveSearchResponse(
                             displayName,
@@ -68,36 +62,39 @@ class EmbedTv : MainAPI() {
                         }
                     )
                 }
-                
-                if (jogosList.isNotEmpty()) {
-                    homePageList.add(HomePageList("📺 Jogos de Hoje", jogosList))
-                }
             }
+        }
+        
+        // Categorias
+        val categories = doc.select(".categorie")
+        val allCategories = mutableListOf<HomePageList>()
+        
+        if (jogosList.isNotEmpty()) {
+            allCategories.add(HomePageList("📺 Jogos de Hoje", jogosList))
+        }
+        
+        for (category in categories) {
+            val titleElement = category.selectFirst(".title")
+            val categoryTitle = titleElement?.text()?.trim()
+            if (categoryTitle.isNullOrBlank()) continue
             
-            // Todas as categorias
-            val categories = document.select(".categorie")
+            val channelList = mutableListOf<SearchResponse>()
+            val cards = category.select(".card")
             
-            for (category in categories) {
-                val titleElement = category.selectFirst(".title")
-                val categoryTitle = titleElement?.text()
-                if (categoryTitle.isNullOrBlank()) continue
+            for (card in cards) {
+                val channelId = card.attr("data-channel")
+                if (channelId.isBlank()) continue
                 
-                val channelList = mutableListOf<SearchResponse>()
-                val cards = category.select(".card")
+                val nameElement = card.selectFirst("h3")
+                val channelName = nameElement?.text()?.trim()
+                if (channelName.isNullOrBlank()) continue
                 
-                for (card in cards) {
-                    val channelId = card.attr("data-channel")
-                    if (channelId.isBlank()) continue
-                    
-                    val nameElement = card.selectFirst("h3")
-                    val channelName = nameElement?.text()
-                    if (channelName.isNullOrBlank()) continue
-                    
-                    val imgElement = card.selectFirst("img")
-                    val imgSrc = imgElement?.attr("src")
-                    val imgDataSrc = imgElement?.attr("data-src")
-                    val imageUrl = if (!imgSrc.isNullOrBlank()) imgSrc else imgDataSrc ?: ""
-                    
+                val imgElement = card.selectFirst("img")
+                val imgSrc = imgElement?.attr("src")?.trim()
+                val imgDataSrc = imgElement?.attr("data-src")?.trim()
+                val imageUrl = if (!imgSrc.isNullOrBlank()) imgSrc else imgDataSrc
+                
+                if (channelId.isNotBlank() && imageUrl != null) {
                     channelList.add(
                         newLiveSearchResponse(
                             channelName,
@@ -108,21 +105,18 @@ class EmbedTv : MainAPI() {
                         }
                     )
                 }
-                
-                if (channelList.isNotEmpty()) {
-                    homePageList.add(HomePageList(categoryTitle, channelList))
-                }
             }
             
-        } catch (e: Exception) {
-            e.printStackTrace()
+            if (channelList.isNotEmpty()) {
+                allCategories.add(HomePageList(categoryTitle, channelList))
+            }
         }
-
-        if (homePageList.isEmpty()) {
+        
+        if (allCategories.isEmpty()) {
             throw ErrorLoadingException("Nenhum canal encontrado.")
         }
         
-        return HomePageResponse(homePageList)
+        return newHomePageResponse(allCategories)
     }
 
     override suspend fun load(url: String): LoadResponse {
@@ -132,37 +126,30 @@ class EmbedTv : MainAPI() {
         var channelImage = "https://embedtv.best/assets/icon.png"
         
         try {
-            val document = app.get(mainSite).document
-            val allCards = document.select(".card[data-channel=\"$channelId\"]")
+            val doc = app.get(mainSite).document
+            val card = doc.select(".card[data-channel=\"$channelId\"]").firstOrNull()
             
-            if (allCards.isNotEmpty()) {
-                val card = allCards.first()
-                
-                // Nome do canal
+            if (card != null) {
                 val nameElement = card.selectFirst("h3")
-                val name = nameElement?.text()
+                val name = nameElement?.text()?.trim()
                 if (!name.isNullOrBlank()) {
                     channelName = name
                 }
                 
-                // Imagem do canal
                 val imgElement = card.selectFirst("img")
                 if (imgElement != null) {
-                    val src = imgElement.attr("src")
-                    val dataSrc = imgElement.attr("data-src")
+                    val src = imgElement.attr("src").trim()
+                    val dataSrc = imgElement.attr("data-src").trim()
                     val image = if (src.isNotBlank()) src else dataSrc
                     if (image.isNotBlank()) {
                         channelImage = image
                     }
                 }
                 
-                // Horário do jogo
                 val timeElement = card.selectFirst("span")
-                if (timeElement != null) {
-                    val time = timeElement.text()
-                    if (time.isNotBlank()) {
-                        channelName = "$channelName ($time)"
-                    }
+                val time = timeElement?.text()?.trim()
+                if (!time.isNullOrBlank()) {
+                    channelName = "$channelName ($time)"
                 }
             }
         } catch (e: Exception) {
@@ -181,32 +168,31 @@ class EmbedTv : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse>? {
+        val doc = app.get(mainSite).document
+        val allCards = doc.select(".card")
         val results = mutableListOf<SearchResponse>()
         
-        try {
-            val document = app.get(mainSite).document
-            val allCards = document.select(".card")
+        for (card in allCards) {
+            val channelId = card.attr("data-channel")
+            if (channelId.isBlank()) continue
             
-            for (card in allCards) {
-                val channelId = card.attr("data-channel")
-                if (channelId.isBlank()) continue
-                
-                val nameElement = card.selectFirst("h3")
-                val channelName = nameElement?.text()
-                if (channelName.isNullOrBlank()) continue
-                
-                if (!channelName.contains(query, ignoreCase = true)) continue
-                
-                val imgElement = card.selectFirst("img")
-                val imgSrc = imgElement?.attr("src")
-                val imgDataSrc = imgElement?.attr("data-src")
-                val imageUrl = if (!imgSrc.isNullOrBlank()) imgSrc else imgDataSrc ?: ""
-                
-                val timeElement = card.selectFirst("span")
-                val time = timeElement?.text() ?: ""
-                
-                val displayName = if (time.isNotBlank()) "$channelName ($time)" else channelName
-                
+            val nameElement = card.selectFirst("h3")
+            val channelName = nameElement?.text()?.trim()
+            if (channelName.isNullOrBlank()) continue
+            
+            if (!channelName.contains(query, ignoreCase = true)) continue
+            
+            val imgElement = card.selectFirst("img")
+            val imgSrc = imgElement?.attr("src")?.trim()
+            val imgDataSrc = imgElement?.attr("data-src")?.trim()
+            val imageUrl = if (!imgSrc.isNullOrBlank()) imgSrc else imgDataSrc
+            
+            val timeElement = card.selectFirst("span")
+            val time = timeElement?.text()?.trim()
+            
+            val displayName = if (!time.isNullOrBlank()) "$channelName ($time)" else channelName
+            
+            if (imageUrl != null) {
                 results.add(
                     newLiveSearchResponse(
                         displayName,
@@ -217,11 +203,8 @@ class EmbedTv : MainAPI() {
                     }
                 )
             }
-        } catch (e: Exception) {
-            e.printStackTrace()
-            return null
         }
-
+        
         return results
     }
 
@@ -231,47 +214,48 @@ class EmbedTv : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
+        val channelUrl = data.ifEmpty { return false }
+        
         try {
-            val headers = mapOf(
-                "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
-                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-                "Accept-Language" to "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
-                "Upgrade-Insecure-Requests" to "1"
-            )
-
-            val response = app.get(data, headers = headers)
-            val html = response.text
+            val doc = app.get(channelUrl).document
+            val html = doc.html()
             
             // Procura data.channel.stream
             val dataPattern = Regex("""data\.channel\.stream\s*=\s*"([^"]+\.m3u8[^"]*)""")
             val dataMatch = dataPattern.find(html)
             
-            val videoUrl = dataMatch?.groupValues?.get(1) ?: run {
-                // Procura link direto .m3u8
+            var finalUrl = dataMatch?.groupValues?.get(1)
+            
+            // Se não encontrou, procura link direto .m3u8
+            if (finalUrl == null) {
                 val directPattern = Regex("""(https?://[^"'\s]+\.m3u8[^"'\s]*)""")
-                directPattern.find(html)?.groupValues?.get(1)
+                finalUrl = directPattern.find(html)?.groupValues?.get(1)
             }
             
-            if (videoUrl != null) {
-                val videoHeaders = mapOf(
-                    "Referer" to baseUrl,
-                    "Origin" to baseUrl,
-                    "User-Agent" to headers["User-Agent"]!!
-                )
-                
-                callback.invoke(
-                    newExtractorLink("EmbedTv", "EmbedTv [HLS]", videoUrl) {
-                        this.referer = baseUrl
-                        this.type = ExtractorLinkType.M3U8
-                        this.headers = videoHeaders
-                        this.quality = Qualities.Unknown.value
-                    }
-                )
-                return true
-            }
+            if (finalUrl == null) return false
             
-            return false
-
+            val headers = mapOf(
+                "Referer" to baseUrl,
+                "Origin" to baseUrl,
+                "User-Agent" to USER_AGENT,
+                "Accept" to "*/*"
+            )
+            
+            callback(
+                newExtractorLink(
+                    source = name,
+                    name = "EmbedTv Live",
+                    url = finalUrl,
+                    referer = baseUrl
+                ) {
+                    this.type = ExtractorLinkType.M3U8
+                    this.headers = headers
+                    this.quality = Qualities.Unknown.value
+                }
+            )
+            
+            return true
+            
         } catch (e: Exception) {
             return false
         }
