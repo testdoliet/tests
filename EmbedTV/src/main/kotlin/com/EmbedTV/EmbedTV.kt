@@ -4,6 +4,8 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.plugins.BasePlugin
 import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
+import android.util.Base64
+import java.io.ByteArrayOutputStream
 
 @CloudstreamPlugin
 class EmbedTvProvider : BasePlugin() {
@@ -22,6 +24,39 @@ class EmbedTv : MainAPI() {
     
     private val mainSite = "https://embedtv.best"
     private val baseUrl = "https://www3.embedtv.best"
+    private val decryptionKey = "embedtv@123"
+
+    /**
+     * Replica a função dc() do JavaScript para descriptografar a URL do stream
+     * 1. Base64 decode
+     * 2. Inverter a string
+     * 3. XOR com a chave "embedtv@123"
+     */
+    private fun decryptStreamUrl(encodedString: String): String? {
+        return try {
+            // 1. Base64 decode
+            val decodedBytes = Base64.decode(encodedString, Base64.DEFAULT)
+            val decodedString = String(decodedBytes, Charsets.ISO_8859_1) // Usar ISO-8859-1 (latin1)
+            
+            // 2. Inverter a string
+            val reversedString = decodedString.reversed()
+            
+            // 3. XOR byte a byte com a chave
+            val keyBytes = decryptionKey.toByteArray(Charsets.ISO_8859_1)
+            val inputBytes = reversedString.toByteArray(Charsets.ISO_8859_1)
+            val outputStream = ByteArrayOutputStream()
+            
+            for (i in inputBytes.indices) {
+                val keyByte = keyBytes[i % keyBytes.size]
+                outputStream.write((inputBytes[i].toInt() xor keyByte.toInt()).toByte().toInt())
+            }
+            
+            outputStream.toString(Charsets.UTF_8.name())
+        } catch (e: Exception) {
+            println("❌ [EmbedTv] Erro na descriptografia: ${e.message}")
+            null
+        }
+    }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         println("📥 [EmbedTv] Carregando página principal...")
@@ -243,19 +278,70 @@ class EmbedTv : MainAPI() {
             val doc = app.get(channelUrl).document
             val html = doc.html()
             
-            // Procura data.channel.stream
-            println("🔍 [EmbedTv] Procurando data.channel.stream...")
-            val dataPattern = Regex("""data\.channel\.stream\s*=\s*"([^"]+\.m3u8[^"]*)""")
-            val dataMatch = dataPattern.find(html)
+            // ===== PASSO 1: Procurar pela string codificada no padrão dc("...") =====
+            println("🔍 [EmbedTv] Procurando string codificada em dc(\"...\")...")
+            val encodedPattern = Regex("""dc\("([A-Za-z0-9+/=]+)"\)""")
+            val encodedMatch = encodedPattern.find(html)
+            val encodedString = encodedMatch?.groupValues?.get(1)
             
-            var finalUrl = dataMatch?.groupValues?.get(1)
+            var finalUrl: String? = null
             
-            if (finalUrl != null) {
-                println("✅ [EmbedTv] Link encontrado em data.channel.stream")
-            } else {
-                println("⚠️ [EmbedTv] data.channel.stream não encontrado, procurando link direto...")
+            if (encodedString != null) {
+                println("✅ [EmbedTv] String codificada encontrada!")
+                println("📦 Tamanho: ${encodedString.length} caracteres")
+                
+                // ===== PASSO 2: Descriptografar URL com XOR =====
+                println("🔓 [EmbedTv] Descriptografando com XOR (chave: $decryptionKey)...")
+                val tokenUrl = decryptStreamUrl(encodedString)
+                
+                if (tokenUrl != null) {
+                    println("✅ [EmbedTv] Token URL obtido: $tokenUrl")
+                    
+                    // ===== PASSO 3: Se for token .txt, buscar playlist =====
+                    if (tokenUrl.endsWith(".txt", ignoreCase = true)) {
+                        println("📄 [EmbedTv] Token é um arquivo .txt, buscando playlist...")
+                        
+                        val tokenResponse = app.get(tokenUrl, headers = mapOf(
+                            "Referer" to baseUrl,
+                            "Origin" to baseUrl,
+                            "User-Agent" to USER_AGENT
+                        )).text
+                        
+                        println("✅ [EmbedTv] Playlist obtida (${tokenResponse.length} caracteres)")
+                        
+                        // ===== PASSO 4: Extrair URLs .ts da playlist =====
+                        val tsPattern = Regex("""(https?://[^\s]+\.ts)""")
+                        val tsUrls = tsPattern.findAll(tokenResponse).map { it.value }.toList()
+                        
+                        if (tsUrls.isNotEmpty()) {
+                            println("✅ [EmbedTv] Encontrados ${tsUrls.size} segmentos .ts")
+                            
+                            // Extrair o caminho base da primeira URL .ts
+                            val firstTs = tsUrls.first()
+                            val basePath = firstTs.substringBeforeLast("/") + "/"
+                            
+                            // Construir URL da playlist .m3u8
+                            val channelName = channelUrl.substringAfterLast("/")
+                            val playlistUrl = "$basePath$channelName.m3u8"
+                            
+                            println("📺 [EmbedTv] Playlist .m3u8 construída: $playlistUrl")
+                            finalUrl = playlistUrl
+                        } else {
+                            println("⚠️ [EmbedTv] Nenhum segmento .ts encontrado na playlist")
+                        }
+                    } else {
+                        // URL já é direta
+                        finalUrl = tokenUrl
+                    }
+                }
+            }
+            
+            // Fallback: procurar link direto .m3u8
+            if (finalUrl == null) {
+                println("⚠️ [EmbedTv] String codificada não encontrada, procurando link direto...")
                 val directPattern = Regex("""https?://[^\s"'<>]+\.m3u8[^\s"'<>]*""")
                 finalUrl = directPattern.find(html)?.value
+                
                 if (finalUrl != null) {
                     println("✅ [EmbedTv] Link direto encontrado")
                 }
@@ -266,7 +352,7 @@ class EmbedTv : MainAPI() {
                 return false
             }
             
-            println("📺 [EmbedTv] URL encontrada: $finalUrl")
+            println("📺 [EmbedTv] URL final: $finalUrl")
             
             val headers = mapOf(
                 "referer" to baseUrl,
@@ -279,10 +365,10 @@ class EmbedTv : MainAPI() {
                 newExtractorLink(
                     source = name,
                     name = "EmbedTv Live",
-                    url = finalUrl
+                    url = finalUrl,
+                    type = ExtractorLinkType.M3U8
                 ) {
                     this.referer = baseUrl
-                    this.type = ExtractorLinkType.M3U8
                     this.headers = headers
                     this.quality = Qualities.Unknown.value
                 }
@@ -293,6 +379,7 @@ class EmbedTv : MainAPI() {
             
         } catch (e: Exception) {
             println("❌ [EmbedTv] Erro: ${e.message}")
+            e.printStackTrace()
             return false
         }
     }
