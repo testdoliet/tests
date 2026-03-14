@@ -26,6 +26,22 @@ class EmbedTv : MainAPI() {
     private val baseUrl = "https://www3.embedtv.best"
     private val decryptionKey = "embedtv@123"
 
+    // Função para redimensionar imagens (adaptado do FilmesPK)
+    private fun fixImageUrl(url: String): String {
+        return when {
+            url.contains("cloudfront.net") -> {
+                // Remove qualquer transformação existente
+                val cleanUrl = url.split("?")[0]
+                // Adiciona parâmetros de redimensionamento para o CloudFront
+                "$cleanUrl?width=300&height=170&fit=crop&format=webp"
+            }
+            url.startsWith("//") -> "https:$url"
+            url.startsWith("http") -> url
+            url.startsWith("/") -> "$mainSite$url"
+            else -> url
+        }
+    }
+
     private fun decryptStreamUrl(encodedString: String): String? {
         return try {
             val decodedBytes = Base64.decode(encodedString, Base64.DEFAULT)
@@ -54,7 +70,7 @@ class EmbedTv : MainAPI() {
         
         val allCategories = mutableListOf<HomePageList>()
         
-        // Jogos de Hoje (formato horizontal)
+        // Jogos de Hoje
         val jogosSection = doc.selectFirst(".session.futebol")
         if (jogosSection != null) {
             println("✅ [EmbedTv] Seção de jogos encontrada")
@@ -84,7 +100,7 @@ class EmbedTv : MainAPI() {
                         "$baseUrl/$channelId",
                         TvType.Live
                     ) {
-                        this.posterUrl = fixUrl(imageUrl)
+                        this.posterUrl = fixImageUrl(imageUrl)
                     }
                 )
             }
@@ -94,7 +110,7 @@ class EmbedTv : MainAPI() {
             }
         }
         
-        // Categorias (todas em formato horizontal)
+        // Categorias
         val categories = doc.select(".categorie")
         println("📊 [EmbedTv] ${categories.size} categorias encontradas")
         
@@ -125,7 +141,7 @@ class EmbedTv : MainAPI() {
                         "$baseUrl/$channelId",
                         TvType.Live
                     ) {
-                        this.posterUrl = fixUrl(imageUrl)
+                        this.posterUrl = fixImageUrl(imageUrl)
                     }
                 )
             }
@@ -171,7 +187,7 @@ class EmbedTv : MainAPI() {
                     val dataSrc = imgElement.attr("data-src").trim()
                     val image = if (src.isNotBlank()) src else dataSrc
                     if (image.isNotBlank()) {
-                        channelImage = image
+                        channelImage = fixImageUrl(image)
                     }
                 }
                 
@@ -194,7 +210,7 @@ class EmbedTv : MainAPI() {
             TvType.Live,
             url
         ) {
-            this.posterUrl = fixUrl(channelImage)
+            this.posterUrl = channelImage
             this.plot = "Assista $channelName ao vivo no EmbedTv"
         }
     }
@@ -231,7 +247,7 @@ class EmbedTv : MainAPI() {
                     "$baseUrl/$channelId",
                     TvType.Live
                 ) {
-                    this.posterUrl = fixUrl(imageUrl)
+                    this.posterUrl = fixImageUrl(imageUrl)
                 }
             )
         }
@@ -333,15 +349,6 @@ class EmbedTv : MainAPI() {
             println("❌ [EmbedTv] Erro: ${e.message}")
             e.printStackTrace()
             return false
-        }
-    }
-
-    private fun fixUrl(url: String): String {
-        return when {
-            url.startsWith("//") -> "https:$url"
-            url.startsWith("http") -> url
-            url.startsWith("/") -> "$mainSite$url"
-            else -> url
         }
     }
 }
