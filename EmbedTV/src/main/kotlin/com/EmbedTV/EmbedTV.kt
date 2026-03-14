@@ -226,21 +226,22 @@ class EmbedTv : MainAPI() {
         
         var finalUrl = dataMatch?.groupValues?.get(1)
         
-        // Se não encontrou, procura link direto .m3u8
+        // Se não encontrou, procura link direto .m3u8 (igual ao EmbedTVOnline)
         if (finalUrl == null) {
-            val directPattern = Regex("""(https?://[^"'\s]+\.m3u8[^"'\s]*)""")
-            finalUrl = directPattern.find(html)?.groupValues?.get(1)
+            val regex = Regex("""https?://[^\s"'<>]+\.m3u8[^\s"'<>]*""")
+            finalUrl = regex.find(html)?.value
         }
         
         if (finalUrl == null) return false
         
         val headers = mapOf(
-            "Referer" to baseUrl,
-            "Origin" to baseUrl,
-            "User-Agent" to USER_AGENT,
-            "Accept" to "*/*"
+            "referer" to baseUrl,
+            "origin" to baseUrl,
+            "user-agent" to USER_AGENT,
+            "accept" to "*/*"
         )
         
+        // EXATAMENTE igual ao EmbedTVOnline
         callback.invoke(
             newExtractorLink(
                 source = name,
@@ -262,4 +263,3 @@ class EmbedTv : MainAPI() {
     }
 }
 }
-    
