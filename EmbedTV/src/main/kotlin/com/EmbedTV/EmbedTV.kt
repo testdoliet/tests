@@ -41,11 +41,14 @@ class EmbedTv : MainAPI() {
                 
                 jogosCards.forEach { card ->
                     val channelId = card.attr("data-channel")
-                    val channelName = card.selectFirst("h3")?.text()
+                    val channelNameElement = card.selectFirst("h3")
+                    val channelName = channelNameElement?.text()
+                    
                     if (!channelId.isNullOrBlank() && !channelName.isNullOrBlank()) {
                         val imgElement = card.selectFirst("img")
                         val imageUrl = imgElement?.attr("src") ?: imgElement?.attr("data-src") ?: ""
-                        val time = card.selectFirst("span")?.text() ?: ""
+                        val timeElement = card.selectFirst("span")
+                        val time = timeElement?.text() ?: ""
                         
                         val displayName = if (time.isNotBlank()) "$channelName ($time)" else channelName
                         
@@ -70,13 +73,16 @@ class EmbedTv : MainAPI() {
             val categories = document.select(".categorie")
             
             categories.forEach { category ->
-                val categoryTitle = category.selectFirst(".title")?.text()
+                val titleElement = category.selectFirst(".title")
+                val categoryTitle = titleElement?.text()
+                
                 if (!categoryTitle.isNullOrBlank()) {
                     val channelCards = category.select(".card")
                     
                     val channelList = channelCards.mapNotNull { card ->
                         val channelId = card.attr("data-channel")
-                        val channelName = card.selectFirst("h3")?.text()
+                        val channelNameElement = card.selectFirst("h3")
+                        val channelName = channelNameElement?.text()
                         
                         if (!channelId.isNullOrBlank() && !channelName.isNullOrBlank()) {
                             val imgElement = card.selectFirst("img")
@@ -124,7 +130,8 @@ class EmbedTv : MainAPI() {
             
             if (allCards.isNotEmpty()) {
                 val card = allCards.first()
-                val name = card.selectFirst("h3")?.text()
+                val nameElement = card.selectFirst("h3")
+                val name = nameElement?.text()
                 if (!name.isNullOrBlank()) {
                     channelName = name
                 }
@@ -136,7 +143,8 @@ class EmbedTv : MainAPI() {
                 }
                 
                 // Se for jogo, adiciona horário
-                val time = card.selectFirst("span")?.text()
+                val timeElement = card.selectFirst("span")
+                val time = timeElement?.text()
                 if (!time.isNullOrBlank()) {
                     channelName = "$channelName ($time)"
                 }
@@ -166,14 +174,16 @@ class EmbedTv : MainAPI() {
             
             val matchingChannels = allCards.mapNotNull { card ->
                 val channelId = card.attr("data-channel")
-                val channelName = card.selectFirst("h3")?.text()
+                val channelNameElement = card.selectFirst("h3")
+                val channelName = channelNameElement?.text()
                 
                 if (!channelId.isNullOrBlank() && !channelName.isNullOrBlank() && 
                     channelName.contains(query, ignoreCase = true)) {
                     
                     val imgElement = card.selectFirst("img")
                     val imageUrl = imgElement?.attr("src") ?: imgElement?.attr("data-src") ?: ""
-                    val time = card.selectFirst("span")?.text() ?: ""
+                    val timeElement = card.selectFirst("span")
+                    val time = timeElement?.text() ?: ""
                     
                     val displayName = if (time.isNotBlank()) "$channelName ($time)" else channelName
                     
