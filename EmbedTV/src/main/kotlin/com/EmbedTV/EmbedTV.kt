@@ -2,7 +2,6 @@ package com.EmbedTV
 
 import android.util.Base64
 import com.lagradost.cloudstream3.*
-import com.logger.Log
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.plugins.BasePlugin
 import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
@@ -175,6 +174,11 @@ class EmbedTv : MainAPI() {
             }
         }
         
+        if (allCategories.isEmpty()) {
+            println("❌ [EmbedTv] Nenhum canal encontrado!")
+            throw ErrorLoadingException("Nenhum canal encontrado.")
+        }
+        
         println("✅ [EmbedTv] Total de ${allCategories.size} categorias carregadas")
         println("📊 Cache: ${jogosCache.size} jogos, ${canaisCache.size} canais fixos")
         
@@ -192,69 +196,40 @@ class EmbedTv : MainAPI() {
         println("📥 [EmbedTv] Veio dos jogos? $isFromJogos")
         println("=".repeat(60))
         
-        // Busca a página principal
-        val mainPage = app.get(mainSite).document
-        
-        // DEBUG: Mostrar primeiros cards
-        val allCards = mainPage.select(".card")
-        println("🔍 Total de cards: ${allCards.size}")
-        
-        val channelCard = mainPage.selectFirst(".card[data-channel=\"$channelId\"]")
-        
-        if (channelCard == null) {
-            println("❌ Card não encontrado!")
-            return newMovieLoadResponse(
-                "Canal $channelId",
-                cleanUrl,
-                TvType.Live,
-                cleanUrl
-            ) {
-                this.posterUrl = "https://embedtv.best/assets/icon.png"
-                this.plot = "Assista ao vivo no EmbedTv"
-            }
-        }
-        
-        // DECISÃO: Qual imagem usar?
+        // DECISÃO: Qual imagem usar baseado na origem
         val (finalName, finalImage) = if (isFromJogos) {
-            // VEIO DOS JOGOS: usa dados do jogo (com horário)
+            // VEIO DOS JOGOS: usa dados do jogo do cache
             println("🎮 Usando dados do JOGO")
-            val nameElement = channelCard.selectFirst("h3")
-            val gameName = nameElement?.text()?.trim() ?: "Canal $channelId"
-            
-            val imgElement = channelCard.selectFirst("img")
-            val imgSrc = imgElement?.attr("src")?.trim()
-            val imgDataSrc = imgElement?.attr("data-src")?.trim()
-            val gameImage = if (!imgSrc.isNullOrBlank()) imgSrc else imgDataSrc ?: "https://embedtv.best/assets/icon.png"
-            
-            val timeElement = channelCard.selectFirst("span")
-            val time = timeElement?.text()?.trim()
-            val displayName = if (!time.isNullOrBlank()) "$gameName ($time)" else gameName
-            
-            Pair(displayName, gameImage)
-            
+            val jogoData = jogosCache[channelId]
+            if (jogoData != null) {
+                jogoData
+            } else {
+                // Fallback: busca na página
+                val mainPage = app.get(mainSite).document
+                val card = mainPage.selectFirst(".card[data-channel=\"$channelId\"]")
+                val name = card?.selectFirst("h3")?.text()?.trim() ?: "Canal $channelId"
+                val img = card?.selectFirst("img")?.let { img ->
+                    img.attr("src").ifEmpty { img.attr("data-src") }
+                } ?: "https://embedtv.best/assets/icon.png"
+                val time = card?.selectFirst("span")?.text()?.trim()
+                val displayName = if (!time.isNullOrBlank()) "$name ($time)" else name
+                Pair(displayName, img)
+            }
         } else {
-            // VEIO DOS CANAIS FIXOS: usa dados do cache de canais (logo do canal)
+            // VEIO DOS CANAIS FIXOS: usa dados do cache de canais
             println("📺 Usando dados do CANAL FIXO")
-            
-            // Tenta pegar do cache de canais fixos
             val canalData = canaisCache[channelId]
             if (canalData != null) {
-                val (canalName, canalImage) = canalData
-                Pair(canalName, canalImage)
+                canalData
             } else {
-                // Fallback: pega do card mas remove horário se tiver
-                val nameElement = channelCard.selectFirst("h3")
-                val rawName = nameElement?.text()?.trim() ?: "Canal $channelId"
-                
-                // Remove horário se tiver (ex: "Al-Fateh X Al-Hilal" vira "Band")
-                // Mas como é canal fixo, o nome já deve ser "Band"
-                
-                val imgElement = channelCard.selectFirst("img")
-                val imgSrc = imgElement?.attr("src")?.trim()
-                val imgDataSrc = imgElement?.attr("data-src")?.trim()
-                val fallbackImage = if (!imgSrc.isNullOrBlank()) imgSrc else imgDataSrc ?: "https://embedtv.best/assets/icon.png"
-                
-                Pair(rawName, fallbackImage)
+                // Fallback: busca na página
+                val mainPage = app.get(mainSite).document
+                val card = mainPage.selectFirst(".card[data-channel=\"$channelId\"]")
+                val name = card?.selectFirst("h3")?.text()?.trim() ?: "Canal $channelId"
+                val img = card?.selectFirst("img")?.let { img ->
+                    img.attr("src").ifEmpty { img.attr("data-src") }
+                } ?: "https://embedtv.best/assets/icon.png"
+                Pair(name, img)
             }
         }
         
