@@ -25,9 +25,9 @@ class EmbedTv : MainAPI() {
     private val mainSite = "https://embedtv.best"
     private val baseUrl = "https://www3.embedtv.best"
     private val decryptionKey = "embedtv@123"
-
-    private var jogosCache = mutableMapOf<String, Pair<String, String>>()
-    private var canaisCache = mutableMapOf<String, Pair<String, String>>()
+    
+    // Lista de canais bloqueados
+    private val blockedChannels = listOf("sexyhot", "playboy")
 
     private fun fixImageUrl(url: String): String {
         return when {
@@ -65,12 +65,9 @@ class EmbedTv : MainAPI() {
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val doc = app.get(mainSite).document
-        
-        jogosCache.clear()
-        canaisCache.clear()
-        
         val allCategories = mutableListOf<HomePageList>()
         
+        // Jogos de Hoje (removida paginação - mostra todos)
         val jogosSection = doc.selectFirst(".session.futebol")
         if (jogosSection != null) {
             val jogosCards = jogosSection.select(".card")
@@ -78,7 +75,7 @@ class EmbedTv : MainAPI() {
             val jogosList = mutableListOf<SearchResponse>()
             for (card in jogosCards) {
                 val channelId = card.attr("data-channel")
-                if (channelId.isBlank()) continue
+                if (channelId.isBlank() || channelId in blockedChannels) continue
                 
                 val nameElement = card.selectFirst("h3") ?: continue
                 val gameName = nameElement.text().trim()
@@ -89,8 +86,6 @@ class EmbedTv : MainAPI() {
                 val timeElement = card.selectFirst("span")
                 val time = timeElement?.text()?.trim()
                 val displayName = if (!time.isNullOrBlank()) "$gameName ($time)" else gameName
-                
-                jogosCache[channelId] = Pair(displayName, imageUrl)
                 
                 val jogoUrl = "$baseUrl/$channelId?source=jogos"
                 
@@ -110,6 +105,7 @@ class EmbedTv : MainAPI() {
             }
         }
         
+        // Categorias (canais fixos)
         val categories = doc.select(".categorie")
         
         for (category in categories) {
@@ -121,17 +117,13 @@ class EmbedTv : MainAPI() {
             
             for (card in cards) {
                 val channelId = card.attr("data-channel")
-                if (channelId.isBlank()) continue
+                if (channelId.isBlank() || channelId in blockedChannels) continue
                 
                 val nameElement = card.selectFirst("h3") ?: continue
                 val channelName = nameElement.text().trim()
                 
                 val imgElement = card.selectFirst("img") ?: continue
                 val imageUrl = imgElement.attr("src").ifEmpty { imgElement.attr("data-src") }
-                
-                if (!canaisCache.containsKey(channelId)) {
-                    canaisCache[channelId] = Pair(channelName, imageUrl)
-                }
                 
                 val canalUrl = "$baseUrl/$channelId"
                 
@@ -155,7 +147,7 @@ class EmbedTv : MainAPI() {
             throw ErrorLoadingException("Nenhum canal encontrado.")
         }
         
-        return newHomePageResponse(allCategories)
+        return newHomePageResponse(allCategories, hasNext = false)
     }
 
     override suspend fun load(url: String): LoadResponse {
@@ -164,58 +156,37 @@ class EmbedTv : MainAPI() {
         
         val channelId = cleanUrl.substringAfterLast("/")
         
-        val (finalName, finalImage) = if (isFromJogos) {
-            val jogoData = jogosCache[channelId]
-            if (jogoData != null) {
-                jogoData
-            } else {
-                val mainPage = app.get(mainSite).document
-                val card = mainPage.selectFirst(".card[data-channel=\"$channelId\"]") ?: return newMovieLoadResponse(
-                    "Canal $channelId",
-                    cleanUrl,
-                    TvType.Live,
-                    cleanUrl
-                ) {
-                    this.posterUrl = "https://embedtv.best/assets/icon.png"
-                }
-                val name = card.selectFirst("h3")?.text()?.trim() ?: "Canal $channelId"
-                val img = card.selectFirst("img")?.let { img ->
-                    img.attr("src").ifEmpty { img.attr("data-src") }
-                } ?: "https://embedtv.best/assets/icon.png"
-                val time = card.selectFirst("span")?.text()?.trim()
-                val displayName = if (!time.isNullOrBlank()) "$name ($time)" else name
-                Pair(displayName, img)
-            }
-        } else {
-            val canalData = canaisCache[channelId]
-            if (canalData != null) {
-                canalData
-            } else {
-                val mainPage = app.get(mainSite).document
-                val card = mainPage.selectFirst(".card[data-channel=\"$channelId\"]") ?: return newMovieLoadResponse(
-                    "Canal $channelId",
-                    cleanUrl,
-                    TvType.Live,
-                    cleanUrl
-                ) {
-                    this.posterUrl = "https://embedtv.best/assets/icon.png"
-                }
-                val name = card.selectFirst("h3")?.text()?.trim() ?: "Canal $channelId"
-                val img = card.selectFirst("img")?.let { img ->
-                    img.attr("src").ifEmpty { img.attr("data-src") }
-                } ?: "https://embedtv.best/assets/icon.png"
-                Pair(name, img)
-            }
+        // Verifica se é canal bloqueado
+        if (channelId in blockedChannels) {
+            throw ErrorLoadingException("Canal não disponível")
         }
-
-        return newMovieLoadResponse(
-            finalName,
+        
+        val mainPage = app.get(mainSite).document
+        val card = mainPage.selectFirst(".card[data-channel=\"$channelId\"]") ?: return newMovieLoadResponse(
+            "Canal $channelId",
             cleanUrl,
             TvType.Live,
             cleanUrl
         ) {
-            this.posterUrl = fixImageUrl(finalImage)
-            this.plot = "Assista $finalName ao vivo no EmbedTv"
+            this.posterUrl = "https://embedtv.best/assets/icon.png"
+        }
+        
+        val name = card.selectFirst("h3")?.text()?.trim() ?: "Canal $channelId"
+        val img = card.selectFirst("img")?.let { img ->
+            img.attr("src").ifEmpty { img.attr("data-src") }
+        } ?: "https://embedtv.best/assets/icon.png"
+        
+        val time = card.selectFirst("span")?.text()?.trim()
+        val displayName = if (!time.isNullOrBlank() && isFromJogos) "$name ($time)" else name
+
+        return newMovieLoadResponse(
+            displayName,
+            cleanUrl,
+            TvType.Live,
+            cleanUrl
+        ) {
+            this.posterUrl = fixImageUrl(img)
+            this.plot = "Assista $displayName ao vivo no EmbedTv"
         }
     }
 
@@ -226,7 +197,7 @@ class EmbedTv : MainAPI() {
         
         for (card in allCards) {
             val channelId = card.attr("data-channel")
-            if (channelId.isBlank()) continue
+            if (channelId.isBlank() || channelId in blockedChannels) continue
             
             val nameElement = card.selectFirst("h3") ?: continue
             val channelName = nameElement.text().trim()
@@ -287,8 +258,6 @@ class EmbedTv : MainAPI() {
                 if (tokenUrl != null) {
                     if (tokenUrl.endsWith(".txt", ignoreCase = true)) {
                         val testResponse = app.get(tokenUrl, headers = mapOf(
-                            "Referer" to baseUrl,
-                            "Origin" to baseUrl,
                             "User-Agent" to USER_AGENT
                         )).text
                         
