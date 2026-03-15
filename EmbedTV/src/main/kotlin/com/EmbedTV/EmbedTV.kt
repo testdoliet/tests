@@ -15,7 +15,7 @@ class EmbedTvProvider : BasePlugin() {
 }
 
 class EmbedTv : MainAPI() {
-    override var name = "EmbedTv"
+    override var name = "EmbedTV"
     override val hasMainPage = true
     override var lang = "pt-br"
     override val hasDownloadSupport = false
@@ -25,8 +25,6 @@ class EmbedTv : MainAPI() {
     private val mainSite = "https://embedtv.best"
     private val baseUrl = "https://www3.embedtv.best"
     private val decryptionKey = "embedtv@123"
-    
-    // Lista de canais bloqueados
     private val blockedChannels = listOf("sexyhot", "playboy")
 
     private fun fixImageUrl(url: String): String {
@@ -66,8 +64,6 @@ class EmbedTv : MainAPI() {
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val doc = app.get(mainSite).document
         val allCategories = mutableListOf<HomePageList>()
-        
-        // Jogos de Hoje (removida paginação - mostra todos)
         val jogosSection = doc.selectFirst(".session.futebol")
         if (jogosSection != null) {
             val jogosCards = jogosSection.select(".card")
@@ -105,7 +101,6 @@ class EmbedTv : MainAPI() {
             }
         }
         
-        // Categorias (canais fixos)
         val categories = doc.select(".categorie")
         
         for (category in categories) {
@@ -155,8 +150,6 @@ class EmbedTv : MainAPI() {
         val cleanUrl = url.replace("?source=jogos", "")
         
         val channelId = cleanUrl.substringAfterLast("/")
-        
-        // Verifica se é canal bloqueado
         if (channelId in blockedChannels) {
             throw ErrorLoadingException("Canal não disponível")
         }
