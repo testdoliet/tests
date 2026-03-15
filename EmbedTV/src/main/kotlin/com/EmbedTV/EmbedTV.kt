@@ -97,7 +97,7 @@ class EmbedTv : MainAPI() {
             }
             
             if (jogosList.isNotEmpty()) {
-                allCategories.add(HomePageList("📺 Jogos de Hoje", jogosList, isHorizontalImages = true))
+                allCategories.add(HomePageList("Jogos de Hoje", jogosList, isHorizontalImages = true))
             }
         }
         
