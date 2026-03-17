@@ -6,6 +6,7 @@ import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
 import com.lagradost.cloudstream3.plugins.Plugin
 import org.jsoup.nodes.Element
+import java.net.URLDecoder
 
 @CloudstreamPlugin
 class AnimesFlixProvider : Plugin() {
@@ -112,8 +113,9 @@ class AnimesFlix : MainAPI() {
 
         return newAnimeSearchResponse(cleanedTitle, fixUrl(urlWithPoster), TvType.Anime) {
             this.posterUrl = posterUrl
-            // CORRIGIDO: addDubStatus com Boolean e Int?
-            addDubStatus(isDubbed, episodeNumber)
+            // CORRIGIDO: Usando DubStatus igual ao AniTube
+            val dubStatus = if (isDubbed) DubStatus.Dubbed else DubStatus.Subbed
+            addDubStatus(dubStatus, episodeNumber)
         }
     }
 
@@ -130,7 +132,7 @@ class AnimesFlix : MainAPI() {
 
         return newAnimeSearchResponse(cleanedTitle, fixUrl(href), TvType.Anime) {
             this.posterUrl = posterUrl
-            // CORRIGIDO: addDubStatus com Boolean e null para episódios
+            // CORRIGIDO: Usando Boolean igual ao AniTube para addDubStatus em pesquisa
             addDubStatus(isDubbed, null)
         }
     }
@@ -256,7 +258,7 @@ class AnimesFlix : MainAPI() {
                         this.season = seasonNumber
                         this.episode = episodeNumber
                         this.posterUrl = poster
-                        // CORRIGIDO: addDubStatus para Episode
+                        // CORRIGIDO: Usando DubStatus igual ao AniTube
                         addDubStatus(if (isDubbed) DubStatus.Dubbed else DubStatus.Subbed, episodeNumber)
                     }
                     episodesList.add(episode)
@@ -297,7 +299,7 @@ class AnimesFlix : MainAPI() {
                 this.showStatus = showStatus
                 this.recommendations = recommendations.takeIf { it.isNotEmpty() }
 
-                // CORRIGIDO: Agrupa episódios por temporada
+                // CORRIGIDO: Agrupa episódios por temporada igual ao AniTube
                 val episodesBySeason = sortedEpisodes.groupBy { it.season }
                 episodesBySeason.forEach { (season, episodes) ->
                     val isDubbedSeason = episodes.any { it.name.contains("Dublado", true) }
@@ -313,6 +315,7 @@ class AnimesFlix : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
+        // Por enquanto retorna false para testes
         return false
     }
 }
