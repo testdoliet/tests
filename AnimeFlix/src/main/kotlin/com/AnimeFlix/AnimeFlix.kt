@@ -445,105 +445,102 @@ class AnimesFlix : MainAPI() {
         println("$TAG - loadLinks - Temporada: $temporada")
         println("$TAG - loadLinks - Episódio: $episodio")
         
-        // Constrói a URL do stream
+        // Headers necessários para o stream
+        val streamHeaders = mapOf(
+            "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
+            "Referer" to "https://www.animesflix.site/",
+            "Accept" to "*/*",
+            "Accept-Language" to "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+            "Connection" to "keep-alive",
+            "Range" to "bytes=0-"
+        )
+        
+        // Constrói a URL do stream com várias variações de slug
         val firstLetter = slug.firstOrNull()?.uppercase() ?: ""
         
-        val streamPath = if (tipo == "filmes") {
-            "$firstLetter/$slug/stream/stream.m3u8"
-        } else {
-            val tempNum = temporada?.toString()?.padStart(2, '0') ?: "01"
-            val epNum = episodio?.toString()?.padStart(2, '0') ?: "01"
-            "$firstLetter/$slug/${tempNum}-temporada/$epNum/stream.m3u8"
-        }
+        // Lista de possíveis slugs (com e sem legendado/dublado)
+        val slugVariations = mutableListOf(
+            slug,
+            slug.replace("-legendado", ""),
+            slug.replace("-dublado", ""),
+            slug.replace(Regex("-\\d{4}$"), ""), // remove ano do final
+            slug.replace(Regex("-\\d{4}-legendado$"), ""),
+            slug.replace(Regex("-\\d{4}-dublado$"), "")
+        ).distinct()
         
+        val tempNum = temporada?.toString()?.padStart(2, '0') ?: "01"
+        val epNum = episodio?.toString()?.padStart(2, '0') ?: "01"
         val timestamp = System.currentTimeMillis()
-        val streamUrl = "$primaryUrl/$streamPath?nocache=$timestamp"
         
-        println("$TAG - loadLinks - Stream URL: $streamUrl")
+        val streamUrls = mutableListOf<String>()
         
-        // Tenta gerar links M3U8
-        val m3u8Links = try {
-            com.lagradost.cloudstream3.utils.M3u8Helper.generateM3u8(
-                source = "AnimesFlix",
-                streamUrl = streamUrl,
-                referer = mainUrl,
-                headers = mapOf(
-                    "Referer" to mainUrl,
-                    "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
-                    "Accept" to "*/*"
+        // Gera URLs para cada variação de slug
+        for (slugVar in slugVariations) {
+            if (slugVar.isBlank()) continue
+            
+            val letter = slugVar.firstOrNull()?.uppercase() ?: firstLetter
+            
+            val streamPath = if (tipo == "filmes") {
+                "$letter/$slugVar/stream/stream.m3u8"
+            } else {
+                "$letter/$slugVar/${tempNum}-temporada/$epNum/stream.m3u8"
+            }
+            
+            streamUrls.add("$primaryUrl/$streamPath?nocache=$timestamp")
+        }
+        
+        println("$TAG - loadLinks - Generated ${streamUrls.size} possible URLs")
+        
+        var anySuccess = false
+        
+        // Testa cada URL até encontrar uma que funcione
+        for (streamUrl in streamUrls) {
+            println("$TAG - loadLinks - Trying: $streamUrl")
+            
+            try {
+                // Testa se a URL existe com uma requisição HEAD
+                val testResponse = app.head(
+                    streamUrl,
+                    headers = streamHeaders,
+                    timeout = 5000,
+                    allowRedirects = false
                 )
-            )
-        } catch (e: Exception) {
-            println("$TAG - loadLinks - M3u8Helper error: ${e.message}")
-            // Se falhar, tenta adicionar como link direto
-            callback(
-                newExtractorLink(
-                    source = "AnimesFlix",
-                    name = "AnimesFlix (Direct)",
-                    url = streamUrl,
-                    type = ExtractorLinkType.M3U8
-                ) {
-                    this.referer = mainUrl
-                    this.quality = 1080
-                    this.headers = mapOf(
-                        "Referer" to mainUrl,
-                        "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
-                        "Accept" to "*/*"
+                
+                if (testResponse.code == 200 || testResponse.code == 206) {
+                    println("$TAG - loadLinks - Found working URL: $streamUrl")
+                    
+                    // Adiciona o link direto
+                    callback(
+                        newExtractorLink(
+                            source = "AnimesFlix",
+                            name = "AnimesFlix",
+                            url = streamUrl,
+                            type = ExtractorLinkType.M3U8
+                        ) {
+                            this.referer = "https://www.animesflix.site/"
+                            this.quality = 1080
+                            this.headers = streamHeaders
+                        }
                     )
+                    
+                    anySuccess = true
+                    break
                 }
-            )
-            return true
+            } catch (e: Exception) {
+                println("$TAG - loadLinks - URL failed: ${e.message}")
+                // Continua tentando outras URLs
+            }
         }
         
-        if (m3u8Links.isEmpty()) {
-            println("$TAG - loadLinks - No M3U8 links generated, adding direct link")
-            // Adiciona como link direto
-            callback(
-                newExtractorLink(
-                    source = "AnimesFlix",
-                    name = "AnimesFlix (Direct)",
-                    url = streamUrl,
-                    type = ExtractorLinkType.M3U8
-                ) {
-                    this.referer = mainUrl
-                    this.quality = 1080
-                    this.headers = mapOf(
-                        "Referer" to mainUrl,
-                        "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
-                        "Accept" to "*/*"
-                    )
-                }
-            )
-            return true
+        if (!anySuccess) {
+            println("$TAG - loadLinks - No working URL found")
         }
         
-        println("$TAG - loadLinks - Generated ${m3u8Links.size} M3U8 links")
+        anySuccess
         
-        m3u8Links.forEachIndexed { index, m3u8Link ->
-            println("$TAG - loadLinks - Link $index: Quality ${m3u8Link.quality}")
-            callback(
-                newExtractorLink(
-                    source = "AnimesFlix",
-                    name = "AnimesFlix",
-                    url = m3u8Link.url,
-                    type = ExtractorLinkType.M3U8
-                ) {
-                    this.referer = mainUrl
-                    this.quality = m3u8Link.quality
-                    this.headers = mapOf(
-                        "Referer" to mainUrl,
-                        "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
-                        "Accept" to "*/*"
-                    )
-                }
-            )
-        }
-        
-        true
     } catch (e: Exception) {
         println("$TAG - loadLinks - Error: ${e.message}")
         e.printStackTrace()
         false
-    }
     }
 }
