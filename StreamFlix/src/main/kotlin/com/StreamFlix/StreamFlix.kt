@@ -5,6 +5,7 @@ import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.LoadResponse.Companion.addActors
 import com.lagradost.cloudstream3.LoadResponse.Companion.addTrailer
 import com.fasterxml.jackson.annotation.JsonProperty
+import org.jsoup.nodes.Element
 import java.text.SimpleDateFormat
 import java.util.Locale
 
@@ -66,7 +67,7 @@ class StreamFlix : MainAPI() {
 
     private fun parseMoviesJson(json: String): List<SearchResponse> {
         return try {
-            val response = json.parsedSafe<MoviesResponse>() ?: return emptyList()
+            val response = mapper.readValue(json, MoviesResponse::class.java)
             response.movies.mapNotNull { movie ->
                 movie.toSearchResponse()
             }
@@ -77,7 +78,7 @@ class StreamFlix : MainAPI() {
 
     private fun parseSeriesJson(json: String): List<SearchResponse> {
         return try {
-            val response = json.parsedSafe<SeriesResponse>() ?: return emptyList()
+            val response = mapper.readValue(json, SeriesResponse::class.java)
             response.series.mapNotNull { series ->
                 series.toSearchResponse()
             }
@@ -88,7 +89,7 @@ class StreamFlix : MainAPI() {
 
     private fun parseTrendingJson(json: String): List<SearchResponse> {
         return try {
-            val response = json.parsedSafe<TrendingResponse>() ?: return emptyList()
+            val response = mapper.readValue(json, TrendingResponse::class.java)
             val items = mutableListOf<SearchResponse>()
             
             response.movies?.forEach { movie ->
@@ -136,9 +137,9 @@ class StreamFlix : MainAPI() {
         try {
             val movieSearchUrl = "$apiUrl?action=tmdb_search&query=${java.net.URLEncoder.encode(query, "UTF-8")}&type=movie"
             val movieResponse = app.get(movieSearchUrl)
-            val movieJson = movieResponse.parsedSafe<TMDBMovieSearchResponse>()
+            val movieJson = mapper.readValue(movieResponse.text, TMDBMovieSearchResponse::class.java)
             
-            movieJson?.result?.let { movie ->
+            movieJson.result?.let { movie ->
                 movie.toSearchResponse()?.let { results.add(it) }
             }
         } catch (e: Exception) {
@@ -149,9 +150,9 @@ class StreamFlix : MainAPI() {
         try {
             val seriesSearchUrl = "$apiUrl?action=tmdb_search&query=${java.net.URLEncoder.encode(query, "UTF-8")}&type=tv"
             val seriesResponse = app.get(seriesSearchUrl)
-            val seriesJson = seriesResponse.parsedSafe<TMDBSeriesSearchResponse>()
+            val seriesJson = mapper.readValue(seriesResponse.text, TMDBSeriesSearchResponse::class.java)
             
-            seriesJson?.result?.let { series ->
+            seriesJson.result?.let { series ->
                 series.toSearchResponse()?.let { results.add(it) }
             }
         } catch (e: Exception) {
@@ -174,7 +175,11 @@ class StreamFlix : MainAPI() {
         // Busca informações detalhadas da API
         val infoUrl = "$apiUrl?action=get_vod_info&vod_id=$id"
         val infoResponse = app.get(infoUrl)
-        val infoJson = infoResponse.parsedSafe<VodInfoResponse>() ?: return null
+        val infoJson = try {
+            mapper.readValue(infoResponse.text, VodInfoResponse::class.java)
+        } catch (e: Exception) {
+            return null
+        }
         
         val info = infoJson.info ?: return null
         val movieData = infoJson.movie_data
@@ -196,15 +201,11 @@ class StreamFlix : MainAPI() {
         // Processa gêneros
         val tags = info.genre?.split(",")?.map { it.trim() }
         
-        // Processa elenco
-        val actors = info.actors?.split(",")?.mapNotNull { actorName ->
-            if (actorName.isNotBlank()) {
-                Actor(actorName.trim())
-            }
+        // Processa elenco - CORRIGIDO: Actor requer apenas o nome
+        val actorsList = info.actors?.split(",")?.mapNotNull { actorName ->
+            actorName.trim().takeIf { it.isNotBlank() }
         } ?: info.cast?.split(",")?.mapNotNull { actorName ->
-            if (actorName.isNotBlank()) {
-                Actor(actorName.trim())
-            }
+            actorName.trim().takeIf { it.isNotBlank() }
         }
         
         // Processa trailer
@@ -234,8 +235,8 @@ class StreamFlix : MainAPI() {
                 this.plot = plot
                 this.tags = tags
                 
-                if (!actors.isNullOrEmpty()) {
-                    addActors(actors)
+                if (!actorsList.isNullOrEmpty()) {
+                    addActors(actorsList)
                 }
                 
                 trailerUrl?.let { addTrailer(it) }
@@ -251,8 +252,8 @@ class StreamFlix : MainAPI() {
                 this.plot = plot
                 this.tags = tags
                 
-                if (!actors.isNullOrEmpty()) {
-                    addActors(actors)
+                if (!actorsList.isNullOrEmpty()) {
+                    addActors(actorsList)
                 }
                 
                 trailerUrl?.let { addTrailer(it) }
@@ -281,7 +282,7 @@ class StreamFlix : MainAPI() {
         
         if (episodeElements.isNotEmpty()) {
             episodeElements.forEachIndexed { index, element ->
-                val dataUrl = element.attr("data-url") ?: element.attr("href") ?: ""
+                val dataUrl = element.attr("data-url").ifEmpty { element.attr("href") }
                 val episodeNumber = element.attr("data-episode").toIntOrNull() ?: (index + 1)
                 val seasonNumber = element.attr("data-season").toIntOrNull() ?: 1
                 
