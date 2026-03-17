@@ -249,7 +249,7 @@ class AnimesFlix : MainAPI() {
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error in getMainPage: ${e.message}", e)
-            newHomePageResponse(request.name, emptyList(), false)
+            return newHomePageResponse(request.name, emptyList(), false)
         }
     }
 
