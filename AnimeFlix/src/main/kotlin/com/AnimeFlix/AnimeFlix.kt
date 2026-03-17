@@ -243,7 +243,6 @@ class AnimesFlix : MainAPI() {
                 val seasonNumber = row.attr("data-temporada").toIntOrNull() ?: 1
 
                 if (episodeNumber != null && episodeLink.isNotBlank()) {
-                    val isDubbed = row.text().contains("Dublado", true)
                     val episodeName = row.select(".episode-name").text()?.trim() ?: "Episódio $episodeNumber"
 
                     val episode = newEpisode(fixUrl(episodeLink)) {
@@ -251,7 +250,6 @@ class AnimesFlix : MainAPI() {
                         this.season = seasonNumber
                         this.episode = episodeNumber
                         this.posterUrl = poster
-                        // CORREÇÃO: Episode não tem addDubStatus, removido
                     }
                     episodesList.add(episode)
                 }
@@ -291,9 +289,9 @@ class AnimesFlix : MainAPI() {
                 this.showStatus = showStatus
                 this.recommendations = recommendations.takeIf { it.isNotEmpty() }
 
-                // CORREÇÃO: addEpisodes do AniTube - passa a lista completa
+                // CORREÇÃO: Usando safe call para name que pode ser null
                 if (sortedEpisodes.isNotEmpty()) {
-                    val isDubbedOverall = sortedEpisodes.any { it.name.contains("Dublado", true) }
+                    val isDubbedOverall = sortedEpisodes.any { it.name?.contains("Dublado", true) == true }
                     addEpisodes(if (isDubbedOverall) DubStatus.Dubbed else DubStatus.Subbed, sortedEpisodes)
                 }
             }
