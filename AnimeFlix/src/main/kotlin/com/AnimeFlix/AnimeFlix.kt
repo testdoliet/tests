@@ -25,7 +25,7 @@ class AnimesFlix : MainAPI() {
 
     companion object {
         private const val SEARCH_PATH = "/search/?q="
-        private const val GENRES_PATH = "/generos"
+        private const val EPISODES_PATH = "/episodios"
 
         // Seletores baseados no HTML
         private const val ANIME_CARD = ".anime-item"
@@ -33,35 +33,52 @@ class AnimesFlix : MainAPI() {
         private const val POSTER_SELECTOR = "img"
         private const val EPISODE_NUMBER_SELECTOR = ".episode-badge"
         private const val EPISODE_META_SELECTOR = ".episode-meta span"
-        private const val GENRE_ITEM = ".genre-item"
-        private const val GENRE_NAME = ".genre-name"
-        private const val GENRE_COUNT = ".genre-count"
+
+        private const val ANIME_TITLE = "h1.anime-title-large"
+        private const val ANIME_POSTER = ".anime-poster-large img"
+        private const val ANIME_SYNOPSIS = ".overview-text"
+        private const val ANIME_TAGS = ".tags-container .tag"
+        private const val ANIME_METADATA = ".anime-meta-item"
+        private const val EPISODE_LIST = ".episodes-list .episode-row"
+
+        private const val RECOMMENDATIONS = ".content-grid .anime-item"
     }
 
-    // Lista fixa de categorias baseada nos gêneros com mais de 20 animes
+    // Lista de categorias baseada nos gêneros com mais de 20 animes
     private val mainPageCategories = listOf(
-        "$mainUrl" to "Últimos Episódios",
-        "$mainUrl/genero/animes-acao" to "Ação",
-        "$mainUrl/genero/animes" to "Animes",
-        "$mainUrl/genero/animes-aventura" to "Aventura",
-        "$mainUrl/genero/animes-comedia" to "Comédia",
-        "$mainUrl/genero/animes-drama" to "Drama",
-        "$mainUrl/genero/animes-fantasia" to "Fantasia",
-        "$mainUrl/genero/animes-ficcao-cientifica" to "Ficção Científica",
-        "$mainUrl/genero/animes-horror" to "Horror",
-        "$mainUrl/genero/animes-misterio" to "Mistério",
-        "$mainUrl/genero/animes-romance" to "Romance",
-        "$mainUrl/genero/animes-sci-fi" to "Sci-Fi",
-        "$mainUrl/genero/animes-seinen" to "Seinen",
-        "$mainUrl/genero/animes-shounen" to "Shounen",
-        "$mainUrl/genero/slice-of-life1" to "Slice of life",
-        "$mainUrl/genero/sobrenatural1" to "Sobrenatural",
-        "$mainUrl/genero/animes-suspense" to "Suspense",
-        "$mainUrl/genero/animes-vida-escolar" to "Vida Escolar"
+        EPISODES_PATH to "Últimos Episódios",
+        "/genero/animes-acao" to "Ação",
+        "/genero/animes-aventura" to "Aventura",
+        "/genero/animes-comedia" to "Comédia",
+        "/genero/animes-drama" to "Drama",
+        "/genero/animes-fantasia" to "Fantasia",
+        "/genero/animes-ficcao-cientifica" to "Ficção Científica",
+        "/genero/animes-horror" to "Horror",
+        "/genero/animes-misterio" to "Mistério",
+        "/genero/animes-romance" to "Romance",
+        "/genero/animes-sci-fi" to "Sci-Fi",
+        "/genero/animes-seinen" to "Seinen",
+        "/genero/animes-shounen" to "Shounen",
+        "/genero/slice-of-life1" to "Slice of life",
+        "/genero/sobrenatural1" to "Sobrenatural",
+        "/genero/animes-suspense" to "Suspense",
+        "/genero/animes-vida-escolar" to "Vida Escolar",
+        "/genero/animes" to "Animes",
+        "/genero/animes-artes-marciais" to "Artes Marciais",
+        "/genero/animes-demonios" to "Demônios",
+        "/genero/animes-ecchi" to "Ecchi",
+        "/genero/animes-esportes" to "Esporte",
+        "/genero/animes-jogos" to "Jogos",
+        "/genero/animes-magia" to "Magia",
+        "/genero/animes-militar" to "Militar",
+        "/genero/animes-psicologico" to "Psicológico",
+        "/genero/animes-superpoder" to "Superpoder"
     )
 
     override val mainPage = mainPageOf(
-        *mainPageCategories.toTypedArray()
+        *mainPageCategories.map { (path, name) ->
+            "$mainUrl${path.removePrefix("/")}" to name
+        }.toTypedArray()
     )
 
     private fun cleanTitle(dirtyTitle: String): String {
@@ -121,7 +138,10 @@ class AnimesFlix : MainAPI() {
         val cleanedTitle = cleanTitle(animeTitle)
 
         val posterUrl = selectFirst(POSTER_SELECTOR)?.attr("src")?.let { fixUrl(it) }
-        val isDubbed = isDubbed(this)
+        
+        // Verifica se é legendado pelo título
+        val isSubbed = rawTitle.contains("Legendado", true)
+        val isDubbed = isDubbed(this) && !isSubbed
 
         val urlWithPoster = if (posterUrl != null) {
             "$href|poster=$posterUrl"
@@ -131,7 +151,8 @@ class AnimesFlix : MainAPI() {
 
         return newAnimeSearchResponse(cleanedTitle, fixUrl(urlWithPoster), TvType.Anime) {
             this.posterUrl = posterUrl
-            val dubStatus = if (isDubbed) DubStatus.Dubbed else DubStatus.Subbed
+            // Se tiver Legendado no título, marca como Legendado
+            val dubStatus = if (isSubbed) DubStatus.Subbed else DubStatus.Dubbed
             addDubStatus(dubStatus, episodeNumber)
         }
     }
@@ -145,44 +166,51 @@ class AnimesFlix : MainAPI() {
         val cleanedTitle = cleanTitle(rawTitle)
 
         val posterUrl = selectFirst(POSTER_SELECTOR)?.attr("src")?.let { fixUrl(it) }
-        val isDubbed = isDubbed(this)
+        
+        // Verifica se é legendado pelo título
+        val isSubbed = rawTitle.contains("Legendado", true)
+        val isDubbed = isDubbed(this) && !isSubbed
 
         return newAnimeSearchResponse(cleanedTitle, fixUrl(href), TvType.Anime) {
             this.posterUrl = posterUrl
-            addDubStatus(isDubbed, null)
+            addDubStatus(if (isSubbed) DubStatus.Subbed else DubStatus.Dubbed, null)
         }
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
+        val url = if (page > 1) {
+            if (request.data.contains("?")) {
+                "$request.data&page=$page"
+            } else {
+                "$request.data/pagina/$page"
+            }
+        } else {
+            request.data
+        }
+
+        val document = app.get(url).document
+
         return if (request.name == "Últimos Episódios") {
             // Para Últimos Episódios, usa layout horizontal
-            val document = app.get(mainUrl).document
             val episodes = document.select(".episodes-grid $EPISODE_CARD")
                 .mapNotNull { it.toEpisodeSearchResponse() }
                 .distinctBy { it.url }
 
+            // Verifica se tem próxima página
+            val hasNext = document.select(".pagination a:contains(Próxima)").isNotEmpty()
+
             newHomePageResponse(
                 list = HomePageList(request.name, episodes, isHorizontalImages = true),
-                hasNext = false
+                hasNext = hasNext
             )
         } else {
             // Para categorias de gêneros
-            val url = if (page > 1) {
-                if (request.data.contains("?")) {
-                    "$request.data&page=$page"
-                } else {
-                    "$request.data?page=$page"
-                }
-            } else {
-                request.data
-            }
-
-            val document = app.get(url).document
             val items = document.select(".content-grid $ANIME_CARD")
                 .mapNotNull { it.toAnimeSearchResponse() }
                 .distinctBy { it.url }
 
-            val hasNext = document.select(".pagination .next, .pagination a:contains(Próxima)").isNotEmpty()
+            // Verifica se tem próxima página
+            val hasNext = document.select(".pagination a:contains(Próxima)").isNotEmpty()
 
             newHomePageResponse(request.name, items, hasNext)
         }
@@ -209,32 +237,25 @@ class AnimesFlix : MainAPI() {
 
         val document = app.get(actualUrl).document
 
-        val rawTitle = document.selectFirst("h1.anime-title-large")?.text()?.trim() ?: 
+        val rawTitle = document.selectFirst(ANIME_TITLE)?.text()?.trim() ?: 
                       document.select("meta[property='og:title']").attr("content") ?: "Sem Título"
         val title = cleanTitle(rawTitle)
 
-        val poster = thumbPoster ?: document.selectFirst(".anime-poster-large img")?.attr("src")?.let { fixUrl(it) } ?:
+        // Usa o poster como backdrop também (removendo o banner separado)
+        val poster = thumbPoster ?: document.selectFirst(ANIME_POSTER)?.attr("src")?.let { fixUrl(it) } ?:
                     document.select("meta[property='og:image']").attr("content")?.let { fixUrl(it) }
 
-        val backdrop = document.selectFirst(".anime-hero-bg")?.attr("style")?.let { style ->
-            Regex("url\\((.*?)\\)").find(style)?.groupValues?.get(1)?.let { fixUrl(it) }
-        }
-
-        val synopsis = document.selectFirst(".overview-text")?.text()?.trim() ?:
+        val synopsis = document.selectFirst(ANIME_SYNOPSIS)?.text()?.trim() ?:
                       document.select("meta[name='description']").attr("content")
 
-        val tags = document.select(".tags-container .tag").map { it.text().trim() }
+        val tags = document.select(ANIME_TAGS).map { it.text().trim() }
 
-        var year: Int? = null
         var duration: Int? = null
         var episodeCount = 0
 
-        document.select(".anime-meta-item").forEach { element ->
+        document.select(ANIME_METADATA).forEach { element ->
             val text = element.text()
             when {
-                text.contains("202") -> {
-                    year = Regex("(\\d{4})").find(text)?.groupValues?.get(1)?.toIntOrNull()
-                }
                 text.contains("min") -> {
                     duration = Regex("(\\d+)").find(text)?.groupValues?.get(1)?.toIntOrNull()
                 }
@@ -244,7 +265,7 @@ class AnimesFlix : MainAPI() {
             }
         }
 
-        val episodeRows = document.select(".episodes-list .episode-row")
+        val episodeRows = document.select(EPISODE_LIST)
         val episodesList = mutableListOf<Episode>()
 
         if (episodeRows.isNotEmpty()) {
@@ -256,19 +277,21 @@ class AnimesFlix : MainAPI() {
 
                 if (episodeNumber != null && episodeLink.isNotBlank()) {
                     val episodeName = row.select(".episode-name").text()?.trim() ?: "Episódio $episodeNumber"
+                    val isSubbed = row.text().contains("Legendado", true)
 
                     val episode = newEpisode(fixUrl(episodeLink)) {
                         this.name = episodeName
                         this.season = seasonNumber
                         this.episode = episodeNumber
                         this.posterUrl = poster
+                        addDubStatus(if (isSubbed) DubStatus.Subbed else DubStatus.Dubbed, episodeNumber)
                     }
                     episodesList.add(episode)
                 }
             }
         }
 
-        val recommendations = document.select(".content-grid .anime-item").mapNotNull { element ->
+        val recommendations = document.select(RECOMMENDATIONS).mapNotNull { element ->
             element.toAnimeSearchResponse()
         }.take(20)
 
@@ -277,8 +300,7 @@ class AnimesFlix : MainAPI() {
         return if (isMovie) {
             newMovieLoadResponse(title, actualUrl, TvType.AnimeMovie, actualUrl) {
                 this.posterUrl = poster
-                this.backgroundPosterUrl = backdrop
-                this.year = year
+                this.backgroundPosterUrl = poster // Usa o mesmo poster como backdrop
                 this.plot = synopsis
                 this.tags = tags
                 this.duration = duration
@@ -294,16 +316,19 @@ class AnimesFlix : MainAPI() {
 
             newAnimeLoadResponse(title, actualUrl, TvType.Anime) {
                 this.posterUrl = poster
-                this.backgroundPosterUrl = backdrop
-                this.year = year
+                this.backgroundPosterUrl = poster // Usa o mesmo poster como backdrop
                 this.plot = synopsis
                 this.tags = tags
                 this.showStatus = showStatus
                 this.recommendations = recommendations.takeIf { it.isNotEmpty() }
 
                 if (sortedEpisodes.isNotEmpty()) {
-                    val isDubbedOverall = sortedEpisodes.any { it.name?.contains("Dublado", true) == true }
-                    addEpisodes(if (isDubbedOverall) DubStatus.Dubbed else DubStatus.Subbed, sortedEpisodes)
+                    // Agrupa episódios por temporada
+                    val episodesBySeason = sortedEpisodes.groupBy { it.season }
+                    episodesBySeason.forEach { (season, episodes) ->
+                        val isSubbedSeason = episodes.any { it.name?.contains("Legendado", true) == true }
+                        addEpisodes(if (isSubbedSeason) DubStatus.Subbed else DubStatus.Dubbed, episodes)
+                    }
                 }
             }
         }
