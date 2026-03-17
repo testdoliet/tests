@@ -151,7 +151,6 @@ class AnimesFlix : MainAPI() {
 
         return newAnimeSearchResponse(cleanedTitle, fixUrl(urlWithPoster), TvType.Anime) {
             this.posterUrl = posterUrl
-            // CORRIGIDO: Usando Boolean para addDubStatus
             if (isSubbed) {
                 addDubStatus(false, episodeNumber) // false = não é dublado (legendado)
             } else {
@@ -176,7 +175,6 @@ class AnimesFlix : MainAPI() {
 
         return newAnimeSearchResponse(cleanedTitle, fixUrl(href), TvType.Anime) {
             this.posterUrl = posterUrl
-            // CORRIGIDO: Usando Boolean para addDubStatus
             if (isSubbed) {
                 addDubStatus(false, null) // false = não é dublado (legendado)
             } else {
@@ -249,9 +247,11 @@ class AnimesFlix : MainAPI() {
                       document.select("meta[property='og:title']").attr("content") ?: "Sem Título"
         val title = cleanTitle(rawTitle)
 
-        // Usa o poster como backdrop também (removendo o banner separado)
+        // Usa o poster como backdrop também
         val poster = thumbPoster ?: document.selectFirst(ANIME_POSTER)?.attr("src")?.let { fixUrl(it) } ?:
                     document.select("meta[property='og:image']").attr("content")?.let { fixUrl(it) }
+
+        val backdrop = poster // Usa o mesmo poster como backdrop
 
         val synopsis = document.selectFirst(ANIME_SYNOPSIS)?.text()?.trim() ?:
                       document.select("meta[name='description']").attr("content")
@@ -292,7 +292,6 @@ class AnimesFlix : MainAPI() {
                         this.season = seasonNumber
                         this.episode = episodeNumber
                         this.posterUrl = poster
-                        // CORRIGIDO: Episode não tem addDubStatus, removido
                     }
                     episodesList.add(episode)
                 }
@@ -308,7 +307,7 @@ class AnimesFlix : MainAPI() {
         return if (isMovie) {
             newMovieLoadResponse(title, actualUrl, TvType.AnimeMovie, actualUrl) {
                 this.posterUrl = poster
-                this.backgroundPosterUrl = poster // Usa o mesmo poster como backdrop
+                this.backgroundPosterUrl = backdrop
                 this.plot = synopsis
                 this.tags = tags
                 this.duration = duration
@@ -324,7 +323,7 @@ class AnimesFlix : MainAPI() {
 
             newAnimeLoadResponse(title, actualUrl, TvType.Anime) {
                 this.posterUrl = poster
-                this.backgroundPosterUrl = poster // Usa o mesmo poster como backdrop
+                this.backgroundPosterUrl = backdrop
                 this.plot = synopsis
                 this.tags = tags
                 this.showStatus = showStatus
@@ -335,7 +334,6 @@ class AnimesFlix : MainAPI() {
                     val episodesBySeason = sortedEpisodes.groupBy { it.season }
                     episodesBySeason.forEach { (season, episodes) ->
                         val isSubbedSeason = episodes.any { it.name?.contains("Legendado", true) == true }
-                        // CORRIGIDO: addEpisodes espera uma lista de Episode
                         addEpisodes(
                             if (isSubbedSeason) DubStatus.Subbed else DubStatus.Dubbed,
                             episodes
@@ -352,6 +350,81 @@ class AnimesFlix : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        return false
+        val actualUrl = data.split("|poster=")[0]
+        
+        return try {
+            val response = app.get(actualUrl, headers = mapOf(
+                "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
+                "Referer" to mainUrl
+            ))
+
+            val document = org.jsoup.Jsoup.parse(response.text)
+            
+            // Extrai as configurações do script
+            val script = document.select("script:containsData(urlConfig)").first()?.data() ?: return false
+            
+            // Extrai PRIMARY_URL (servidor principal)
+            val primaryUrl = Regex("PRIMARY_URL\\s*=\\s*\"(.*?)\"").find(script)?.groupValues?.get(1)
+                ?: "https://ondemand.towns3.shop"
+            
+            // Extrai slug do anime
+            val slug = Regex("slug\\s*:\\s*\"(.*?)\"").find(script)?.groupValues?.get(1) ?: return false
+            
+            // Extrai tipo (animes ou filmes)
+            val tipo = Regex("tipo\\s*:\\s*\"(.*?)\"").find(script)?.groupValues?.get(1) ?: "animes"
+            
+            // Extrai temporada e episódio (para séries)
+            val temporada = Regex("temporada\\s*:\\s*(\\d+)").find(script)?.groupValues?.get(1)?.toIntOrNull()
+            val episodio = Regex("episodio\\s*:\\s*(\\d+)").find(script)?.groupValues?.get(1)?.toIntOrNull()
+            
+            // Constrói a URL do stream
+            val firstLetter = slug.firstOrNull()?.uppercase() ?: ""
+            
+            val streamPath = if (tipo == "filmes") {
+                "$firstLetter/$slug/stream/stream.m3u8"
+            } else {
+                val tempNum = temporada?.toString()?.padStart(2, '0') ?: "01"
+                val epNum = episodio?.toString()?.padStart(2, '0') ?: "01"
+                "$firstLetter/$slug/${tempNum}-temporada/$epNum/stream.m3u8"
+            }
+            
+            val timestamp = System.currentTimeMillis()
+            val streamUrl = "$primaryUrl/$streamPath?nocache=$timestamp"
+            
+            // Gera os links M3U8
+            val m3u8Links = com.lagradost.cloudstream3.utils.M3u8Helper.generateM3u8(
+                source = "AnimesFlix",
+                streamUrl = streamUrl,
+                referer = mainUrl,
+                headers = mapOf(
+                    "Referer" to mainUrl,
+                    "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
+                    "Accept" to "*/*"
+                )
+            )
+            
+            m3u8Links.forEach { m3u8Link ->
+                callback(
+                    newExtractorLink(
+                        source = "AnimesFlix",
+                        name = "AnimesFlix",
+                        url = m3u8Link.url,
+                        type = ExtractorLinkType.M3U8
+                    ) {
+                        this.referer = mainUrl
+                        this.quality = m3u8Link.quality
+                        this.headers = mapOf(
+                            "Referer" to mainUrl,
+                            "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
+                            "Accept" to "*/*"
+                        )
+                    }
+                )
+            }
+            
+            true
+        } catch (e: Exception) {
+            false
+        }
     }
 }
