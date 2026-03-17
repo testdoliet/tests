@@ -151,9 +151,12 @@ class AnimesFlix : MainAPI() {
 
         return newAnimeSearchResponse(cleanedTitle, fixUrl(urlWithPoster), TvType.Anime) {
             this.posterUrl = posterUrl
-            // Se tiver Legendado no título, marca como Legendado
-            val dubStatus = if (isSubbed) DubStatus.Subbed else DubStatus.Dubbed
-            addDubStatus(dubStatus, episodeNumber)
+            // CORRIGIDO: Usando Boolean para addDubStatus
+            if (isSubbed) {
+                addDubStatus(false, episodeNumber) // false = não é dublado (legendado)
+            } else {
+                addDubStatus(true, episodeNumber) // true = é dublado
+            }
         }
     }
 
@@ -173,7 +176,12 @@ class AnimesFlix : MainAPI() {
 
         return newAnimeSearchResponse(cleanedTitle, fixUrl(href), TvType.Anime) {
             this.posterUrl = posterUrl
-            addDubStatus(if (isSubbed) DubStatus.Subbed else DubStatus.Dubbed, null)
+            // CORRIGIDO: Usando Boolean para addDubStatus
+            if (isSubbed) {
+                addDubStatus(false, null) // false = não é dublado (legendado)
+            } else {
+                addDubStatus(true, null) // true = é dublado
+            }
         }
     }
 
@@ -284,7 +292,7 @@ class AnimesFlix : MainAPI() {
                         this.season = seasonNumber
                         this.episode = episodeNumber
                         this.posterUrl = poster
-                        addDubStatus(if (isSubbed) DubStatus.Subbed else DubStatus.Dubbed, episodeNumber)
+                        // CORRIGIDO: Episode não tem addDubStatus, removido
                     }
                     episodesList.add(episode)
                 }
@@ -327,7 +335,11 @@ class AnimesFlix : MainAPI() {
                     val episodesBySeason = sortedEpisodes.groupBy { it.season }
                     episodesBySeason.forEach { (season, episodes) ->
                         val isSubbedSeason = episodes.any { it.name?.contains("Legendado", true) == true }
-                        addEpisodes(if (isSubbedSeason) DubStatus.Subbed else DubStatus.Dubbed, episodes)
+                        // CORRIGIDO: addEpisodes espera uma lista de Episode
+                        addEpisodes(
+                            if (isSubbedSeason) DubStatus.Subbed else DubStatus.Dubbed,
+                            episodes
+                        )
                     }
                 }
             }
