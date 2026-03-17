@@ -21,6 +21,28 @@
         "name": "AnimeFire"
     },
     {
+        "iconUrl": "https://www.animesflix.site/assets/animesflix/images/favicon.webp",
+        "jarFileSize": 63678,
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/lawlietbt/lietrepo",
+        "fileSize": 18376,
+        "status": 1,
+        "language": "pt-br",
+        "authors": [
+            "lawlietbr"
+        ],
+        "tvTypes": [
+            "Anime",
+            "AnimeMovie"
+        ],
+        "version": 1,
+        "internalName": "AnimeFlix",
+        "jarUrl": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/AnimeFlix.jar",
+        "description": "AnimesFlix - Assista Animes Online Gr\u00e1tis em HD Dublado e Legendado",
+        "url": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/AnimeFlix.cs3",
+        "name": "AnimeFlix"
+    },
+    {
         "iconUrl": "https://animeq.net/wp-content/uploads/2025/06/Favicon-AnimeQ-1-150x150.png",
         "jarFileSize": 125956,
         "apiVersion": 1,
