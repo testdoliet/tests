@@ -1,13 +1,21 @@
 package com.StreamFlix
 
+import android.content.Context
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.LoadResponse.Companion.addActors
 import com.lagradost.cloudstream3.LoadResponse.Companion.addTrailer
+import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
+import com.lagradost.cloudstream3.plugins.Plugin
 import com.fasterxml.jackson.annotation.JsonProperty
 import org.jsoup.nodes.Element
-import java.text.SimpleDateFormat
-import java.util.Locale
+
+@CloudstreamPlugin
+class StreamFlixProvider : Plugin() {
+    override fun load(context: Context) {
+        registerMainAPI(StreamFlix())
+    }
+}
 
 class StreamFlix : MainAPI() {
     override var mainUrl = "https://streamflix.live/"
@@ -201,7 +209,7 @@ class StreamFlix : MainAPI() {
         // Processa gêneros
         val tags = info.genre?.split(",")?.map { it.trim() }
         
-        // Processa elenco - CORRIGIDO: Actor requer apenas o nome
+        // Processa elenco
         val actorsList = info.actors?.split(",")?.mapNotNull { actorName ->
             actorName.trim().takeIf { it.isNotBlank() }
         } ?: info.cast?.split(",")?.mapNotNull { actorName ->
