@@ -6,7 +6,6 @@ import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
 import com.lagradost.cloudstream3.plugins.Plugin
 import org.jsoup.nodes.Element
-import java.net.URLDecoder
 
 @CloudstreamPlugin
 class AnimesFlixProvider : Plugin() {
@@ -113,7 +112,6 @@ class AnimesFlix : MainAPI() {
 
         return newAnimeSearchResponse(cleanedTitle, fixUrl(urlWithPoster), TvType.Anime) {
             this.posterUrl = posterUrl
-            // CORRIGIDO: Usando DubStatus igual ao AniTube
             val dubStatus = if (isDubbed) DubStatus.Dubbed else DubStatus.Subbed
             addDubStatus(dubStatus, episodeNumber)
         }
@@ -132,7 +130,6 @@ class AnimesFlix : MainAPI() {
 
         return newAnimeSearchResponse(cleanedTitle, fixUrl(href), TvType.Anime) {
             this.posterUrl = posterUrl
-            // CORRIGIDO: Usando Boolean igual ao AniTube para addDubStatus em pesquisa
             addDubStatus(isDubbed, null)
         }
     }
@@ -218,7 +215,6 @@ class AnimesFlix : MainAPI() {
 
         var year: Int? = null
         var duration: Int? = null
-        var seasonCount = 1
         var episodeCount = 0
 
         document.select(ANIME_METADATA).forEach { element ->
@@ -229,9 +225,6 @@ class AnimesFlix : MainAPI() {
                 }
                 text.contains("min") -> {
                     duration = Regex("(\\d+)").find(text)?.groupValues?.get(1)?.toIntOrNull()
-                }
-                text.contains("Temporada") -> {
-                    seasonCount = Regex("(\\d+)").find(text)?.groupValues?.get(1)?.toIntOrNull() ?: 1
                 }
                 text.contains("Episódios") -> {
                     episodeCount = Regex("(\\d+)").find(text)?.groupValues?.get(1)?.toIntOrNull() ?: 0
@@ -258,8 +251,7 @@ class AnimesFlix : MainAPI() {
                         this.season = seasonNumber
                         this.episode = episodeNumber
                         this.posterUrl = poster
-                        // CORRIGIDO: Usando DubStatus igual ao AniTube
-                        addDubStatus(if (isDubbed) DubStatus.Dubbed else DubStatus.Subbed, episodeNumber)
+                        // CORREÇÃO: Episode não tem addDubStatus, removido
                     }
                     episodesList.add(episode)
                 }
@@ -299,11 +291,10 @@ class AnimesFlix : MainAPI() {
                 this.showStatus = showStatus
                 this.recommendations = recommendations.takeIf { it.isNotEmpty() }
 
-                // CORRIGIDO: Agrupa episódios por temporada igual ao AniTube
-                val episodesBySeason = sortedEpisodes.groupBy { it.season }
-                episodesBySeason.forEach { (season, episodes) ->
-                    val isDubbedSeason = episodes.any { it.name.contains("Dublado", true) }
-                    addEpisodes(if (isDubbedSeason) DubStatus.Dubbed else DubStatus.Subbed, episodes)
+                // CORREÇÃO: addEpisodes do AniTube - passa a lista completa
+                if (sortedEpisodes.isNotEmpty()) {
+                    val isDubbedOverall = sortedEpisodes.any { it.name.contains("Dublado", true) }
+                    addEpisodes(if (isDubbedOverall) DubStatus.Dubbed else DubStatus.Subbed, sortedEpisodes)
                 }
             }
         }
