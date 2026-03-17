@@ -1,6 +1,7 @@
 package com.AnimesFlix
 
 import android.content.Context
+import android.util.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
@@ -24,6 +25,7 @@ class AnimesFlix : MainAPI() {
     override val usesWebView = true
 
     companion object {
+        private const val TAG = "AnimesFlix"
         private const val SEARCH_PATH = "/search/?q="
         private const val EPISODES_PATH = "/episodios"
 
@@ -42,6 +44,11 @@ class AnimesFlix : MainAPI() {
         private const val EPISODE_LIST = ".episodes-list .episode-row"
 
         private const val RECOMMENDATIONS = ".content-grid .anime-item"
+        
+        // Seletores de paginação
+        private const val PAGINATION_NEXT = ".pagination a:contains(Próxima), .pagination .next"
+        private const val PAGINATION_PREV = ".pagination a:contains(Anterior), .pagination .prev"
+        private const val PAGINATION_INFO = ".pagination-info"
     }
 
     // Lista de categorias baseada nos gêneros com mais de 20 animes
@@ -149,6 +156,8 @@ class AnimesFlix : MainAPI() {
             href
         }
 
+        Log.d(TAG, "Episode Search Response - Title: $cleanedTitle, URL: $href, Episode: $episodeNumber, Subbed: $isSubbed")
+
         return newAnimeSearchResponse(cleanedTitle, fixUrl(urlWithPoster), TvType.Anime) {
             this.posterUrl = posterUrl
             if (isSubbed) {
@@ -173,6 +182,8 @@ class AnimesFlix : MainAPI() {
         val isSubbed = rawTitle.contains("Legendado", true)
         val isDubbed = isDubbed(this) && !isSubbed
 
+        Log.d(TAG, "Anime Search Response - Title: $cleanedTitle, URL: $href, Subbed: $isSubbed")
+
         return newAnimeSearchResponse(cleanedTitle, fixUrl(href), TvType.Anime) {
             this.posterUrl = posterUrl
             if (isSubbed) {
@@ -184,163 +195,206 @@ class AnimesFlix : MainAPI() {
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
+        Log.d(TAG, "getMainPage - Name: ${request.name}, Page: $page, URL: ${request.data}")
+        
+        val baseUrl = request.data
+        
         val url = if (page > 1) {
-            if (request.data.contains("?")) {
-                "$request.data&page=$page"
+            if (baseUrl.contains(EPISODES_PATH)) {
+                // Para episódios: /episodios/pagina/2
+                "$mainUrl$EPISODES_PATH/pagina/$page"
+            } else if (baseUrl.contains("/genero/")) {
+                // Para gêneros: /genero/animes-acao/pagina/2
+                val genrePath = baseUrl.substringAfter("$mainUrl").removeSuffix("/")
+                "$mainUrl$genrePath/pagina/$page"
             } else {
-                "$request.data/pagina/$page"
+                baseUrl
             }
         } else {
-            request.data
+            baseUrl
         }
+        
+        Log.d(TAG, "getMainPage - Final URL: $url")
 
-        val document = app.get(url).document
+        try {
+            val document = app.get(url).document
 
-        return if (request.name == "Últimos Episódios") {
-            // Para Últimos Episódios, usa layout horizontal
-            val episodes = document.select(".episodes-grid $EPISODE_CARD")
-                .mapNotNull { it.toEpisodeSearchResponse() }
-                .distinctBy { it.url }
+            return if (request.name == "Últimos Episódios") {
+                // Para Últimos Episódios, usa layout horizontal
+                val episodes = document.select(".episodes-grid $EPISODE_CARD")
+                    .mapNotNull { it.toEpisodeSearchResponse() }
+                    .distinctBy { it.url }
 
-            // Verifica se tem próxima página
-            val hasNext = document.select(".pagination a:contains(Próxima)").isNotEmpty()
+                // Verifica se tem próxima página
+                val hasNext = document.select(PAGINATION_NEXT).isNotEmpty()
+                
+                Log.d(TAG, "Últimos Episódios - Found ${episodes.size} episodes, hasNext: $hasNext")
 
-            newHomePageResponse(
-                list = HomePageList(request.name, episodes, isHorizontalImages = true),
-                hasNext = hasNext
-            )
-        } else {
-            // Para categorias de gêneros
-            val items = document.select(".content-grid $ANIME_CARD")
-                .mapNotNull { it.toAnimeSearchResponse() }
-                .distinctBy { it.url }
+                newHomePageResponse(
+                    list = HomePageList(request.name, episodes, isHorizontalImages = true),
+                    hasNext = hasNext
+                )
+            } else {
+                // Para categorias de gêneros
+                val items = document.select(".content-grid $ANIME_CARD")
+                    .mapNotNull { it.toAnimeSearchResponse() }
+                    .distinctBy { it.url }
 
-            // Verifica se tem próxima página
-            val hasNext = document.select(".pagination a:contains(Próxima)").isNotEmpty()
+                // Verifica se tem próxima página
+                val hasNext = document.select(PAGINATION_NEXT).isNotEmpty()
+                
+                Log.d(TAG, "${request.name} - Found ${items.size} items, hasNext: $hasNext")
 
-            newHomePageResponse(request.name, items, hasNext)
+                newHomePageResponse(request.name, items, hasNext)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error in getMainPage: ${e.message}", e)
+            newHomePageResponse(request.name, emptyList(), false)
         }
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
         if (query.length < 2) return emptyList()
+        
+        Log.d(TAG, "Searching for: $query")
 
         val searchUrl = "$mainUrl$SEARCH_PATH${java.net.URLEncoder.encode(query, "UTF-8")}"
-        val document = app.get(searchUrl).document
+        
+        try {
+            val document = app.get(searchUrl).document
 
-        val results = mutableListOf<SearchResponse>()
+            val results = mutableListOf<SearchResponse>()
 
-        document.select(".content-grid $ANIME_CARD").mapNotNullTo(results) { it.toAnimeSearchResponse() }
-        document.select(".episodes-grid $EPISODE_CARD").mapNotNullTo(results) { it.toEpisodeSearchResponse() }
+            document.select(".content-grid $ANIME_CARD").mapNotNullTo(results) { it.toAnimeSearchResponse() }
+            document.select(".episodes-grid $EPISODE_CARD").mapNotNullTo(results) { it.toEpisodeSearchResponse() }
+            
+            Log.d(TAG, "Search found ${results.size} results")
 
-        return results.distinctBy { it.url }
+            return results.distinctBy { it.url }
+        } catch (e: Exception) {
+            Log.e(TAG, "Search error: ${e.message}", e)
+            return emptyList()
+        }
     }
 
     override suspend fun load(url: String): LoadResponse {
+        Log.d(TAG, "Loading URL: $url")
+        
         val parts = url.split("|poster=")
         val actualUrl = parts[0]
         val thumbPoster = parts.getOrNull(1)?.let { if (it.isNotBlank()) fixUrl(it) else null }
 
-        val document = app.get(actualUrl).document
+        try {
+            val document = app.get(actualUrl).document
 
-        val rawTitle = document.selectFirst(ANIME_TITLE)?.text()?.trim() ?: 
-                      document.select("meta[property='og:title']").attr("content") ?: "Sem Título"
-        val title = cleanTitle(rawTitle)
+            val rawTitle = document.selectFirst(ANIME_TITLE)?.text()?.trim() ?: 
+                          document.select("meta[property='og:title']").attr("content") ?: "Sem Título"
+            val title = cleanTitle(rawTitle)
+            
+            Log.d(TAG, "Title: $title")
 
-        // Usa o poster como backdrop também
-        val poster = thumbPoster ?: document.selectFirst(ANIME_POSTER)?.attr("src")?.let { fixUrl(it) } ?:
-                    document.select("meta[property='og:image']").attr("content")?.let { fixUrl(it) }
+            // Usa o poster como backdrop também
+            val poster = thumbPoster ?: document.selectFirst(ANIME_POSTER)?.attr("src")?.let { fixUrl(it) } ?:
+                        document.select("meta[property='og:image']").attr("content")?.let { fixUrl(it) }
 
-        val backdrop = poster // Usa o mesmo poster como backdrop
+            val backdrop = poster // Usa o mesmo poster como backdrop
 
-        val synopsis = document.selectFirst(ANIME_SYNOPSIS)?.text()?.trim() ?:
-                      document.select("meta[name='description']").attr("content")
+            val synopsis = document.selectFirst(ANIME_SYNOPSIS)?.text()?.trim() ?:
+                          document.select("meta[name='description']").attr("content")
 
-        val tags = document.select(ANIME_TAGS).map { it.text().trim() }
+            val tags = document.select(ANIME_TAGS).map { it.text().trim() }
 
-        var duration: Int? = null
-        var episodeCount = 0
+            var duration: Int? = null
+            var episodeCount = 0
 
-        document.select(ANIME_METADATA).forEach { element ->
-            val text = element.text()
-            when {
-                text.contains("min") -> {
-                    duration = Regex("(\\d+)").find(text)?.groupValues?.get(1)?.toIntOrNull()
-                }
-                text.contains("Episódios") -> {
-                    episodeCount = Regex("(\\d+)").find(text)?.groupValues?.get(1)?.toIntOrNull() ?: 0
-                }
-            }
-        }
-
-        val episodeRows = document.select(EPISODE_LIST)
-        val episodesList = mutableListOf<Episode>()
-
-        if (episodeRows.isNotEmpty()) {
-            episodeRows.forEach { row ->
-                val episodeLink = row.attr("href")
-                val episodeNumber = row.attr("data-episode-number").toIntOrNull() ?:
-                                   row.select(".episode-number").text().toIntOrNull()
-                val seasonNumber = row.attr("data-temporada").toIntOrNull() ?: 1
-
-                if (episodeNumber != null && episodeLink.isNotBlank()) {
-                    val episodeName = row.select(".episode-name").text()?.trim() ?: "Episódio $episodeNumber"
-                    val isSubbed = row.text().contains("Legendado", true)
-
-                    val episode = newEpisode(fixUrl(episodeLink)) {
-                        this.name = episodeName
-                        this.season = seasonNumber
-                        this.episode = episodeNumber
-                        this.posterUrl = poster
+            document.select(ANIME_METADATA).forEach { element ->
+                val text = element.text()
+                when {
+                    text.contains("min") -> {
+                        duration = Regex("(\\d+)").find(text)?.groupValues?.get(1)?.toIntOrNull()
                     }
-                    episodesList.add(episode)
+                    text.contains("Episódios") -> {
+                        episodeCount = Regex("(\\d+)").find(text)?.groupValues?.get(1)?.toIntOrNull() ?: 0
+                    }
                 }
             }
-        }
 
-        val recommendations = document.select(RECOMMENDATIONS).mapNotNull { element ->
-            element.toAnimeSearchResponse()
-        }.take(20)
+            val episodeRows = document.select(EPISODE_LIST)
+            val episodesList = mutableListOf<Episode>()
 
-        val isMovie = actualUrl.contains("/filmes/") || episodesList.isEmpty()
+            if (episodeRows.isNotEmpty()) {
+                episodeRows.forEach { row ->
+                    val episodeLink = row.attr("href")
+                    val episodeNumber = row.attr("data-episode-number").toIntOrNull() ?:
+                                       row.select(".episode-number").text().toIntOrNull()
+                    val seasonNumber = row.attr("data-temporada").toIntOrNull() ?: 1
 
-        return if (isMovie) {
-            newMovieLoadResponse(title, actualUrl, TvType.AnimeMovie, actualUrl) {
-                this.posterUrl = poster
-                this.backgroundPosterUrl = backdrop
-                this.plot = synopsis
-                this.tags = tags
-                this.duration = duration
-                this.recommendations = recommendations.takeIf { it.isNotEmpty() }
+                    if (episodeNumber != null && episodeLink.isNotBlank()) {
+                        val episodeName = row.select(".episode-name").text()?.trim() ?: "Episódio $episodeNumber"
+                        val isSubbed = row.text().contains("Legendado", true)
+
+                        val episode = newEpisode(fixUrl(episodeLink)) {
+                            this.name = episodeName
+                            this.season = seasonNumber
+                            this.episode = episodeNumber
+                            this.posterUrl = poster
+                        }
+                        episodesList.add(episode)
+                    }
+                }
             }
-        } else {
-            val sortedEpisodes = episodesList.sortedBy { it.episode }
-            val showStatus = if (episodeCount > 0 && sortedEpisodes.size >= episodeCount) {
-                ShowStatus.Completed
+            
+            Log.d(TAG, "Found ${episodesList.size} episodes")
+
+            val recommendations = document.select(RECOMMENDATIONS).mapNotNull { element ->
+                element.toAnimeSearchResponse()
+            }.take(20)
+
+            val isMovie = actualUrl.contains("/filmes/") || episodesList.isEmpty()
+            
+            Log.d(TAG, "isMovie: $isMovie")
+
+            return if (isMovie) {
+                newMovieLoadResponse(title, actualUrl, TvType.AnimeMovie, actualUrl) {
+                    this.posterUrl = poster
+                    this.backgroundPosterUrl = backdrop
+                    this.plot = synopsis
+                    this.tags = tags
+                    this.duration = duration
+                    this.recommendations = recommendations.takeIf { it.isNotEmpty() }
+                }
             } else {
-                ShowStatus.Ongoing
-            }
+                val sortedEpisodes = episodesList.sortedBy { it.episode }
+                val showStatus = if (episodeCount > 0 && sortedEpisodes.size >= episodeCount) {
+                    ShowStatus.Completed
+                } else {
+                    ShowStatus.Ongoing
+                }
 
-            newAnimeLoadResponse(title, actualUrl, TvType.Anime) {
-                this.posterUrl = poster
-                this.backgroundPosterUrl = backdrop
-                this.plot = synopsis
-                this.tags = tags
-                this.showStatus = showStatus
-                this.recommendations = recommendations.takeIf { it.isNotEmpty() }
+                newAnimeLoadResponse(title, actualUrl, TvType.Anime) {
+                    this.posterUrl = poster
+                    this.backgroundPosterUrl = backdrop
+                    this.plot = synopsis
+                    this.tags = tags
+                    this.showStatus = showStatus
+                    this.recommendations = recommendations.takeIf { it.isNotEmpty() }
 
-                if (sortedEpisodes.isNotEmpty()) {
-                    // Agrupa episódios por temporada
-                    val episodesBySeason = sortedEpisodes.groupBy { it.season }
-                    episodesBySeason.forEach { (season, episodes) ->
-                        val isSubbedSeason = episodes.any { it.name?.contains("Legendado", true) == true }
-                        addEpisodes(
-                            if (isSubbedSeason) DubStatus.Subbed else DubStatus.Dubbed,
-                            episodes
-                        )
+                    if (sortedEpisodes.isNotEmpty()) {
+                        // Agrupa episódios por temporada
+                        val episodesBySeason = sortedEpisodes.groupBy { it.season }
+                        episodesBySeason.forEach { (season, episodes) ->
+                            val isSubbedSeason = episodes.any { it.name?.contains("Legendado", true) == true }
+                            addEpisodes(
+                                if (isSubbedSeason) DubStatus.Subbed else DubStatus.Dubbed,
+                                episodes
+                            )
+                        }
                     }
                 }
             }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error loading URL: ${e.message}", e)
+            throw e
         }
     }
 
@@ -352,23 +406,39 @@ class AnimesFlix : MainAPI() {
     ): Boolean {
         val actualUrl = data.split("|poster=")[0]
         
+        Log.d(TAG, "loadLinks - URL: $actualUrl")
+        
         return try {
             val response = app.get(actualUrl, headers = mapOf(
                 "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
                 "Referer" to mainUrl
             ))
 
+            Log.d(TAG, "loadLinks - Response code: ${response.code}")
+            
             val document = org.jsoup.Jsoup.parse(response.text)
             
             // Extrai as configurações do script
-            val script = document.select("script:containsData(urlConfig)").first()?.data() ?: return false
+            val script = document.select("script:containsData(urlConfig)").first()?.data()
+            
+            if (script == null) {
+                Log.e(TAG, "loadLinks - Script not found")
+                return false
+            }
+            
+            Log.d(TAG, "loadLinks - Script found: ${script.take(200)}...")
             
             // Extrai PRIMARY_URL (servidor principal)
             val primaryUrl = Regex("PRIMARY_URL\\s*=\\s*\"(.*?)\"").find(script)?.groupValues?.get(1)
                 ?: "https://ondemand.towns3.shop"
             
             // Extrai slug do anime
-            val slug = Regex("slug\\s*:\\s*\"(.*?)\"").find(script)?.groupValues?.get(1) ?: return false
+            val slug = Regex("slug\\s*:\\s*\"(.*?)\"").find(script)?.groupValues?.get(1)
+            
+            if (slug == null) {
+                Log.e(TAG, "loadLinks - Slug not found")
+                return false
+            }
             
             // Extrai tipo (animes ou filmes)
             val tipo = Regex("tipo\\s*:\\s*\"(.*?)\"").find(script)?.groupValues?.get(1) ?: "animes"
@@ -376,6 +446,12 @@ class AnimesFlix : MainAPI() {
             // Extrai temporada e episódio (para séries)
             val temporada = Regex("temporada\\s*:\\s*(\\d+)").find(script)?.groupValues?.get(1)?.toIntOrNull()
             val episodio = Regex("episodio\\s*:\\s*(\\d+)").find(script)?.groupValues?.get(1)?.toIntOrNull()
+            
+            Log.d(TAG, "loadLinks - Primary URL: $primaryUrl")
+            Log.d(TAG, "loadLinks - Slug: $slug")
+            Log.d(TAG, "loadLinks - Tipo: $tipo")
+            Log.d(TAG, "loadLinks - Temporada: $temporada")
+            Log.d(TAG, "loadLinks - Episódio: $episodio")
             
             // Constrói a URL do stream
             val firstLetter = slug.firstOrNull()?.uppercase() ?: ""
@@ -391,6 +467,8 @@ class AnimesFlix : MainAPI() {
             val timestamp = System.currentTimeMillis()
             val streamUrl = "$primaryUrl/$streamPath?nocache=$timestamp"
             
+            Log.d(TAG, "loadLinks - Stream URL: $streamUrl")
+            
             // Gera os links M3U8
             val m3u8Links = com.lagradost.cloudstream3.utils.M3u8Helper.generateM3u8(
                 source = "AnimesFlix",
@@ -403,7 +481,15 @@ class AnimesFlix : MainAPI() {
                 )
             )
             
-            m3u8Links.forEach { m3u8Link ->
+            if (m3u8Links.isEmpty()) {
+                Log.e(TAG, "loadLinks - No M3U8 links generated")
+                return false
+            }
+            
+            Log.d(TAG, "loadLinks - Generated ${m3u8Links.size} M3U8 links")
+            
+            m3u8Links.forEachIndexed { index, m3u8Link ->
+                Log.d(TAG, "loadLinks - Link $index: Quality ${m3u8Link.quality}")
                 callback(
                     newExtractorLink(
                         source = "AnimesFlix",
@@ -424,6 +510,7 @@ class AnimesFlix : MainAPI() {
             
             true
         } catch (e: Exception) {
+            Log.e(TAG, "loadLinks - Error: ${e.message}", e)
             false
         }
     }
