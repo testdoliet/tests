@@ -38,33 +38,30 @@ class AnimesFlix : MainAPI() {
         private const val GENRE_COUNT = ".genre-count"
     }
 
-    private val genresMap = mapOf(
-        "Ação" to "animes-acao",
-        "Aventura" to "animes-aventura",
-        "Comédia" to "animes-comedia",
-        "Drama" to "animes-drama",
-        "Fantasia" to "animes-fantasia",
-        "Ficção Científica" to "animes-ficcao-cientifica",
-        "Horror" to "animes-horror",
-        "Mistério" to "animes-misterio",
-        "Romance" to "animes-romance",
-        "Sci-Fi" to "animes-sci-fi",
-        "Seinen" to "animes-seinen",
-        "Shounen" to "animes-shounen",
-        "Slice of life" to "slice-of-life1",
-        "Sobrenatural" to "sobrenatural1",
-        "Suspense" to "animes-suspense",
-        "Vida Escolar" to "animes-vida-escolar",
-        "Animes" to "animes",
-        "Artes Marciais" to "animes-artes-marciais",
-        "Demônios" to "animes-demonios",
-        "Ecchi" to "animes-ecchi",
-        "Esporte" to "animes-esportes",
-        "Jogos" to "animes-jogos",
-        "Magia" to "animes-magia",
-        "Militar" to "animes-militar",
-        "Psicológico" to "animes-psicologico",
-        "Superpoder" to "animes-superpoder"
+    // Lista fixa de categorias baseada nos gêneros com mais de 20 animes
+    private val mainPageCategories = listOf(
+        "$mainUrl" to "Últimos Episódios",
+        "$mainUrl/genero/animes-acao" to "Ação",
+        "$mainUrl/genero/animes" to "Animes",
+        "$mainUrl/genero/animes-aventura" to "Aventura",
+        "$mainUrl/genero/animes-comedia" to "Comédia",
+        "$mainUrl/genero/animes-drama" to "Drama",
+        "$mainUrl/genero/animes-fantasia" to "Fantasia",
+        "$mainUrl/genero/animes-ficcao-cientifica" to "Ficção Científica",
+        "$mainUrl/genero/animes-horror" to "Horror",
+        "$mainUrl/genero/animes-misterio" to "Mistério",
+        "$mainUrl/genero/animes-romance" to "Romance",
+        "$mainUrl/genero/animes-sci-fi" to "Sci-Fi",
+        "$mainUrl/genero/animes-seinen" to "Seinen",
+        "$mainUrl/genero/animes-shounen" to "Shounen",
+        "$mainUrl/genero/slice-of-life1" to "Slice of life",
+        "$mainUrl/genero/sobrenatural1" to "Sobrenatural",
+        "$mainUrl/genero/animes-suspense" to "Suspense",
+        "$mainUrl/genero/animes-vida-escolar" to "Vida Escolar"
+    )
+
+    override val mainPage = mainPageOf(
+        *mainPageCategories.toTypedArray()
     )
 
     private fun cleanTitle(dirtyTitle: String): String {
@@ -154,29 +151,6 @@ class AnimesFlix : MainAPI() {
             this.posterUrl = posterUrl
             addDubStatus(isDubbed, null)
         }
-    }
-
-    override val mainPage = mainPageOf(
-        "$mainUrl" to "Últimos Episódios",
-        *getAvailableGenres().toTypedArray()
-    )
-
-    private suspend fun getAvailableGenres(): List<Pair<String, String>> {
-        val document = app.get("$mainUrl$GENRES_PATH").document
-        val genres = mutableListOf<Pair<String, String>>()
-
-        document.select(GENRE_ITEM).forEach { element ->
-            val genreName = element.select(GENRE_NAME).text().trim()
-            val genreCount = element.select(GENRE_COUNT).text().toIntOrNull() ?: 0
-            val genreLink = element.attr("href")
-
-            // Só adiciona se tiver pelo menos 20 animes e não for "Animes" (já temos na main)
-            if (genreCount >= 20 && genreName != "Animes" && genreName != "Dublado" && genreName != "Legendado") {
-                genres.add(genreLink to genreName)
-            }
-        }
-
-        return genres
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
