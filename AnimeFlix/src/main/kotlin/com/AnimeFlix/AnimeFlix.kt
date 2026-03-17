@@ -391,78 +391,79 @@ class AnimesFlix : MainAPI() {
     }
 
     override suspend fun loadLinks(
-        data: String,
-        isCasting: Boolean,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        val actualUrl = data.split("|poster=")[0]
-        
-        println("$TAG - loadLinks - URL: $actualUrl")
-        
-        return try {
-            val response = app.get(actualUrl, headers = mapOf(
-                "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
-                "Referer" to mainUrl
-            ))
+    data: String,
+    isCasting: Boolean,
+    subtitleCallback: (SubtitleFile) -> Unit,
+    callback: (ExtractorLink) -> Unit
+): Boolean {
+    val actualUrl = data.split("|poster=")[0]
+    
+    println("$TAG - loadLinks - URL: $actualUrl")
+    
+    return try {
+        val response = app.get(actualUrl, headers = mapOf(
+            "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
+            "Referer" to mainUrl
+        ))
 
-            println("$TAG - loadLinks - Response code: ${response.code}")
-            
-            val document = org.jsoup.Jsoup.parse(response.text)
-            
-            // Extrai as configurações do script
-            val script = document.select("script:containsData(urlConfig)").first()?.data()
-            
-            if (script == null) {
-                println("$TAG - loadLinks - Script not found")
-                return false
-            }
-            
-            println("$TAG - loadLinks - Script found: ${script.take(200)}...")
-            
-            // Extrai PRIMARY_URL (servidor principal)
-            val primaryUrl = Regex("PRIMARY_URL\\s*=\\s*\"(.*?)\"").find(script)?.groupValues?.get(1)
-                ?: "https://ondemand.towns3.shop"
-            
-            // Extrai slug do anime
-            val slug = Regex("slug\\s*:\\s*\"(.*?)\"").find(script)?.groupValues?.get(1)
-            
-            if (slug == null) {
-                println("$TAG - loadLinks - Slug not found")
-                return false
-            }
-            
-            // Extrai tipo (animes ou filmes)
-            val tipo = Regex("tipo\\s*:\\s*\"(.*?)\"").find(script)?.groupValues?.get(1) ?: "animes"
-            
-            // Extrai temporada e episódio (para séries)
-            val temporada = Regex("temporada\\s*:\\s*(\\d+)").find(script)?.groupValues?.get(1)?.toIntOrNull()
-            val episodio = Regex("episodio\\s*:\\s*(\\d+)").find(script)?.groupValues?.get(1)?.toIntOrNull()
-            
-            println("$TAG - loadLinks - Primary URL: $primaryUrl")
-            println("$TAG - loadLinks - Slug: $slug")
-            println("$TAG - loadLinks - Tipo: $tipo")
-            println("$TAG - loadLinks - Temporada: $temporada")
-            println("$TAG - loadLinks - Episódio: $episodio")
-            
-            // Constrói a URL do stream
-            val firstLetter = slug.firstOrNull()?.uppercase() ?: ""
-            
-            val streamPath = if (tipo == "filmes") {
-                "$firstLetter/$slug/stream/stream.m3u8"
-            } else {
-                val tempNum = temporada?.toString()?.padStart(2, '0') ?: "01"
-                val epNum = episodio?.toString()?.padStart(2, '0') ?: "01"
-                "$firstLetter/$slug/${tempNum}-temporada/$epNum/stream.m3u8"
-            }
-            
-            val timestamp = System.currentTimeMillis()
-            val streamUrl = "$primaryUrl/$streamPath?nocache=$timestamp"
-            
-            println("$TAG - loadLinks - Stream URL: $streamUrl")
-            
-            // Gera os links M3U8
-            val m3u8Links = com.lagradost.cloudstream3.utils.M3u8Helper.generateM3u8(
+        println("$TAG - loadLinks - Response code: ${response.code}")
+        
+        val document = org.jsoup.Jsoup.parse(response.text)
+        
+        // Extrai as configurações do script
+        val script = document.select("script:containsData(urlConfig)").first()?.data()
+        
+        if (script == null) {
+            println("$TAG - loadLinks - Script not found")
+            return false
+        }
+        
+        println("$TAG - loadLinks - Script found")
+        
+        // Extrai PRIMARY_URL (servidor principal)
+        val primaryUrl = Regex("PRIMARY_URL\\s*=\\s*\"(.*?)\"").find(script)?.groupValues?.get(1)
+            ?: "https://ondemand.towns3.shop"
+        
+        // Extrai slug do anime
+        val slug = Regex("slug\\s*:\\s*\"(.*?)\"").find(script)?.groupValues?.get(1)
+        
+        if (slug == null) {
+            println("$TAG - loadLinks - Slug not found")
+            return false
+        }
+        
+        // Extrai tipo (animes ou filmes)
+        val tipo = Regex("tipo\\s*:\\s*\"(.*?)\"").find(script)?.groupValues?.get(1) ?: "animes"
+        
+        // Extrai temporada e episódio (para séries)
+        val temporada = Regex("temporada\\s*:\\s*(\\d+)").find(script)?.groupValues?.get(1)?.toIntOrNull()
+        val episodio = Regex("episodio\\s*:\\s*(\\d+)").find(script)?.groupValues?.get(1)?.toIntOrNull()
+        
+        println("$TAG - loadLinks - Primary URL: $primaryUrl")
+        println("$TAG - loadLinks - Slug: $slug")
+        println("$TAG - loadLinks - Tipo: $tipo")
+        println("$TAG - loadLinks - Temporada: $temporada")
+        println("$TAG - loadLinks - Episódio: $episodio")
+        
+        // Constrói a URL do stream
+        val firstLetter = slug.firstOrNull()?.uppercase() ?: ""
+        
+        val streamPath = if (tipo == "filmes") {
+            "$firstLetter/$slug/stream/stream.m3u8"
+        } else {
+            val tempNum = temporada?.toString()?.padStart(2, '0') ?: "01"
+            val epNum = episodio?.toString()?.padStart(2, '0') ?: "01"
+            "$firstLetter/$slug/${tempNum}-temporada/$epNum/stream.m3u8"
+        }
+        
+        val timestamp = System.currentTimeMillis()
+        val streamUrl = "$primaryUrl/$streamPath?nocache=$timestamp"
+        
+        println("$TAG - loadLinks - Stream URL: $streamUrl")
+        
+        // Tenta gerar links M3U8
+        val m3u8Links = try {
+            com.lagradost.cloudstream3.utils.M3u8Helper.generateM3u8(
                 source = "AnimesFlix",
                 streamUrl = streamUrl,
                 referer = mainUrl,
@@ -472,39 +473,77 @@ class AnimesFlix : MainAPI() {
                     "Accept" to "*/*"
                 )
             )
-            
-            if (m3u8Links.isEmpty()) {
-                println("$TAG - loadLinks - No M3U8 links generated")
-                return false
-            }
-            
-            println("$TAG - loadLinks - Generated ${m3u8Links.size} M3U8 links")
-            
-            m3u8Links.forEachIndexed { index, m3u8Link ->
-                println("$TAG - loadLinks - Link $index: Quality ${m3u8Link.quality}")
-                callback(
-                    newExtractorLink(
-                        source = "AnimesFlix",
-                        name = "AnimesFlix",
-                        url = m3u8Link.url,
-                        type = ExtractorLinkType.M3U8
-                    ) {
-                        this.referer = mainUrl
-                        this.quality = m3u8Link.quality
-                        this.headers = mapOf(
-                            "Referer" to mainUrl,
-                            "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
-                            "Accept" to "*/*"
-                        )
-                    }
-                )
-            }
-            
-            true
         } catch (e: Exception) {
-            println("$TAG - loadLinks - Error: ${e.message}")
-            e.printStackTrace()
-            false
+            println("$TAG - loadLinks - M3u8Helper error: ${e.message}")
+            // Se falhar, tenta adicionar como link direto
+            callback(
+                newExtractorLink(
+                    source = "AnimesFlix",
+                    name = "AnimesFlix (Direct)",
+                    url = streamUrl,
+                    type = ExtractorLinkType.M3U8
+                ) {
+                    this.referer = mainUrl
+                    this.quality = 1080
+                    this.headers = mapOf(
+                        "Referer" to mainUrl,
+                        "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
+                        "Accept" to "*/*"
+                    )
+                }
+            )
+            return true
         }
+        
+        if (m3u8Links.isEmpty()) {
+            println("$TAG - loadLinks - No M3U8 links generated, adding direct link")
+            // Adiciona como link direto
+            callback(
+                newExtractorLink(
+                    source = "AnimesFlix",
+                    name = "AnimesFlix (Direct)",
+                    url = streamUrl,
+                    type = ExtractorLinkType.M3U8
+                ) {
+                    this.referer = mainUrl
+                    this.quality = 1080
+                    this.headers = mapOf(
+                        "Referer" to mainUrl,
+                        "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
+                        "Accept" to "*/*"
+                    )
+                }
+            )
+            return true
+        }
+        
+        println("$TAG - loadLinks - Generated ${m3u8Links.size} M3U8 links")
+        
+        m3u8Links.forEachIndexed { index, m3u8Link ->
+            println("$TAG - loadLinks - Link $index: Quality ${m3u8Link.quality}")
+            callback(
+                newExtractorLink(
+                    source = "AnimesFlix",
+                    name = "AnimesFlix",
+                    url = m3u8Link.url,
+                    type = ExtractorLinkType.M3U8
+                ) {
+                    this.referer = mainUrl
+                    this.quality = m3u8Link.quality
+                    this.headers = mapOf(
+                        "Referer" to mainUrl,
+                        "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
+                        "Accept" to "*/*"
+                    )
+                }
+            )
+        }
+        
+        true
+    } catch (e: Exception) {
+        println("$TAG - loadLinks - Error: ${e.message}")
+        e.printStackTrace()
+        false
+    }
     }
 }
