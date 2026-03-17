@@ -544,3 +544,4 @@ class AnimesFlix : MainAPI() {
         false
     }
 }
+}
