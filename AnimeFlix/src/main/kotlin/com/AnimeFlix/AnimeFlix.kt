@@ -3,12 +3,9 @@ package com.AnimesFlix
 import android.content.Context
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
-import com.lagradost.cloudstream3.LoadResponse.Companion.addActors
-import com.lagradost.cloudstream3.LoadResponse.Companion.addTrailer
 import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
 import com.lagradost.cloudstream3.plugins.Plugin
 import org.jsoup.nodes.Element
-import java.net.URLDecoder
 
 @CloudstreamPlugin
 class AnimesFlixProvider : Plugin() {
@@ -91,11 +88,6 @@ class AnimesFlix : MainAPI() {
                element.select(EPISODE_META_SELECTOR).any { it.text().contains("Dublado", true) }
     }
 
-    private fun isSubbed(element: Element): Boolean {
-        return element.text().contains("Legendado", true) ||
-               element.select(EPISODE_META_SELECTOR).any { it.text().contains("Legendado", true) }
-    }
-
     private fun Element.toEpisodeSearchResponse(): AnimeSearchResponse? {
         val linkElement = selectFirst("a[href*='/series/']") ?: return null
         val href = linkElement.attr("href")
@@ -120,7 +112,8 @@ class AnimesFlix : MainAPI() {
 
         return newAnimeSearchResponse(cleanedTitle, fixUrl(urlWithPoster), TvType.Anime) {
             this.posterUrl = posterUrl
-            addDubStatus(if (isDubbed) DubStatus.Dubbed else DubStatus.Subbed, episodeNumber)
+            // CORRIGIDO: addDubStatus com Boolean e Int?
+            addDubStatus(isDubbed, episodeNumber)
         }
     }
 
@@ -137,7 +130,8 @@ class AnimesFlix : MainAPI() {
 
         return newAnimeSearchResponse(cleanedTitle, fixUrl(href), TvType.Anime) {
             this.posterUrl = posterUrl
-            addDubStatus(if (isDubbed) DubStatus.Dubbed else DubStatus.Subbed, null)
+            // CORRIGIDO: addDubStatus com Boolean e null para episódios
+            addDubStatus(isDubbed, null)
         }
     }
 
@@ -159,7 +153,6 @@ class AnimesFlix : MainAPI() {
                 newHomePageResponse(request.name, episodes, false)
             }
             "Animes Online" -> {
-                // Pega a primeira seção de animes
                 val animes = document.select(".content-grid $ANIME_CARD")
                     .mapNotNull { it.toAnimeSearchResponse() }
                     .distinctBy { it.url }
@@ -168,7 +161,6 @@ class AnimesFlix : MainAPI() {
                 newHomePageResponse(request.name, animes, false)
             }
             "Filmes Animes" -> {
-                // Pega a segunda seção (filmes)
                 val sections = document.select(".section")
                 val movieSection = sections.firstOrNull { section ->
                     section.select(".section-title").text().contains("Filmes Animes", true)
@@ -193,10 +185,7 @@ class AnimesFlix : MainAPI() {
 
         val results = mutableListOf<SearchResponse>()
 
-        // Busca por animes na grid
         document.select(".content-grid $ANIME_CARD").mapNotNullTo(results) { it.toAnimeSearchResponse() }
-
-        // Busca por episódios
         document.select(".episodes-grid $EPISODE_CARD").mapNotNullTo(results) { it.toEpisodeSearchResponse() }
 
         return results.distinctBy { it.url }
@@ -209,28 +198,22 @@ class AnimesFlix : MainAPI() {
 
         val document = app.get(actualUrl).document
 
-        // Título
         val rawTitle = document.selectFirst(ANIME_TITLE)?.text()?.trim() ?: 
                       document.select("meta[property='og:title']").attr("content") ?: "Sem Título"
         val title = cleanTitle(rawTitle)
 
-        // Poster
         val poster = thumbPoster ?: document.selectFirst(ANIME_POSTER)?.attr("src")?.let { fixUrl(it) } ?:
                     document.select("meta[property='og:image']").attr("content")?.let { fixUrl(it) }
 
-        // Backdrop
         val backdrop = document.selectFirst(ANIME_BACKDROP)?.attr("style")?.let { style ->
             Regex("url\\((.*?)\\)").find(style)?.groupValues?.get(1)?.let { fixUrl(it) }
         }
 
-        // Sinopse
         val synopsis = document.selectFirst(ANIME_SYNOPSIS)?.text()?.trim() ?:
                       document.select("meta[name='description']").attr("content")
 
-        // Tags/Gêneros
         val tags = document.select(ANIME_TAGS).map { it.text().trim() }
 
-        // Metadados
         var year: Int? = null
         var duration: Int? = null
         var seasonCount = 1
@@ -254,7 +237,6 @@ class AnimesFlix : MainAPI() {
             }
         }
 
-        // Episódios
         val episodeRows = document.select(EPISODE_LIST)
         val episodesList = mutableListOf<Episode>()
 
@@ -274,6 +256,7 @@ class AnimesFlix : MainAPI() {
                         this.season = seasonNumber
                         this.episode = episodeNumber
                         this.posterUrl = poster
+                        // CORRIGIDO: addDubStatus para Episode
                         addDubStatus(if (isDubbed) DubStatus.Dubbed else DubStatus.Subbed, episodeNumber)
                     }
                     episodesList.add(episode)
@@ -281,12 +264,10 @@ class AnimesFlix : MainAPI() {
             }
         }
 
-        // Recomendações
         val recommendations = document.select(RECOMMENDATIONS).mapNotNull { element ->
             element.toAnimeSearchResponse()
         }.take(20)
 
-        // Determina se é filme ou série
         val isMovie = actualUrl.contains("/filmes/") || episodesList.isEmpty()
 
         return if (isMovie) {
@@ -316,10 +297,11 @@ class AnimesFlix : MainAPI() {
                 this.showStatus = showStatus
                 this.recommendations = recommendations.takeIf { it.isNotEmpty() }
 
-                // Agrupa episódios por temporada
+                // CORRIGIDO: Agrupa episódios por temporada
                 val episodesBySeason = sortedEpisodes.groupBy { it.season }
                 episodesBySeason.forEach { (season, episodes) ->
-                    addEpisodes(if (episodes.any { it.name.contains("Dublado", true) }) DubStatus.Dubbed else DubStatus.Subbed, episodes)
+                    val isDubbedSeason = episodes.any { it.name.contains("Dublado", true) }
+                    addEpisodes(if (isDubbedSeason) DubStatus.Dubbed else DubStatus.Subbed, episodes)
                 }
             }
         }
@@ -331,8 +313,6 @@ class AnimesFlix : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // Por enquanto, retorna false para testes
-        // Depois implementaremos a extração dos links de vídeo
         return false
     }
 }
