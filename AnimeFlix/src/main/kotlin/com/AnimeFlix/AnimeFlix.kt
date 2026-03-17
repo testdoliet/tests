@@ -1,7 +1,6 @@
 package com.AnimesFlix
 
 import android.content.Context
-import android.util.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
@@ -156,7 +155,7 @@ class AnimesFlix : MainAPI() {
             href
         }
 
-        Log.d(TAG, "Episode Search Response - Title: $cleanedTitle, URL: $href, Episode: $episodeNumber, Subbed: $isSubbed")
+        println("$TAG - Episode Search Response - Title: $cleanedTitle, URL: $href, Episode: $episodeNumber, Subbed: $isSubbed")
 
         return newAnimeSearchResponse(cleanedTitle, fixUrl(urlWithPoster), TvType.Anime) {
             this.posterUrl = posterUrl
@@ -182,7 +181,7 @@ class AnimesFlix : MainAPI() {
         val isSubbed = rawTitle.contains("Legendado", true)
         val isDubbed = isDubbed(this) && !isSubbed
 
-        Log.d(TAG, "Anime Search Response - Title: $cleanedTitle, URL: $href, Subbed: $isSubbed")
+        println("$TAG - Anime Search Response - Title: $cleanedTitle, URL: $href, Subbed: $isSubbed")
 
         return newAnimeSearchResponse(cleanedTitle, fixUrl(href), TvType.Anime) {
             this.posterUrl = posterUrl
@@ -195,7 +194,7 @@ class AnimesFlix : MainAPI() {
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        Log.d(TAG, "getMainPage - Name: ${request.name}, Page: $page, URL: ${request.data}")
+        println("$TAG - getMainPage - Name: ${request.name}, Page: $page, URL: ${request.data}")
         
         val baseUrl = request.data
         
@@ -214,7 +213,7 @@ class AnimesFlix : MainAPI() {
             baseUrl
         }
         
-        Log.d(TAG, "getMainPage - Final URL: $url")
+        println("$TAG - getMainPage - Final URL: $url")
 
         try {
             val document = app.get(url).document
@@ -228,7 +227,7 @@ class AnimesFlix : MainAPI() {
                 // Verifica se tem próxima página
                 val hasNext = document.select(PAGINATION_NEXT).isNotEmpty()
                 
-                Log.d(TAG, "Últimos Episódios - Found ${episodes.size} episodes, hasNext: $hasNext")
+                println("$TAG - Últimos Episódios - Found ${episodes.size} episodes, hasNext: $hasNext")
 
                 newHomePageResponse(
                     list = HomePageList(request.name, episodes, isHorizontalImages = true),
@@ -243,12 +242,13 @@ class AnimesFlix : MainAPI() {
                 // Verifica se tem próxima página
                 val hasNext = document.select(PAGINATION_NEXT).isNotEmpty()
                 
-                Log.d(TAG, "${request.name} - Found ${items.size} items, hasNext: $hasNext")
+                println("$TAG - ${request.name} - Found ${items.size} items, hasNext: $hasNext")
 
                 newHomePageResponse(request.name, items, hasNext)
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Error in getMainPage: ${e.message}", e)
+            println("$TAG - Error in getMainPage: ${e.message}")
+            e.printStackTrace()
             return newHomePageResponse(request.name, emptyList(), false)
         }
     }
@@ -256,7 +256,7 @@ class AnimesFlix : MainAPI() {
     override suspend fun search(query: String): List<SearchResponse> {
         if (query.length < 2) return emptyList()
         
-        Log.d(TAG, "Searching for: $query")
+        println("$TAG - Searching for: $query")
 
         val searchUrl = "$mainUrl$SEARCH_PATH${java.net.URLEncoder.encode(query, "UTF-8")}"
         
@@ -268,17 +268,18 @@ class AnimesFlix : MainAPI() {
             document.select(".content-grid $ANIME_CARD").mapNotNullTo(results) { it.toAnimeSearchResponse() }
             document.select(".episodes-grid $EPISODE_CARD").mapNotNullTo(results) { it.toEpisodeSearchResponse() }
             
-            Log.d(TAG, "Search found ${results.size} results")
+            println("$TAG - Search found ${results.size} results")
 
             return results.distinctBy { it.url }
         } catch (e: Exception) {
-            Log.e(TAG, "Search error: ${e.message}", e)
+            println("$TAG - Search error: ${e.message}")
+            e.printStackTrace()
             return emptyList()
         }
     }
 
     override suspend fun load(url: String): LoadResponse {
-        Log.d(TAG, "Loading URL: $url")
+        println("$TAG - Loading URL: $url")
         
         val parts = url.split("|poster=")
         val actualUrl = parts[0]
@@ -291,7 +292,7 @@ class AnimesFlix : MainAPI() {
                           document.select("meta[property='og:title']").attr("content") ?: "Sem Título"
             val title = cleanTitle(rawTitle)
             
-            Log.d(TAG, "Title: $title")
+            println("$TAG - Title: $title")
 
             // Usa o poster como backdrop também
             val poster = thumbPoster ?: document.selectFirst(ANIME_POSTER)?.attr("src")?.let { fixUrl(it) } ?:
@@ -305,16 +306,12 @@ class AnimesFlix : MainAPI() {
             val tags = document.select(ANIME_TAGS).map { it.text().trim() }
 
             var duration: Int? = null
-            var episodeCount = 0
 
             document.select(ANIME_METADATA).forEach { element ->
                 val text = element.text()
                 when {
                     text.contains("min") -> {
                         duration = Regex("(\\d+)").find(text)?.groupValues?.get(1)?.toIntOrNull()
-                    }
-                    text.contains("Episódios") -> {
-                        episodeCount = Regex("(\\d+)").find(text)?.groupValues?.get(1)?.toIntOrNull() ?: 0
                     }
                 }
             }
@@ -344,7 +341,7 @@ class AnimesFlix : MainAPI() {
                 }
             }
             
-            Log.d(TAG, "Found ${episodesList.size} episodes")
+            println("$TAG - Found ${episodesList.size} episodes")
 
             val recommendations = document.select(RECOMMENDATIONS).mapNotNull { element ->
                 element.toAnimeSearchResponse()
@@ -352,7 +349,7 @@ class AnimesFlix : MainAPI() {
 
             val isMovie = actualUrl.contains("/filmes/") || episodesList.isEmpty()
             
-            Log.d(TAG, "isMovie: $isMovie")
+            println("$TAG - isMovie: $isMovie")
 
             return if (isMovie) {
                 newMovieLoadResponse(title, actualUrl, TvType.AnimeMovie, actualUrl) {
@@ -365,18 +362,12 @@ class AnimesFlix : MainAPI() {
                 }
             } else {
                 val sortedEpisodes = episodesList.sortedBy { it.episode }
-                val showStatus = if (episodeCount > 0 && sortedEpisodes.size >= episodeCount) {
-                    ShowStatus.Completed
-                } else {
-                    ShowStatus.Ongoing
-                }
 
                 newAnimeLoadResponse(title, actualUrl, TvType.Anime) {
                     this.posterUrl = poster
                     this.backgroundPosterUrl = backdrop
                     this.plot = synopsis
                     this.tags = tags
-                    this.showStatus = showStatus
                     this.recommendations = recommendations.takeIf { it.isNotEmpty() }
 
                     if (sortedEpisodes.isNotEmpty()) {
@@ -393,7 +384,8 @@ class AnimesFlix : MainAPI() {
                 }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Error loading URL: ${e.message}", e)
+            println("$TAG - Error loading URL: ${e.message}")
+            e.printStackTrace()
             throw e
         }
     }
@@ -406,7 +398,7 @@ class AnimesFlix : MainAPI() {
     ): Boolean {
         val actualUrl = data.split("|poster=")[0]
         
-        Log.d(TAG, "loadLinks - URL: $actualUrl")
+        println("$TAG - loadLinks - URL: $actualUrl")
         
         return try {
             val response = app.get(actualUrl, headers = mapOf(
@@ -414,7 +406,7 @@ class AnimesFlix : MainAPI() {
                 "Referer" to mainUrl
             ))
 
-            Log.d(TAG, "loadLinks - Response code: ${response.code}")
+            println("$TAG - loadLinks - Response code: ${response.code}")
             
             val document = org.jsoup.Jsoup.parse(response.text)
             
@@ -422,11 +414,11 @@ class AnimesFlix : MainAPI() {
             val script = document.select("script:containsData(urlConfig)").first()?.data()
             
             if (script == null) {
-                Log.e(TAG, "loadLinks - Script not found")
+                println("$TAG - loadLinks - Script not found")
                 return false
             }
             
-            Log.d(TAG, "loadLinks - Script found: ${script.take(200)}...")
+            println("$TAG - loadLinks - Script found: ${script.take(200)}...")
             
             // Extrai PRIMARY_URL (servidor principal)
             val primaryUrl = Regex("PRIMARY_URL\\s*=\\s*\"(.*?)\"").find(script)?.groupValues?.get(1)
@@ -436,7 +428,7 @@ class AnimesFlix : MainAPI() {
             val slug = Regex("slug\\s*:\\s*\"(.*?)\"").find(script)?.groupValues?.get(1)
             
             if (slug == null) {
-                Log.e(TAG, "loadLinks - Slug not found")
+                println("$TAG - loadLinks - Slug not found")
                 return false
             }
             
@@ -447,11 +439,11 @@ class AnimesFlix : MainAPI() {
             val temporada = Regex("temporada\\s*:\\s*(\\d+)").find(script)?.groupValues?.get(1)?.toIntOrNull()
             val episodio = Regex("episodio\\s*:\\s*(\\d+)").find(script)?.groupValues?.get(1)?.toIntOrNull()
             
-            Log.d(TAG, "loadLinks - Primary URL: $primaryUrl")
-            Log.d(TAG, "loadLinks - Slug: $slug")
-            Log.d(TAG, "loadLinks - Tipo: $tipo")
-            Log.d(TAG, "loadLinks - Temporada: $temporada")
-            Log.d(TAG, "loadLinks - Episódio: $episodio")
+            println("$TAG - loadLinks - Primary URL: $primaryUrl")
+            println("$TAG - loadLinks - Slug: $slug")
+            println("$TAG - loadLinks - Tipo: $tipo")
+            println("$TAG - loadLinks - Temporada: $temporada")
+            println("$TAG - loadLinks - Episódio: $episodio")
             
             // Constrói a URL do stream
             val firstLetter = slug.firstOrNull()?.uppercase() ?: ""
@@ -467,7 +459,7 @@ class AnimesFlix : MainAPI() {
             val timestamp = System.currentTimeMillis()
             val streamUrl = "$primaryUrl/$streamPath?nocache=$timestamp"
             
-            Log.d(TAG, "loadLinks - Stream URL: $streamUrl")
+            println("$TAG - loadLinks - Stream URL: $streamUrl")
             
             // Gera os links M3U8
             val m3u8Links = com.lagradost.cloudstream3.utils.M3u8Helper.generateM3u8(
@@ -482,14 +474,14 @@ class AnimesFlix : MainAPI() {
             )
             
             if (m3u8Links.isEmpty()) {
-                Log.e(TAG, "loadLinks - No M3U8 links generated")
+                println("$TAG - loadLinks - No M3U8 links generated")
                 return false
             }
             
-            Log.d(TAG, "loadLinks - Generated ${m3u8Links.size} M3U8 links")
+            println("$TAG - loadLinks - Generated ${m3u8Links.size} M3U8 links")
             
             m3u8Links.forEachIndexed { index, m3u8Link ->
-                Log.d(TAG, "loadLinks - Link $index: Quality ${m3u8Link.quality}")
+                println("$TAG - loadLinks - Link $index: Quality ${m3u8Link.quality}")
                 callback(
                     newExtractorLink(
                         source = "AnimesFlix",
@@ -510,7 +502,8 @@ class AnimesFlix : MainAPI() {
             
             true
         } catch (e: Exception) {
-            Log.e(TAG, "loadLinks - Error: ${e.message}", e)
+            println("$TAG - loadLinks - Error: ${e.message}")
+            e.printStackTrace()
             false
         }
     }
