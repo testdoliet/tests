@@ -398,52 +398,66 @@ class AnimesFlix : MainAPI() {
 ): Boolean {
     val actualUrl = data.split("|poster=")[0]
     
-    println("$TAG - loadLinks - URL: $actualUrl")
+    println("🎬🔗 ========== LOAD LINKS INICIADO ==========")
+    println("🎬🔗 URL recebida: $actualUrl")
+    println("🎬🔗 =========================================")
     
     return try {
+        println("📡🌐 Fazendo requisição para a página do episódio...")
         val response = app.get(actualUrl, headers = mapOf(
             "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
             "Referer" to mainUrl
         ))
 
-        println("$TAG - loadLinks - Response code: ${response.code}")
+        println("📡✅ Código de resposta: ${response.code}")
+        println("📏📦 Tamanho da resposta: ${response.text.length} bytes")
         
         val document = org.jsoup.Jsoup.parse(response.text)
         
-        // Extrai as configurações do script
+        println("🔍📜 Procurando script com configurações (urlConfig)...")
         val script = document.select("script:containsData(urlConfig)").first()?.data()
         
         if (script == null) {
-            println("$TAG - loadLinks - Script not found")
+            println("❌🔍 Script não encontrado na página!")
+            println("🔍📄 Primeiros 500 caracteres da página:")
+            println(response.text.take(500))
+            println("🎬🔗 ========== LOAD LINKS FALHOU ==========")
             return false
         }
         
-        println("$TAG - loadLinks - Script found")
+        println("✅📜 Script encontrado! Tamanho: ${script.length} caracteres")
+        println("📝📋 Primeiros 200 caracteres do script:")
+        println(script.take(200))
         
         // Extrai PRIMARY_URL (servidor principal)
         val primaryUrl = Regex("PRIMARY_URL\\s*=\\s*\"(.*?)\"").find(script)?.groupValues?.get(1)
             ?: "https://ondemand.towns3.shop"
         
+        println("🌐🔗 PRIMARY_URL extraída: $primaryUrl")
+        
         // Extrai slug do anime
         val slug = Regex("slug\\s*:\\s*\"(.*?)\"").find(script)?.groupValues?.get(1)
         
         if (slug == null) {
-            println("$TAG - loadLinks - Slug not found")
+            println("❌🐌 Slug não encontrado no script!")
+            println("🔍📋 Procurando por 'slug' no script...")
+            val slugLines = script.lines().filter { it.contains("slug") }
+            slugLines.forEach { println("   📝 $it") }
+            println("🎬🔗 ========== LOAD LINKS FALHOU ==========")
             return false
         }
         
+        println("✅🐌 Slug extraído: $slug")
+        
         // Extrai tipo (animes ou filmes)
         val tipo = Regex("tipo\\s*:\\s*\"(.*?)\"").find(script)?.groupValues?.get(1) ?: "animes"
+        println("🎬📋 Tipo: $tipo")
         
         // Extrai temporada e episódio (para séries)
         val temporada = Regex("temporada\\s*:\\s*(\\d+)").find(script)?.groupValues?.get(1)?.toIntOrNull()
         val episodio = Regex("episodio\\s*:\\s*(\\d+)").find(script)?.groupValues?.get(1)?.toIntOrNull()
         
-        println("$TAG - loadLinks - Primary URL: $primaryUrl")
-        println("$TAG - loadLinks - Slug: $slug")
-        println("$TAG - loadLinks - Tipo: $tipo")
-        println("$TAG - loadLinks - Temporada: $temporada")
-        println("$TAG - loadLinks - Episódio: $episodio")
+        println("📅🔢 Temporada: ${temporada ?: "N/A"} | Episódio: ${episodio ?: "N/A"}")
         
         // Headers necessários para o stream
         val streamHeaders = mapOf(
@@ -455,8 +469,14 @@ class AnimesFlix : MainAPI() {
             "Range" to "bytes=0-"
         )
         
+        println("📋🔧 Headers configurados:")
+        streamHeaders.forEach { (key, value) ->
+            println("   📌 $key: $value")
+        }
+        
         // Constrói a URL do stream com várias variações de slug
         val firstLetter = slug.firstOrNull()?.uppercase() ?: ""
+        println("🔤📌 Primeira letra do slug (maiúscula): $firstLetter")
         
         // Lista de possíveis slugs (com e sem legendado/dublado)
         val slugVariations = mutableListOf(
@@ -466,15 +486,24 @@ class AnimesFlix : MainAPI() {
             slug.replace(Regex("-\\d{4}$"), ""), // remove ano do final
             slug.replace(Regex("-\\d{4}-legendado$"), ""),
             slug.replace(Regex("-\\d{4}-dublado$"), "")
-        ).distinct()
+        ).distinct().filter { it.isNotBlank() }
+        
+        println("🔄🐌 Variações de slug geradas (${slugVariations.size}):")
+        slugVariations.forEachIndexed { i, s -> 
+            println("   ${i+1}. $s")
+        }
         
         val tempNum = temporada?.toString()?.padStart(2, '0') ?: "01"
         val epNum = episodio?.toString()?.padStart(2, '0') ?: "01"
         val timestamp = System.currentTimeMillis()
         
+        println("📅🔢 Temporada formatada: $tempNum, Episódio formatado: $epNum")
+        println("⏱️🕒 Timestamp: $timestamp")
+        
         val streamUrls = mutableListOf<String>()
         
         // Gera URLs para cada variação de slug
+        println("🔗🌐 Gerando URLs para teste:")
         for (slugVar in slugVariations) {
             if (slugVar.isBlank()) continue
             
@@ -486,19 +515,25 @@ class AnimesFlix : MainAPI() {
                 "$letter/$slugVar/${tempNum}-temporada/$epNum/stream.m3u8"
             }
             
-            streamUrls.add("$primaryUrl/$streamPath?nocache=$timestamp")
+            val fullUrl = "$primaryUrl/$streamPath?nocache=$timestamp"
+            streamUrls.add(fullUrl)
+            println("   📍 $fullUrl")
         }
         
-        println("$TAG - loadLinks - Generated ${streamUrls.size} possible URLs")
+        println("🎯🔗 Total de URLs para testar: ${streamUrls.size}")
         
         var anySuccess = false
+        var testedCount = 0
         
         // Testa cada URL até encontrar uma que funcione
         for (streamUrl in streamUrls) {
-            println("$TAG - loadLinks - Trying: $streamUrl")
+            testedCount++
+            println("🔍🔄 Testando URL $testedCount/${streamUrls.size}:")
+            println("   📎 $streamUrl")
             
             try {
                 // Testa se a URL existe com uma requisição HEAD
+                println("   📡⏳ Enviando requisição HEAD...")
                 val testResponse = app.head(
                     streamUrl,
                     headers = streamHeaders,
@@ -506,8 +541,16 @@ class AnimesFlix : MainAPI() {
                     allowRedirects = false
                 )
                 
+                println("   📡✅ Código de resposta HEAD: ${testResponse.code}")
+                
                 if (testResponse.code == 200 || testResponse.code == 206) {
-                    println("$TAG - loadLinks - Found working URL: $streamUrl")
+                    println("   ✅🎉 URL FUNCIONOU! Código ${testResponse.code}")
+                    
+                    // Mostra headers da resposta
+                    println("   📋📨 Headers da resposta:")
+                    testResponse.headers.forEach { (key, value) ->
+                        println("      📌 $key: $value")
+                    }
                     
                     // Adiciona o link direto
                     callback(
@@ -523,24 +566,77 @@ class AnimesFlix : MainAPI() {
                         }
                     )
                     
+                    println("   ✅📤 Link adicionado ao callback com qualidade 1080p")
                     anySuccess = true
                     break
+                } else {
+                    println("   ❌ Código ${testResponse.code} - URL não disponível")
+                    
+                    // Tenta uma requisição GET para ver se o conteúdo é diferente
+                    if (testResponse.code == 404) {
+                        println("   🔍📄 Testando com GET para ver se há conteúdo...")
+                        try {
+                            val getResponse = app.get(
+                                streamUrl,
+                                headers = streamHeaders,
+                                timeout = 3000
+                            )
+                            println("   📡✅ GET retornou código: ${getResponse.code}")
+                            if (getResponse.code == 200 || getResponse.code == 206) {
+                                println("   ✅🎉 URL FUNCIONOU COM GET! (HEAD falhou)")
+                                // Adiciona o link mesmo assim
+                                callback(
+                                    newExtractorLink(
+                                        source = "AnimesFlix",
+                                        name = "AnimesFlix",
+                                        url = streamUrl,
+                                        type = ExtractorLinkType.M3U8
+                                    ) {
+                                        this.referer = "https://www.animesflix.site/"
+                                        this.quality = 1080
+                                        this.headers = streamHeaders
+                                    }
+                                )
+                                anySuccess = true
+                                break
+                            }
+                        } catch (getError: Exception) {
+                            println("   ❌ GET também falhou: ${getError.message}")
+                        }
+                    }
                 }
             } catch (e: Exception) {
-                println("$TAG - loadLinks - URL failed: ${e.message}")
-                // Continua tentando outras URLs
+                println("   ❌⚠️ Erro ao testar URL: ${e.message}")
+                println("   📋🔍 Tipo do erro: ${e.javaClass.simpleName}")
+                if (e.cause != null) {
+                    println("   🔍 Causa: ${e.cause?.message}")
+                }
             }
         }
         
         if (!anySuccess) {
-            println("$TAG - loadLinks - No working URL found")
+            println("❌😢 Nenhuma URL funcionou após testar $testedCount URLs")
+            println("💡📋 Possíveis problemas:")
+            println("   • Slug incorreto ou variações insuficientes")
+            println("   • Servidor pode estar fora do ar")
+            println("   • Headers podem estar incompletos")
+            println("   • URL pode precisar de autenticação")
+        } else {
+            println("✅🎉 Link encontrado com sucesso após $testedCount tentativas!")
         }
         
+        println("🎬🔗 ========== LOAD LINKS FINALIZADO ==========")
         anySuccess
         
     } catch (e: Exception) {
-        println("$TAG - loadLinks - Error: ${e.message}")
-        e.printStackTrace()
+        println("💥❌ ERRO FATAL em loadLinks:")
+        println("   📋 Mensagem: ${e.message}")
+        println("   📋 Tipo: ${e.javaClass.simpleName}")
+        println("   📋 Stack trace:")
+        e.stackTrace.take(10).forEach { trace ->
+            println("      🔍 $trace")
+        }
+        println("🎬🔗 ========== LOAD LINKS FALHOU ==========")
         false
     }
 }
