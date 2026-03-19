@@ -1008,7 +1008,14 @@ class BetterFlix : MainAPI() {
                 println("   📍 [SERIES] Contexto do contentId encontrado no ALL_EPISODES")
             }
             
-            return getVideoIdFromOptions(domain, contentId, attempt, callback)
+            // CORREÇÃO: Separar a chamada para getVideoIdFromOptions
+            val videoId = getVideoIdFromOptions(domain, contentId, attempt, callback)
+            if (videoId != null) {
+                return getPlayerWithVideoId(domain, videoId, attempt, callback)
+            } else {
+                println("   ❌ [SERIES] Não foi possível obter video_id das options")
+                return false
+            }
             
         } catch (e: Exception) {
             println("   💥 [SERIES] Erro na extração: ${e.message}")
@@ -1168,7 +1175,7 @@ class BetterFlix : MainAPI() {
                 val data = json.optJSONObject("data")
                 if (data == null) {
                     println("   ❌ [OPTIONS] Objeto 'data' não encontrado no JSON")
-                    println("   📄 [OPTIONS] Chaves disponíveis: ${json.keySet()}")
+                    println("   📄 [OPTIONS] Chaves disponíveis: ${json.keys().asSequence().toList()}")
                     return null
                 }
                 
@@ -1177,7 +1184,7 @@ class BetterFlix : MainAPI() {
                 val optionsArray = data.optJSONArray("options")
                 if (optionsArray == null) {
                     println("   ❌ [OPTIONS] Array 'options' não encontrado no data")
-                    println("   📄 [OPTIONS] Chaves em data: ${data.keySet()}")
+                    println("   📄 [OPTIONS] Chaves em data: ${data.keys().asSequence().toList()}")
                     return null
                 }
                 
@@ -1280,12 +1287,12 @@ class BetterFlix : MainAPI() {
                 val data = json.optJSONObject("data")
                 if (data == null) {
                     println("   ❌ [PLAYER] Objeto 'data' não encontrado no JSON")
-                    println("   📄 [PLAYER] Chaves disponíveis: ${json.keySet()}")
+                    println("   📄 [PLAYER] Chaves disponíveis: ${json.keys().asSequence().toList()}")
                     return false
                 }
                 
                 println("   ✅ [PLAYER] Objeto 'data' encontrado")
-                println("   📊 [PLAYER] Chaves em data: ${data.keySet()}")
+                println("   📊 [PLAYER] Chaves em data: ${data.keys().asSequence().toList()}")
                 
                 val videoUrl = data.optString("video_url")
                 if (videoUrl.isBlank()) {
@@ -1399,7 +1406,7 @@ class BetterFlix : MainAPI() {
             try {
                 val json = JSONObject(responseText)
                 println("   ✅ [M3U8] JSON parseado com sucesso")
-                println("   📊 [M3U8] Chaves disponíveis: ${json.keySet()}")
+                println("   📊 [M3U8] Chaves disponíveis: ${json.keys().asSequence().toList()}")
                 
                 val m3u8Url = json.optString("securedLink")
                     .takeIf { it.isNotBlank() }
