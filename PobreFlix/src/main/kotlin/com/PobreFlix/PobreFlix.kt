@@ -2,6 +2,9 @@ package com.PobreFlix
 
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
+import com.lagradost.cloudstream3.LoadResponse.Companion.addActors
+import com.lagradost.cloudstream3.LoadResponse.Companion.addTrailer
+import com.lagradost.cloudstream3.app
 import org.jsoup.nodes.Element
 
 class PobreFlix : MainAPI() {
@@ -102,7 +105,7 @@ class PobreFlix : MainAPI() {
                 val cleanTitle = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
                 
                 val isAnime = href.contains("/anime/") || title.contains("(Anime)", ignoreCase = true)
-                val isSerie = href.contains("/serie/") || href.contains("/tv/") || href.contains("/dorama/")
+                val isSerie = href.contains("/serie/") || href.contains("/tv/") || href.contains("/dorama/)
                 
                 when {
                     isAnime -> newAnimeSearchResponse(cleanTitle, cleanUrl, TvType.Anime) {
@@ -137,10 +140,9 @@ class PobreFlix : MainAPI() {
             .map { it.text() }
             .takeIf { it.isNotEmpty() }
         
-        // Converter % para Float (ex: 90% -> 9.0) e depois para Score
+        // Converter % para Float e depois para Score (usando o formato do MendigoFlix)
         val ratingPercent = document.selectFirst("text[x='18'][y='21']")?.text()?.replace("%", "")?.toFloatOrNull()
         val scoreValue = ratingPercent?.let { it / 10 }
-        val score = scoreValue?.let { Score(it.toInt(), 10) }
         
         val poster = document.selectFirst("meta[property='og:image']")?.attr("content")?.let { fixUrl(it) }
         
@@ -154,13 +156,13 @@ class PobreFlix : MainAPI() {
         val isSerie = url.contains("/serie/") || url.contains("/dorama/") || 
                       document.select("#episodes-list, .season-dropdown, .episode-card").isNotEmpty()
         
-        // Elenco como lista de Actor (usando ActorData)
+        // Elenco como lista de Actor (igual ao MendigoFlix)
         val cast = document.select("#cast-section .swiper-slide .text-sm.font-bold, .swiper-slide .text-sm.font-bold")
             .map { it.text() }
             .takeIf { it.isNotEmpty() }
-            ?.map { ActorData(it) }
+            ?.map { Actor(name = it) }
         
-        // Trailer - não usar trailerUrl diretamente, usar no LoadResponse
+        // Trailer
         val trailerKey = document.selectFirst("script:containsData(window.__trailerKeys)")?.data()?.let { script ->
             Regex("window\\.__trailerKeys\\s*=\\s*\\[\"([^\"]+)\"\\]").find(script)?.groupValues?.get(1)
         }
@@ -204,13 +206,19 @@ class PobreFlix : MainAPI() {
                 this.year = year
                 this.plot = plot
                 this.tags = tags
-                this.score = score
                 this.recommendations = recommendations.takeIf { it.isNotEmpty() }
                 
-                if (cast != null) {
+                // Usar score com valor e máximo (igual ao MendigoFlix)
+                if (scoreValue != null) {
+                    this.score = Score(scoreValue.toInt(), 10)
+                }
+                
+                // Adicionar elenco usando addActors (igual ao MendigoFlix)
+                if (cast != null && cast.isNotEmpty()) {
                     addActors(cast)
                 }
                 
+                // Adicionar trailer usando addTrailer (igual ao MendigoFlix)
                 if (trailerKey != null) {
                     addTrailer("https://www.youtube.com/watch?v=$trailerKey")
                 }
@@ -222,14 +230,20 @@ class PobreFlix : MainAPI() {
                 this.year = year
                 this.plot = plot
                 this.tags = tags
-                this.score = score
                 this.duration = duration
                 this.recommendations = recommendations.takeIf { it.isNotEmpty() }
                 
-                if (cast != null) {
+                // Usar score com valor e máximo (igual ao MendigoFlix)
+                if (scoreValue != null) {
+                    this.score = Score(scoreValue.toInt(), 10)
+                }
+                
+                // Adicionar elenco usando addActors (igual ao MendigoFlix)
+                if (cast != null && cast.isNotEmpty()) {
                     addActors(cast)
                 }
                 
+                // Adicionar trailer usando addTrailer (igual ao MendigoFlix)
                 if (trailerKey != null) {
                     addTrailer("https://www.youtube.com/watch?v=$trailerKey")
                 }
