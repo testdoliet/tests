@@ -390,7 +390,7 @@ class PobreFlix : MainAPI() {
                             source = name,
                             name = name,
                             url = videoUrl,
-                            type = if (videoUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.DIRECT
+                            type = if (videoUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else null
                         ) {
                             this.referer = data
                             this.quality = 720
