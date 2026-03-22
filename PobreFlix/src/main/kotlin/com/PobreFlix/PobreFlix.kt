@@ -161,7 +161,8 @@ class PobreFlix : MainAPI() {
             .takeIf { it.isNotEmpty() }
 
         val ratingPercent = document.selectFirst("text[x='18'][y='21']")?.text()?.replace("%", "")?.toFloatOrNull()
-        val scoreValue = ratingPercent?.let { it / 10 }
+        val ratingValue = ratingPercent?.let { it / 10 }
+        val score = ratingValue?.let { Score.from10(it) }
 
         val backdrop = document.selectFirst(".absolute.left-1\\/2 img, .blur-\\[4px\\] img")?.attr("src")?.let { fixUrl(it) }
 
@@ -220,10 +221,7 @@ class PobreFlix : MainAPI() {
                 this.plot = plot
                 this.tags = tags
                 this.recommendations = siteRecommendations.takeIf { it.isNotEmpty() }
-
-                if (scoreValue != null) {
-                    this.score = Score(scoreValue.toInt(), 10)
-                }
+                this.score = score
 
                 if (cast != null && cast.isNotEmpty()) {
                     addActors(cast)
@@ -244,10 +242,7 @@ class PobreFlix : MainAPI() {
                 this.tags = tags
                 this.duration = duration
                 this.recommendations = siteRecommendations.takeIf { it.isNotEmpty() }
-
-                if (scoreValue != null) {
-                    this.score = Score(scoreValue.toInt(), 10)
-                }
+                this.score = score
 
                 if (cast != null && cast.isNotEmpty()) {
                     addActors(cast)
@@ -375,14 +370,15 @@ class PobreFlix : MainAPI() {
                     true
                 } else {
                     callback.invoke(
-                        ExtractorLink(
+                        newExtractorLink(
                             source = name,
                             name = name,
                             url = playerUrl,
-                            referer = playerUrl,
-                            quality = Qualities.Unknown.value,
-                            isM3u8 = playerUrl.contains(".m3u8")
-                        )
+                            type = ExtractorLinkType.M3U8
+                        ) {
+                            this.referer = playerUrl
+                            this.quality = 720
+                        }
                     )
                     true
                 }
@@ -390,14 +386,15 @@ class PobreFlix : MainAPI() {
                 val videoUrl = document.selectFirst("video source, source[src]")?.attr("src")
                 if (videoUrl != null) {
                     callback.invoke(
-                        ExtractorLink(
+                        newExtractorLink(
                             source = name,
                             name = name,
                             url = videoUrl,
-                            referer = data,
-                            quality = Qualities.Unknown.value,
-                            isM3u8 = videoUrl.contains(".m3u8")
-                        )
+                            type = if (videoUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.DIRECT
+                        ) {
+                            this.referer = data
+                            this.quality = 720
+                        }
                     )
                     true
                 } else false
