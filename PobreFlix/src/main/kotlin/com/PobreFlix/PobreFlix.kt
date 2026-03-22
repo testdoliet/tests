@@ -140,57 +140,45 @@ class PobreFlix : MainAPI() {
     override suspend fun load(url: String): LoadResponse? {
         val document = app.get(url).document
 
-        // Título
         val titleElement = document.selectFirst("h1, .text-3xl.text-lead.font-bold")
         val title = titleElement?.text() ?: return null
 
-        // Ano
         val year = Regex("\\((\\d{4})\\)").find(title)?.groupValues?.get(1)?.toIntOrNull()
         val cleanTitle = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
 
-        // Determinar tipo
         val isAnime = url.contains("/anime/") || title.contains("(Anime)", ignoreCase = true)
         val isSerie = url.contains("/serie/") || url.contains("/dorama/") || 
                      (!isAnime && document.selectFirst("#episodes-list, .season-dropdown, .episode-card") != null)
 
-        // Extrair metadados do HTML
         val ogImage = document.selectFirst("meta[property='og:image']")?.attr("content")
         val poster = ogImage?.let { fixUrl(it) }
 
-        // Sinopse
         val synopsis = document.selectFirst(".text-slate-700.dark\\:text-slate-200.md\\:text-lg, .text-slate-900\\/90.dark\\:text-slate-100\\/90, meta[name='description']")?.attr("content")?.trim()
         val plot = synopsis
 
-        // Gêneros
         val tags = document.select(".flex.flex-wrap.gap-2 a, .px-3.py-1.rounded-full.text-xs.bg-slate-200")
             .map { it.text() }
             .takeIf { it.isNotEmpty() }
 
-        // Avaliação (converter % para Float)
         val ratingPercent = document.selectFirst("text[x='18'][y='21']")?.text()?.replace("%", "")?.toFloatOrNull()
-        val ratingValue = ratingPercent?.let { it / 10 }
+        val scoreValue = ratingPercent?.let { it / 10 }
 
-        // Background
         val backdrop = document.selectFirst(".absolute.left-1\\/2 img, .blur-\\[4px\\] img")?.attr("src")?.let { fixUrl(it) }
 
-        // Duração (filmes)
         val durationText = document.selectFirst(".bg-slate-200.dark\\:bg-slate-700.rounded-lg.p-3:contains(min) .font-medium, .inline-flex.items-center.rounded-full.px-3.py-1:contains(min)")?.text()
         val duration = durationText?.let { 
             Regex("(\\d+)\\s*min").find(it)?.groupValues?.get(1)?.toIntOrNull()
         }
 
-        // Elenco
         val cast = document.select("#cast-section .swiper-slide .text-sm.font-bold, .swiper-slide .text-sm.font-bold")
             .map { it.text() }
             .takeIf { it.isNotEmpty() }
             ?.map { Actor(name = it) }
 
-        // Trailer
         val trailerKey = document.selectFirst("script:containsData(window.__trailerKeys)")?.data()?.let { script ->
             Regex("window\\.__trailerKeys\\s*=\\s*\\[\"([^\"]+)\"\\]").find(script)?.groupValues?.get(1)
         }
 
-        // Recomendações
         val siteRecommendations = document.select("#relatedSection .swiper-slide a, .related-swiper .swiper-slide a")
             .mapNotNull { element ->
                 try {
@@ -233,8 +221,8 @@ class PobreFlix : MainAPI() {
                 this.tags = tags
                 this.recommendations = siteRecommendations.takeIf { it.isNotEmpty() }
 
-                if (ratingValue != null) {
-                    this.rating = ratingValue.toInt()
+                if (scoreValue != null) {
+                    this.score = Score(scoreValue.toInt(), 10)
                 }
 
                 if (cast != null && cast.isNotEmpty()) {
@@ -257,8 +245,8 @@ class PobreFlix : MainAPI() {
                 this.duration = duration
                 this.recommendations = siteRecommendations.takeIf { it.isNotEmpty() }
 
-                if (ratingValue != null) {
-                    this.rating = ratingValue.toInt()
+                if (scoreValue != null) {
+                    this.score = Score(scoreValue.toInt(), 10)
                 }
 
                 if (cast != null && cast.isNotEmpty()) {
@@ -280,7 +268,6 @@ class PobreFlix : MainAPI() {
     ): List<Episode> {
         val episodes = mutableListOf<Episode>()
 
-        // Primeiro tenta extrair do JSON window.allEpisodes
         val scriptData = document.selectFirst("script:containsData(window.allEpisodes)")?.data()
         if (scriptData != null) {
             try {
@@ -325,7 +312,6 @@ class PobreFlix : MainAPI() {
             } catch (e: Exception) { }
         }
 
-        // Fallback: extrair do HTML
         val episodeElements = document.select("#episodes-list article, .episode-card, .episode-item")
         
         episodeElements.forEachIndexed { index, element ->
@@ -378,7 +364,28 @@ class PobreFlix : MainAPI() {
             val iframe = document.selectFirst("iframe[src*='player'], iframe[src*='embed'], iframe[src*='fembed'], iframe[src*='filemoon']")
             if (iframe != null) {
                 val playerUrl = iframe.attr("src")
-                loadExtractor(playerUrl, subtitleCallback, callback)
+                val links = M3u8Helper.generateM3u8(
+                    source = name,
+                    streamUrl = playerUrl,
+                    referer = playerUrl
+                )
+                
+                if (links.isNotEmpty()) {
+                    links.forEach { callback(it) }
+                    true
+                } else {
+                    callback.invoke(
+                        ExtractorLink(
+                            source = name,
+                            name = name,
+                            url = playerUrl,
+                            referer = playerUrl,
+                            quality = Qualities.Unknown.value,
+                            isM3u8 = playerUrl.contains(".m3u8")
+                        )
+                    )
+                    true
+                }
             } else {
                 val videoUrl = document.selectFirst("video source, source[src]")?.attr("src")
                 if (videoUrl != null) {
@@ -387,7 +394,7 @@ class PobreFlix : MainAPI() {
                             source = name,
                             name = name,
                             url = videoUrl,
-                            referer = mainUrl,
+                            referer = data,
                             quality = Qualities.Unknown.value,
                             isM3u8 = videoUrl.contains(".m3u8")
                         )
