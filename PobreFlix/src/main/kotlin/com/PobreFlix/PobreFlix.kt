@@ -4,7 +4,6 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.LoadResponse.Companion.addActors
 import com.lagradost.cloudstream3.LoadResponse.Companion.addTrailer
-import com.lagradost.cloudstream3.app
 import org.jsoup.nodes.Element
 
 class PobreFlix : MainAPI() {
@@ -24,6 +23,7 @@ class PobreFlix : MainAPI() {
             "/series" to "Séries",
             "/animes" to "Animes",
             "/doramas" to "Doramas",
+            "/calendario" to "Calendário",
             "" to "Em Alta"
         )
     }
@@ -36,56 +36,63 @@ class PobreFlix : MainAPI() {
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val url = if (page > 1 && request.data != mainUrl) {
-            if (request.data.contains("?")) "${request.data}&page=$page"
-            else "${request.data}?page=$page"
+        val baseUrl = request.data
+        val url = if (page > 1 && baseUrl != mainUrl) {
+            if (baseUrl.contains("?")) {
+                "$baseUrl&page=$page"
+            } else {
+                "$baseUrl?page=$page"
+            }
         } else {
-            request.data
+            baseUrl
         }
 
         val document = app.get(url).document
 
-        val home = document.select("article.relative.group/item, .swiper-slide article.relative.group/item, .grid article.relative.group/item, a.card")
+        val home = document.select("a.card, article.relative.group/item, .swiper-slide article.relative.group/item, .grid article.relative.group/item")
             .mapNotNull { element ->
                 element.toSearchResult()
             }
 
-        val hasNextPage = document.select("a:contains(Próxima), .pagination a:contains(Próxima), .page-numbers a:contains(Próxima)").isNotEmpty()
+        val hasNextPage = document.select("a:contains(Próxima), .page-numbers a[href*='page']").isNotEmpty() ||
+                         document.select(".pagination").isNotEmpty()
 
         return newHomePageResponse(request.name, home.distinctBy { it.url }, hasNextPage)
     }
 
     private fun Element.toSearchResult(): SearchResponse? {
-        val titleElement = selectFirst("h3, .font-bold, .text-sm.md\\:text-base.font-bold")
-        val title = titleElement?.text() ?: selectFirst("img")?.attr("alt") ?: return null
-        
-        val link = selectFirst("a[href]") ?: return null
-        val href = link.attr("href") ?: return null
-        val cleanUrl = fixUrl(href)
-        
-        val poster = selectFirst("img")?.attr("src")?.let { fixUrl(it) }
-        
-        val yearElement = selectFirst(".text-xs span:first-child, .text-xs span:matches(\\d{4}), .text-white\\/70.text-xs")
-        val year = yearElement?.text()?.trim()?.toIntOrNull()
-        
-        val badge = selectFirst(".border-slate-300, .border-white\\/10, .px-1\\.5.py-0\\.5")?.text()?.lowercase() ?: ""
+        val title = attr("title") ?: selectFirst("img")?.attr("alt") ?: return null
+        val href = attr("href") ?: return null
+
+        val localPoster = selectFirst("img")?.attr("src")?.let { fixUrl(it) }
+        val year = Regex("\\((\\d{4})\\)").find(title)?.groupValues?.get(1)?.toIntOrNull()
         val cleanTitle = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
-        
-        val isAnime = href.contains("/anime/") || badge.contains("anime")
-        val isSerie = href.contains("/serie/") || badge.contains("série") || badge.contains("serie") || href.contains("/dorama/")
-        
+
+        val badge = selectFirst(".badge-kind, .border-slate-300, .border-white\\/10, .px-1\\.5")?.text()?.lowercase() ?: ""
+        val isAnime = badge.contains("anime") || href.contains("/anime/") ||
+                      title.contains("(Anime)", ignoreCase = true)
+        val isSerie = badge.contains("série") || badge.contains("serie") || badge.contains("dorama") ||
+                     href.contains("/serie/") || href.contains("/dorama/") ||
+                     (!isAnime && (badge.contains("tv") || href.contains("/tv/")))
+
         return when {
-            isAnime -> newAnimeSearchResponse(cleanTitle, cleanUrl, TvType.Anime) {
-                this.posterUrl = poster
-                this.year = year
+            isAnime -> {
+                newAnimeSearchResponse(cleanTitle, fixUrl(href), TvType.Anime) {
+                    this.posterUrl = localPoster
+                    this.year = year
+                }
             }
-            isSerie -> newTvSeriesSearchResponse(cleanTitle, cleanUrl, TvType.TvSeries) {
-                this.posterUrl = poster
-                this.year = year
+            isSerie -> {
+                newTvSeriesSearchResponse(cleanTitle, fixUrl(href), TvType.TvSeries) {
+                    this.posterUrl = localPoster
+                    this.year = year
+                }
             }
-            else -> newMovieSearchResponse(cleanTitle, cleanUrl, TvType.Movie) {
-                this.posterUrl = poster
-                this.year = year
+            else -> {
+                newMovieSearchResponse(cleanTitle, fixUrl(href), TvType.Movie) {
+                    this.posterUrl = localPoster
+                    this.year = year
+                }
             }
         }
     }
@@ -98,25 +105,28 @@ class PobreFlix : MainAPI() {
             try {
                 val title = card.attr("title") ?: card.selectFirst("img")?.attr("alt") ?: return@mapNotNull null
                 val href = card.attr("href") ?: return@mapNotNull null
-                val cleanUrl = fixUrl(href)
-                
+
                 val poster = card.selectFirst("img")?.attr("src")?.let { fixUrl(it) }
-                val year = Regex("\\b(\\d{4})\\b").find(title)?.groupValues?.get(1)?.toIntOrNull()
+                val year = Regex("\\((\\d{4})\\)").find(title)?.groupValues?.get(1)?.toIntOrNull()
                 val cleanTitle = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
-                
-                val isAnime = href.contains("/anime/") || title.contains("(Anime)", ignoreCase = true)
-                val isSerie = href.contains("/serie/") || href.contains("/tv/") || href.contains("/dorama/)
-                
+
+                val badge = card.selectFirst(".badge-kind, .border-slate-300")?.text()?.lowercase() ?: ""
+                val isAnime = badge.contains("anime") || href.contains("/anime/") ||
+                             title.contains("(Anime)", ignoreCase = true)
+                val isSerie = badge.contains("série") || badge.contains("serie") || badge.contains("dorama") ||
+                             href.contains("/serie/") || href.contains("/dorama/") ||
+                             (!isAnime && (badge.contains("tv") || href.contains("/tv/")))
+
                 when {
-                    isAnime -> newAnimeSearchResponse(cleanTitle, cleanUrl, TvType.Anime) {
+                    isAnime -> newAnimeSearchResponse(cleanTitle, fixUrl(href), TvType.Anime) {
                         this.posterUrl = poster
                         this.year = year
                     }
-                    isSerie -> newTvSeriesSearchResponse(cleanTitle, cleanUrl, TvType.TvSeries) {
+                    isSerie -> newTvSeriesSearchResponse(cleanTitle, fixUrl(href), TvType.TvSeries) {
                         this.posterUrl = poster
                         this.year = year
                     }
-                    else -> newMovieSearchResponse(cleanTitle, cleanUrl, TvType.Movie) {
+                    else -> newMovieSearchResponse(cleanTitle, fixUrl(href), TvType.Movie) {
                         this.posterUrl = poster
                         this.year = year
                     }
@@ -129,121 +139,132 @@ class PobreFlix : MainAPI() {
 
     override suspend fun load(url: String): LoadResponse? {
         val document = app.get(url).document
-        
-        val title = document.selectFirst("h1, .text-3xl.text-lead.font-bold, .text-3xl.md\\:text-4xl.font-bold")?.text() ?: return null
-        
-        val year = document.selectFirst(".inline-flex.items-center.rounded-full.px-3.py-1 span:contains(\\d{4}), .text-xs span:contains(\\d{4})")?.text()?.toIntOrNull()
-        
-        val plot = document.selectFirst(".text-slate-700.dark\\:text-slate-200.md\\:text-lg, .text-slate-900\\/90.dark\\:text-slate-100\\/90")?.text()
-        
+
+        // Título
+        val titleElement = document.selectFirst("h1, .text-3xl.text-lead.font-bold")
+        val title = titleElement?.text() ?: return null
+
+        // Ano
+        val year = Regex("\\((\\d{4})\\)").find(title)?.groupValues?.get(1)?.toIntOrNull()
+        val cleanTitle = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
+
+        // Determinar tipo
+        val isAnime = url.contains("/anime/") || title.contains("(Anime)", ignoreCase = true)
+        val isSerie = url.contains("/serie/") || url.contains("/dorama/") || 
+                     (!isAnime && document.selectFirst("#episodes-list, .season-dropdown, .episode-card") != null)
+
+        // Extrair metadados do HTML
+        val ogImage = document.selectFirst("meta[property='og:image']")?.attr("content")
+        val poster = ogImage?.let { fixUrl(it) }
+
+        // Sinopse
+        val synopsis = document.selectFirst(".text-slate-700.dark\\:text-slate-200.md\\:text-lg, .text-slate-900\\/90.dark\\:text-slate-100\\/90, meta[name='description']")?.attr("content")?.trim()
+        val plot = synopsis
+
+        // Gêneros
         val tags = document.select(".flex.flex-wrap.gap-2 a, .px-3.py-1.rounded-full.text-xs.bg-slate-200")
             .map { it.text() }
             .takeIf { it.isNotEmpty() }
-        
-        // Converter % para Float e depois para Score (usando o formato do MendigoFlix)
+
+        // Avaliação (converter % para Float)
         val ratingPercent = document.selectFirst("text[x='18'][y='21']")?.text()?.replace("%", "")?.toFloatOrNull()
-        val scoreValue = ratingPercent?.let { it / 10 }
-        
-        val poster = document.selectFirst("meta[property='og:image']")?.attr("content")?.let { fixUrl(it) }
-        
-        val background = document.selectFirst(".absolute.left-1\\/2 img, .blur-\\[4px\\] img")?.attr("src")?.let { fixUrl(it) }
-        
-        val durationText = document.selectFirst(".bg-slate-200.dark\\:bg-slate-700.rounded-lg.p-3:contains(min) .font-medium")?.text()
+        val ratingValue = ratingPercent?.let { it / 10 }
+
+        // Background
+        val backdrop = document.selectFirst(".absolute.left-1\\/2 img, .blur-\\[4px\\] img")?.attr("src")?.let { fixUrl(it) }
+
+        // Duração (filmes)
+        val durationText = document.selectFirst(".bg-slate-200.dark\\:bg-slate-700.rounded-lg.p-3:contains(min) .font-medium, .inline-flex.items-center.rounded-full.px-3.py-1:contains(min)")?.text()
         val duration = durationText?.let { 
             Regex("(\\d+)\\s*min").find(it)?.groupValues?.get(1)?.toIntOrNull()
         }
-        
-        val isSerie = url.contains("/serie/") || url.contains("/dorama/") || 
-                      document.select("#episodes-list, .season-dropdown, .episode-card").isNotEmpty()
-        
-        // Elenco como lista de Actor (igual ao MendigoFlix)
+
+        // Elenco
         val cast = document.select("#cast-section .swiper-slide .text-sm.font-bold, .swiper-slide .text-sm.font-bold")
             .map { it.text() }
             .takeIf { it.isNotEmpty() }
             ?.map { Actor(name = it) }
-        
+
         // Trailer
         val trailerKey = document.selectFirst("script:containsData(window.__trailerKeys)")?.data()?.let { script ->
             Regex("window\\.__trailerKeys\\s*=\\s*\\[\"([^\"]+)\"\\]").find(script)?.groupValues?.get(1)
         }
-        
+
         // Recomendações
-        val recommendations = document.select("#relatedSection .swiper-slide a, .related-swiper .swiper-slide a")
+        val siteRecommendations = document.select("#relatedSection .swiper-slide a, .related-swiper .swiper-slide a")
             .mapNotNull { element ->
                 try {
                     val href = element.attr("href") ?: return@mapNotNull null
-                    val titleEl = element.selectFirst("h3, .text-white.font-bold")
-                    val titleRec = titleEl?.text() ?: return@mapNotNull null
-                    val posterRec = element.selectFirst("img")?.attr("src")?.let { fixUrl(it) }
+                    val imgElement = element.selectFirst("img")
+                    val titleRec = imgElement?.attr("alt") ?: element.selectFirst("h3, .text-white.font-bold")?.text() ?: return@mapNotNull null
+                    val posterRec = imgElement?.attr("src")?.let { fixUrl(it) }
                     val yearRec = element.selectFirst(".text-white\\/70.text-xs")?.text()?.toIntOrNull()
-                    
+                    val cleanTitleRec = titleRec.replace(Regex("\\(\\d{4}\\)"), "").trim()
+
                     val isAnimeRec = href.contains("/anime/")
                     val isSerieRec = href.contains("/serie/") || href.contains("/dorama/")
-                    
+
                     when {
-                        isAnimeRec -> newAnimeSearchResponse(titleRec, fixUrl(href), TvType.Anime) {
+                        isAnimeRec -> newAnimeSearchResponse(cleanTitleRec, fixUrl(href), TvType.Anime) {
                             this.posterUrl = posterRec
                             this.year = yearRec
                         }
-                        isSerieRec -> newTvSeriesSearchResponse(titleRec, fixUrl(href), TvType.TvSeries) {
+                        isSerieRec -> newTvSeriesSearchResponse(cleanTitleRec, fixUrl(href), TvType.TvSeries) {
                             this.posterUrl = posterRec
                             this.year = yearRec
                         }
-                        else -> newMovieSearchResponse(titleRec, fixUrl(href), TvType.Movie) {
+                        else -> newMovieSearchResponse(cleanTitleRec, fixUrl(href), TvType.Movie) {
                             this.posterUrl = posterRec
                             this.year = yearRec
                         }
                     }
                 } catch (e: Exception) { null }
             }
-        
-        return if (isSerie) {
-            val episodes = extractEpisodes(document, url)
-            
-            newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes) {
+
+        return if (isAnime || isSerie) {
+            val type = if (isAnime) TvType.Anime else TvType.TvSeries
+            val episodes = extractEpisodesFromSite(document, url, isAnime, isSerie)
+
+            newTvSeriesLoadResponse(cleanTitle, url, type, episodes) {
                 this.posterUrl = poster
-                this.backgroundPosterUrl = background
+                this.backgroundPosterUrl = backdrop
                 this.year = year
                 this.plot = plot
                 this.tags = tags
-                this.recommendations = recommendations.takeIf { it.isNotEmpty() }
-                
-                // Usar score com valor e máximo (igual ao MendigoFlix)
-                if (scoreValue != null) {
-                    this.score = Score(scoreValue.toInt(), 10)
+                this.recommendations = siteRecommendations.takeIf { it.isNotEmpty() }
+
+                if (ratingValue != null) {
+                    this.rating = ratingValue.toInt()
                 }
-                
-                // Adicionar elenco usando addActors (igual ao MendigoFlix)
+
                 if (cast != null && cast.isNotEmpty()) {
                     addActors(cast)
                 }
-                
-                // Adicionar trailer usando addTrailer (igual ao MendigoFlix)
+
                 if (trailerKey != null) {
                     addTrailer("https://www.youtube.com/watch?v=$trailerKey")
                 }
             }
         } else {
-            newMovieLoadResponse(title, url, TvType.Movie, url) {
+            val playerUrl = findPlayerUrl(document)
+
+            newMovieLoadResponse(cleanTitle, url, TvType.Movie, playerUrl ?: url) {
                 this.posterUrl = poster
-                this.backgroundPosterUrl = background
+                this.backgroundPosterUrl = backdrop
                 this.year = year
                 this.plot = plot
                 this.tags = tags
                 this.duration = duration
-                this.recommendations = recommendations.takeIf { it.isNotEmpty() }
-                
-                // Usar score com valor e máximo (igual ao MendigoFlix)
-                if (scoreValue != null) {
-                    this.score = Score(scoreValue.toInt(), 10)
+                this.recommendations = siteRecommendations.takeIf { it.isNotEmpty() }
+
+                if (ratingValue != null) {
+                    this.rating = ratingValue.toInt()
                 }
-                
-                // Adicionar elenco usando addActors (igual ao MendigoFlix)
+
                 if (cast != null && cast.isNotEmpty()) {
                     addActors(cast)
                 }
-                
-                // Adicionar trailer usando addTrailer (igual ao MendigoFlix)
+
                 if (trailerKey != null) {
                     addTrailer("https://www.youtube.com/watch?v=$trailerKey")
                 }
@@ -251,85 +272,98 @@ class PobreFlix : MainAPI() {
         }
     }
 
-    private suspend fun extractEpisodes(document: org.jsoup.nodes.Document, url: String): List<Episode> {
+    private suspend fun extractEpisodesFromSite(
+        document: org.jsoup.nodes.Document,
+        url: String,
+        isAnime: Boolean,
+        isSerie: Boolean
+    ): List<Episode> {
         val episodes = mutableListOf<Episode>()
-        
+
+        // Primeiro tenta extrair do JSON window.allEpisodes
         val scriptData = document.selectFirst("script:containsData(window.allEpisodes)")?.data()
         if (scriptData != null) {
             try {
                 val jsonMatch = Regex("window\\.allEpisodes\\s*=\\s*(\\{[^;]+\\})").find(scriptData)
-                val jsonString = jsonMatch?.groupValues?.get(1) ?: return extractEpisodesFromHtml(document)
+                val jsonString = jsonMatch?.groupValues?.get(1)
                 
-                val seasonPattern = Regex("\"(\\d+)\":\\s*\\[([^\\]]+)\\]")
-                val seasonMatches = seasonPattern.findAll(jsonString)
-                
-                for (seasonMatch in seasonMatches) {
-                    val seasonNum = seasonMatch.groupValues[1].toIntOrNull() ?: 1
-                    val episodesJson = seasonMatch.groupValues[2]
+                if (jsonString != null) {
+                    val seasonPattern = Regex("\"(\\d+)\":\\s*\\[([^\\]]+)\\]")
+                    val seasonMatches = seasonPattern.findAll(jsonString)
                     
-                    val episodePattern = Regex("\\{[^}]*\"epi_num\"\\s*:\\s*(\\d+)[^}]*\"title\"\\s*:\\s*\"([^\"]*)\"[^}]*\"thumb_url\"\\s*:\\s*\"([^\"]*)\"[^}]*\"duration\"\\s*:\\s*(\\d+)[^}]*\"air_date\"\\s*:\\s*\"([^\"]*)\"[^}]*\"has_dub\"\\s*:\\s*(true|false)[^}]*\"has_leg\"\\s*:\\s*(true|false)[^}]*\\}")
-                    val episodeMatches = episodePattern.findAll(episodesJson)
-                    
-                    for (epMatch in episodeMatches) {
-                        val epNum = epMatch.groupValues[1].toIntOrNull() ?: continue
-                        val epTitle = epMatch.groupValues[2].ifEmpty { "Episódio $epNum" }
-                        val thumbUrl = epMatch.groupValues[3].takeIf { it.isNotEmpty() }?.let { fixUrl(it) }
-                        val durationMin = epMatch.groupValues[4].toIntOrNull()
-                        val airDate = epMatch.groupValues[5].takeIf { it.isNotEmpty() }
+                    for (seasonMatch in seasonMatches) {
+                        val seasonNum = seasonMatch.groupValues[1].toIntOrNull() ?: 1
+                        val episodesJson = seasonMatch.groupValues[2]
                         
-                        val episodeUrl = "$url/$seasonNum/$epNum"
+                        val episodePattern = Regex("\\{[^}]*\"epi_num\"\\s*:\\s*(\\d+)[^}]*\"title\"\\s*:\\s*\"([^\"]*)\"[^}]*\"thumb_url\"\\s*:\\s*\"([^\"]*)\"[^}]*\"duration\"\\s*:\\s*(\\d+)[^}]*\"air_date\"\\s*:\\s*\"([^\"]*)\"[^}]*\\}")
+                        val episodeMatches = episodePattern.findAll(episodesJson)
                         
-                        episodes.add(newEpisode(fixUrl(episodeUrl)) {
-                            this.name = epTitle
-                            this.season = seasonNum
-                            this.episode = epNum
-                            this.posterUrl = thumbUrl
-                            this.description = buildString {
-                                if (durationMin != null && durationMin > 0) append("Duração: ${durationMin}min\n")
-                                if (airDate != null) append("Data: $airDate")
-                            }.trim()
-                        })
+                        for (epMatch in episodeMatches) {
+                            val epNum = epMatch.groupValues[1].toIntOrNull() ?: continue
+                            val epTitle = epMatch.groupValues[2].ifEmpty { "Episódio $epNum" }
+                            val thumbUrl = epMatch.groupValues[3].takeIf { it.isNotEmpty() }?.let { fixUrl(it) }
+                            val durationMin = epMatch.groupValues[4].toIntOrNull()
+                            val airDate = epMatch.groupValues[5].takeIf { it.isNotEmpty() }
+                            
+                            val episodeUrl = "$url/$seasonNum/$epNum"
+                            
+                            episodes.add(newEpisode(fixUrl(episodeUrl)) {
+                                this.name = epTitle
+                                this.season = seasonNum
+                                this.episode = epNum
+                                this.posterUrl = thumbUrl
+                                this.description = buildString {
+                                    if (durationMin != null && durationMin > 0) append("Duração: ${durationMin}min\n")
+                                    if (airDate != null) append("Data: $airDate")
+                                }.trim()
+                            })
+                        }
                     }
+                    
+                    if (episodes.isNotEmpty()) return episodes
                 }
-                
-                if (episodes.isNotEmpty()) return episodes
             } catch (e: Exception) { }
         }
-        
-        return extractEpisodesFromHtml(document)
-    }
-    
-    private fun extractEpisodesFromHtml(document: org.jsoup.nodes.Document): List<Episode> {
-        val episodes = mutableListOf<Episode>()
-        
+
+        // Fallback: extrair do HTML
         val episodeElements = document.select("#episodes-list article, .episode-card, .episode-item")
         
-        episodeElements.forEach { element ->
+        episodeElements.forEachIndexed { index, element ->
             try {
-                val link = element.selectFirst("a[href]") ?: return@forEach
-                val episodeUrl = link.attr("href")
-                if (episodeUrl.isBlank()) return@forEach
-                
-                val seasonText = element.selectFirst(".text-lead.shrink-0")?.text() ?: "T1:E1"
+                val link = element.selectFirst("a[href]") ?: return@forEachIndexed
+                val dataUrl = link.attr("href")
+                if (dataUrl.isBlank()) return@forEachIndexed
+
+                val seasonText = element.selectFirst(".text-lead.shrink-0")?.text() ?: "T1:E${index + 1}"
                 val seasonMatch = Regex("T(\\d+):E(\\d+)").find(seasonText)
-                val season = seasonMatch?.groupValues?.get(1)?.toIntOrNull() ?: 1
-                val episodeNum = seasonMatch?.groupValues?.get(2)?.toIntOrNull() ?: 1
+                val seasonNumber = seasonMatch?.groupValues?.get(1)?.toIntOrNull() ?: 1
+                val epNumber = seasonMatch?.groupValues?.get(2)?.toIntOrNull() ?: (index + 1)
                 
-                val title = element.selectFirst("h2, .truncate")?.text() ?: "Episódio $episodeNum"
+                val epTitle = element.selectFirst("h2, .truncate")?.text() ?: "Episódio $epNumber"
                 val thumb = element.selectFirst("img")?.attr("src")?.let { fixUrl(it) }
                 val description = element.selectFirst(".line-clamp-2.text-xs")?.text()
-                
-                episodes.add(newEpisode(fixUrl(episodeUrl)) {
-                    this.name = title
-                    this.season = season
-                    this.episode = episodeNum
+
+                episodes.add(newEpisode(fixUrl(dataUrl)) {
+                    this.name = epTitle
+                    this.season = seasonNumber
+                    this.episode = epNumber
                     this.posterUrl = thumb
                     this.description = description
                 })
             } catch (e: Exception) { }
         }
-        
+
         return episodes
+    }
+
+    private fun findPlayerUrl(document: org.jsoup.nodes.Document): String? {
+        val iframe = document.selectFirst("iframe[src*='player'], iframe[src*='embed'], iframe[src*='fembed'], iframe[src*='filemoon']")
+        if (iframe != null) {
+            return iframe.attr("src")
+        }
+
+        val videoLink = document.selectFirst("a[href*='.m3u8'], a[href*='.mp4'], a[href*='watch']")
+        return videoLink?.attr("href")
     }
 
     override suspend fun loadLinks(
