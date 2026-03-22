@@ -10,20 +10,18 @@ class PobreFlix : MainAPI() {
     override val hasMainPage = true
     override var lang = "pt-br"
     override val hasDownloadSupport = true
-    override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries, TvType.Anime, TvType.Documentary, TvType.TvShow)
+    override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries, TvType.Anime, TvType.Documentary)
     override val usesWebView = true
 
     companion object {
         private const val SEARCH_PATH = "/pesquisar"
 
-        // Categorias do menu principal
         private val FIXED_CATEGORIES = listOf(
             "/filmes" to "Filmes",
-            "/series" to "Séries", 
+            "/series" to "Séries",
             "/animes" to "Animes",
             "/doramas" to "Doramas",
-            "/calendario" to "Calendário",
-            "" to "Em Alta"  // Página principal
+            "" to "Em Alta"
         )
     }
 
@@ -44,52 +42,41 @@ class PobreFlix : MainAPI() {
 
         val document = app.get(url).document
 
-        // Seletores baseados no HTML:
-        // - Cards dos sliders: .swiper-slide article.relative.group/item
-        // - Cards do top 10: .top10-rank-wrap + a
-        // - Cards em geral: article.relative.group/item, a.card
         val home = document.select("article.relative.group/item, .swiper-slide article.relative.group/item, .grid article.relative.group/item, a.card")
             .mapNotNull { element ->
                 element.toSearchResult()
             }
 
-        // Paginação: verificar se existe botão "Próxima"
         val hasNextPage = document.select("a:contains(Próxima), .pagination a:contains(Próxima), .page-numbers a:contains(Próxima)").isNotEmpty()
 
         return newHomePageResponse(request.name, home.distinctBy { it.url }, hasNextPage)
     }
 
     private fun Element.toSearchResult(): SearchResponse? {
-        // Título: pode estar em h3, .font-bold, ou alt da imagem
         val titleElement = selectFirst("h3, .font-bold, .text-sm.md\\:text-base.font-bold")
         val title = titleElement?.text() ?: selectFirst("img")?.attr("alt") ?: return null
         
-        // URL: link do card
         val link = selectFirst("a[href]") ?: return null
         val href = link.attr("href") ?: return null
         val cleanUrl = fixUrl(href)
         
-        // Pôster: imagem do card
         val poster = selectFirst("img")?.attr("src")?.let { fixUrl(it) }
         
-        // Ano: span com ano (formato: 2026)
         val yearElement = selectFirst(".text-xs span:first-child, .text-xs span:matches(\\d{4}), .text-white\\/70.text-xs")
         val year = yearElement?.text()?.trim()?.toIntOrNull()
         
-        // Tipo baseado na URL e badges
         val badge = selectFirst(".border-slate-300, .border-white\\/10, .px-1\\.5.py-0\\.5")?.text()?.lowercase() ?: ""
         val cleanTitle = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
         
         val isAnime = href.contains("/anime/") || badge.contains("anime")
-        val isSerie = href.contains("/serie/") || badge.contains("série") || badge.contains("serie")
-        val isDorama = href.contains("/dorama/") || badge.contains("dorama")
+        val isSerie = href.contains("/serie/") || badge.contains("série") || badge.contains("serie") || href.contains("/dorama/")
         
         return when {
             isAnime -> newAnimeSearchResponse(cleanTitle, cleanUrl, TvType.Anime) {
                 this.posterUrl = poster
                 this.year = year
             }
-            isSerie || isDorama -> newTvSeriesSearchResponse(cleanTitle, cleanUrl, TvType.TvSeries) {
+            isSerie -> newTvSeriesSearchResponse(cleanTitle, cleanUrl, TvType.TvSeries) {
                 this.posterUrl = poster
                 this.year = year
             }
@@ -115,7 +102,7 @@ class PobreFlix : MainAPI() {
                 val cleanTitle = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
                 
                 val isAnime = href.contains("/anime/") || title.contains("(Anime)", ignoreCase = true)
-                val isSerie = href.contains("/serie/") || href.contains("/tv/")
+                val isSerie = href.contains("/serie/") || href.contains("/tv/") || href.contains("/dorama/")
                 
                 when {
                     isAnime -> newAnimeSearchResponse(cleanTitle, cleanUrl, TvType.Anime) {
@@ -140,58 +127,49 @@ class PobreFlix : MainAPI() {
     override suspend fun load(url: String): LoadResponse? {
         val document = app.get(url).document
         
-        // ===== TÍTULO =====
         val title = document.selectFirst("h1, .text-3xl.text-lead.font-bold, .text-3xl.md\\:text-4xl.font-bold")?.text() ?: return null
         
-        // ===== ANO =====
         val year = document.selectFirst(".inline-flex.items-center.rounded-full.px-3.py-1 span:contains(\\d{4}), .text-xs span:contains(\\d{4})")?.text()?.toIntOrNull()
         
-        // ===== SINOPSE =====
-        val plot = document.selectFirst(".text-slate-700.dark\\:text-slate-200.md\\:text-lg, .text-slate-900\\/90.dark\\:text-slate-100\\/90, p:contains(Cinco ex-espiões)")?.text()
+        val plot = document.selectFirst(".text-slate-700.dark\\:text-slate-200.md\\:text-lg, .text-slate-900\\/90.dark\\:text-slate-100\\/90")?.text()
         
-        // ===== GÊNEROS =====
         val tags = document.select(".flex.flex-wrap.gap-2 a, .px-3.py-1.rounded-full.text-xs.bg-slate-200")
             .map { it.text() }
             .takeIf { it.isNotEmpty() }
         
-        // ===== AVALIAÇÃO (converter % para 1-10) =====
+        // Converter % para Float (ex: 90% -> 9.0)
         val ratingPercent = document.selectFirst("text[x='18'][y='21']")?.text()?.replace("%", "")?.toFloatOrNull()
-        val rating = ratingPercent?.let { (it / 10) } // Ex: 90% -> 9.0
+        val score = ratingPercent?.let { it / 10 }
         
-        // ===== POSTER e BACKGROUND =====
         val poster = document.selectFirst("meta[property='og:image']")?.attr("content")?.let { fixUrl(it) }
         
-        // Background: imagem de fundo do hero
         val background = document.selectFirst(".absolute.left-1\\/2 img, .blur-\\[4px\\] img")?.attr("src")?.let { fixUrl(it) }
         
-        // ===== DURAÇÃO (apenas para filmes) =====
-        val durationText = document.selectFirst(".bg-slate-200.dark\\:bg-slate-700.rounded-lg.p-3:contains(min) .font-medium, .inline-flex.items-center.rounded-full.px-3.py-1:contains(min)")?.text()
+        val durationText = document.selectFirst(".bg-slate-200.dark\\:bg-slate-700.rounded-lg.p-3:contains(min) .font-medium")?.text()
         val duration = durationText?.let { 
             Regex("(\\d+)\\s*min").find(it)?.groupValues?.get(1)?.toIntOrNull()
         }
         
-        // ===== QUALIDADE =====
-        val quality = document.selectFirst(".inline-flex.items-center.rounded-full.px-3.py-1:contains(HD), .inline-flex.items-center.rounded-full.px-3.py-1:contains(4K)")?.text()
+        val isSerie = url.contains("/serie/") || url.contains("/dorama/") || 
+                      document.select("#episodes-list, .season-dropdown, .episode-card").isNotEmpty()
         
-        // ===== ELENCO =====
+        // Elenco como lista de strings
         val cast = document.select("#cast-section .swiper-slide .text-sm.font-bold, .swiper-slide .text-sm.font-bold")
             .map { it.text() }
             .takeIf { it.isNotEmpty() }
-            ?.map { Actor(it) }
         
-        // ===== TRAILER =====
+        // Trailer
         val trailerKey = document.selectFirst("script:containsData(window.__trailerKeys)")?.data()?.let { script ->
             Regex("window\\.__trailerKeys\\s*=\\s*\\[\"([^\"]+)\"\\]").find(script)?.groupValues?.get(1)
         }
-        val trailerUrl = trailerKey?.let { "https://www.youtube.com/watch?v=$it" }
         
-        // ===== RECOMENDAÇÕES =====
+        // Recomendações
         val recommendations = document.select("#relatedSection .swiper-slide a, .related-swiper .swiper-slide a")
             .mapNotNull { element ->
                 try {
                     val href = element.attr("href") ?: return@mapNotNull null
                     val titleEl = element.selectFirst("h3, .text-white.font-bold")
-                    val title = titleEl?.text() ?: return@mapNotNull null
+                    val titleRec = titleEl?.text() ?: return@mapNotNull null
                     val posterRec = element.selectFirst("img")?.attr("src")?.let { fixUrl(it) }
                     val yearRec = element.selectFirst(".text-white\\/70.text-xs")?.text()?.toIntOrNull()
                     
@@ -199,25 +177,21 @@ class PobreFlix : MainAPI() {
                     val isSerieRec = href.contains("/serie/") || href.contains("/dorama/")
                     
                     when {
-                        isAnimeRec -> newAnimeSearchResponse(title, fixUrl(href), TvType.Anime) {
+                        isAnimeRec -> newAnimeSearchResponse(titleRec, fixUrl(href), TvType.Anime) {
                             this.posterUrl = posterRec
                             this.year = yearRec
                         }
-                        isSerieRec -> newTvSeriesSearchResponse(title, fixUrl(href), TvType.TvSeries) {
+                        isSerieRec -> newTvSeriesSearchResponse(titleRec, fixUrl(href), TvType.TvSeries) {
                             this.posterUrl = posterRec
                             this.year = yearRec
                         }
-                        else -> newMovieSearchResponse(title, fixUrl(href), TvType.Movie) {
+                        else -> newMovieSearchResponse(titleRec, fixUrl(href), TvType.Movie) {
                             this.posterUrl = posterRec
                             this.year = yearRec
                         }
                     }
                 } catch (e: Exception) { null }
             }
-        
-        // ===== DETERMINAR SE É SÉRIE =====
-        val isSerie = url.contains("/serie/") || url.contains("/dorama/") || 
-                      document.select("#episodes-list, .season-dropdown, .episode-card").isNotEmpty()
         
         return if (isSerie) {
             val episodes = extractEpisodes(document, url)
@@ -228,12 +202,14 @@ class PobreFlix : MainAPI() {
                 this.year = year
                 this.plot = plot
                 this.tags = tags
-                this.rating = rating?.toInt()
-                this.quality = quality
+                this.score = score?.toInt()
                 this.recommendations = recommendations.takeIf { it.isNotEmpty() }
-                this.trailerUrl = trailerUrl
+                this.trailerUrl = trailerKey?.let { "https://www.youtube.com/watch?v=$it" }
                 
-                cast?.let { addActors(it) }
+                // Adicionar elenco
+                if (cast != null && cast.isNotEmpty()) {
+                    this.actors = cast
+                }
             }
         } else {
             newMovieLoadResponse(title, url, TvType.Movie, url) {
@@ -242,13 +218,15 @@ class PobreFlix : MainAPI() {
                 this.year = year
                 this.plot = plot
                 this.tags = tags
-                this.rating = rating?.toInt()
-                this.quality = quality
+                this.score = score?.toInt()
                 this.duration = duration
                 this.recommendations = recommendations.takeIf { it.isNotEmpty() }
-                this.trailerUrl = trailerUrl
+                this.trailerUrl = trailerKey?.let { "https://www.youtube.com/watch?v=$it" }
                 
-                cast?.let { addActors(it) }
+                // Adicionar elenco
+                if (cast != null && cast.isNotEmpty()) {
+                    this.actors = cast
+                }
             }
         }
     }
@@ -256,15 +234,12 @@ class PobreFlix : MainAPI() {
     private suspend fun extractEpisodes(document: org.jsoup.nodes.Document, url: String): List<Episode> {
         val episodes = mutableListOf<Episode>()
         
-        // Extrair dados dos episódios do JavaScript (window.allEpisodes)
         val scriptData = document.selectFirst("script:containsData(window.allEpisodes)")?.data()
         if (scriptData != null) {
             try {
-                // Parse do JSON de episódios
                 val jsonMatch = Regex("window\\.allEpisodes\\s*=\\s*(\\{[^;]+\\})").find(scriptData)
                 val jsonString = jsonMatch?.groupValues?.get(1) ?: return extractEpisodesFromHtml(document)
                 
-                // Usar parsing simples com regex para extrair episódios
                 val seasonPattern = Regex("\"(\\d+)\":\\s*\\[([^\\]]+)\\]")
                 val seasonMatches = seasonPattern.findAll(jsonString)
                 
@@ -279,10 +254,8 @@ class PobreFlix : MainAPI() {
                         val epNum = epMatch.groupValues[1].toIntOrNull() ?: continue
                         val epTitle = epMatch.groupValues[2].ifEmpty { "Episódio $epNum" }
                         val thumbUrl = epMatch.groupValues[3].takeIf { it.isNotEmpty() }?.let { fixUrl(it) }
-                        val duration = epMatch.groupValues[4].toIntOrNull()
+                        val durationMin = epMatch.groupValues[4].toIntOrNull()
                         val airDate = epMatch.groupValues[5].takeIf { it.isNotEmpty() }
-                        val hasDub = epMatch.groupValues[6] == "true"
-                        val hasLeg = epMatch.groupValues[7] == "true"
                         
                         val episodeUrl = "$url/$seasonNum/$epNum"
                         
@@ -292,9 +265,7 @@ class PobreFlix : MainAPI() {
                             this.episode = epNum
                             this.posterUrl = thumbUrl
                             this.description = buildString {
-                                if (duration != null && duration > 0) append("Duração: ${duration}min\n")
-                                if (hasDub) append("Dublado\n")
-                                if (hasLeg) append("Legendado\n")
+                                if (durationMin != null && durationMin > 0) append("Duração: ${durationMin}min\n")
                                 if (airDate != null) append("Data: $airDate")
                             }.trim()
                         })
@@ -302,12 +273,9 @@ class PobreFlix : MainAPI() {
                 }
                 
                 if (episodes.isNotEmpty()) return episodes
-            } catch (e: Exception) {
-                // Fallback para extração por HTML
-            }
+            } catch (e: Exception) { }
         }
         
-        // Fallback: extrair episódios do HTML
         return extractEpisodesFromHtml(document)
     }
     
@@ -350,20 +318,14 @@ class PobreFlix : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // O PobreFlix usa players como warezcdn.site e superflixapi.rest
-        // Vamos extrair o iframe ou usar os extractors padrão
-        
         return try {
             val document = app.get(data).document
             
-            // Procurar o iframe do player no HTML
             val iframe = document.selectFirst("iframe[src*='player'], iframe[src*='embed'], iframe[src*='fembed'], iframe[src*='filemoon']")
             if (iframe != null) {
                 val playerUrl = iframe.attr("src")
-                // Usar os extractors padrão do CloudStream
                 loadExtractor(playerUrl, subtitleCallback, callback)
             } else {
-                // Procurar vídeo direto (m3u8, mp4)
                 val videoUrl = document.selectFirst("video source, source[src]")?.attr("src")
                 if (videoUrl != null) {
                     callback.invoke(
@@ -371,9 +333,9 @@ class PobreFlix : MainAPI() {
                             source = name,
                             name = name,
                             url = videoUrl,
+                            referer = mainUrl,
                             quality = Qualities.Unknown.value,
-                            isM3u8 = videoUrl.contains(".m3u8"),
-                            headers = mapOf("Referer" to mainUrl)
+                            type = ExtractorLinkType.DIRECT
                         )
                     )
                     true
