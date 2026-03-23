@@ -140,48 +140,59 @@ class PobreFlix : MainAPI() {
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val url = request.data
         
-        // Para a seção "Em Alta", usamos a página principal
-        val isHomePage = url == mainUrl
+        // Tratamento especial para a seção "Em Alta"
+        if (request.name == "Em Alta") {
+            val document = app.get(url).document
+            val items = document.select(".swiper-slide article")
+                .mapNotNull { element ->
+                    element.toSearchResult()
+                }
+                .distinctBy { it.url }
+            
+            return newHomePageResponse(request.name, items, hasNext = false)
+        }
         
-        val document = if (isHomePage) {
-            app.get(url).document
-        } else {
-            // Para outras seções, adicionamos paginação se necessário
-            val finalUrl = if (page > 1) {
-                if (url.contains("?")) "$url&page=$page" else "$url?page=$page"
+        // Tratamento especial para "Novos Episódios"
+        if (request.name.contains("Novos Episódios")) {
+            val document = if (page > 1) {
+                val finalUrl = if (url.contains("?")) "$url&page=$page" else "$url?page=$page"
+                app.get(finalUrl).document
             } else {
-                url
+                app.get(url).document
             }
-            app.get(finalUrl).document
-        }
-        
-        val items = if (isHomePage) {
-            // Em Alta: pegar os cards do swiper da página principal
-            document.select(".swiper-slide article")
+            
+            val items = document.select(".grid article, .swiper-slide article")
                 .mapNotNull { element ->
                     element.toSearchResult()
                 }
+                .distinctBy { it.url }
+            
+            val hasNextPage = document.select("a:contains(Próxima), .page-numbers a[href*='page'], .pagination a:contains(Próxima)").isNotEmpty()
+            
+            // Retornar como HomePageList para definir isHorizontalImages = true
+            return newHomePageResponse(
+                list = HomePageList(request.name, items, isHorizontalImages = true),
+                hasNext = hasNextPage
+            )
+        }
+        
+        // Para as outras seções (gêneros de filmes, séries, animes, doramas)
+        val finalUrl = if (page > 1) {
+            if (url.contains("?")) "$url&page=$page" else "$url?page=$page"
         } else {
-            // Para gêneros e novos episódios, usar o seletor genérico
-            document.select(".grid article, .swiper-slide article")
-                .mapNotNull { element ->
-                    element.toSearchResult()
-                }
+            url
         }
         
-        // Verificar se há próxima página (para seções que não são a home)
-        val hasNextPage = if (!isHomePage) {
-            document.select("a:contains(Próxima), .page-numbers a[href*='page'], .pagination a:contains(Próxima)").isNotEmpty()
-        } else {
-            false
-        }
+        val document = app.get(finalUrl).document
+        val items = document.select(".grid article, .swiper-slide article")
+            .mapNotNull { element ->
+                element.toSearchResult()
+            }
+            .distinctBy { it.url }
         
-        // Para Novos Episódios, usar layout horizontal
-        val isHorizontal = request.name.contains("Novos Episódios")
+        val hasNextPage = document.select("a:contains(Próxima), .page-numbers a[href*='page'], .pagination a:contains(Próxima)").isNotEmpty()
         
-        return newHomePageResponse(request.name, items.distinctBy { it.url }, hasNextPage) {
-            this.isHorizontalImages = isHorizontal
-        }
+        return newHomePageResponse(request.name, items, hasNext = hasNextPage)
     }
     
     private fun Element.toSearchResult(): SearchResponse? {
