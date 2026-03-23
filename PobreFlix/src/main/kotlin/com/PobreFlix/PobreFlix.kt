@@ -17,80 +17,208 @@ class PobreFlix : MainAPI() {
 
     companion object {
         private const val SEARCH_PATH = "/pesquisar"
-
-        private val FIXED_CATEGORIES = listOf(
-            "/filmes" to "Filmes",
-            "/series" to "Séries",
-            "/animes" to "Animes",
-            "/doramas" to "Doramas",
-            "/calendario" to "Calendário",
-            "" to "Em Alta"
+        
+        // Gêneros de Filmes
+        private val MOVIE_GENRES = listOf(
+            "acao" to "Ação",
+            "animacao" to "Animação",
+            "aventura" to "Aventura",
+            "cinema-tv" to "Cinema TV",
+            "comedia" to "Comédia",
+            "crime" to "Crime",
+            "documentario" to "Documentário",
+            "drama" to "Drama",
+            "familia" to "Família",
+            "fantasia" to "Fantasia",
+            "faroeste" to "Faroeste",
+            "ficcao-cientifica" to "Ficção Científica",
+            "guerra" to "Guerra",
+            "historia" to "História",
+            "horror" to "Horror",
+            "misterio" to "Mistério",
+            "musica" to "Música",
+            "romance" to "Romance",
+            "terror" to "Terror"
+        )
+        
+        // Gêneros de Séries
+        private val SERIES_GENRES = listOf(
+            "animacao" to "Animação",
+            "comedia" to "Comédia",
+            "crime" to "Crime",
+            "documentario" to "Documentário",
+            "dorama" to "Dorama",
+            "drama" to "Drama",
+            "familia" to "Família",
+            "faroeste" to "Faroeste",
+            "historia" to "História",
+            "misterio" to "Mistério",
+            "reality" to "Reality",
+            "romance" to "Romance"
+        )
+        
+        // Gêneros de Animes
+        private val ANIME_GENRES = listOf(
+            "acao" to "Ação",
+            "artes-marciais" to "Artes Marciais",
+            "animacao" to "Animação",
+            "aventura" to "Aventura",
+            "comedia" to "Comédia",
+            "crime" to "Crime",
+            "detetive" to "Detetive",
+            "drama" to "Drama",
+            "documentario" to "Documentário",
+            "escolar" to "Escolar",
+            "esportes" to "Esportes",
+            "familia" to "Família",
+            "fantasia" to "Fantasia",
+            "faroeste" to "Faroeste",
+            "infantil" to "Infantil",
+            "jogo-de-estrategia" to "Jogos de Estratégia",
+            "mitologia" to "Mitologia",
+            "misterio" to "Mistério",
+            "musica" to "Música",
+            "reencarnacao" to "Reencarnação",
+            "romance" to "Romance",
+            "samurai" to "Samurai",
+            "sobrenatural" to "Sobrenatural",
+            "superpoder" to "Superpoder",
+            "suspense" to "Suspense",
+            "terror" to "Terror"
+        )
+        
+        // Gêneros de Doramas
+        private val DORAMA_GENRES = listOf(
+            "comedia" to "Comédia",
+            "crime" to "Crime",
+            "documentario" to "Documentário",
+            "drama" to "Drama",
+            "misterio" to "Mistério",
+            "familia" to "Família",
+            "reality" to "Reality",
+            "romance" to "Romance"
+        )
+        
+        // Novos Episódios por tipo
+        private val NEW_EPISODES = listOf(
+            "/episodios?tipo=series" to "Novos Episódios - Séries",
+            "/episodios?tipo=animes" to "Novos Episódios - Animes",
+            "/episodios?tipo=doramas" to "Novos Episódios - Doramas"
         )
     }
 
     override val mainPage = mainPageOf(
-        *FIXED_CATEGORIES.map { (path, name) ->
-            if (path.isEmpty()) mainUrl to name
-            else "$mainUrl$path" to name
+        // Em Alta (página principal)
+        mainUrl to "Em Alta",
+        
+        // Gêneros de Filmes
+        *MOVIE_GENRES.map { (genre, name) ->
+            "$mainUrl/filmes?genre=$genre" to "Filmes - $name"
+        }.toTypedArray(),
+        
+        // Gêneros de Séries
+        *SERIES_GENRES.map { (genre, name) ->
+            "$mainUrl/series?genre=$genre" to "Séries - $name"
+        }.toTypedArray(),
+        
+        // Gêneros de Animes
+        *ANIME_GENRES.map { (genre, name) ->
+            "$mainUrl/animes?genre=$genre" to "Animes - $name"
+        }.toTypedArray(),
+        
+        // Gêneros de Doramas
+        *DORAMA_GENRES.map { (genre, name) ->
+            "$mainUrl/doramas?genre=$genre" to "Doramas - $name"
+        }.toTypedArray(),
+        
+        // Novos Episódios (horizontais)
+        *NEW_EPISODES.map { (path, name) ->
+            "$mainUrl$path" to name
         }.toTypedArray()
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val baseUrl = request.data
-        val url = if (page > 1 && baseUrl != mainUrl) {
-            if (baseUrl.contains("?")) {
-                "$baseUrl&page=$page"
-            } else {
-                "$baseUrl?page=$page"
-            }
+        val url = request.data
+        
+        // Para a seção "Em Alta", usamos a página principal
+        val isHomePage = url == mainUrl
+        
+        val document = if (isHomePage) {
+            app.get(url).document
         } else {
-            baseUrl
-        }
-
-        val document = app.get(url).document
-
-        val home = document.select("a.card, article.relative.group/item, .swiper-slide article.relative.group/item, .grid article.relative.group/item")
-            .mapNotNull { element ->
-                element.toSearchResult()
+            // Para outras seções, adicionamos paginação se necessário
+            val finalUrl = if (page > 1) {
+                if (url.contains("?")) "$url&page=$page" else "$url?page=$page"
+            } else {
+                url
             }
-
-        val hasNextPage = document.select("a:contains(Próxima), .page-numbers a[href*='page']").isNotEmpty() ||
-                         document.select(".pagination").isNotEmpty()
-
-        return newHomePageResponse(request.name, home.distinctBy { it.url }, hasNextPage)
+            app.get(finalUrl).document
+        }
+        
+        val items = if (isHomePage) {
+            // Em Alta: pegar os cards do swiper da página principal
+            document.select(".swiper-slide article")
+                .mapNotNull { element ->
+                    element.toSearchResult()
+                }
+        } else {
+            // Para gêneros e novos episódios, usar o seletor genérico
+            document.select(".grid article, .swiper-slide article")
+                .mapNotNull { element ->
+                    element.toSearchResult()
+                }
+        }
+        
+        // Verificar se há próxima página (para seções que não são a home)
+        val hasNextPage = if (!isHomePage) {
+            document.select("a:contains(Próxima), .page-numbers a[href*='page'], .pagination a:contains(Próxima)").isNotEmpty()
+        } else {
+            false
+        }
+        
+        // Para Novos Episódios, usar layout horizontal
+        val isHorizontal = request.name.contains("Novos Episódios")
+        
+        return newHomePageResponse(request.name, items.distinctBy { it.url }, hasNextPage) {
+            this.isHorizontalImages = isHorizontal
+        }
     }
-
+    
     private fun Element.toSearchResult(): SearchResponse? {
-        val title = attr("title") ?: selectFirst("img")?.attr("alt") ?: return null
-        val href = attr("href") ?: return null
-
-        val localPoster = selectFirst("img")?.attr("src")?.let { fixUrl(it) }
+        // Busca o link dentro do elemento
+        val linkElement = selectFirst("a")
+        val href = linkElement?.attr("href") ?: return null
+        
+        // Busca o título
+        val imgElement = linkElement?.selectFirst("img")
+        val title = imgElement?.attr("alt") ?: attr("title") ?: return null
+        
+        val poster = imgElement?.attr("src")?.let { fixUrl(it) }
+        
+        // Extrai ano do título se disponível
         val year = Regex("\\((\\d{4})\\)").find(title)?.groupValues?.get(1)?.toIntOrNull()
         val cleanTitle = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
-
-        val badge = selectFirst(".badge-kind, .border-slate-300, .border-white\\/10, .px-1\\.5")?.text()?.lowercase() ?: ""
-        val isAnime = badge.contains("anime") || href.contains("/anime/") ||
-                      title.contains("(Anime)", ignoreCase = true)
-        val isSerie = badge.contains("série") || badge.contains("serie") || badge.contains("dorama") ||
-                     href.contains("/serie/") || href.contains("/dorama/") ||
-                     (!isAnime && (badge.contains("tv") || href.contains("/tv/")))
-
+        
+        // Determina o tipo baseado na URL
+        val isAnime = href.contains("/anime/")
+        val isSerie = href.contains("/serie/") || href.contains("/dorama/")
+        
         return when {
             isAnime -> {
                 newAnimeSearchResponse(cleanTitle, fixUrl(href), TvType.Anime) {
-                    this.posterUrl = localPoster
+                    this.posterUrl = poster
                     this.year = year
                 }
             }
             isSerie -> {
                 newTvSeriesSearchResponse(cleanTitle, fixUrl(href), TvType.TvSeries) {
-                    this.posterUrl = localPoster
+                    this.posterUrl = poster
                     this.year = year
                 }
             }
             else -> {
                 newMovieSearchResponse(cleanTitle, fixUrl(href), TvType.Movie) {
-                    this.posterUrl = localPoster
+                    this.posterUrl = poster
                     this.year = year
                 }
             }
@@ -101,36 +229,9 @@ class PobreFlix : MainAPI() {
         val searchUrl = "$mainUrl$SEARCH_PATH?s=${java.net.URLEncoder.encode(query, "UTF-8")}"
         val document = app.get(searchUrl).document
 
-        return document.select(".grid .card, a.card, article.relative.group/item").mapNotNull { card ->
+        return document.select(".grid article, .swiper-slide article").mapNotNull { card ->
             try {
-                val title = card.attr("title") ?: card.selectFirst("img")?.attr("alt") ?: return@mapNotNull null
-                val href = card.attr("href") ?: return@mapNotNull null
-
-                val poster = card.selectFirst("img")?.attr("src")?.let { fixUrl(it) }
-                val year = Regex("\\((\\d{4})\\)").find(title)?.groupValues?.get(1)?.toIntOrNull()
-                val cleanTitle = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
-
-                val badge = card.selectFirst(".badge-kind, .border-slate-300")?.text()?.lowercase() ?: ""
-                val isAnime = badge.contains("anime") || href.contains("/anime/") ||
-                             title.contains("(Anime)", ignoreCase = true)
-                val isSerie = badge.contains("série") || badge.contains("serie") || badge.contains("dorama") ||
-                             href.contains("/serie/") || href.contains("/dorama/") ||
-                             (!isAnime && (badge.contains("tv") || href.contains("/tv/")))
-
-                when {
-                    isAnime -> newAnimeSearchResponse(cleanTitle, fixUrl(href), TvType.Anime) {
-                        this.posterUrl = poster
-                        this.year = year
-                    }
-                    isSerie -> newTvSeriesSearchResponse(cleanTitle, fixUrl(href), TvType.TvSeries) {
-                        this.posterUrl = poster
-                        this.year = year
-                    }
-                    else -> newMovieSearchResponse(cleanTitle, fixUrl(href), TvType.Movie) {
-                        this.posterUrl = poster
-                        this.year = year
-                    }
-                }
+                card.toSearchResult()
             } catch (e: Exception) {
                 null
             }
