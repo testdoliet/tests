@@ -5,6 +5,7 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
 import com.lagradost.cloudstream3.plugins.Plugin
+import com.fasterxml.jackson.annotation.JsonProperty
 import org.jsoup.nodes.Element
 
 @CloudstreamPlugin
@@ -29,9 +30,7 @@ class StreamFlix : MainAPI() {
     companion object {
         // Categorias da página inicial
         private val homeCategories = listOf(
-            // Usa a API para trending (funciona)
             "tmdb_trending" to "Em Alta",
-            // Usa as páginas HTML para filmes e séries
             "html_movies" to "Filmes",
             "html_series" to "Séries"
         )
@@ -52,18 +51,15 @@ class StreamFlix : MainAPI() {
         val items = mutableListOf<SearchResponse>()
         
         when {
-            // Para a aba "Em Alta" - usa a API (funciona)
             request.data.contains("tmdb_trending") -> {
                 val url = if (page > 1) "$request.data&page=$page" else request.data
                 val response = app.get(url)
                 items.addAll(parseTrendingJson(response.text))
             }
-            // Para a aba "Filmes" - extrai do HTML
             request.data.contains("/filmes") -> {
                 val doc = app.get(request.data).document
                 items.addAll(extractMoviesFromHtml(doc))
             }
-            // Para a aba "Séries" - extrai do HTML
             request.data.contains("/series") -> {
                 val doc = app.get(request.data).document
                 items.addAll(extractSeriesFromHtml(doc))
@@ -94,30 +90,23 @@ class StreamFlix : MainAPI() {
 
     private fun extractMoviesFromHtml(doc: org.jsoup.nodes.Document): List<SearchResponse> {
         val movies = mutableListOf<SearchResponse>()
-        
-        // Procura os cards na página de filmes
         val cards = doc.select("div.group\\/card")
         cards.forEach { card ->
             extractFromCard(card)?.let { movies.add(it) }
         }
-        
         return movies
     }
 
     private fun extractSeriesFromHtml(doc: org.jsoup.nodes.Document): List<SearchResponse> {
         val series = mutableListOf<SearchResponse>()
-        
-        // Procura os cards na página de séries
         val cards = doc.select("div.group\\/card")
         cards.forEach { card ->
             extractFromCard(card)?.let { series.add(it) }
         }
-        
         return series
     }
 
     private fun extractFromCard(card: Element): SearchResponse? {
-        // Extrai os dados do atributo onclick que contém o JSON
         val onclick = card.selectFirst("[onclick]")?.attr("onclick") ?: return null
         val jsonData = extractJsonFromOnclick(onclick) ?: return null
         
@@ -133,11 +122,7 @@ class StreamFlix : MainAPI() {
         val year = extractJsonValue(jsonData, "year")?.toIntOrNull()
         
         val cleanTitle = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
-        val url = if (isSerie) {
-            "$mainUrl/series/$id"
-        } else {
-            "$mainUrl/movie/$id"
-        }
+        val url = if (isSerie) "$mainUrl/series/$id" else "$mainUrl/movie/$id"
 
         return newMovieSearchResponse(cleanTitle, url, tvType) {
             this.posterUrl = poster
@@ -184,7 +169,6 @@ class StreamFlix : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        // Busca usando a página com query
         val searchUrl = "$mainUrl?search=${java.net.URLEncoder.encode(query, "UTF-8")}"
         val doc = app.get(searchUrl).document
         
@@ -196,7 +180,6 @@ class StreamFlix : MainAPI() {
     override suspend fun load(url: String): LoadResponse? {
         val doc = app.get(url).document
         
-        // Extrai o JSON do onclick
         val mainCard = doc.selectFirst("[onclick*='openContent']")
         val onclick = mainCard?.attr("onclick") ?: return null
         val jsonData = extractJsonFromOnclick(onclick) ?: return null
@@ -210,7 +193,6 @@ class StreamFlix : MainAPI() {
         val poster = extractJsonValue(jsonData, "stream_icon")?.let { fixUrl(it) }
         val year = extractJsonValue(jsonData, "year")?.toIntOrNull()
         
-        // Tenta extrair sinopse da página
         val plot = doc.selectFirst("p:contains(Sinopse)")?.nextElementSibling()?.text() ?:
                    doc.selectFirst(".description, .plot")?.text()
         
