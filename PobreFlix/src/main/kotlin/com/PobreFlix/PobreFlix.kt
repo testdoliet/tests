@@ -33,6 +33,8 @@ class SuperFlix : MainAPI() {
     private val TMDB_ACCESS_TOKEN = BuildConfig.TMDB_ACCESS_TOKEN
 
     companion object {
+        private const val SEARCH_PATH = "/pesquisar"  // ← ADICIONADO
+        
         private val MAIN_SECTIONS = listOf(
             "/filmes" to "Filmes",
             "/series" to "Séries",
