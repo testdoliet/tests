@@ -164,8 +164,8 @@ class PobreFlix : MainAPI() {
         }
         
         // Extrai ano e tipo dos spans dentro da div de informações
-        // Estrutura: <div class="flex justify-between items-center text-xs ...">
-        //   <span>2020</span>
+        // Estrutura correta: <div class="flex justify-between items-center text-xs ...">
+        //   <span>2024</span>
         //   <span>Filme</span>
         // </div>
         val infoDiv = selectFirst(".flex.justify-between.items-center.text-xs")
@@ -188,8 +188,10 @@ class PobreFlix : MainAPI() {
                 val text = spans[0].text().trim()
                 if (text.matches(Regex("\\d{4}"))) {
                     year = text.toIntOrNull()
+                    println("  ano encontrado (único span): $year")
                 } else {
                     typeText = text.lowercase()
+                    println("  tipo texto (único span): $typeText")
                 }
             }
         }
@@ -274,14 +276,14 @@ class PobreFlix : MainAPI() {
         } else {
             "$mainUrl$SEARCH_PATH?s=$encodedQuery"
         }
-        println("URL de busca: $searchUrl")
+        println("URL de busca (página $page): $searchUrl")
         
         val document = app.get(searchUrl).document
         println("Título da página: ${document.title()}")
         
         // Na página de pesquisa, os cards usam a classe .grid article.relative.group-item
         val elements = document.select(".grid article.relative.group-item, .grid article")
-        println("Elementos encontrados na busca: ${elements.size}")
+        println("Elementos encontrados na busca (página $page): ${elements.size}")
         
         val results = elements.mapNotNull { element ->
             try {
@@ -296,15 +298,16 @@ class PobreFlix : MainAPI() {
         val hasNextPage = document.select("a[href*='page=${page + 1}']").isNotEmpty() ||
                           document.select("a:contains(Próxima), .pagination a:contains(Próxima)").isNotEmpty()
         
-        println("Resultados processados: ${results.size}")
-        println("Has next page: $hasNextPage")
+        println("Resultados processados (página $page): ${results.size}")
+        println("Has next page (página $page): $hasNextPage")
         
         if (hasNextPage) {
+            println("Carregando página ${page + 1}...")
             val nextPageResults = searchPage(query, page + 1)
             return results + nextPageResults
         }
         
-        println("=== search FINALIZADO ===\n")
+        println("=== search FINALIZADO - Total: ${results.size} resultados ===\n")
         return results
     }
 
