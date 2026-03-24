@@ -11,6 +11,7 @@ import com.fasterxml.jackson.annotation.JsonProperty
 import org.jsoup.nodes.Element
 import java.net.URLEncoder
 import java.text.SimpleDateFormat
+import java.util.Base64
 
 @CloudstreamPlugin
 class SuperFlixProvider : Plugin() {
@@ -33,8 +34,6 @@ class SuperFlix : MainAPI() {
     private val TMDB_ACCESS_TOKEN = BuildConfig.TMDB_ACCESS_TOKEN
 
     companion object {
-        private const val SEARCH_PATH = "/pesquisar"
-        
         private val MAIN_SECTIONS = listOf(
             "/filmes" to "Filmes",
             "/series" to "Séries",
@@ -80,9 +79,30 @@ class SuperFlix : MainAPI() {
     }
     
     private fun Element.toSearchResult(): SearchResponse? {
-        val linkElement = selectFirst("a[href]") ?: return null
-        var href = linkElement.attr("href")
-        if (href.isBlank()) return null
+        // Tenta encontrar o link no botão com data-embed
+        val embedButton = selectFirst("button[data-embed]")
+        var href: String? = null
+        
+        if (embedButton != null) {
+            val embedData = embedButton.attr("data-embed")
+            if (embedData.isNotBlank()) {
+                try {
+                    val decodedBytes = Base64.getDecoder().decode(embedData)
+                    val decoded = String(decodedBytes, Charsets.UTF_8)
+                    href = decoded
+                } catch (e: Exception) {
+                    // Se falhar, tenta outro método
+                }
+            }
+        }
+        
+        // Se não encontrou no data-embed, tenta encontrar um link normal
+        if (href == null) {
+            val linkElement = selectFirst("a[href]")
+            href = linkElement?.attr("href")
+        }
+        
+        if (href.isNullOrBlank()) return null
         
         if (!href.startsWith("http")) {
             href = if (href.startsWith("/")) "$mainUrl$href" else "$mainUrl/$href"
@@ -92,8 +112,8 @@ class SuperFlix : MainAPI() {
         var poster: String? = null
         
         if (imgElement != null) {
-            poster = imgElement.attr("data-src")
-            if (poster.isNullOrBlank()) poster = imgElement.attr("src")
+            poster = imgElement.attr("src")
+            if (poster.isNullOrBlank()) poster = imgElement.attr("data-src")
             if (!poster.isNullOrBlank()) {
                 // Remove o prefixo do CDN se existir
                 if (poster.contains("d1muf25xaso8hp.cloudfront.net/")) {
@@ -103,73 +123,47 @@ class SuperFlix : MainAPI() {
             }
         }
         
-        // Extrai título do alt da imagem ou do h3
-        var title = imgElement?.attr("alt")
-        if (title.isNullOrBlank()) title = selectFirst("h3")?.text()
-        
-        // Extrai idioma (DUB/LEG)
-        var isDubbed = false
-        val langElement = selectFirst(".absolute.bottom-2.left-2 .inline-flex")
-        if (langElement != null) {
-            val langText = langElement.text()
-            isDubbed = langText.contains("DUB", ignoreCase = true)
-        }
-        
-        // Extrai score
-        var scoreValue: Float? = null
-        val scoreElement = selectFirst(".absolute.top-2.right-2 svg text")
-        if (scoreElement != null) {
-            val scoreText = scoreElement.text().replace("%", "").trim()
-            scoreValue = scoreText.toFloatOrNull()
-        }
-        
+        // Extrai título do h3
+        var title = selectFirst("h3")?.text()
+        if (title.isNullOrBlank()) title = imgElement?.attr("alt")
         if (title.isNullOrBlank()) return null
         
-        val cleanedTitle = title!!.replace(Regex("\\s+poster$", RegexOption.IGNORE_CASE), "").trim()
-        val year = Regex("\\((\\d{4})\\)").find(cleanedTitle)?.groupValues?.get(1)?.toIntOrNull()
-        val finalTitle = cleanedTitle.replace(Regex("\\(\\d{4}\\)"), "").trim()
+        // Limpa o título
+        val cleanTitle = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
         
-        // Determina o tipo baseado na URL
-        val isAnime = href.contains("/anime/")
-        val isSerie = href.contains("/serie/") || href.contains("/dorama/")
+        // Extrai ano do span
+        val yearSpan = selectFirst(".mt-3 .flex .text-xs span:first-child")
+        val year = yearSpan?.text()?.toIntOrNull()
         
-        val result = when {
-            isAnime -> {
-                newAnimeSearchResponse(finalTitle, href, TvType.Anime) {
-                    this.posterUrl = poster
-                    this.year = year
-                    if (scoreValue != null) this.score = Score.from10(scoreValue / 10)
-                }
+        // Extrai tipo do badge
+        val typeSpan = selectFirst(".mt-3 .flex .text-xs span:last-child")
+        val typeText = typeSpan?.text()?.lowercase()
+        
+        // Determina o tipo baseado no texto do badge ou URL
+        val isAnime = typeText?.contains("anime") == true || href.contains("/anime/")
+        val isSerie = typeText?.contains("série") == true || typeText?.contains("dorama") == true || href.contains("/serie/") || href.contains("/dorama/")
+        
+        return when {
+            isAnime -> newAnimeSearchResponse(cleanTitle, href, TvType.Anime) {
+                this.posterUrl = poster
+                this.year = year
             }
-            isSerie -> {
-                newTvSeriesSearchResponse(finalTitle, href, TvType.TvSeries) {
-                    this.posterUrl = poster
-                    this.year = year
-                    if (scoreValue != null) this.score = Score.from10(scoreValue / 10)
-                }
+            isSerie -> newTvSeriesSearchResponse(cleanTitle, href, TvType.TvSeries) {
+                this.posterUrl = poster
+                this.year = year
             }
-            else -> {
-                newMovieSearchResponse(finalTitle, href, TvType.Movie) {
-                    this.posterUrl = poster
-                    this.year = year
-                    if (scoreValue != null) this.score = Score.from10(scoreValue / 10)
-                }
+            else -> newMovieSearchResponse(cleanTitle, href, TvType.Movie) {
+                this.posterUrl = poster
+                this.year = year
             }
         }
-        
-        // Adiciona status de dublagem para animes
-        if (result is AnimeSearchResponse) {
-            result.addDubStatus(if (isDubbed) DubStatus.Dubbed else DubStatus.Subbed, null)
-        }
-        
-        return result
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
         if (query.length < 2) return emptyList()
         
         // URL de busca correta do SuperFlix
-        val searchUrl = "$mainUrl$SEARCH_PATH?s=${URLEncoder.encode(query, "UTF-8")}"
+        val searchUrl = "$mainUrl/pesquisar?s=${URLEncoder.encode(query, "UTF-8")}"
         val document = app.get(searchUrl).document
         
         return document.select(".grid .group\\/card")
