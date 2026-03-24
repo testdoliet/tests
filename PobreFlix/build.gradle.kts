@@ -9,7 +9,7 @@ android {
     buildFeatures {
         buildConfig = true
     }
-    namespace = "com.PobreFlix"
+    namespace = "com.SuperFlixAPI"
     compileSdk = 33
 
     defaultConfig {
@@ -61,12 +61,12 @@ fun getLocalProperty(key: String): String? {
 
 cloudstream {
     version = 1
-    description = "PobreFlix, assistir online, filmes, séries, animes, doramas"
+    description = "SuperFlixAPI - API Online"
     language = "pt-br"
     authors = listOf("lawlietbr")
     status = 1 
     tvTypes = listOf("Movies", "Series", "Animes", "AsianDrama")
-    iconUrl = "https://lospobreflix.site/favicon.svg"
+    iconUrl = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxODAiIGhlaWdodD0iMTgwIiB2aWV3Qm94PSIwIDAgMTgwIDE4MCI+PHJlY3Qgd2lkdGg9IjEwMCUiIGhlaWdodD0iMTAwJSIgcng9IjQwIiBmaWxsPSIjZmYwMDAwIi8+PHRleHQgeD0iNTAlIiB5PSI1NCUiIGRvbWluYW50LWJhc2VsaW5lPSJtaWRkbGUiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZvbnQtZmFtaWx5PSJBcmlhbCxIZWx2ZXRpY2Esc2Fucy1zZXJpZiIgZm9udC1zaXplPSI2OCIgZm9udC13ZWlnaHQ9IjgwMCIgZmlsbD0iI2ZmZmZmZiI+U0E8L3RleHQ+PC9zdmc+"
     isCrossPlatform = true
     requiresResources = false
 }
@@ -77,4 +77,5 @@ dependencies {
 
     implementation("com.fasterxml.jackson.core:jackson-databind:2.15.2")
     implementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.15.2")
+    implementation("org.jsoup:jsoup:1.16.1") // Adicione jsoup para parsing
 }
