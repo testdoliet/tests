@@ -129,6 +129,7 @@ class PobreFlix : MainAPI() {
         // Tratamento especial para a seção "Em Alta"
         if (request.name == "Em Alta") {
             val document = app.get(url).document
+            // Na página principal, os cards estão dentro de .swiper-slide article
             val items = document.select(".swiper-slide article")
                 .mapNotNull { element ->
                     element.toSearchResult()
@@ -147,7 +148,8 @@ class PobreFlix : MainAPI() {
                 app.get(url).document
             }
             
-            val items = document.select(".grid article, .swiper-slide article")
+            // Na página de episódios, os cards são <article> diretos dentro do grid
+            val items = document.select(".grid article, .grid .group\\/card")
                 .mapNotNull { element ->
                     element.toSearchResult()
                 }
@@ -170,7 +172,9 @@ class PobreFlix : MainAPI() {
         }
         
         val document = app.get(finalUrl).document
-        val items = document.select(".grid article, .swiper-slide article")
+        
+        // Seletores para diferentes tipos de página
+        val items = document.select(".grid .group\\/card, .grid article")
             .mapNotNull { element ->
                 element.toSearchResult()
             }
@@ -186,9 +190,9 @@ class PobreFlix : MainAPI() {
         val linkElement = selectFirst("a")
         val href = linkElement?.attr("href") ?: return null
         
-        // Busca o título
+        // Busca a imagem e o título
         val imgElement = linkElement?.selectFirst("img")
-        val title = imgElement?.attr("alt") ?: attr("title") ?: return null
+        val title = imgElement?.attr("alt") ?: linkElement?.attr("title") ?: return null
         
         val poster = imgElement?.attr("src")?.let { fixUrl(it) }
         
@@ -226,13 +230,14 @@ class PobreFlix : MainAPI() {
         val searchUrl = "$mainUrl$SEARCH_PATH?s=${java.net.URLEncoder.encode(query, "UTF-8")}"
         val document = app.get(searchUrl).document
 
-        return document.select(".grid article, .swiper-slide article").mapNotNull { card ->
-            try {
-                card.toSearchResult()
-            } catch (e: Exception) {
-                null
+        return document.select(".grid .group\\/card, .grid article, .swiper-slide article")
+            .mapNotNull { card ->
+                try {
+                    card.toSearchResult()
+                } catch (e: Exception) {
+                    null
+                }
             }
-        }
     }
 
     override suspend fun load(url: String): LoadResponse? {
