@@ -23,8 +23,6 @@ class StreamFlix : MainAPI() {
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries)
     override val usesWebView = true
 
-    private val tmdbImageUrl = "https://image.tmdb.org/t/p/w500"
-
     // Definindo as categorias da página inicial
     override val mainPage = mainPageOf(
         "$mainUrl" to "Início",
@@ -43,11 +41,11 @@ class StreamFlix : MainAPI() {
                 items.addAll(extractSeriesFromSection(doc, "Séries em Alta"))
             }
             request.data.contains("/filmes") -> {
-                // Página de filmes: extrai da seção de filmes
+                // Página de filmes
                 items.addAll(extractMoviesFromSection(doc, "Filmes"))
             }
             request.data.contains("/series") -> {
-                // Página de séries: extrai da seção de séries
+                // Página de séries
                 items.addAll(extractSeriesFromSection(doc, "Séries"))
             }
         }
@@ -58,13 +56,10 @@ class StreamFlix : MainAPI() {
     private fun extractMoviesFromSection(doc: org.jsoup.nodes.Document, sectionTitle: String): List<SearchResponse> {
         val movies = mutableListOf<SearchResponse>()
         
-        // Procura a seção pelo título
-        val section = doc.selectFirst("section#movies-section, section:has(h3:contains($sectionTitle))")
-        if (section != null) {
-            val cards = section.select("div.group\\/card")
-            cards.forEach { card ->
-                extractFromCard(card)?.let { movies.add(it) }
-            }
+        // Procura os cards de filmes
+        val cards = doc.select("div.group\\/card")
+        cards.forEach { card ->
+            extractFromCard(card)?.let { movies.add(it) }
         }
         
         return movies
@@ -73,13 +68,10 @@ class StreamFlix : MainAPI() {
     private fun extractSeriesFromSection(doc: org.jsoup.nodes.Document, sectionTitle: String): List<SearchResponse> {
         val series = mutableListOf<SearchResponse>()
         
-        // Procura a seção de séries
-        val section = doc.selectFirst("section:has(h3:contains($sectionTitle))")
-        if (section != null) {
-            val cards = section.select("div.group\\/card")
-            cards.forEach { card ->
-                extractFromCard(card)?.let { series.add(it) }
-            }
+        // Procura os cards de séries
+        val cards = doc.select("div.group\\/card")
+        cards.forEach { card ->
+            extractFromCard(card)?.let { series.add(it) }
         }
         
         return series
@@ -100,7 +92,6 @@ class StreamFlix : MainAPI() {
         
         val poster = extractJsonValue(jsonData, "stream_icon")?.let { fixUrl(it) }
         val year = extractJsonValue(jsonData, "year")?.toIntOrNull()
-        val rating = extractJsonValue(jsonData, "rating")?.toFloatOrNull()
         
         val cleanTitle = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
         val url = if (isSerie) {
@@ -112,7 +103,6 @@ class StreamFlix : MainAPI() {
         return newMovieSearchResponse(cleanTitle, url, tvType) {
             this.posterUrl = poster
             this.year = year
-            this.rating = rating
         }
     }
 
@@ -132,7 +122,7 @@ class StreamFlix : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        // A busca pode ser implementada usando a URL com query
+        // Busca usando a URL com query
         val searchUrl = "$mainUrl?search=${java.net.URLEncoder.encode(query, "UTF-8")}"
         val doc = app.get(searchUrl).document
         
@@ -157,9 +147,8 @@ class StreamFlix : MainAPI() {
         val isSerie = streamType == "series"
         val poster = extractJsonValue(jsonData, "stream_icon")?.let { fixUrl(it) }
         val year = extractJsonValue(jsonData, "year")?.toIntOrNull()
-        val rating = extractJsonValue(jsonData, "rating")?.toFloatOrNull()
         
-        // Tenta extrair mais informações da página
+        // Tenta extrair sinopse da página
         val plot = doc.selectFirst("p:contains(Sinopse)")?.nextElementSibling()?.text() ?:
                    doc.selectFirst(".description, .plot")?.text()
         
@@ -173,14 +162,12 @@ class StreamFlix : MainAPI() {
                 this.posterUrl = poster
                 this.year = year
                 this.plot = plot
-                this.rating = rating
             }
         } else {
             newMovieLoadResponse(cleanTitle, url, TvType.Movie, videoUrl) {
                 this.posterUrl = poster
                 this.year = year
                 this.plot = plot
-                this.rating = rating
             }
         }
     }
@@ -215,8 +202,7 @@ class StreamFlix : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // Implementar extração de links do player
-        // Por enquanto retorna false
+        // Implementar extração de links do player posteriormente
         return false
     }
 }
