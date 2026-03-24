@@ -267,14 +267,14 @@ class PobreFlix : MainAPI() {
         }
         println("  título original: $title")
         
-        // Remove a palavra "poster" do título se existir
-        title = title.replace(Regex("\\s+poster$", RegexOption.IGNORE_CASE), "").trim()
-        println("  título após remover 'poster': $title")
+        // Remove a palavra "poster" do título se existir (usando let para evitar nullable)
+        val cleanedTitle = title!!.replace(Regex("\\s+poster$", RegexOption.IGNORE_CASE), "").trim()
+        println("  título após remover 'poster': $cleanedTitle")
         
         // Extrai ano do título se disponível
-        val year = Regex("\\((\\d{4})\\)").find(title)?.groupValues?.get(1)?.toIntOrNull()
-        val cleanTitle = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
-        println("  título final: $cleanTitle, ano: $year")
+        val year = Regex("\\((\\d{4})\\)").find(cleanedTitle)?.groupValues?.get(1)?.toIntOrNull()
+        val finalTitle = cleanedTitle.replace(Regex("\\(\\d{4}\\)"), "").trim()
+        println("  título final: $finalTitle, ano: $year")
         
         // Determina o tipo baseado na URL
         val isAnime = href.contains("/anime/")
@@ -284,21 +284,21 @@ class PobreFlix : MainAPI() {
         val result = when {
             isAnime -> {
                 println("  >>> Criando resposta de ANIME")
-                newAnimeSearchResponse(cleanTitle, fixUrl(href), TvType.Anime) {
+                newAnimeSearchResponse(finalTitle, fixUrl(href), TvType.Anime) {
                     this.posterUrl = fixedPoster
                     this.year = year
                 }
             }
             isSerie -> {
                 println("  >>> Criando resposta de SÉRIE")
-                newTvSeriesSearchResponse(cleanTitle, fixUrl(href), TvType.TvSeries) {
+                newTvSeriesSearchResponse(finalTitle, fixUrl(href), TvType.TvSeries) {
                     this.posterUrl = fixedPoster
                     this.year = year
                 }
             }
             else -> {
                 println("  >>> Criando resposta de FILME")
-                newMovieSearchResponse(cleanTitle, fixUrl(href), TvType.Movie) {
+                newMovieSearchResponse(finalTitle, fixUrl(href), TvType.Movie) {
                     this.posterUrl = fixedPoster
                     this.year = year
                 }
@@ -506,7 +506,8 @@ class PobreFlix : MainAPI() {
                         for (epMatch in episodeMatches) {
                             val epNum = epMatch.groupValues[1].toIntOrNull() ?: continue
                             val epTitle = epMatch.groupValues[2].ifEmpty { "Episódio $epNum" }
-                            val thumbUrl = epMatch.groupValues[3].takeIf { it.isNotEmpty() }?.let { fixUrl(it) }
+                            var thumbUrl = epMatch.groupValues[3].takeIf { it.isNotEmpty() }
+                            thumbUrl = thumbUrl?.let { fixUrl(it) }
                             val durationMin = epMatch.groupValues[4].toIntOrNull()
                             val airDate = epMatch.groupValues[5].takeIf { it.isNotEmpty() }
                             
@@ -551,10 +552,16 @@ class PobreFlix : MainAPI() {
                 val epNumber = seasonMatch?.groupValues?.get(2)?.toIntOrNull() ?: (index + 1)
                 
                 val epTitle = element.selectFirst("h2, .truncate")?.text() ?: "Episódio $epNumber"
-                val thumb = element.selectFirst("img")?.let { img ->
-                    var src = img.attr("data-src")
-                    if (src.isNullOrBlank()) src = img.attr("src")
-                    if (!src.isNullOrBlank()) fixUrl(src) else null
+                var thumb: String? = null
+                val imgElement = element.selectFirst("img")
+                if (imgElement != null) {
+                    thumb = imgElement.attr("data-src")
+                    if (thumb.isNullOrBlank()) {
+                        thumb = imgElement.attr("src")
+                    }
+                    if (!thumb.isNullOrBlank()) {
+                        thumb = fixUrl(thumb)
+                    }
                 }
                 val description = element.selectFirst(".line-clamp-2.text-xs")?.text()
 
