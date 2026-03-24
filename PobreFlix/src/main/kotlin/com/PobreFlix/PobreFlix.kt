@@ -168,7 +168,7 @@ class PobreFlix : MainAPI() {
         val fixedPoster = if (!poster.isNullOrBlank()) fixUrl(poster) else null
         println("  poster corrigido: $fixedPoster")
         
-        // Para página de episódios, o título está na div .line-clamp-1 dentro do hover
+        // Busca o título
         var title: String? = null
         
         if (isEpisodePage) {
@@ -214,6 +214,8 @@ class PobreFlix : MainAPI() {
         // Extrai informações de score e idioma para páginas normais
         var scoreValue: Float? = null
         var isDubbed = false
+        var episodeNumber: Int? = null
+        var seasonNumber: Int? = null
         
         if (!isEpisodePage) {
             // Busca o score (porcentagem) do badge SVG
@@ -232,6 +234,23 @@ class PobreFlix : MainAPI() {
                 val languageText = languageElement.text()
                 isDubbed = languageText.contains("DUB", ignoreCase = true)
             }
+        } else {
+            // Para página de episódios, extrai temporada e episódio
+            val seasonText = selectFirst(".text-lead.font-black")?.text()
+            if (seasonText != null) {
+                val seasonMatch = Regex("T(\\d+):E(\\d+)").find(seasonText)
+                if (seasonMatch != null) {
+                    seasonNumber = seasonMatch.groupValues[1].toIntOrNull() ?: 1
+                    episodeNumber = seasonMatch.groupValues[2].toIntOrNull() ?: 1
+                }
+            }
+            
+            // Busca o idioma nos badges superiores
+            val languageElement = selectFirst(".absolute.inset-x-0.top-0 .inline-flex.items-center.gap-1")
+            if (languageElement != null) {
+                val languageText = languageElement.text()
+                isDubbed = languageText.contains("DUB", ignoreCase = true)
+            }
         }
         
         val result = when {
@@ -240,15 +259,8 @@ class PobreFlix : MainAPI() {
                 newAnimeSearchResponse(finalTitle, fixUrl(href), TvType.Anime) {
                     this.posterUrl = fixedPoster
                     this.year = year
-                    // Adiciona o score se disponível
                     if (scoreValue != null) {
                         this.score = Score.from10(scoreValue)
-                    }
-                    // Adiciona o status de dublagem
-                    if (isDubbed) {
-                        addDubStatus(DubStatus.Dubbed, null)
-                    } else {
-                        addDubStatus(DubStatus.Subbed, null)
                     }
                 }
             }
@@ -260,11 +272,6 @@ class PobreFlix : MainAPI() {
                     if (scoreValue != null) {
                         this.score = Score.from10(scoreValue)
                     }
-                    if (isDubbed) {
-                        addDubStatus(DubStatus.Dubbed, null)
-                    } else {
-                        addDubStatus(DubStatus.Subbed, null)
-                    }
                 }
             }
             else -> {
@@ -275,25 +282,16 @@ class PobreFlix : MainAPI() {
                     if (scoreValue != null) {
                         this.score = Score.from10(scoreValue)
                     }
-                    if (isDubbed) {
-                        addDubStatus(DubStatus.Dubbed, null)
-                    } else {
-                        addDubStatus(DubStatus.Subbed, null)
-                    }
                 }
             }
         }
         
-        // Para página de episódios, adiciona informações de temporada/episódio
-        if (isEpisodePage && result is AnimeSearchResponse) {
-            val seasonText = selectFirst(".text-lead.font-black")?.text()
-            if (seasonText != null) {
-                val seasonMatch = Regex("T(\\d+):E(\\d+)").find(seasonText)
-                if (seasonMatch != null) {
-                    val season = seasonMatch.groupValues[1].toIntOrNull() ?: 1
-                    val episode = seasonMatch.groupValues[2].toIntOrNull() ?: 1
-                    result.addDubStatus(if (isDubbed) DubStatus.Dubbed else DubStatus.Subbed, episode)
-                }
+        // Adiciona o status de dublagem e episódio após a criação
+        if (result is AnimeSearchResponse) {
+            if (isEpisodePage && episodeNumber != null && seasonNumber != null) {
+                result.addDubStatus(isDubbed, episodeNumber)
+            } else if (!isEpisodePage) {
+                result.addDubStatus(isDubbed, null)
             }
         }
         
@@ -315,7 +313,7 @@ class PobreFlix : MainAPI() {
             .filter { element ->
                 val link = element.selectFirst("a")
                 val href = link?.attr("href") ?: ""
-                // Excluir episódios da busca geral (opcional)
+                // Excluir episódios da busca geral
                 !href.contains("/episodio/")
             }
         println("Elementos encontrados na busca: ${elements.size}")
