@@ -18,7 +18,22 @@ class PobreFlix : MainAPI() {
     companion object {
         private const val SEARCH_PATH = "/pesquisar"
         
-        // Gêneros de Filmes (19 no total)
+        // Apenas as 6 seções principais
+        private val MAIN_SECTIONS = listOf(
+            "/episodios" to "Novos Episódios",
+            "" to "Em Alta",
+            "/filmes" to "Filmes",
+            "/series" to "Séries",
+            "/animes" to "Animes",
+            "/doramas" to "Doramas"
+        )
+        
+        /*
+        // ============================================================
+        // GÊNEROS COMPLETOS (COMENTADOS PARA REFERÊNCIA FUTURA)
+        // ============================================================
+        
+        // Gêneros de Filmes (19)
         private val MOVIE_GENRES = listOf(
             "acao" to "Ação",
             "animacao" to "Animação",
@@ -41,7 +56,7 @@ class PobreFlix : MainAPI() {
             "terror" to "Terror"
         )
         
-        // Gêneros de Séries (12 no total)
+        // Gêneros de Séries (12)
         private val SERIES_GENRES = listOf(
             "animacao" to "Animação",
             "comedia" to "Comédia",
@@ -57,7 +72,7 @@ class PobreFlix : MainAPI() {
             "romance" to "Romance"
         )
         
-        // Gêneros de Animes (26 no total)
+        // Gêneros de Animes (26)
         private val ANIME_GENRES = listOf(
             "acao" to "Ação",
             "artes-marciais" to "Artes Marciais",
@@ -87,7 +102,7 @@ class PobreFlix : MainAPI() {
             "terror" to "Terror"
         )
         
-        // Gêneros de Doramas (8 no total)
+        // Gêneros de Doramas (8)
         private val DORAMA_GENRES = listOf(
             "comedia" to "Comédia",
             "crime" to "Crime",
@@ -98,141 +113,15 @@ class PobreFlix : MainAPI() {
             "reality" to "Reality",
             "romance" to "Romance"
         )
-        
-        // Selecionar apenas 10 gêneros de filmes
-        private val SELECTED_MOVIE_GENRES = MOVIE_GENRES.take(10)
-        
-        // Selecionar apenas 10 gêneros de séries
-        private val SELECTED_SERIES_GENRES = SERIES_GENRES.take(10)
-        
-        // Selecionar apenas 10 gêneros de animes
-        private val SELECTED_ANIME_GENRES = ANIME_GENRES.take(10)
-        
-        // Selecionar todos os gêneros de doramas (8)
-        private val SELECTED_DORAMA_GENRES = DORAMA_GENRES
-        
-        // Novos Episódios por tipo (3 seções)
-        private val NEW_EPISODES = listOf(
-            "/episodios?tipo=series" to "Novos Episódios - Séries",
-            "/episodios?tipo=animes" to "Novos Episódios - Animes",
-            "/episodios?tipo=doramas" to "Novos Episódios - Doramas"
-        )
+        */
     }
 
     override val mainPage = mainPageOf(
-        // 1. Em Alta (página principal)
-        mainUrl to "Em Alta",
-        
-        // 2. Filmes - 10 gêneros
-        *SELECTED_MOVIE_GENRES.map { (genre, name) ->
-            "$mainUrl/filmes?genre=$genre" to "Filmes - $name"
-        }.toTypedArray(),
-        
-        // 3. Séries - 10 gêneros
-        *SELECTED_SERIES_GENRES.map { (genre, name) ->
-            "$mainUrl/series?genre=$genre" to "Séries - $name"
-        }.toTypedArray(),
-        
-        // 4. Animes - 10 gêneros
-        *SELECTED_ANIME_GENRES.map { (genre, name) ->
-            "$mainUrl/animes?genre=$genre" to "Animes - $name"
-        }.toTypedArray(),
-        
-        // 5. Doramas - 8 gêneros
-        *SELECTED_DORAMA_GENRES.map { (genre, name) ->
-            "$mainUrl/doramas?genre=$genre" to "Doramas - $name"
-        }.toTypedArray(),
-        
-        // 6. Novos Episódios - 3 seções
-        *NEW_EPISODES.map { (path, name) ->
-            "$mainUrl$path" to name
+        *MAIN_SECTIONS.map { (path, name) ->
+            if (path.isEmpty()) mainUrl to name
+            else "$mainUrl$path" to name
         }.toTypedArray()
     )
-    
-    /*
-    // GÊNEROS COMPLETOS (COMENTADOS PARA REFERÊNCIA FUTURA)
-    
-    // Filmes - 19 gêneros (todos)
-    private val ALL_MOVIE_GENRES = listOf(
-        "acao" to "Ação",
-        "animacao" to "Animação",
-        "aventura" to "Aventura",
-        "cinema-tv" to "Cinema TV",
-        "comedia" to "Comédia",
-        "crime" to "Crime",
-        "documentario" to "Documentário",
-        "drama" to "Drama",
-        "familia" to "Família",
-        "fantasia" to "Fantasia",
-        "faroeste" to "Faroeste",
-        "ficcao-cientifica" to "Ficção Científica",
-        "guerra" to "Guerra",
-        "historia" to "História",
-        "horror" to "Horror",
-        "misterio" to "Mistério",
-        "musica" to "Música",
-        "romance" to "Romance",
-        "terror" to "Terror"
-    )
-    
-    // Séries - 12 gêneros (todos)
-    private val ALL_SERIES_GENRES = listOf(
-        "animacao" to "Animação",
-        "comedia" to "Comédia",
-        "crime" to "Crime",
-        "documentario" to "Documentário",
-        "dorama" to "Dorama",
-        "drama" to "Drama",
-        "familia" to "Família",
-        "faroeste" to "Faroeste",
-        "historia" to "História",
-        "misterio" to "Mistério",
-        "reality" to "Reality",
-        "romance" to "Romance"
-    )
-    
-    // Animes - 26 gêneros (todos)
-    private val ALL_ANIME_GENRES = listOf(
-        "acao" to "Ação",
-        "artes-marciais" to "Artes Marciais",
-        "animacao" to "Animação",
-        "aventura" to "Aventura",
-        "comedia" to "Comédia",
-        "crime" to "Crime",
-        "detetive" to "Detetive",
-        "drama" to "Drama",
-        "documentario" to "Documentário",
-        "escolar" to "Escolar",
-        "esportes" to "Esportes",
-        "familia" to "Família",
-        "fantasia" to "Fantasia",
-        "faroeste" to "Faroeste",
-        "infantil" to "Infantil",
-        "jogo-de-estrategia" to "Jogos de Estratégia",
-        "mitologia" to "Mitologia",
-        "misterio" to "Mistério",
-        "musica" to "Música",
-        "reencarnacao" to "Reencarnação",
-        "romance" to "Romance",
-        "samurai" to "Samurai",
-        "sobrenatural" to "Sobrenatural",
-        "superpoder" to "Superpoder",
-        "suspense" to "Suspense",
-        "terror" to "Terror"
-    )
-    
-    // Doramas - 8 gêneros (todos)
-    private val ALL_DORAMA_GENRES = listOf(
-        "comedia" to "Comédia",
-        "crime" to "Crime",
-        "documentario" to "Documentário",
-        "drama" to "Drama",
-        "misterio" to "Mistério",
-        "familia" to "Família",
-        "reality" to "Reality",
-        "romance" to "Romance"
-    )
-    */
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val url = request.data
@@ -249,8 +138,8 @@ class PobreFlix : MainAPI() {
             return newHomePageResponse(request.name, items, hasNext = false)
         }
         
-        // Tratamento especial para "Novos Episódios"
-        if (request.name.contains("Novos Episódios")) {
+        // Tratamento especial para "Novos Episódios" (horizontal)
+        if (request.name == "Novos Episódios") {
             val document = if (page > 1) {
                 val finalUrl = if (url.contains("?")) "$url&page=$page" else "$url?page=$page"
                 app.get(finalUrl).document
@@ -273,7 +162,7 @@ class PobreFlix : MainAPI() {
             )
         }
         
-        // Para as outras seções (gêneros de filmes, séries, animes, doramas)
+        // Para as outras seções (Filmes, Séries, Animes, Doramas)
         val finalUrl = if (page > 1) {
             if (url.contains("?")) "$url&page=$page" else "$url?page=$page"
         } else {
