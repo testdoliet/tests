@@ -253,8 +253,8 @@ class PobreFlix : MainAPI() {
         val fixedPoster = if (!poster.isNullOrBlank()) fixUrl(poster) else null
         println("  poster corrigido: $fixedPoster")
         
-        // Busca o título - tenta várias fontes
-        var title = imgElement.attr("alt")
+        // Busca o título - tenta várias fontes (declarado como nullable)
+        var title: String? = imgElement.attr("alt")
         if (title.isNullOrBlank()) {
             title = linkElement.attr("title")
         }
@@ -267,7 +267,7 @@ class PobreFlix : MainAPI() {
         }
         println("  título original: $title")
         
-        // Remove a palavra "poster" do título se existir (usando let para evitar nullable)
+        // Remove a palavra "poster" do título se existir
         val cleanedTitle = title!!.replace(Regex("\\s+poster$", RegexOption.IGNORE_CASE), "").trim()
         println("  título após remover 'poster': $cleanedTitle")
         
