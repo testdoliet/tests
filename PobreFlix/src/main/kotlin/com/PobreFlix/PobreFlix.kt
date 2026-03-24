@@ -44,7 +44,7 @@ class PobreFlix : MainAPI() {
         
         val url = request.data
         
-        // Tratamento especial para a seção "Em Alta"
+        // Tratamento especial para a seção "Em Alta" (Top 10)
         if (request.name == "Em Alta") {
             println(">>> Processando seção: Em Alta")
             val document = app.get(url).document
@@ -57,7 +57,7 @@ class PobreFlix : MainAPI() {
             
             val items = elements.mapNotNull { element ->
                 println("--- Processando elemento Em Alta ---")
-                element.toSearchResult()
+                element.toSearchResult(isEpisodePage = false)
             }
             println("Items processados: ${items.size}")
             println("=== getMainPage FINALIZADO (Em Alta) ===\n")
@@ -86,7 +86,7 @@ class PobreFlix : MainAPI() {
             
             val items = elements.mapNotNull { element ->
                 println("--- Processando elemento Novos Episódios ---")
-                element.toSearchResult()
+                element.toSearchResult(isEpisodePage = true)
             }
             println("Items processados: ${items.size}")
             
@@ -117,12 +117,12 @@ class PobreFlix : MainAPI() {
         println("Título da página: ${document.title()}")
         
         // Seletores para diferentes tipos de página
-        val elements = document.select(".grid .group\\/card, .grid article")
-        println("Elementos encontrados com '.grid .group/card, .grid article': ${elements.size}")
+        val elements = document.select(".grid .group\\/card")
+        println("Elementos encontrados com '.grid .group/card': ${elements.size}")
         
         val items = elements.mapNotNull { element ->
             println("--- Processando elemento genérico ---")
-            element.toSearchResult()
+            element.toSearchResult(isEpisodePage = false)
         }
         println("Items processados: ${items.size}")
         
@@ -134,8 +134,8 @@ class PobreFlix : MainAPI() {
         return newHomePageResponse(request.name, items, hasNext = hasNextPage)
     }
     
-    private fun Element.toSearchResult(): SearchResponse? {
-        println("  >>> toSearchResult INICIADO")
+    private fun Element.toSearchResult(isEpisodePage: Boolean = false): SearchResponse? {
+        println("  >>> toSearchResult INICIADO (isEpisodePage=$isEpisodePage)")
         
         // Busca o link dentro do elemento
         val linkElement = selectFirst("a")
@@ -168,14 +168,27 @@ class PobreFlix : MainAPI() {
         val fixedPoster = if (!poster.isNullOrBlank()) fixUrl(poster) else null
         println("  poster corrigido: $fixedPoster")
         
-        // Busca o título - tenta várias fontes
-        var title: String? = imgElement.attr("alt")
-        if (title.isNullOrBlank()) {
-            title = linkElement.attr("title")
+        // Para página de episódios, o título está na div .line-clamp-1 dentro do hover
+        var title: String? = null
+        
+        if (isEpisodePage) {
+            // Na página de episódios, o nome do anime está no hover (div com classe line-clamp-1)
+            val hoverDiv = selectFirst(".absolute.inset-x-0.bottom-0.z-10")
+            if (hoverDiv != null) {
+                title = hoverDiv.selectFirst(".line-clamp-1")?.text()
+            }
+            // Se não encontrou no hover, tenta no alt da imagem
+            if (title.isNullOrBlank()) {
+                title = imgElement.attr("alt")
+            }
+        } else {
+            // Para páginas normais, título está no alt da imagem ou no h3
+            title = imgElement.attr("alt")
+            if (title.isNullOrBlank()) {
+                title = selectFirst("h3")?.text()
+            }
         }
-        if (title.isNullOrBlank()) {
-            title = selectFirst(".text-sm, .font-bold")?.text()
-        }
+        
         if (title.isNullOrBlank()) {
             println("  ERRO: título está em branco")
             return null
@@ -194,8 +207,32 @@ class PobreFlix : MainAPI() {
         // Determina o tipo baseado na URL
         val isAnime = href.contains("/anime/")
         val isSerie = href.contains("/serie/") || href.contains("/dorama/")
+        val isEpisode = href.contains("/episodio/")
         
-        println("  isAnime: $isAnime, isSerie: $isSerie")
+        println("  isAnime: $isAnime, isSerie: $isSerie, isEpisode: $isEpisode")
+        
+        // Extrai informações de score e idioma para páginas normais
+        var scoreValue: Float? = null
+        var isDubbed = false
+        
+        if (!isEpisodePage) {
+            // Busca o score (porcentagem) do badge SVG
+            val scoreElement = selectFirst(".absolute.top-2.right-2 svg")
+            if (scoreElement != null) {
+                val textElement = scoreElement.selectFirst("text")
+                if (textElement != null) {
+                    val scoreText = textElement.text().replace("%", "").trim()
+                    scoreValue = scoreText.toFloatOrNull()?.let { it / 10 }
+                }
+            }
+            
+            // Busca o idioma (DUB/LEG) nos badges inferiores
+            val languageElement = selectFirst(".absolute.bottom-2.left-2 .inline-flex")
+            if (languageElement != null) {
+                val languageText = languageElement.text()
+                isDubbed = languageText.contains("DUB", ignoreCase = true)
+            }
+        }
         
         val result = when {
             isAnime -> {
@@ -203,6 +240,16 @@ class PobreFlix : MainAPI() {
                 newAnimeSearchResponse(finalTitle, fixUrl(href), TvType.Anime) {
                     this.posterUrl = fixedPoster
                     this.year = year
+                    // Adiciona o score se disponível
+                    if (scoreValue != null) {
+                        this.score = Score.from10(scoreValue)
+                    }
+                    // Adiciona o status de dublagem
+                    if (isDubbed) {
+                        addDubStatus(DubStatus.Dubbed, null)
+                    } else {
+                        addDubStatus(DubStatus.Subbed, null)
+                    }
                 }
             }
             isSerie -> {
@@ -210,6 +257,14 @@ class PobreFlix : MainAPI() {
                 newTvSeriesSearchResponse(finalTitle, fixUrl(href), TvType.TvSeries) {
                     this.posterUrl = fixedPoster
                     this.year = year
+                    if (scoreValue != null) {
+                        this.score = Score.from10(scoreValue)
+                    }
+                    if (isDubbed) {
+                        addDubStatus(DubStatus.Dubbed, null)
+                    } else {
+                        addDubStatus(DubStatus.Subbed, null)
+                    }
                 }
             }
             else -> {
@@ -217,6 +272,27 @@ class PobreFlix : MainAPI() {
                 newMovieSearchResponse(finalTitle, fixUrl(href), TvType.Movie) {
                     this.posterUrl = fixedPoster
                     this.year = year
+                    if (scoreValue != null) {
+                        this.score = Score.from10(scoreValue)
+                    }
+                    if (isDubbed) {
+                        addDubStatus(DubStatus.Dubbed, null)
+                    } else {
+                        addDubStatus(DubStatus.Subbed, null)
+                    }
+                }
+            }
+        }
+        
+        // Para página de episódios, adiciona informações de temporada/episódio
+        if (isEpisodePage && result is AnimeSearchResponse) {
+            val seasonText = selectFirst(".text-lead.font-black")?.text()
+            if (seasonText != null) {
+                val seasonMatch = Regex("T(\\d+):E(\\d+)").find(seasonText)
+                if (seasonMatch != null) {
+                    val season = seasonMatch.groupValues[1].toIntOrNull() ?: 1
+                    val episode = seasonMatch.groupValues[2].toIntOrNull() ?: 1
+                    result.addDubStatus(if (isDubbed) DubStatus.Dubbed else DubStatus.Subbed, episode)
                 }
             }
         }
@@ -236,11 +312,17 @@ class PobreFlix : MainAPI() {
         println("Título da página de busca: ${document.title()}")
         
         val elements = document.select(".grid .group\\/card, .grid article, .swiper-slide article")
+            .filter { element ->
+                val link = element.selectFirst("a")
+                val href = link?.attr("href") ?: ""
+                // Excluir episódios da busca geral (opcional)
+                !href.contains("/episodio/")
+            }
         println("Elementos encontrados na busca: ${elements.size}")
         
         val results = elements.mapNotNull { card ->
             try {
-                card.toSearchResult()
+                card.toSearchResult(isEpisodePage = false)
             } catch (e: Exception) {
                 println("ERRO ao processar resultado de busca: ${e.message}")
                 null
