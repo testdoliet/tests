@@ -33,10 +33,7 @@ class SuperFlix : MainAPI() {
     private val TMDB_ACCESS_TOKEN = BuildConfig.TMDB_ACCESS_TOKEN
 
     companion object {
-        private const val SEARCH_PATH = "/pesquisar"
-        
         private val MAIN_SECTIONS = listOf(
-            "/episodios" to "Novos Episódios",
             "/filmes" to "Filmes",
             "/series" to "Séries",
             "/animes" to "Animes",
@@ -68,49 +65,23 @@ class SuperFlix : MainAPI() {
             println("URL com paginação: $url")
         }
         
-        // Seção "Novos Episódios" (tem estrutura diferente)
-        if (request.name == "Novos Episódios") {
-            println(">>> Processando seção: Novos Episódios")
-            val document = app.get(url).document
-            println("URL carregada: $url")
-            
-            val elements = document.select(".grid article")
-            println("Elementos encontrados: ${elements.size}")
-            
-            val items = elements.mapNotNull { element ->
-                element.toSearchResult(isEpisodePage = true)
-            }
-            println("Items processados: ${items.size}")
-            
-            // Verifica próxima página
-            val hasNextPage = document.select("a[href*='page=']").any { link ->
-                val href = link.attr("href")
-                href.contains("page=${page + 1}") || href.contains("&page=${page + 1}")
-            } || document.select("a:contains(Próxima), .pagination a:contains(Próxima)").isNotEmpty()
-            
-            println("Has next page: $hasNextPage")
-            
-            return newHomePageResponse(
-                list = HomePageList(request.name, items, isHorizontalImages = true),
-                hasNext = hasNextPage
-            )
-        }
-        
-        // Seções genéricas (Filmes, Séries, Animes, Doramas)
-        println(">>> Processando seção genérica: ${request.name}")
+        println(">>> Processando seção: ${request.name}")
         val document = app.get(url).document
         println("URL carregada: $url")
         
+        // Seletor correto para os cards do SuperFlix
         val elements = document.select(".grid .group\\/card")
         println("Elementos encontrados: ${elements.size}")
         
         val items = elements.mapNotNull { element ->
-            element.toSearchResult(isEpisodePage = false)
+            element.toSearchResult()
         }
+        println("Items processados: ${items.size}")
         
-        val hasNextPage = document.select("a[href*='?page=']").any { link ->
+        // Verifica se tem próxima página
+        val hasNextPage = document.select("a[href*='page=']").any { link ->
             val href = link.attr("href")
-            href.contains("?page=${page + 1}") || href.contains("&page=${page + 1}")
+            href.contains("page=${page + 1}") || href.contains("&page=${page + 1}")
         } || document.select("a:contains(Próxima), .pagination a:contains(Próxima)").isNotEmpty()
         
         println("Has next page: $hasNextPage")
@@ -118,8 +89,8 @@ class SuperFlix : MainAPI() {
         return newHomePageResponse(request.name, items, hasNext = hasNextPage)
     }
     
-    private fun Element.toSearchResult(isEpisodePage: Boolean = false): SearchResponse? {
-        println("  >>> toSearchResult (isEpisodePage=$isEpisodePage)")
+    private fun Element.toSearchResult(): SearchResponse? {
+        println("  >>> toSearchResult")
         
         val linkElement = selectFirst("a[href]") ?: return null
         var href = linkElement.attr("href")
@@ -146,106 +117,33 @@ class SuperFlix : MainAPI() {
             println("  poster: $poster")
         }
         
-        var title: String? = null
-        var animeTitle: String? = null
-        var episodeNumber: Int? = null
-        var seasonNumber: Int? = null
-        var isDubbed = false
-        var mediaType = ""
-        var scoreValue: Float? = null
-        var tmdbId: Int? = null
+        // Extrai título do alt da imagem ou do h3
+        var title = imgElement?.attr("alt")
+        if (title.isNullOrBlank()) title = selectFirst("h3")?.text()
+        println("  Título original: '$title'")
         
-        if (isEpisodePage) {
-            println("  --- Processando EPISÓDIO ---")
-            
-            // Extrai badges do topo
-            val topBadges = selectFirst(".absolute.inset-x-0.top-0.z-10")
-            if (topBadges != null) {
-                val typeElement = topBadges.selectFirst(".inline-flex.items-center.rounded-full.bg-black\\/75")
-                mediaType = typeElement?.text()?.trim() ?: ""
-                println("  Tipo: '$mediaType'")
-                
-                val langElement = topBadges.selectFirst(".inline-flex.items-center.gap-1")
-                if (langElement != null) {
-                    val langText = langElement.text()
-                    isDubbed = langText.contains("DUB", ignoreCase = true)
-                    println("  Idioma: '$langText', isDubbed: $isDubbed")
-                }
-            }
-            
-            // Extrai número do episódio
-            val seasonText = selectFirst(".text-lead.font-black")?.text()
-            if (seasonText != null) {
-                val seasonMatch = Regex("T(\\d+):E(\\d+)").find(seasonText)
-                if (seasonMatch != null) {
-                    seasonNumber = seasonMatch.groupValues[1].toIntOrNull() ?: 1
-                    episodeNumber = seasonMatch.groupValues[2].toIntOrNull() ?: 1
-                    println("  Temporada: $seasonNumber, Episódio: $episodeNumber")
-                }
-            }
-            
-            // Extrai título do anime
-            val hoverDiv = selectFirst(".absolute.inset-x-0.bottom-0.z-10")
-            if (hoverDiv != null) {
-                animeTitle = hoverDiv.selectFirst(".line-clamp-1")?.text()
-                println("  Título do anime (hover): '$animeTitle'")
-            }
-            
-            if (animeTitle.isNullOrBlank()) {
-                val episodeTitleElement = selectFirst(".line-clamp-2.text-white") ?: selectFirst(".line-clamp-2")
-                val episodeTitle = episodeTitleElement?.text()
-                println("  Título do episódio: '$episodeTitle'")
-                
-                if (episodeTitle != null) {
-                    animeTitle = episodeTitle
-                        .replace(Regex("Epis[oó]dio\\s*\\d+", RegexOption.IGNORE_CASE), "")
-                        .replace(Regex("E\\d+", RegexOption.IGNORE_CASE), "")
-                        .replace(Regex("T\\d+:E\\d+", RegexOption.IGNORE_CASE), "")
-                        .trim()
-                    println("  Título do anime (extraído): '$animeTitle'")
-                }
-            }
-            
-            if (animeTitle.isNullOrBlank() && imgElement != null) {
-                animeTitle = imgElement.attr("alt")
-                println("  Título do anime (alt): '$animeTitle'")
-            }
-            
-            title = if (episodeNumber != null && episodeNumber > 0) {
-                "$animeTitle - Episódio $episodeNumber"
-            } else {
-                animeTitle ?: mediaType
-            }
-            println("  Título final: '$title'")
-            
-        } else {
-            println("  --- Processando card NORMAL ---")
-            
-            title = imgElement?.attr("alt")
-            if (title.isNullOrBlank()) title = selectFirst("h3")?.text()
-            println("  Título original: '$title'")
-            
-            // Extrai idioma
-            val langElement = selectFirst(".absolute.bottom-2.left-2 .inline-flex")
-            if (langElement != null) {
-                val langText = langElement.text()
-                isDubbed = langText.contains("DUB", ignoreCase = true)
-                println("  Idioma: '$langText', isDubbed: $isDubbed")
-            }
-            
-            // Extrai score
-            val scoreElement = selectFirst(".absolute.top-2.right-2 svg text")
-            if (scoreElement != null) {
-                val scoreText = scoreElement.text().replace("%", "").trim()
-                scoreValue = scoreText.toFloatOrNull()
-                println("  Score: $scoreText%")
-            }
-            
-            // Extrai TMDB ID da URL
-            val tmdbIdMatch = Regex("/(filme|serie|anime|dorama)/(\\d+)").find(href)
-            tmdbId = tmdbIdMatch?.groupValues?.get(2)?.toIntOrNull()
-            println("  TMDB ID: $tmdbId")
+        // Extrai idioma (DUB/LEG)
+        var isDubbed = false
+        val langElement = selectFirst(".absolute.bottom-2.left-2 .inline-flex")
+        if (langElement != null) {
+            val langText = langElement.text()
+            isDubbed = langText.contains("DUB", ignoreCase = true)
+            println("  Idioma: '$langText', isDubbed: $isDubbed")
         }
+        
+        // Extrai score
+        var scoreValue: Float? = null
+        val scoreElement = selectFirst(".absolute.top-2.right-2 svg text")
+        if (scoreElement != null) {
+            val scoreText = scoreElement.text().replace("%", "").trim()
+            scoreValue = scoreText.toFloatOrNull()
+            println("  Score: $scoreText%")
+        }
+        
+        // Extrai TMDB ID da URL
+        val tmdbIdMatch = Regex("/(filme|serie|anime|dorama)/(\\d+)").find(href)
+        val tmdbId = tmdbIdMatch?.groupValues?.get(2)?.toIntOrNull()
+        println("  TMDB ID: $tmdbId")
         
         if (title.isNullOrBlank()) {
             println("  ERRO: título em branco")
@@ -256,10 +154,9 @@ class SuperFlix : MainAPI() {
         val year = Regex("\\((\\d{4})\\)").find(cleanedTitle)?.groupValues?.get(1)?.toIntOrNull()
         val finalTitle = cleanedTitle.replace(Regex("\\(\\d{4}\\)"), "").trim()
         
-        val isAnime = href.contains("/anime/") || mediaType.equals("ANIME", ignoreCase = true)
-        val isSerie = href.contains("/serie/") || href.contains("/dorama/") || 
-                     mediaType.equals("SÉRIE", ignoreCase = true) || 
-                     mediaType.equals("DORAMA", ignoreCase = true)
+        // Determina o tipo baseado na URL
+        val isAnime = href.contains("/anime/")
+        val isSerie = href.contains("/serie/") || href.contains("/dorama/")
         
         println("  Tipo final: isAnime=$isAnime, isSerie=$isSerie")
         println("  Título final: '$finalTitle'")
@@ -291,9 +188,8 @@ class SuperFlix : MainAPI() {
             }
         }
         
-        if (result is AnimeSearchResponse && episodeNumber != null) {
-            result.addDubStatus(if (isDubbed) DubStatus.Dubbed else DubStatus.Subbed, episodeNumber)
-        } else if (result is AnimeSearchResponse) {
+        // Adiciona status de dublagem para animes
+        if (result is AnimeSearchResponse) {
             result.addDubStatus(if (isDubbed) DubStatus.Dubbed else DubStatus.Subbed, null)
         }
         
@@ -304,11 +200,14 @@ class SuperFlix : MainAPI() {
     override suspend fun search(query: String): List<SearchResponse> {
         if (query.length < 2) return emptyList()
         
+        // URL de busca correta do SuperFlix
         val searchUrl = "$mainUrl$SEARCH_PATH?s=${URLEncoder.encode(query, "UTF-8")}"
+        println("Search URL: $searchUrl")
+        
         val document = app.get(searchUrl).document
         
-        return document.select(".grid .group\\/card, .grid article")
-            .mapNotNull { it.toSearchResult(isEpisodePage = false) }
+        return document.select(".grid .group\\/card")
+            .mapNotNull { it.toSearchResult() }
             .distinctBy { it.url }
     }
 
@@ -352,13 +251,6 @@ class SuperFlix : MainAPI() {
             emptyList()
         }
         
-        // Busca o player URL do site (para filmes)
-        val playerUrl = if (!isTv) {
-            findPlayerUrlFromSite(url)
-        } else {
-            null
-        }
-        
         return if (isTv) {
             newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes) {
                 this.posterUrl = posterUrl
@@ -377,7 +269,7 @@ class SuperFlix : MainAPI() {
                 }
             }
         } else {
-            newMovieLoadResponse(title, playerUrl ?: url, TvType.Movie, playerUrl ?: url) {
+            newMovieLoadResponse(title, url, TvType.Movie, url) {
                 this.posterUrl = posterUrl
                 this.backgroundPosterUrl = backdropUrl
                 this.year = year
@@ -394,17 +286,6 @@ class SuperFlix : MainAPI() {
                     addTrailer(trailerUrl)
                 }
             }
-        }
-    }
-    
-    private suspend fun findPlayerUrlFromSite(url: String): String? {
-        try {
-            val document = app.get(url).document
-            val iframe = document.selectFirst("iframe[src*='player'], iframe[src*='embed'], iframe[src*='fembed'], iframe[src*='filemoon']")
-            return iframe?.attr("src")
-        } catch (e: Exception) {
-            println("Erro ao buscar player: ${e.message}")
-            return null
         }
     }
     
@@ -539,7 +420,11 @@ class SuperFlix : MainAPI() {
                     if (seasonResponse.code == 200) {
                         val seasonData = seasonResponse.parsedSafe<TMDBSeasonResponse>()
                         seasonData?.episodes?.let { episodes ->
-                            result[seasonNum] = episodes
+                            // Adiciona URL do episódio
+                            val episodesWithUrl = episodes.map { ep ->
+                                ep.copy(episode_url = "$mainUrl/serie/$seriesId/$seasonNum/${ep.episode_number}")
+                            }
+                            result[seasonNum] = episodesWithUrl
                         }
                     }
                 }
