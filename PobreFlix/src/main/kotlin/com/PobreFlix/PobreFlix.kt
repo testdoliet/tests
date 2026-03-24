@@ -7,7 +7,7 @@ import com.lagradost.cloudstream3.LoadResponse.Companion.addTrailer
 import org.jsoup.nodes.Element
 
 class PobreFlix : MainAPI() {
-    override var mainUrl = "https://lospobreflix.site/"
+    override var mainUrl = "https://lospobreflix.site"
     override var name = "PobreFlix"
     override val hasMainPage = true
     override var lang = "pt-br"
@@ -168,8 +168,8 @@ class PobreFlix : MainAPI() {
             println("Título da página: ${document.title()}")
             
             // Na página de episódios, os cards são <article> diretos dentro do grid
-            val elements = document.select(".grid article, .grid .group\\/card")
-            println("Elementos encontrados com '.grid article, .grid .group/card': ${elements.size}")
+            val elements = document.select(".grid article")
+            println("Elementos encontrados com '.grid article': ${elements.size}")
             
             val items = elements.mapNotNull { element ->
                 println("--- Processando elemento Novos Episódios ---")
@@ -206,10 +206,6 @@ class PobreFlix : MainAPI() {
         val elements = document.select(".grid .group\\/card, .grid article")
         println("Elementos encontrados com '.grid .group/card, .grid article': ${elements.size}")
         
-        // Log do HTML da página para debug
-        println("Primeiros 500 caracteres do HTML:")
-        println(document.html().take(500))
-        
         val items = elements.mapNotNull { element ->
             println("--- Processando elemento genérico ---")
             element.toSearchResult()
@@ -240,32 +236,45 @@ class PobreFlix : MainAPI() {
         }
         println("  href: $href")
         
-        // Busca a imagem e o título
+        // Busca a imagem dentro do link
         val imgElement = linkElement.selectFirst("img")
         if (imgElement == null) {
             println("  ERRO: imgElement é null")
             return null
         }
         
-        val title = imgElement.attr("alt")
-        if (title.isBlank()) {
+        // Tenta pegar a URL da imagem: primeiro data-src (lazy loading), depois src
+        var poster = imgElement.attr("data-src")
+        if (poster.isNullOrBlank()) {
+            poster = imgElement.attr("src")
+        }
+        println("  poster original: $poster")
+        
+        val fixedPoster = if (!poster.isNullOrBlank()) fixUrl(poster) else null
+        println("  poster corrigido: $fixedPoster")
+        
+        // Busca o título - tenta várias fontes
+        var title = imgElement.attr("alt")
+        if (title.isNullOrBlank()) {
+            title = linkElement.attr("title")
+        }
+        if (title.isNullOrBlank()) {
+            title = selectFirst(".text-sm, .font-bold")?.text()
+        }
+        if (title.isNullOrBlank()) {
             println("  ERRO: título está em branco")
             return null
         }
         println("  título original: $title")
         
-        val poster = imgElement.attr("src")
-        println("  poster original: $poster")
-        
-        val fixedPoster = poster?.let { fixUrl(it) }
-        println("  poster corrigido: $fixedPoster")
+        // Remove a palavra "poster" do título se existir
+        title = title.replace(Regex("\\s+poster$", RegexOption.IGNORE_CASE), "").trim()
+        println("  título após remover 'poster': $title")
         
         // Extrai ano do título se disponível
         val year = Regex("\\((\\d{4})\\)").find(title)?.groupValues?.get(1)?.toIntOrNull()
-        println("  ano extraído: $year")
-        
         val cleanTitle = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
-        println("  título limpo: $cleanTitle")
+        println("  título final: $cleanTitle, ano: $year")
         
         // Determina o tipo baseado na URL
         val isAnime = href.contains("/anime/")
@@ -542,7 +551,11 @@ class PobreFlix : MainAPI() {
                 val epNumber = seasonMatch?.groupValues?.get(2)?.toIntOrNull() ?: (index + 1)
                 
                 val epTitle = element.selectFirst("h2, .truncate")?.text() ?: "Episódio $epNumber"
-                val thumb = element.selectFirst("img")?.attr("src")?.let { fixUrl(it) }
+                val thumb = element.selectFirst("img")?.let { img ->
+                    var src = img.attr("data-src")
+                    if (src.isNullOrBlank()) src = img.attr("src")
+                    if (!src.isNullOrBlank()) fixUrl(src) else null
+                }
                 val description = element.selectFirst(".line-clamp-2.text-xs")?.text()
 
                 episodes.add(newEpisode(fixUrl(dataUrl)) {
