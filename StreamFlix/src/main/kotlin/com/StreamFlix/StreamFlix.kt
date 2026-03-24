@@ -23,40 +23,79 @@ class StreamFlix : MainAPI() {
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries)
     override val usesWebView = true
 
-    // Definindo as categorias da página inicial
+    private val apiUrl = "$mainUrl/api_proxy.php"
+    private val tmdbImageUrl = "https://image.tmdb.org/t/p"
+
+    companion object {
+        // Categorias da página inicial
+        private val homeCategories = listOf(
+            // Usa a API para trending (funciona)
+            "tmdb_trending" to "Em Alta",
+            // Usa as páginas HTML para filmes e séries
+            "html_movies" to "Filmes",
+            "html_series" to "Séries"
+        )
+    }
+
     override val mainPage = mainPageOf(
-        "$mainUrl" to "Início",
-        "$mainUrl/filmes" to "Filmes",
-        "$mainUrl/series" to "Séries"
+        *homeCategories.map { (category, name) ->
+            when (category) {
+                "tmdb_trending" -> "$apiUrl?action=$category" to name
+                "html_movies" -> "$mainUrl/filmes" to name
+                "html_series" -> "$mainUrl/series" to name
+                else -> "" to name
+            }
+        }.toTypedArray()
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val doc = app.get(request.data).document
         val items = mutableListOf<SearchResponse>()
-
+        
         when {
-            request.data == mainUrl -> {
-                // Página inicial: extrai das seções "Filmes em Alta" e "Séries em Alta"
-                items.addAll(extractMoviesFromSection(doc, "Filmes em Alta"))
-                items.addAll(extractSeriesFromSection(doc, "Séries em Alta"))
+            // Para a aba "Em Alta" - usa a API (funciona)
+            request.data.contains("tmdb_trending") -> {
+                val url = if (page > 1) "$request.data&page=$page" else request.data
+                val response = app.get(url)
+                items.addAll(parseTrendingJson(response.text))
             }
+            // Para a aba "Filmes" - extrai do HTML
             request.data.contains("/filmes") -> {
-                // Página de filmes
-                items.addAll(extractMoviesFromSection(doc, "Filmes"))
+                val doc = app.get(request.data).document
+                items.addAll(extractMoviesFromHtml(doc))
             }
+            // Para a aba "Séries" - extrai do HTML
             request.data.contains("/series") -> {
-                // Página de séries
-                items.addAll(extractSeriesFromSection(doc, "Séries"))
+                val doc = app.get(request.data).document
+                items.addAll(extractSeriesFromHtml(doc))
             }
         }
 
         return newHomePageResponse(request.name, items, false)
     }
 
-    private fun extractMoviesFromSection(doc: org.jsoup.nodes.Document, sectionTitle: String): List<SearchResponse> {
+    private fun parseTrendingJson(json: String): List<SearchResponse> {
+        return try {
+            val response = mapper.readValue(json, TrendingResponse::class.java)
+            val items = mutableListOf<SearchResponse>()
+            
+            response.movies?.forEach { movie ->
+                movie.toSearchResponse()?.let { items.add(it) }
+            }
+            
+            response.series?.forEach { series ->
+                series.toSearchResponse()?.let { items.add(it) }
+            }
+            
+            items
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    private fun extractMoviesFromHtml(doc: org.jsoup.nodes.Document): List<SearchResponse> {
         val movies = mutableListOf<SearchResponse>()
         
-        // Procura os cards de filmes
+        // Procura os cards na página de filmes
         val cards = doc.select("div.group\\/card")
         cards.forEach { card ->
             extractFromCard(card)?.let { movies.add(it) }
@@ -65,10 +104,10 @@ class StreamFlix : MainAPI() {
         return movies
     }
 
-    private fun extractSeriesFromSection(doc: org.jsoup.nodes.Document, sectionTitle: String): List<SearchResponse> {
+    private fun extractSeriesFromHtml(doc: org.jsoup.nodes.Document): List<SearchResponse> {
         val series = mutableListOf<SearchResponse>()
         
-        // Procura os cards de séries
+        // Procura os cards na página de séries
         val cards = doc.select("div.group\\/card")
         cards.forEach { card ->
             extractFromCard(card)?.let { series.add(it) }
@@ -107,7 +146,6 @@ class StreamFlix : MainAPI() {
     }
 
     private fun extractJsonFromOnclick(onclick: String): String? {
-        // Extrai o JSON do onclick: openContent(JSON.parse(decodeURIComponent('...')))
         val regex = "openContent\\(JSON.parse\\(decodeURIComponent\\(['\"](.*?)['\"]\\)\\)\\)".toRegex()
         val matchResult = regex.find(onclick)
         
@@ -121,8 +159,32 @@ class StreamFlix : MainAPI() {
         return regex.find(json)?.groupValues?.get(1)?.replace("\\\"", "\"")?.trim()
     }
 
+    private fun TMDBMovie.toSearchResponse(): SearchResponse? {
+        val title = title ?: return null
+        val year = release_date?.substring(0, 4)?.toIntOrNull()
+        val poster = poster_path?.let { "$tmdbImageUrl/w500$it" }
+        val url = "$mainUrl/movie/$id"
+
+        return newMovieSearchResponse(title, url, TvType.Movie) {
+            this.posterUrl = poster
+            this.year = year
+        }
+    }
+
+    private fun TMDBSeries.toSearchResponse(): SearchResponse? {
+        val title = name ?: return null
+        val year = first_air_date?.substring(0, 4)?.toIntOrNull()
+        val poster = poster_path?.let { "$tmdbImageUrl/w500$it" }
+        val url = "$mainUrl/series/$id"
+
+        return newTvSeriesSearchResponse(title, url, TvType.TvSeries) {
+            this.posterUrl = poster
+            this.year = year
+        }
+    }
+
     override suspend fun search(query: String): List<SearchResponse> {
-        // Busca usando a URL com query
+        // Busca usando a página com query
         val searchUrl = "$mainUrl?search=${java.net.URLEncoder.encode(query, "UTF-8")}"
         val doc = app.get(searchUrl).document
         
@@ -134,7 +196,7 @@ class StreamFlix : MainAPI() {
     override suspend fun load(url: String): LoadResponse? {
         val doc = app.get(url).document
         
-        // Extrai o JSON do onclick do elemento principal
+        // Extrai o JSON do onclick
         val mainCard = doc.selectFirst("[onclick*='openContent']")
         val onclick = mainCard?.attr("onclick") ?: return null
         val jsonData = extractJsonFromOnclick(onclick) ?: return null
@@ -156,7 +218,6 @@ class StreamFlix : MainAPI() {
         val videoUrl = "$mainUrl/player/$id"
         
         return if (isSerie) {
-            // Para séries, extrai os episódios
             val episodes = extractEpisodes(doc, id.toIntOrNull() ?: 0)
             newTvSeriesLoadResponse(cleanTitle, url, TvType.TvSeries, episodes) {
                 this.posterUrl = poster
@@ -175,7 +236,6 @@ class StreamFlix : MainAPI() {
     private suspend fun extractEpisodes(document: org.jsoup.nodes.Document, seriesId: Int): List<Episode> {
         val episodes = mutableListOf<Episode>()
         
-        // Tenta encontrar os episódios na página
         val episodeElements = document.select("[data-episode], .episode-item, .season-episodes a")
         
         episodeElements.forEachIndexed { index, element ->
@@ -202,7 +262,26 @@ class StreamFlix : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // Implementar extração de links do player posteriormente
         return false
     }
+
+    // Classes de dados para a API
+    data class TrendingResponse(
+        @JsonProperty("movies") val movies: List<TMDBMovie>?,
+        @JsonProperty("series") val series: List<TMDBSeries>?
+    )
+
+    data class TMDBMovie(
+        @JsonProperty("id") val id: Int,
+        @JsonProperty("title") val title: String?,
+        @JsonProperty("release_date") val release_date: String?,
+        @JsonProperty("poster_path") val poster_path: String?
+    )
+
+    data class TMDBSeries(
+        @JsonProperty("id") val id: Int,
+        @JsonProperty("name") val name: String?,
+        @JsonProperty("first_air_date") val first_air_date: String?,
+        @JsonProperty("poster_path") val poster_path: String?
+    )
 }
