@@ -55,6 +55,7 @@ class PobreFlix : MainAPI() {
         var url = request.data
         
         // Construção da URL com paginação
+        // Para todas as seções exceto "Em Alta" que não tem paginação
         if (request.name != "Em Alta" && page > 1) {
             url = if (url.contains("?")) {
                 "$url&page=$page"
@@ -64,7 +65,7 @@ class PobreFlix : MainAPI() {
             println("URL com paginação: $url")
         }
         
-        // Seção "Em Alta" (Top 10)
+        // Seção "Em Alta" (Top 10) - sem paginação
         if (request.name == "Em Alta") {
             println(">>> Processando seção: Em Alta")
             val document = app.get(url).document
@@ -78,21 +79,26 @@ class PobreFlix : MainAPI() {
             return newHomePageResponse(request.name, items, hasNext = false)
         }
         
-        // Seções genéricas (Filmes, Séries, Animes, Doramas)
+        // Seções genéricas (Filmes, Séries, Animes, Doramas) com paginação
         println(">>> Processando seção genérica: ${request.name}")
         val document = app.get(url).document
         println("URL carregada: $url")
         
+        // Seletor correto para os cards
         val elements = document.select(".grid .group\\/card")
         println("Elementos encontrados: ${elements.size}")
         
         val items = elements.mapNotNull { element ->
             element.toSearchResult(isEpisodePage = false)
         }
+        println("Items processados: ${items.size}")
         
-        val hasNextPage = document.select("a[href*='?page=']").any { link ->
+        // Verifica se tem próxima página
+        // Procura por links de paginação como "?page=X" ou "&page=X"
+        val hasNextPage = document.select("a[href*='page=']").any { link ->
             val href = link.attr("href")
-            href.contains("?page=${page + 1}") || href.contains("&page=${page + 1}")
+            // Verifica se existe link para a próxima página
+            href.contains("page=${page + 1}") || href.contains("&page=${page + 1}")
         } || document.select("a:contains(Próxima), .pagination a:contains(Próxima)").isNotEmpty()
         
         println("Has next page: $hasNextPage")
@@ -220,8 +226,9 @@ class PobreFlix : MainAPI() {
             // ========== PÁGINAS NORMAIS ==========
             println("  --- Processando card NORMAL ---")
             
-            title = imgElement?.attr("alt")
-            if (title.isNullOrBlank()) title = selectFirst("h3")?.text()
+            // Título vem do <h3> dentro do card
+            title = selectFirst("h3")?.text()
+            if (title.isNullOrBlank()) title = imgElement?.attr("alt")
             println("  Título original: '$title'")
             
             // Badge de idioma (DUB/LEG)
@@ -232,7 +239,7 @@ class PobreFlix : MainAPI() {
                 println("  Idioma: '$langText', isDubbed: $isDubbed")
             }
             
-            // Score
+            // Score (se disponível)
             val scoreElement = selectFirst(".absolute.top-2.right-2 svg text")
             if (scoreElement != null) {
                 val scoreText = scoreElement.text().replace("%", "").trim()
