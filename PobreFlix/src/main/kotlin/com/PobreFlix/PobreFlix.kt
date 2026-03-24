@@ -33,7 +33,7 @@ class SuperFlix : MainAPI() {
     private val TMDB_ACCESS_TOKEN = BuildConfig.TMDB_ACCESS_TOKEN
 
     companion object {
-        private const val SEARCH_PATH = "/pesquisar"  // ← ADICIONADO
+        private const val SEARCH_PATH = "/pesquisar"
         
         private val MAIN_SECTIONS = listOf(
             "/filmes" to "Filmes",
@@ -50,11 +50,6 @@ class SuperFlix : MainAPI() {
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        println("=== getMainPage INICIADO ===")
-        println("Page: $page")
-        println("Request name: ${request.name}")
-        println("Request data: ${request.data}")
-        
         var url = request.data
         
         // Construção da URL com paginação
@@ -64,21 +59,16 @@ class SuperFlix : MainAPI() {
             } else {
                 "$url?page=$page"
             }
-            println("URL com paginação: $url")
         }
         
-        println(">>> Processando seção: ${request.name}")
         val document = app.get(url).document
-        println("URL carregada: $url")
         
         // Seletor correto para os cards do SuperFlix
         val elements = document.select(".grid .group\\/card")
-        println("Elementos encontrados: ${elements.size}")
         
         val items = elements.mapNotNull { element ->
             element.toSearchResult()
         }
-        println("Items processados: ${items.size}")
         
         // Verifica se tem próxima página
         val hasNextPage = document.select("a[href*='page=']").any { link ->
@@ -86,14 +76,10 @@ class SuperFlix : MainAPI() {
             href.contains("page=${page + 1}") || href.contains("&page=${page + 1}")
         } || document.select("a:contains(Próxima), .pagination a:contains(Próxima)").isNotEmpty()
         
-        println("Has next page: $hasNextPage")
-        
         return newHomePageResponse(request.name, items, hasNext = hasNextPage)
     }
     
     private fun Element.toSearchResult(): SearchResponse? {
-        println("  >>> toSearchResult")
-        
         val linkElement = selectFirst("a[href]") ?: return null
         var href = linkElement.attr("href")
         if (href.isBlank()) return null
@@ -101,7 +87,6 @@ class SuperFlix : MainAPI() {
         if (!href.startsWith("http")) {
             href = if (href.startsWith("/")) "$mainUrl$href" else "$mainUrl/$href"
         }
-        println("  href: $href")
         
         val imgElement = selectFirst("img")
         var poster: String? = null
@@ -116,13 +101,11 @@ class SuperFlix : MainAPI() {
                 }
                 poster = fixUrl(poster)
             }
-            println("  poster: $poster")
         }
         
         // Extrai título do alt da imagem ou do h3
         var title = imgElement?.attr("alt")
         if (title.isNullOrBlank()) title = selectFirst("h3")?.text()
-        println("  Título original: '$title'")
         
         // Extrai idioma (DUB/LEG)
         var isDubbed = false
@@ -130,7 +113,6 @@ class SuperFlix : MainAPI() {
         if (langElement != null) {
             val langText = langElement.text()
             isDubbed = langText.contains("DUB", ignoreCase = true)
-            println("  Idioma: '$langText', isDubbed: $isDubbed")
         }
         
         // Extrai score
@@ -139,18 +121,9 @@ class SuperFlix : MainAPI() {
         if (scoreElement != null) {
             val scoreText = scoreElement.text().replace("%", "").trim()
             scoreValue = scoreText.toFloatOrNull()
-            println("  Score: $scoreText%")
         }
         
-        // Extrai TMDB ID da URL
-        val tmdbIdMatch = Regex("/(filme|serie|anime|dorama)/(\\d+)").find(href)
-        val tmdbId = tmdbIdMatch?.groupValues?.get(2)?.toIntOrNull()
-        println("  TMDB ID: $tmdbId")
-        
-        if (title.isNullOrBlank()) {
-            println("  ERRO: título em branco")
-            return null
-        }
+        if (title.isNullOrBlank()) return null
         
         val cleanedTitle = title!!.replace(Regex("\\s+poster$", RegexOption.IGNORE_CASE), "").trim()
         val year = Regex("\\((\\d{4})\\)").find(cleanedTitle)?.groupValues?.get(1)?.toIntOrNull()
@@ -160,12 +133,8 @@ class SuperFlix : MainAPI() {
         val isAnime = href.contains("/anime/")
         val isSerie = href.contains("/serie/") || href.contains("/dorama/")
         
-        println("  Tipo final: isAnime=$isAnime, isSerie=$isSerie")
-        println("  Título final: '$finalTitle'")
-        
         val result = when {
             isAnime -> {
-                println("  >>> Criando ANIME")
                 newAnimeSearchResponse(finalTitle, href, TvType.Anime) {
                     this.posterUrl = poster
                     this.year = year
@@ -173,7 +142,6 @@ class SuperFlix : MainAPI() {
                 }
             }
             isSerie -> {
-                println("  >>> Criando SÉRIE")
                 newTvSeriesSearchResponse(finalTitle, href, TvType.TvSeries) {
                     this.posterUrl = poster
                     this.year = year
@@ -181,7 +149,6 @@ class SuperFlix : MainAPI() {
                 }
             }
             else -> {
-                println("  >>> Criando FILME")
                 newMovieSearchResponse(finalTitle, href, TvType.Movie) {
                     this.posterUrl = poster
                     this.year = year
@@ -195,7 +162,6 @@ class SuperFlix : MainAPI() {
             result.addDubStatus(if (isDubbed) DubStatus.Dubbed else DubStatus.Subbed, null)
         }
         
-        println("  <<< toSearchResult FINALIZADO")
         return result
     }
 
@@ -204,8 +170,6 @@ class SuperFlix : MainAPI() {
         
         // URL de busca correta do SuperFlix
         val searchUrl = "$mainUrl$SEARCH_PATH?s=${URLEncoder.encode(query, "UTF-8")}"
-        println("Search URL: $searchUrl")
-        
         val document = app.get(searchUrl).document
         
         return document.select(".grid .group\\/card")
@@ -214,20 +178,12 @@ class SuperFlix : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        println("=== load INICIADO ===")
-        println("URL: $url")
-        
         // Extrai o tipo e ID da URL
         val typeMatch = Regex("/(filme|serie|anime|dorama)/(\\d+)").find(url)
         val type = typeMatch?.groupValues?.get(1)
         val tmdbId = typeMatch?.groupValues?.get(2)?.toIntOrNull()
         
-        if (tmdbId == null) {
-            println("ERRO: Não foi possível extrair TMDB ID da URL")
-            return null
-        }
-        
-        println("TMDB ID: $tmdbId, Tipo: $type")
+        if (tmdbId == null) return null
         
         // Determina se é série ou filme
         val isTv = type in listOf("serie", "anime", "dorama")
@@ -342,10 +298,7 @@ class SuperFlix : MainAPI() {
             
             val response = app.get(url, headers = headers, timeout = 15_000)
             
-            if (response.code != 200) {
-                println("TMDB API error: ${response.code}")
-                return null
-            }
+            if (response.code != 200) return null
             
             val details = response.parsedSafe<TMDBDetailsResponse>() ?: return null
             
@@ -389,8 +342,6 @@ class SuperFlix : MainAPI() {
                 seasonsEpisodes = seasonsEpisodes
             )
         } catch (e: Exception) {
-            println("Erro ao buscar TMDB: ${e.message}")
-            e.printStackTrace()
             null
         }
     }
@@ -432,7 +383,7 @@ class SuperFlix : MainAPI() {
                 }
             }
         } catch (e: Exception) {
-            println("Erro ao buscar episódios: ${e.message}")
+            // Erro ao buscar episódios
         }
         
         return result
@@ -494,7 +445,6 @@ class SuperFlix : MainAPI() {
                 }
             }
         } catch (e: Exception) {
-            println("Erro ao carregar links: ${e.message}")
             false
         }
     }
