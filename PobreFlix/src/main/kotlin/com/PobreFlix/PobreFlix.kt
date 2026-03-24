@@ -124,38 +124,62 @@ class PobreFlix : MainAPI() {
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
+        println("=== getMainPage INICIADO ===")
+        println("Page: $page")
+        println("Request name: ${request.name}")
+        println("Request data: ${request.data}")
+        
         val url = request.data
         
         // Tratamento especial para a seção "Em Alta"
         if (request.name == "Em Alta") {
+            println(">>> Processando seção: Em Alta")
             val document = app.get(url).document
+            println("URL carregada: $url")
+            println("Título da página: ${document.title()}")
+            
             // Na página principal, os cards estão dentro de .swiper-slide article
-            val items = document.select(".swiper-slide article")
-                .mapNotNull { element ->
-                    element.toSearchResult()
-                }
-                .distinctBy { it.url }
+            val elements = document.select(".swiper-slide article")
+            println("Elementos encontrados com '.swiper-slide article': ${elements.size}")
+            
+            val items = elements.mapNotNull { element ->
+                println("--- Processando elemento Em Alta ---")
+                element.toSearchResult()
+            }
+            println("Items processados: ${items.size}")
+            println("=== getMainPage FINALIZADO (Em Alta) ===\n")
             
             return newHomePageResponse(request.name, items, hasNext = false)
         }
         
         // Tratamento especial para "Novos Episódios" (horizontal)
         if (request.name == "Novos Episódios") {
-            val document = if (page > 1) {
-                val finalUrl = if (url.contains("?")) "$url&page=$page" else "$url?page=$page"
-                app.get(finalUrl).document
+            println(">>> Processando seção: Novos Episódios")
+            val finalUrl = if (page > 1) {
+                val newUrl = if (url.contains("?")) "$url&page=$page" else "$url?page=$page"
+                println("Paginação: página $page, URL: $newUrl")
+                newUrl
             } else {
-                app.get(url).document
+                url
             }
             
+            val document = app.get(finalUrl).document
+            println("URL carregada: $finalUrl")
+            println("Título da página: ${document.title()}")
+            
             // Na página de episódios, os cards são <article> diretos dentro do grid
-            val items = document.select(".grid article, .grid .group\\/card")
-                .mapNotNull { element ->
-                    element.toSearchResult()
-                }
-                .distinctBy { it.url }
+            val elements = document.select(".grid article, .grid .group\\/card")
+            println("Elementos encontrados com '.grid article, .grid .group/card': ${elements.size}")
+            
+            val items = elements.mapNotNull { element ->
+                println("--- Processando elemento Novos Episódios ---")
+                element.toSearchResult()
+            }
+            println("Items processados: ${items.size}")
             
             val hasNextPage = document.select("a:contains(Próxima), .page-numbers a[href*='page'], .pagination a:contains(Próxima)").isNotEmpty()
+            println("Has next page: $hasNextPage")
+            println("=== getMainPage FINALIZADO (Novos Episódios) ===\n")
             
             // Retornar como HomePageList para definir isHorizontalImages = true
             return newHomePageResponse(
@@ -165,123 +189,200 @@ class PobreFlix : MainAPI() {
         }
         
         // Para as outras seções (Filmes, Séries, Animes, Doramas)
+        println(">>> Processando seção genérica: ${request.name}")
         val finalUrl = if (page > 1) {
-            if (url.contains("?")) "$url&page=$page" else "$url?page=$page"
+            val newUrl = if (url.contains("?")) "$url&page=$page" else "$url?page=$page"
+            println("Paginação: página $page, URL: $newUrl")
+            newUrl
         } else {
             url
         }
         
         val document = app.get(finalUrl).document
+        println("URL carregada: $finalUrl")
+        println("Título da página: ${document.title()}")
         
         // Seletores para diferentes tipos de página
-        val items = document.select(".grid .group\\/card, .grid article")
-            .mapNotNull { element ->
-                element.toSearchResult()
-            }
-            .distinctBy { it.url }
+        val elements = document.select(".grid .group\\/card, .grid article")
+        println("Elementos encontrados com '.grid .group/card, .grid article': ${elements.size}")
+        
+        // Log do HTML da página para debug
+        println("Primeiros 500 caracteres do HTML:")
+        println(document.html().take(500))
+        
+        val items = elements.mapNotNull { element ->
+            println("--- Processando elemento genérico ---")
+            element.toSearchResult()
+        }
+        println("Items processados: ${items.size}")
         
         val hasNextPage = document.select("a:contains(Próxima), .page-numbers a[href*='page'], .pagination a:contains(Próxima)").isNotEmpty()
+        println("Has next page: $hasNextPage")
+        println("=== getMainPage FINALIZADO (Genérico) ===\n")
         
         return newHomePageResponse(request.name, items, hasNext = hasNextPage)
     }
     
     private fun Element.toSearchResult(): SearchResponse? {
+        println("  >>> toSearchResult INICIADO")
+        
         // Busca o link dentro do elemento
         val linkElement = selectFirst("a")
-        val href = linkElement?.attr("href") ?: return null
+        if (linkElement == null) {
+            println("  ERRO: linkElement é null")
+            return null
+        }
+        
+        val href = linkElement.attr("href")
+        if (href.isBlank()) {
+            println("  ERRO: href está em branco")
+            return null
+        }
+        println("  href: $href")
         
         // Busca a imagem e o título
-        val imgElement = linkElement?.selectFirst("img")
-        val title = imgElement?.attr("alt") ?: linkElement?.attr("title") ?: return null
+        val imgElement = linkElement.selectFirst("img")
+        if (imgElement == null) {
+            println("  ERRO: imgElement é null")
+            return null
+        }
         
-        val poster = imgElement?.attr("src")?.let { fixUrl(it) }
+        val title = imgElement.attr("alt")
+        if (title.isBlank()) {
+            println("  ERRO: título está em branco")
+            return null
+        }
+        println("  título original: $title")
+        
+        val poster = imgElement.attr("src")
+        println("  poster original: $poster")
+        
+        val fixedPoster = poster?.let { fixUrl(it) }
+        println("  poster corrigido: $fixedPoster")
         
         // Extrai ano do título se disponível
         val year = Regex("\\((\\d{4})\\)").find(title)?.groupValues?.get(1)?.toIntOrNull()
+        println("  ano extraído: $year")
+        
         val cleanTitle = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
+        println("  título limpo: $cleanTitle")
         
         // Determina o tipo baseado na URL
         val isAnime = href.contains("/anime/")
         val isSerie = href.contains("/serie/") || href.contains("/dorama/")
+        println("  isAnime: $isAnime, isSerie: $isSerie")
         
-        return when {
+        val result = when {
             isAnime -> {
+                println("  >>> Criando resposta de ANIME")
                 newAnimeSearchResponse(cleanTitle, fixUrl(href), TvType.Anime) {
-                    this.posterUrl = poster
+                    this.posterUrl = fixedPoster
                     this.year = year
                 }
             }
             isSerie -> {
+                println("  >>> Criando resposta de SÉRIE")
                 newTvSeriesSearchResponse(cleanTitle, fixUrl(href), TvType.TvSeries) {
-                    this.posterUrl = poster
+                    this.posterUrl = fixedPoster
                     this.year = year
                 }
             }
             else -> {
+                println("  >>> Criando resposta de FILME")
                 newMovieSearchResponse(cleanTitle, fixUrl(href), TvType.Movie) {
-                    this.posterUrl = poster
+                    this.posterUrl = fixedPoster
                     this.year = year
                 }
             }
         }
+        
+        println("  <<< toSearchResult FINALIZADO com sucesso")
+        return result
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
+        println("=== search INICIADO ===")
+        println("Query: $query")
+        
         val searchUrl = "$mainUrl$SEARCH_PATH?s=${java.net.URLEncoder.encode(query, "UTF-8")}"
+        println("URL de busca: $searchUrl")
+        
         val document = app.get(searchUrl).document
-
-        return document.select(".grid .group\\/card, .grid article, .swiper-slide article")
-            .mapNotNull { card ->
-                try {
-                    card.toSearchResult()
-                } catch (e: Exception) {
-                    null
-                }
+        println("Título da página de busca: ${document.title()}")
+        
+        val elements = document.select(".grid .group\\/card, .grid article, .swiper-slide article")
+        println("Elementos encontrados na busca: ${elements.size}")
+        
+        val results = elements.mapNotNull { card ->
+            try {
+                card.toSearchResult()
+            } catch (e: Exception) {
+                println("ERRO ao processar resultado de busca: ${e.message}")
+                null
             }
+        }
+        
+        println("Resultados processados: ${results.size}")
+        println("=== search FINALIZADO ===\n")
+        return results
     }
 
     override suspend fun load(url: String): LoadResponse? {
+        println("=== load INICIADO ===")
+        println("URL: $url")
+        
         val document = app.get(url).document
+        println("Título da página: ${document.title()}")
 
         val titleElement = document.selectFirst("h1, .text-3xl.text-lead.font-bold")
         val title = titleElement?.text() ?: return null
+        println("Título encontrado: $title")
 
         val year = Regex("\\((\\d{4})\\)").find(title)?.groupValues?.get(1)?.toIntOrNull()
         val cleanTitle = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
+        println("Título limpo: $cleanTitle, ano: $year")
 
         val isAnime = url.contains("/anime/") || title.contains("(Anime)", ignoreCase = true)
         val isSerie = url.contains("/serie/") || url.contains("/dorama/") || 
                      (!isAnime && document.selectFirst("#episodes-list, .season-dropdown, .episode-card") != null)
+        println("isAnime: $isAnime, isSerie: $isSerie")
 
         val ogImage = document.selectFirst("meta[property='og:image']")?.attr("content")
         val poster = ogImage?.let { fixUrl(it) }
+        println("Poster: $poster")
 
         val synopsis = document.selectFirst(".text-slate-700.dark\\:text-slate-200.md\\:text-lg, .text-slate-900\\/90.dark\\:text-slate-100\\/90, meta[name='description']")?.attr("content")?.trim()
-        val plot = synopsis
+        println("Sinopse encontrada: ${synopsis?.take(100)}...")
 
         val tags = document.select(".flex.flex-wrap.gap-2 a, .px-3.py-1.rounded-full.text-xs.bg-slate-200")
             .map { it.text() }
             .takeIf { it.isNotEmpty() }
+        println("Tags: $tags")
 
         val ratingPercent = document.selectFirst("text[x='18'][y='21']")?.text()?.replace("%", "")?.toFloatOrNull()
         val ratingValue = ratingPercent?.let { it / 10 }
         val score = ratingValue?.let { Score.from10(it) }
+        println("Rating: $ratingPercent%, score: $score")
 
         val backdrop = document.selectFirst(".absolute.left-1\\/2 img, .blur-\\[4px\\] img")?.attr("src")?.let { fixUrl(it) }
+        println("Backdrop: $backdrop")
 
         val durationText = document.selectFirst(".bg-slate-200.dark\\:bg-slate-700.rounded-lg.p-3:contains(min) .font-medium, .inline-flex.items-center.rounded-full.px-3.py-1:contains(min)")?.text()
         val duration = durationText?.let { 
             Regex("(\\d+)\\s*min").find(it)?.groupValues?.get(1)?.toIntOrNull()
         }
+        println("Duração: $duration")
 
         val cast = document.select("#cast-section .swiper-slide .text-sm.font-bold, .swiper-slide .text-sm.font-bold")
             .map { it.text() }
             .takeIf { it.isNotEmpty() }
             ?.map { Actor(name = it) }
+        println("Elenco: ${cast?.size} atores")
 
         val trailerKey = document.selectFirst("script:containsData(window.__trailerKeys)")?.data()?.let { script ->
             Regex("window\\.__trailerKeys\\s*=\\s*\\[\"([^\"]+)\"\\]").find(script)?.groupValues?.get(1)
         }
+        println("Trailer key: $trailerKey")
 
         val siteRecommendations = document.select("#relatedSection .swiper-slide a, .related-swiper .swiper-slide a")
             .mapNotNull { element ->
@@ -312,16 +413,19 @@ class PobreFlix : MainAPI() {
                     }
                 } catch (e: Exception) { null }
             }
+        println("Recomendações: ${siteRecommendations.size}")
 
         return if (isAnime || isSerie) {
             val type = if (isAnime) TvType.Anime else TvType.TvSeries
+            println("Carregando como Série/Anime, tipo: $type")
             val episodes = extractEpisodesFromSite(document, url, isAnime, isSerie)
+            println("Episódios encontrados: ${episodes.size}")
 
             newTvSeriesLoadResponse(cleanTitle, url, type, episodes) {
                 this.posterUrl = poster
                 this.backgroundPosterUrl = backdrop
                 this.year = year
-                this.plot = plot
+                this.plot = synopsis
                 this.tags = tags
                 this.recommendations = siteRecommendations.takeIf { it.isNotEmpty() }
                 this.score = score
@@ -336,12 +440,13 @@ class PobreFlix : MainAPI() {
             }
         } else {
             val playerUrl = findPlayerUrl(document)
+            println("Carregando como Filme, player URL: $playerUrl")
 
             newMovieLoadResponse(cleanTitle, url, TvType.Movie, playerUrl ?: url) {
                 this.posterUrl = poster
                 this.backgroundPosterUrl = backdrop
                 this.year = year
-                this.plot = plot
+                this.plot = synopsis
                 this.tags = tags
                 this.duration = duration
                 this.recommendations = siteRecommendations.takeIf { it.isNotEmpty() }
@@ -364,18 +469,24 @@ class PobreFlix : MainAPI() {
         isAnime: Boolean,
         isSerie: Boolean
     ): List<Episode> {
+        println("  >>> extractEpisodesFromSite INICIADO")
+        println("  URL: $url, isAnime: $isAnime, isSerie: $isSerie")
+        
         val episodes = mutableListOf<Episode>()
 
         val scriptData = document.selectFirst("script:containsData(window.allEpisodes)")?.data()
         if (scriptData != null) {
+            println("  Script com allEpisodes encontrado")
             try {
                 val jsonMatch = Regex("window\\.allEpisodes\\s*=\\s*(\\{[^;]+\\})").find(scriptData)
                 val jsonString = jsonMatch?.groupValues?.get(1)
                 
                 if (jsonString != null) {
+                    println("  JSON encontrado, tamanho: ${jsonString.length}")
                     val seasonPattern = Regex("\"(\\d+)\":\\s*\\[([^\\]]+)\\]")
                     val seasonMatches = seasonPattern.findAll(jsonString)
                     
+                    var episodeCount = 0
                     for (seasonMatch in seasonMatches) {
                         val seasonNum = seasonMatch.groupValues[1].toIntOrNull() ?: 1
                         val episodesJson = seasonMatch.groupValues[2]
@@ -402,15 +513,22 @@ class PobreFlix : MainAPI() {
                                     if (airDate != null) append("Data: $airDate")
                                 }.trim()
                             })
+                            episodeCount++
                         }
                     }
                     
-                    if (episodes.isNotEmpty()) return episodes
+                    if (episodes.isNotEmpty()) {
+                        println("  Extraídos $episodeCount episódios do JSON")
+                        return episodes
+                    }
                 }
-            } catch (e: Exception) { }
+            } catch (e: Exception) {
+                println("  ERRO ao processar JSON: ${e.message}")
+            }
         }
 
         val episodeElements = document.select("#episodes-list article, .episode-card, .episode-item")
+        println("  Elementos de episódio encontrados: ${episodeElements.size}")
         
         episodeElements.forEachIndexed { index, element ->
             try {
@@ -434,20 +552,27 @@ class PobreFlix : MainAPI() {
                     this.posterUrl = thumb
                     this.description = description
                 })
-            } catch (e: Exception) { }
+            } catch (e: Exception) {
+                println("  ERRO ao processar elemento de episódio: ${e.message}")
+            }
         }
-
+        
+        println("  Total de episódios extraídos: ${episodes.size}")
         return episodes
     }
 
     private fun findPlayerUrl(document: org.jsoup.nodes.Document): String? {
         val iframe = document.selectFirst("iframe[src*='player'], iframe[src*='embed'], iframe[src*='fembed'], iframe[src*='filemoon']")
         if (iframe != null) {
-            return iframe.attr("src")
+            val url = iframe.attr("src")
+            println("Player URL encontrada: $url")
+            return url
         }
 
         val videoLink = document.selectFirst("a[href*='.m3u8'], a[href*='.mp4'], a[href*='watch']")
-        return videoLink?.attr("href")
+        val url = videoLink?.attr("href")
+        println("Video link encontrado: $url")
+        return url
     }
 
     override suspend fun loadLinks(
@@ -456,12 +581,18 @@ class PobreFlix : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
+        println("=== loadLinks INICIADO ===")
+        println("Data: $data")
+        
         return try {
             val document = app.get(data).document
+            println("Documento carregado")
             
             val iframe = document.selectFirst("iframe[src*='player'], iframe[src*='embed'], iframe[src*='fembed'], iframe[src*='filemoon']")
             if (iframe != null) {
                 val playerUrl = iframe.attr("src")
+                println("Iframe encontrado: $playerUrl")
+                
                 val links = M3u8Helper.generateM3u8(
                     source = name,
                     streamUrl = playerUrl,
@@ -469,9 +600,11 @@ class PobreFlix : MainAPI() {
                 )
                 
                 if (links.isNotEmpty()) {
+                    println("Links M3U8 gerados: ${links.size}")
                     links.forEach { callback(it) }
                     true
                 } else {
+                    println("Nenhum link M3U8, usando URL direta")
                     callback.invoke(
                         newExtractorLink(
                             source = name,
@@ -488,6 +621,7 @@ class PobreFlix : MainAPI() {
             } else {
                 val videoUrl = document.selectFirst("video source, source[src]")?.attr("src")
                 if (videoUrl != null) {
+                    println("Video URL encontrada: $videoUrl")
                     callback.invoke(
                         newExtractorLink(
                             source = name,
@@ -500,9 +634,14 @@ class PobreFlix : MainAPI() {
                         }
                     )
                     true
-                } else false
+                } else {
+                    println("Nenhum iframe ou video encontrado")
+                    false
+                }
             }
         } catch (e: Exception) {
+            println("ERRO em loadLinks: ${e.message}")
+            e.printStackTrace()
             false
         }
     }
