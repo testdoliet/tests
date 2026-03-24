@@ -29,7 +29,7 @@ class PobreFlix : MainAPI() {
     companion object {
         private const val SEARCH_PATH = "/pesquisar"
         
-        // Seções principais (sem Novos Episódios)
+        // Seções principais
         private val MAIN_SECTIONS = listOf(
             "" to "Em Alta",
             "/filmes" to "Filmes",
@@ -72,7 +72,7 @@ class PobreFlix : MainAPI() {
             println("Elementos encontrados no Top 10: ${elements.size}")
             
             val items = elements.mapNotNull { element ->
-                element.toSearchResult(isEpisodePage = false)
+                element.toSearchResult()
             }
             
             return newHomePageResponse(request.name, items, hasNext = false)
@@ -88,7 +88,7 @@ class PobreFlix : MainAPI() {
         println("Elementos encontrados: ${elements.size}")
         
         val items = elements.mapNotNull { element ->
-            element.toSearchResult(isEpisodePage = false)
+            element.toSearchResult()
         }
         
         val hasNextPage = document.select("a[href*='?page=']").any { link ->
@@ -101,13 +101,12 @@ class PobreFlix : MainAPI() {
         return newHomePageResponse(request.name, items, hasNext = hasNextPage)
     }
     
-    private fun Element.toSearchResult(isEpisodePage: Boolean = false): SearchResponse? {
-        println("  >>> toSearchResult (isEpisodePage=$isEpisodePage)")
+    private fun Element.toSearchResult(): SearchResponse? {
+        println("  >>> toSearchResult INICIADO")
         
-        // Busca o link dentro do elemento - tenta diferentes formas
+        // Busca o link dentro do elemento
         var linkElement = selectFirst("a")
         if (linkElement == null) {
-            // Tenta encontrar o link dentro do figure
             linkElement = selectFirst("figure a")
         }
         if (linkElement == null) {
@@ -136,7 +135,9 @@ class PobreFlix : MainAPI() {
         
         if (imgElement != null) {
             poster = imgElement.attr("src")
-            if (poster.isNullOrBlank()) poster = imgElement.attr("data-src")
+            if (poster.isNullOrBlank()) {
+                poster = imgElement.attr("data-src")
+            }
             if (!poster.isNullOrBlank()) {
                 // Remove o prefixo do CDN se existir
                 if (poster.contains("d1muf25xaso8hp.cloudfront.net/")) {
@@ -147,7 +148,7 @@ class PobreFlix : MainAPI() {
             println("  poster: $poster")
         }
         
-        // Busca o título - pode estar no h3 ou dentro do link
+        // Busca o título - está no h3
         var title = selectFirst("h3")?.text()
         if (title.isNullOrBlank()) {
             title = selectFirst(".line-clamp-1")?.text()
@@ -162,25 +163,68 @@ class PobreFlix : MainAPI() {
             return null
         }
         
-        // Extrai ano
-        val yearSpan = selectFirst(".flex.justify-between.items-center.text-xs .text-xs span:first-child")
-        val year = yearSpan?.text()?.toIntOrNull()
-        println("  ano: $year")
+        // Extrai ano e tipo dos spans dentro da div de informações
+        // Estrutura: <div class="flex justify-between items-center text-xs ...">
+        //   <span>2020</span>
+        //   <span>Filme</span>
+        // </div>
+        val infoDiv = selectFirst(".flex.justify-between.items-center.text-xs")
+        var year: Int? = null
+        var typeText = ""
         
-        // Extrai tipo (Filme, Série, Anime, Dorama)
-        val typeSpan = selectFirst(".flex.justify-between.items-center.text-xs .text-xs span:last-child")
-        val typeText = typeSpan?.text()?.lowercase() ?: ""
-        println("  tipo texto: $typeText")
+        if (infoDiv != null) {
+            val spans = infoDiv.select("span")
+            if (spans.size >= 2) {
+                // Primeiro span é o ano
+                val yearStr = spans[0].text().trim()
+                year = yearStr.toIntOrNull()
+                println("  ano encontrado: $year")
+                
+                // Segundo span é o tipo
+                typeText = spans[1].text().lowercase().trim()
+                println("  tipo texto: $typeText")
+            } else if (spans.size == 1) {
+                // Se só tem um span, tenta identificar se é ano ou tipo
+                val text = spans[0].text().trim()
+                if (text.matches(Regex("\\d{4}"))) {
+                    year = text.toIntOrNull()
+                } else {
+                    typeText = text.lowercase()
+                }
+            }
+        }
+        
+        // Se não encontrou o ano no infoDiv, tenta extrair do título
+        if (year == null) {
+            val yearMatch = Regex("\\((\\d{4})\\)").find(title)
+            if (yearMatch != null) {
+                year = yearMatch.groupValues[1].toIntOrNull()
+                println("  ano do título: $year")
+                // Remove o ano do título
+                title = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
+            }
+        }
         
         // Limpa o título
-        val finalTitle = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
+        val finalTitle = title!!.trim()
+        println("  título final: '$finalTitle'")
+        
+        // Extrai score do SVG se existir
+        var scoreValue: Float? = null
+        val scoreElement = selectFirst(".absolute.top-2.right-2 svg text")
+        if (scoreElement != null) {
+            val scoreText = scoreElement.text().replace("%", "").trim()
+            scoreValue = scoreText.toFloatOrNull()?.let { it / 10 }
+            println("  score: $scoreValue")
+        }
         
         // Determina o tipo baseado na URL e no texto
         val isAnime = href.contains("/anime/") || typeText.contains("anime")
-        val isSerie = href.contains("/serie/") || href.contains("/dorama/") || typeText.contains("série") || typeText.contains("dorama")
+        val isSerie = href.contains("/serie/") || href.contains("/dorama/") || 
+                      typeText.contains("série") || typeText.contains("serie") || 
+                      typeText.contains("dorama")
         
         println("  Tipo final: isAnime=$isAnime, isSerie=$isSerie")
-        println("  Título final: '$finalTitle'")
         
         // Cria a resposta
         val result = when {
@@ -189,6 +233,7 @@ class PobreFlix : MainAPI() {
                 newAnimeSearchResponse(finalTitle, href, TvType.Anime) {
                     this.posterUrl = poster
                     this.year = year
+                    if (scoreValue != null) this.score = Score.from10(scoreValue)
                 }
             }
             isSerie -> {
@@ -196,6 +241,7 @@ class PobreFlix : MainAPI() {
                 newTvSeriesSearchResponse(finalTitle, href, TvType.TvSeries) {
                     this.posterUrl = poster
                     this.year = year
+                    if (scoreValue != null) this.score = Score.from10(scoreValue)
                 }
             }
             else -> {
@@ -203,6 +249,7 @@ class PobreFlix : MainAPI() {
                 newMovieSearchResponse(finalTitle, href, TvType.Movie) {
                     this.posterUrl = poster
                     this.year = year
+                    if (scoreValue != null) this.score = Score.from10(scoreValue)
                 }
             }
         }
@@ -217,27 +264,46 @@ class PobreFlix : MainAPI() {
         
         if (query.length < 2) return emptyList()
         
-        val searchUrl = "$mainUrl$SEARCH_PATH?s=${URLEncoder.encode(query, "UTF-8")}"
+        return searchPage(query, 1)
+    }
+    
+    private suspend fun searchPage(query: String, page: Int): List<SearchResponse> {
+        val encodedQuery = URLEncoder.encode(query, "UTF-8")
+        val searchUrl = if (page > 1) {
+            "$mainUrl$SEARCH_PATH?s=$encodedQuery&page=$page"
+        } else {
+            "$mainUrl$SEARCH_PATH?s=$encodedQuery"
+        }
         println("URL de busca: $searchUrl")
         
         val document = app.get(searchUrl).document
         println("Título da página: ${document.title()}")
         
-        // Na página de pesquisa, os cards usam a classe .grid .group/item
-        // O seletor correto é: .grid article.relative.group/item
-        val elements = document.select(".grid article.relative.group-item, .grid .group-item, .grid article")
+        // Na página de pesquisa, os cards usam a classe .grid article.relative.group-item
+        val elements = document.select(".grid article.relative.group-item, .grid article")
         println("Elementos encontrados na busca: ${elements.size}")
         
         val results = elements.mapNotNull { element ->
             try {
-                element.toSearchResult(isEpisodePage = false)
+                element.toSearchResult()
             } catch (e: Exception) {
                 println("ERRO ao processar resultado: ${e.message}")
                 null
             }
         }
         
+        // Verifica se há próxima página
+        val hasNextPage = document.select("a[href*='page=${page + 1}']").isNotEmpty() ||
+                          document.select("a:contains(Próxima), .pagination a:contains(Próxima)").isNotEmpty()
+        
         println("Resultados processados: ${results.size}")
+        println("Has next page: $hasNextPage")
+        
+        if (hasNextPage) {
+            val nextPageResults = searchPage(query, page + 1)
+            return results + nextPageResults
+        }
+        
         println("=== search FINALIZADO ===\n")
         return results
     }
