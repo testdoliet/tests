@@ -27,93 +27,6 @@ class PobreFlix : MainAPI() {
             "/animes" to "Animes",
             "/doramas" to "Doramas"
         )
-        
-        /*
-        // ============================================================
-        // GÊNEROS COMPLETOS (COMENTADOS PARA REFERÊNCIA FUTURA)
-        // ============================================================
-        
-        // Gêneros de Filmes (19)
-        private val MOVIE_GENRES = listOf(
-            "acao" to "Ação",
-            "animacao" to "Animação",
-            "aventura" to "Aventura",
-            "cinema-tv" to "Cinema TV",
-            "comedia" to "Comédia",
-            "crime" to "Crime",
-            "documentario" to "Documentário",
-            "drama" to "Drama",
-            "familia" to "Família",
-            "fantasia" to "Fantasia",
-            "faroeste" to "Faroeste",
-            "ficcao-cientifica" to "Ficção Científica",
-            "guerra" to "Guerra",
-            "historia" to "História",
-            "horror" to "Horror",
-            "misterio" to "Mistério",
-            "musica" to "Música",
-            "romance" to "Romance",
-            "terror" to "Terror"
-        )
-        
-        // Gêneros de Séries (12)
-        private val SERIES_GENRES = listOf(
-            "animacao" to "Animação",
-            "comedia" to "Comédia",
-            "crime" to "Crime",
-            "documentario" to "Documentário",
-            "dorama" to "Dorama",
-            "drama" to "Drama",
-            "familia" to "Família",
-            "faroeste" to "Faroeste",
-            "historia" to "História",
-            "misterio" to "Mistério",
-            "reality" to "Reality",
-            "romance" to "Romance"
-        )
-        
-        // Gêneros de Animes (26)
-        private val ANIME_GENRES = listOf(
-            "acao" to "Ação",
-            "artes-marciais" to "Artes Marciais",
-            "animacao" to "Animação",
-            "aventura" to "Aventura",
-            "comedia" to "Comédia",
-            "crime" to "Crime",
-            "detetive" to "Detetive",
-            "drama" to "Drama",
-            "documentario" to "Documentário",
-            "escolar" to "Escolar",
-            "esportes" to "Esportes",
-            "familia" to "Família",
-            "fantasia" to "Fantasia",
-            "faroeste" to "Faroeste",
-            "infantil" to "Infantil",
-            "jogo-de-estrategia" to "Jogos de Estratégia",
-            "mitologia" to "Mitologia",
-            "misterio" to "Mistério",
-            "musica" to "Música",
-            "reencarnacao" to "Reencarnação",
-            "romance" to "Romance",
-            "samurai" to "Samurai",
-            "sobrenatural" to "Sobrenatural",
-            "superpoder" to "Superpoder",
-            "suspense" to "Suspense",
-            "terror" to "Terror"
-        )
-        
-        // Gêneros de Doramas (8)
-        private val DORAMA_GENRES = listOf(
-            "comedia" to "Comédia",
-            "crime" to "Crime",
-            "documentario" to "Documentário",
-            "drama" to "Drama",
-            "misterio" to "Mistério",
-            "familia" to "Família",
-            "reality" to "Reality",
-            "romance" to "Romance"
-        )
-        */
     }
 
     override val mainPage = mainPageOf(
@@ -138,9 +51,9 @@ class PobreFlix : MainAPI() {
             println("URL carregada: $url")
             println("Título da página: ${document.title()}")
             
-            // Na página principal, os cards estão dentro de .swiper-slide article
-            val elements = document.select(".swiper-slide article")
-            println("Elementos encontrados com '.swiper-slide article': ${elements.size}")
+            // Na página principal, o Top 10 está dentro de .swiper_top10_home .swiper-slide
+            val elements = document.select(".swiper_top10_home .swiper-slide")
+            println("Elementos encontrados no Top 10: ${elements.size}")
             
             val items = elements.mapNotNull { element ->
                 println("--- Processando elemento Em Alta ---")
@@ -177,6 +90,7 @@ class PobreFlix : MainAPI() {
             }
             println("Items processados: ${items.size}")
             
+            // Verificar paginação
             val hasNextPage = document.select("a:contains(Próxima), .page-numbers a[href*='page'], .pagination a:contains(Próxima)").isNotEmpty()
             println("Has next page: $hasNextPage")
             println("=== getMainPage FINALIZADO (Novos Episódios) ===\n")
@@ -212,6 +126,7 @@ class PobreFlix : MainAPI() {
         }
         println("Items processados: ${items.size}")
         
+        // Verificar paginação
         val hasNextPage = document.select("a:contains(Próxima), .page-numbers a[href*='page'], .pagination a:contains(Próxima)").isNotEmpty()
         println("Has next page: $hasNextPage")
         println("=== getMainPage FINALIZADO (Genérico) ===\n")
@@ -253,7 +168,7 @@ class PobreFlix : MainAPI() {
         val fixedPoster = if (!poster.isNullOrBlank()) fixUrl(poster) else null
         println("  poster corrigido: $fixedPoster")
         
-        // Busca o título - tenta várias fontes (declarado como nullable)
+        // Busca o título - tenta várias fontes
         var title: String? = imgElement.attr("alt")
         if (title.isNullOrBlank()) {
             title = linkElement.attr("title")
@@ -279,6 +194,7 @@ class PobreFlix : MainAPI() {
         // Determina o tipo baseado na URL
         val isAnime = href.contains("/anime/")
         val isSerie = href.contains("/serie/") || href.contains("/dorama/")
+        
         println("  isAnime: $isAnime, isSerie: $isSerie")
         
         val result = when {
