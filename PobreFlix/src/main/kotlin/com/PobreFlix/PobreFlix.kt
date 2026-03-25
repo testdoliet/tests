@@ -269,16 +269,27 @@ class PobreFlix : MainAPI() {
             synopsis = synopsis?.replace(Regex("\\|.*$"), "")?.trim()
             println("Sinopse: ${synopsis?.take(100)}...")
             
-            // ========== GÊNEROS/TAGS - APENAS OS BOTÕES DE GÊNERO ==========
+            // ========== GÊNEROS/TAGS - APENAS GÊNEROS, NADA MAIS ==========
             val tags = document.select(".flex.flex-wrap.gap-2 a, .flex.flex-wrap.gap-2 .px-3")
                 .filter { element ->
                     // Excluir elementos que são do bloco de títulos alternativos
                     val parent = element.parent()
-                    parent?.attr("class")?.contains("details") != true &&
-                    parent?.parent()?.attr("class")?.contains("details") != true
+                    val isInDetails = parent?.attr("class")?.contains("details") == true ||
+                                     parent?.parent()?.attr("class")?.contains("details") == true
+                    
+                    // Excluir elementos que não são gêneros (HD, ano, temporada, etc)
+                    val text = element.text().trim()
+                    val isGenre = text !in listOf("HD", "4K", "Full HD") &&
+                                  !text.matches(Regex("\\d{4}")) &&
+                                  !text.contains("Temporada", ignoreCase = true) &&
+                                  !text.contains("Season", ignoreCase = true) &&
+                                  !text.contains("Episódio", ignoreCase = true) &&
+                                  !text.contains("Episode", ignoreCase = true)
+                    
+                    !isInDetails && isGenre
                 }
                 .map { it.text().trim() }
-                .filter { it.isNotBlank() && !it.contains("CN") && !it.contains("US") && !it.contains("FR") }
+                .filter { it.isNotBlank() }
                 .takeIf { it.isNotEmpty() }
             println("Tags: $tags")
             
@@ -287,10 +298,8 @@ class PobreFlix : MainAPI() {
                 .mapNotNull { element ->
                     try {
                         val name = element.selectFirst(".text-sm.font-bold")?.text()?.trim() ?: return@mapNotNull null
-                        val character = element.selectFirst(".text-xs.text-slate-600, .text-xs.text-slate-400")?.text()?.trim()
                         val imageUrl = element.selectFirst("img")?.attr("src")?.let { fixImageUrl(it) }
                         
-                        // Actor não tem parâmetro 'role', usar o construtor padrão
                         Actor(
                             name = name,
                             image = imageUrl
@@ -423,7 +432,20 @@ class PobreFlix : MainAPI() {
                             val epTitle = epMatch.groupValues[2].ifEmpty { "Episódio $epNum" }
                             val sinopse = epMatch.groupValues[3].ifEmpty { null }
                             var thumbUrl = epMatch.groupValues[4].takeIf { it.isNotEmpty() }
-                            thumbUrl = thumbUrl?.let { fixImageUrl(it) }
+                            
+                            // CORREÇÃO: Construir URL correta da thumbnail
+                            thumbUrl = thumbUrl?.let { 
+                                if (it.startsWith("//")) {
+                                    "https:$it"
+                                } else if (it.startsWith("/")) {
+                                    "$mainUrl$it"
+                                } else if (!it.startsWith("http")) {
+                                    "https://image.tmdb.org/t/p/w500$it"
+                                } else {
+                                    it
+                                }
+                            }
+                            
                             val durationMin = epMatch.groupValues[5].toIntOrNull()
                             val airDate = epMatch.groupValues[6].takeIf { it.isNotEmpty() }
                             
@@ -478,13 +500,24 @@ class PobreFlix : MainAPI() {
                 // Extrair sinopse
                 val sinopse = element.selectFirst(".line-clamp-2.text-xs")?.text()?.trim()
                 
-                // Extrair thumbnail
+                // CORREÇÃO: Extrair thumbnail com URL correta
                 var thumb: String? = null
                 val imgElement = element.selectFirst("img")
                 if (imgElement != null) {
                     thumb = imgElement.attr("data-src")
                     if (thumb.isNullOrBlank()) thumb = imgElement.attr("src")
-                    if (!thumb.isNullOrBlank()) thumb = fixImageUrl(thumb)
+                    
+                    thumb = thumb?.let {
+                        if (it.startsWith("//")) {
+                            "https:$it"
+                        } else if (it.startsWith("/")) {
+                            "$mainUrl$it"
+                        } else if (!it.startsWith("http")) {
+                            "https://image.tmdb.org/t/p/w500$it"
+                        } else {
+                            it
+                        }
+                    }
                 }
                 
                 // Extrair duração
@@ -611,7 +644,7 @@ class PobreFlix : MainAPI() {
             fixedUrl = "$mainUrl$fixedUrl"
         }
         
-        // Remover wrapper do CDN
+        // Remover wrapper do CDN e construir URL correta
         if (fixedUrl.contains("d1muf25xaso8hp.cloudfront.net/")) {
             val afterCdn = fixedUrl.substringAfter("d1muf25xaso8hp.cloudfront.net/")
             if (afterCdn.startsWith("https://")) {
