@@ -588,75 +588,92 @@ class PobreFlix : MainAPI() {
     }
 
     override suspend fun loadLinks(
-        data: String,
-        isCasting: Boolean,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        println("=== loadLinks INICIADO ===")
-        println("Data: $data")
+    data: String,
+    isCasting: Boolean,
+    subtitleCallback: (SubtitleFile) -> Unit,
+    callback: (ExtractorLink) -> Unit
+): Boolean {
+    println("=== loadLinks INICIADO ===")
+    println("Data: $data")
+    
+    return try {
+        val document = app.get(data).document
+        println("Documento carregado")
         
-        return try {
-            val document = app.get(data).document
-            println("Documento carregado")
-            
-            val iframe = document.selectFirst("iframe[src*='player'], iframe[src*='embed'], iframe[src*='fembed'], iframe[src*='filemoon']")
-            if (iframe != null) {
-                val playerUrl = iframe.attr("src")
-                println("Iframe encontrado: $playerUrl")
-                
-                val links = M3u8Helper.generateM3u8(
-                    source = name,
-                    streamUrl = playerUrl,
-                    referer = playerUrl
-                )
-                
-                if (links.isNotEmpty()) {
-                    println("Links M3U8 gerados: ${links.size}")
-                    links.forEach { callback(it) }
-                    true
-                } else {
-                    println("Nenhum link M3U8, usando URL direta")
-                    callback.invoke(
-                        newExtractorLink(
-                            source = name,
-                            name = name,
-                            url = playerUrl,
-                            type = ExtractorLinkType.M3U8
-                        ) {
-                            this.referer = playerUrl
-                            this.quality = Qualities.Unknown.value
-                        }
-                    )
-                    true
-                }
-            } else {
-                val videoUrl = document.selectFirst("video source, source[src]")?.attr("src")
-                if (videoUrl != null) {
-                    println("Video URL encontrada: $videoUrl")
-                    callback.invoke(
-                        newExtractorLink(
-                            source = name,
-                            name = name,
-                            url = videoUrl,
-                            type = if (videoUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else null
-                        ) {
-                            this.referer = data
-                            this.quality = Qualities.Unknown.value
-                        }
-                    )
-                    true
-                } else {
-                    println("Nenhum iframe ou video encontrado")
-                    false
-                }
-            }
-        } catch (e: Exception) {
-            println("ERRO em loadLinks: ${e.message}")
-            e.printStackTrace()
-            false
+        // ========== EXTRAIR TMDB ID ==========
+        var tmdbId: Int? = null
+        var mediaType = "serie"
+        var season = 1
+        var episode = 1
+        
+        // Tentar extrair TMDB ID do atributo data-contentid
+        val contentIdElement = document.selectFirst("section[data-contentid]")
+        if (contentIdElement != null) {
+            tmdbId = contentIdElement.attr("data-contentid").toIntOrNull()
+            println("TMDB ID encontrado: $tmdbId")
         }
+        
+        // Se não encontrou, tentar do container do player
+        if (tmdbId == null) {
+            val playerContainer = document.selectFirst("#movie-player-container")
+            if (playerContainer != null) {
+                tmdbId = playerContainer.attr("data-apicontentid").toIntOrNull()
+                println("TMDB ID do player: $tmdbId")
+            }
+        }
+        
+        // Extrair informações de temporada e episódio da URL
+        val urlPath = data.substringAfter(mainUrl).substringBefore("?")
+        println("URL Path: $urlPath")
+        
+        // Verificar se é episódio (formato: /episodio/nome-1x1)
+        val episodeMatch = Regex("/episodio/.+-(\\d+)x(\\d+)").find(urlPath)
+        if (episodeMatch != null) {
+            season = episodeMatch.groupValues[1].toIntOrNull() ?: 1
+            episode = episodeMatch.groupValues[2].toIntOrNull() ?: 1
+            mediaType = "serie"
+            println("É episódio: S${season}E${episode}")
+        } 
+        // Verificar se é filme (formato: /filme/nome)
+        else if (urlPath.contains("/filme/") || urlPath.contains("/movie/")) {
+            mediaType = "movie"
+            season = 1
+            episode = 1
+            println("É filme")
+        }
+        // Verificar se é série (formato: /serie/nome)
+        else if (urlPath.contains("/serie/") || urlPath.contains("/anime/") || urlPath.contains("/dorama/")) {
+            mediaType = "serie"
+            season = 1
+            episode = 1
+            println("É série (página principal)")
+        }
+        
+        // ========== USAR EXTRACTOR ==========
+        if (tmdbId == null) {
+            println("TMDB ID não encontrado")
+            return false
+        }
+        
+        println("Usando extractor SuperFlix para: $mediaType $tmdbId S${season}E${episode}")
+        
+        val streams = PobreFlixExtractor.getStreams(tmdbId, mediaType, season, episode)
+        
+        if (streams.isEmpty()) {
+            println("Nenhum stream encontrado")
+            return false
+        }
+        
+        println("Extractor encontrou ${streams.size} streams")
+        streams.forEach { callback(it) }
+        true
+        
+    } catch (e: Exception) {
+        println("ERRO em loadLinks: ${e.message}")
+        e.printStackTrace()
+        false
     }
+}
     
     // ========== FUNÇÕES AUXILIARES ==========
     
