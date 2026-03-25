@@ -29,7 +29,6 @@ class PobreFlix : MainAPI() {
     companion object {
         private const val SEARCH_PATH = "/pesquisar"
         
-        // Seções principais
         private val MAIN_SECTIONS = listOf(
             "" to "Em Alta",
             "/filmes" to "Filmes",
@@ -48,390 +47,331 @@ class PobreFlix : MainAPI() {
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         println("=== getMainPage INICIADO ===")
-        println("Page: $page")
-        println("Request name: ${request.name}")
-        println("Request data: ${request.data}")
+        println("Page: $page, Request: ${request.name}")
         
         var url = request.data
         
-        // Construção da URL com paginação
         if (request.name != "Em Alta" && page > 1) {
-            url = if (url.contains("?")) {
-                "$url&page=$page"
-            } else {
-                "$url?page=$page"
-            }
-            println("URL com paginação: $url")
+            url = if (url.contains("?")) "$url&page=$page" else "$url?page=$page"
         }
         
-        // Seção "Em Alta" (Top 10)
         if (request.name == "Em Alta") {
-            println(">>> Processando seção: Em Alta")
             val document = app.get(url).document
-            val elements = document.select(".swiper_top10_home .swiper-slide")
-            println("Elementos encontrados no Top 10: ${elements.size}")
-            
-            val items = elements.mapNotNull { element ->
-                element.toSearchResult()
-            }
-            
+            val elements = document.select(".swiper_top10_home .swiper-slide, .top-10-items .item")
+            println("Elementos Top 10: ${elements.size}")
+            val items = elements.mapNotNull { it.toSearchResult() }
             return newHomePageResponse(request.name, items, hasNext = false)
         }
         
-        // Seções genéricas (Filmes, Séries, Animes, Doramas)
-        println(">>> Processando seção genérica: ${request.name}")
         val document = app.get(url).document
-        println("URL carregada: $url")
-        
-        // Seletor correto para os cards das seções principais
-        val elements = document.select(".grid .group\\/card")
+        val elements = document.select("article.group, .group\\/card, .grid article")
         println("Elementos encontrados: ${elements.size}")
         
         val items = elements.mapNotNull { element ->
-            element.toSearchResult()
+            try {
+                element.toSearchResult()
+            } catch (e: Exception) {
+                println("ERRO ao processar elemento: ${e.message}")
+                null
+            }
         }
         
-        val hasNextPage = document.select("a[href*='?page=']").any { link ->
-            val href = link.attr("href")
-            href.contains("?page=${page + 1}") || href.contains("&page=${page + 1}")
-        } || document.select("a:contains(Próxima), .pagination a:contains(Próxima)").isNotEmpty()
+        val hasNextPage = document.select("a[href*='?page=${page + 1}'], a[href*='&page=${page + 1}'], a:contains(Próxima)").isNotEmpty()
         
-        println("Has next page: $hasNextPage")
+        println("Items: ${items.size}, HasNext: $hasNextPage")
         
         return newHomePageResponse(request.name, items, hasNext = hasNextPage)
     }
     
     private fun Element.toSearchResult(): SearchResponse? {
-        println("  >>> toSearchResult INICIADO")
-        
-        // Busca o link dentro do elemento
-        var linkElement = selectFirst("a")
-        if (linkElement == null) {
-            linkElement = selectFirst("figure a")
-        }
-        if (linkElement == null) {
-            println("  ERRO: linkElement é null")
-            return null
-        }
+        val linkElement = selectFirst("a[href*='/filme/'], a[href*='/serie/'], a[href*='/anime/'], a[href*='/dorama/']") 
+            ?: selectFirst("a") ?: return null
         
         var href = linkElement.attr("href")
-        if (href.isBlank()) {
-            println("  ERRO: href está em branco")
-            return null
-        }
-        
+        if (href.isBlank()) return null
         if (!href.startsWith("http")) {
             href = if (href.startsWith("/")) "$mainUrl$href" else "$mainUrl/$href"
         }
-        println("  href: $href")
         
-        // Busca a imagem
-        var imgElement = selectFirst("img")
-        if (imgElement == null) {
-            imgElement = selectFirst("figure img")
-        }
-        
+        val imgElement = selectFirst("img")
         var poster: String? = null
         
         if (imgElement != null) {
             poster = imgElement.attr("src")
-            if (poster.isNullOrBlank()) {
-                poster = imgElement.attr("data-src")
-            }
+            if (poster.isNullOrBlank()) poster = imgElement.attr("data-src")
             if (!poster.isNullOrBlank()) {
-                // Remove o prefixo do CDN se existir
-                if (poster.contains("d1muf25xaso8hp.cloudfront.net/")) {
-                    poster = poster.substringAfter("d1muf25xaso8hp.cloudfront.net/")
-                }
-                poster = fixUrl(poster)
+                poster = fixImageUrl(poster)
             }
-            println("  poster: $poster")
         }
         
-        // Busca o título - está no h3
         var title = selectFirst("h3")?.text()
-        if (title.isNullOrBlank()) {
-            title = selectFirst(".line-clamp-1")?.text()
-        }
-        if (title.isNullOrBlank()) {
-            title = imgElement?.attr("alt")
-        }
-        println("  título original: $title")
+        if (title.isNullOrBlank()) title = selectFirst(".line-clamp-1")?.text()
+        if (title.isNullOrBlank()) title = imgElement?.attr("alt")
+        if (title.isNullOrBlank()) return null
         
-        if (title.isNullOrBlank()) {
-            println("  ERRO: título em branco")
-            return null
-        }
-        
-        // Extrai ano e tipo dos spans dentro da div de informações
-        // Estrutura correta: <div class="flex justify-between items-center text-xs ...">
-        //   <span>2024</span>
-        //   <span>Filme</span>
-        // </div>
-        val infoDiv = selectFirst(".flex.justify-between.items-center.text-xs")
         var year: Int? = null
-        var typeText = ""
-        
-        if (infoDiv != null) {
-            val spans = infoDiv.select("span")
-            if (spans.size >= 2) {
-                // Primeiro span é o ano
-                val yearStr = spans[0].text().trim()
-                year = yearStr.toIntOrNull()
-                println("  ano encontrado: $year")
-                
-                // Segundo span é o tipo
-                typeText = spans[1].text().lowercase().trim()
-                println("  tipo texto: $typeText")
-            } else if (spans.size == 1) {
-                // Se só tem um span, tenta identificar se é ano ou tipo
-                val text = spans[0].text().trim()
-                if (text.matches(Regex("\\d{4}"))) {
-                    year = text.toIntOrNull()
-                    println("  ano encontrado (único span): $year")
-                } else {
-                    typeText = text.lowercase()
-                    println("  tipo texto (único span): $typeText")
-                }
+        val yearSpan = selectFirst(".text-white\\/70.text-xs, .text-xs")
+        yearSpan?.text()?.let { 
+            if (it.matches(Regex("\\d{4}"))) {
+                year = it.toIntOrNull()
             }
         }
         
-        // Se não encontrou o ano no infoDiv, tenta extrair do título
         if (year == null) {
             val yearMatch = Regex("\\((\\d{4})\\)").find(title)
             if (yearMatch != null) {
                 year = yearMatch.groupValues[1].toIntOrNull()
-                println("  ano do título: $year")
-                // Remove o ano do título
                 title = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
             }
         }
         
-        // Limpa o título
-        val finalTitle = title!!.trim()
-        println("  título final: '$finalTitle'")
+        val finalTitle = title.trim()
         
-        // Extrai score do SVG se existir
         var scoreValue: Float? = null
-        val scoreElement = selectFirst(".absolute.top-2.right-2 svg text")
-        if (scoreElement != null) {
-            val scoreText = scoreElement.text().replace("%", "").trim()
-            scoreValue = scoreText.toFloatOrNull()?.let { it / 10 }
-            println("  score: $scoreValue")
+        val scoreText = selectFirst("text[x='18'][y='21']")?.text()
+        if (!scoreText.isNullOrBlank()) {
+            val percent = scoreText.replace("%", "").trim().toFloatOrNull()
+            scoreValue = percent?.let { it / 10 }
         }
         
-        // Determina o tipo baseado na URL e no texto
-        val isAnime = href.contains("/anime/") || typeText.contains("anime")
-        val isSerie = href.contains("/serie/") || href.contains("/dorama/") || 
-                      typeText.contains("série") || typeText.contains("serie") || 
-                      typeText.contains("dorama")
+        val isAnime = href.contains("/anime/")
+        val isSerie = href.contains("/serie/") || href.contains("/dorama/")
         
-        println("  Tipo final: isAnime=$isAnime, isSerie=$isSerie")
-        
-        // Cria a resposta
-        val result = when {
-            isAnime -> {
-                println("  >>> Criando ANIME")
-                newAnimeSearchResponse(finalTitle, href, TvType.Anime) {
-                    this.posterUrl = poster
-                    this.year = year
-                    if (scoreValue != null) this.score = Score.from10(scoreValue)
-                }
+        return when {
+            isAnime -> newAnimeSearchResponse(finalTitle, href, TvType.Anime) {
+                this.posterUrl = poster
+                this.year = year
+                if (scoreValue != null) this.score = Score.from10(scoreValue)
             }
-            isSerie -> {
-                println("  >>> Criando SÉRIE")
-                newTvSeriesSearchResponse(finalTitle, href, TvType.TvSeries) {
-                    this.posterUrl = poster
-                    this.year = year
-                    if (scoreValue != null) this.score = Score.from10(scoreValue)
-                }
+            isSerie -> newTvSeriesSearchResponse(finalTitle, href, TvType.TvSeries) {
+                this.posterUrl = poster
+                this.year = year
+                if (scoreValue != null) this.score = Score.from10(scoreValue)
             }
-            else -> {
-                println("  >>> Criando FILME")
-                newMovieSearchResponse(finalTitle, href, TvType.Movie) {
-                    this.posterUrl = poster
-                    this.year = year
-                    if (scoreValue != null) this.score = Score.from10(scoreValue)
-                }
+            else -> newMovieSearchResponse(finalTitle, href, TvType.Movie) {
+                this.posterUrl = poster
+                this.year = year
+                if (scoreValue != null) this.score = Score.from10(scoreValue)
             }
         }
-        
-        println("  <<< toSearchResult FINALIZADO")
-        return result
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        println("=== search INICIADO ===")
-        println("Query: $query")
+        println("=== search INICIADO: $query")
         
         if (query.length < 2) return emptyList()
         
-        return searchPage(query, 1)
-    }
-    
-    private suspend fun searchPage(query: String, page: Int): List<SearchResponse> {
         val encodedQuery = URLEncoder.encode(query, "UTF-8")
-        val searchUrl = if (page > 1) {
-            "$mainUrl$SEARCH_PATH?s=$encodedQuery&page=$page"
-        } else {
-            "$mainUrl$SEARCH_PATH?s=$encodedQuery"
+        val searchUrl = "$mainUrl$SEARCH_PATH?s=$encodedQuery"
+        
+        try {
+            val document = app.get(searchUrl).document
+            println("Título da página: ${document.title()}")
+            
+            val results = document.select("article.group, .grid article, .group\\/card")
+                .mapNotNull { element ->
+                    try {
+                        element.toSearchResult()
+                    } catch (e: Exception) {
+                        println("ERRO no resultado: ${e.message}")
+                        null
+                    }
+                }
+            
+            println("Resultados encontrados: ${results.size}")
+            return results
+            
+        } catch (e: Exception) {
+            println("ERRO na busca: ${e.message}")
+            return emptyList()
         }
-        println("URL de busca (página $page): $searchUrl")
-        
-        val document = app.get(searchUrl).document
-        println("Título da página: ${document.title()}")
-        
-        // Na página de pesquisa, os cards usam a classe .grid article.relative.group-item
-        val elements = document.select(".grid article.relative.group-item, .grid article")
-        println("Elementos encontrados na busca (página $page): ${elements.size}")
-        
-        val results = elements.mapNotNull { element ->
-            try {
-                element.toSearchResult()
-            } catch (e: Exception) {
-                println("ERRO ao processar resultado: ${e.message}")
-                null
-            }
-        }
-        
-        // Verifica se há próxima página
-        val hasNextPage = document.select("a[href*='page=${page + 1}']").isNotEmpty() ||
-                          document.select("a:contains(Próxima), .pagination a:contains(Próxima)").isNotEmpty()
-        
-        println("Resultados processados (página $page): ${results.size}")
-        println("Has next page (página $page): $hasNextPage")
-        
-        if (hasNextPage) {
-            println("Carregando página ${page + 1}...")
-            val nextPageResults = searchPage(query, page + 1)
-            return results + nextPageResults
-        }
-        
-        println("=== search FINALIZADO - Total: ${results.size} resultados ===\n")
-        return results
     }
 
     override suspend fun load(url: String): LoadResponse? {
         println("=== load INICIADO ===")
         println("URL: $url")
         
-        val document = app.get(url).document
-        println("Título da página: ${document.title()}")
+        try {
+            val document = app.get(url).document
+            println("Título da página: ${document.title()}")
 
-        val titleElement = document.selectFirst("h1, .text-3xl.text-lead.font-bold")
-        val title = titleElement?.text() ?: return null
-        println("Título encontrado: $title")
+            // ========== TÍTULO ==========
+            val titleElement = document.selectFirst("h1.text-3xl.text-lead.font-bold")
+            val title = titleElement?.text()?.trim() ?: return null
+            println("Título: $title")
 
-        val year = Regex("\\((\\d{4})\\)").find(title)?.groupValues?.get(1)?.toIntOrNull()
-        val cleanTitle = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
-        println("Título limpo: $cleanTitle, ano: $year")
+            // ========== ANO ==========
+            var year = Regex("\\((\\d{4})\\)").find(title)?.groupValues?.get(1)?.toIntOrNull()
+            val cleanTitle = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
+            println("Título limpo: $cleanTitle, ano: $year")
 
-        val isAnime = url.contains("/anime/") || title.contains("(Anime)", ignoreCase = true)
-        val isSerie = url.contains("/serie/") || url.contains("/dorama/") || 
-                     (!isAnime && document.selectFirst("#episodes-list, .season-dropdown, .episode-card") != null)
-        println("isAnime: $isAnime, isSerie: $isSerie")
+            // ========== TIPO ==========
+            val isAnime = url.contains("/anime/")
+            val isSerie = url.contains("/serie/") || url.contains("/dorama/")
+            println("isAnime: $isAnime, isSerie: $isSerie")
 
-        val ogImage = document.selectFirst("meta[property='og:image']")?.attr("content")
-        val poster = ogImage?.let { fixUrl(it) }
-        println("Poster: $poster")
-
-        val synopsis = document.selectFirst(".text-slate-700.dark\\:text-slate-200.md\\:text-lg, .text-slate-900\\/90.dark\\:text-slate-100\\/90, meta[name='description']")?.attr("content")?.trim()
-        println("Sinopse encontrada: ${synopsis?.take(100)}...")
-
-        val tags = document.select(".flex.flex-wrap.gap-2 a, .px-3.py-1.rounded-full.text-xs.bg-slate-200")
-            .map { it.text() }
-            .takeIf { it.isNotEmpty() }
-        println("Tags: $tags")
-
-        val ratingPercent = document.selectFirst("text[x='18'][y='21']")?.text()?.replace("%", "")?.toFloatOrNull()
-        val ratingValue = ratingPercent?.let { it / 10 }
-        val score = ratingValue?.let { Score.from10(it) }
-        println("Rating: $ratingPercent%, score: $score")
-
-        val backdrop = document.selectFirst(".absolute.left-1\\/2 img, .blur-\\[4px\\] img")?.attr("src")?.let { fixUrl(it) }
-        println("Backdrop: $backdrop")
-
-        val durationText = document.selectFirst(".bg-slate-200.dark\\:bg-slate-700.rounded-lg.p-3:contains(min) .font-medium, .inline-flex.items-center.rounded-full.px-3.py-1:contains(min)")?.text()
-        val duration = durationText?.let { 
-            Regex("(\\d+)\\s*min").find(it)?.groupValues?.get(1)?.toIntOrNull()
-        }
-        println("Duração: $duration")
-
-        val cast = document.select("#cast-section .swiper-slide .text-sm.font-bold, .swiper-slide .text-sm.font-bold")
-            .map { it.text() }
-            .takeIf { it.isNotEmpty() }
-            ?.map { Actor(name = it) }
-        println("Elenco: ${cast?.size} atores")
-
-        val trailerKey = document.selectFirst("script:containsData(window.__trailerKeys)")?.data()?.let { script ->
-            Regex("window\\.__trailerKeys\\s*=\\s*\\[\"([^\"]+)\"\\]").find(script)?.groupValues?.get(1)
-        }
-        println("Trailer key: $trailerKey")
-
-        val siteRecommendations = document.select("#relatedSection .swiper-slide a, .related-swiper .swiper-slide a")
-            .mapNotNull { element ->
-                try {
-                    val href = element.attr("href") ?: return@mapNotNull null
-                    val imgElement = element.selectFirst("img")
-                    val titleRec = imgElement?.attr("alt") ?: element.selectFirst("h3, .text-white.font-bold")?.text() ?: return@mapNotNull null
-                    val posterRec = imgElement?.attr("src")?.let { fixUrl(it) }
-                    val yearRec = element.selectFirst(".text-white\\/70.text-xs")?.text()?.toIntOrNull()
-                    val cleanTitleRec = titleRec.replace(Regex("\\(\\d{4}\\)"), "").trim()
-
-                    val isAnimeRec = href.contains("/anime/")
-                    val isSerieRec = href.contains("/serie/") || href.contains("/dorama/")
-
-                    when {
-                        isAnimeRec -> newAnimeSearchResponse(cleanTitleRec, fixUrl(href), TvType.Anime) {
-                            this.posterUrl = posterRec
-                            this.year = yearRec
-                        }
-                        isSerieRec -> newTvSeriesSearchResponse(cleanTitleRec, fixUrl(href), TvType.TvSeries) {
-                            this.posterUrl = posterRec
-                            this.year = yearRec
-                        }
-                        else -> newMovieSearchResponse(cleanTitleRec, fixUrl(href), TvType.Movie) {
-                            this.posterUrl = posterRec
-                            this.year = yearRec
-                        }
-                    }
-                } catch (e: Exception) { null }
+            // ========== POSTER ==========
+            var poster = document.selectFirst("meta[property='og:image']")?.attr("content")
+            if (poster.isNullOrBlank()) {
+                poster = document.selectFirst("img.w-full.aspect-\\[2\\/3\\]")?.attr("src")
             }
-        println("Recomendações: ${siteRecommendations.size}")
-
-        return if (isAnime || isSerie) {
-            val type = if (isAnime) TvType.Anime else TvType.TvSeries
-            println("Carregando como Série/Anime, tipo: $type")
-            val episodes = extractEpisodesFromSite(document, url)
-
-            newTvSeriesLoadResponse(cleanTitle, url, type, episodes) {
-                this.posterUrl = poster
-                this.backgroundPosterUrl = backdrop
-                this.year = year
-                this.plot = synopsis
-                this.tags = tags
-                this.recommendations = siteRecommendations.takeIf { it.isNotEmpty() }
-                this.score = score
-
-                if (cast != null && cast.isNotEmpty()) addActors(cast)
-                if (trailerKey != null) addTrailer("https://www.youtube.com/watch?v=$trailerKey")
+            poster = fixImageUrl(poster)
+            println("Poster: $poster")
+            
+            // ========== BACKDROP/BANNER ==========
+            var backdrop: String? = null
+            
+            // Tentativa 1: Do data-backdrop do container
+            backdrop = document.selectFirst("#movie-player-container")?.attr("data-backdrop")
+            
+            // Tentativa 2: Da imagem dentro do container
+            if (backdrop.isNullOrBlank()) {
+                backdrop = document.selectFirst("#movie-player-container img")?.attr("src")
             }
-        } else {
+            
+            // Tentativa 3: Do elemento com alt backdrop
+            if (backdrop.isNullOrBlank()) {
+                backdrop = document.selectFirst("img[alt*='backdrop']")?.attr("src")
+            }
+            
+            backdrop = fixImageUrl(backdrop)
+            println("Backdrop: $backdrop")
+            
+            // ========== METADADOS DA BARRA SUPERIOR ==========
+            var rating: Float? = null
+            var duration: Int? = null
+            
+            val infoBar = document.selectFirst(".flex.gap-2.text-sm.flex-wrap.items-center")
+            if (infoBar != null) {
+                // Nota
+                val ratingSpan = infoBar.selectFirst(".text-lead")
+                if (ratingSpan != null) {
+                    rating = ratingSpan.text().trim().toFloatOrNull()
+                    println("Rating: $rating")
+                }
+                
+                // Ano
+                val yearSpan = infoBar.select("span").firstOrNull { it.text().matches(Regex("\\d{4}")) }
+                if (yearSpan != null && year == null) {
+                    year = yearSpan.text().toIntOrNull()
+                    println("Ano da barra: $year")
+                }
+                
+                // Duração
+                val durationSpan = infoBar.select("span").lastOrNull()
+                if (durationSpan != null) {
+                    val durationText = durationSpan.text()
+                    duration = parseDuration(durationText)
+                    println("Duração: $duration minutos")
+                }
+            }
+            
+            // ========== SINOPSE ==========
+            var synopsis = document.selectFirst(".text-slate-700.dark\\:text-slate-200.md\\:text-lg")?.text()?.trim()
+            if (synopsis.isNullOrBlank()) {
+                synopsis = document.selectFirst("meta[name='description']")?.attr("content")?.trim()
+            }
+            // Limpar metadados da sinopse se existirem
+            synopsis = synopsis?.replace(Regex("\\|.*$"), "")?.trim()
+            println("Sinopse: ${synopsis?.take(100)}...")
+            
+            // ========== GÊNEROS/TAGS ==========
+            val tags = document.select(".flex.flex-wrap.gap-2 a, .flex.flex-wrap.gap-2 .px-3")
+                .map { it.text().trim() }
+                .filter { it.isNotBlank() }
+                .takeIf { it.isNotEmpty() }
+            println("Tags: $tags")
+            
+            // ========== ELENCO ==========
+            val cast = document.select("#cast-section .swiper-slide .text-sm.font-bold, .cast-swiper .text-sm.font-bold")
+                .map { Actor(name = it.text()) }
+                .takeIf { it.isNotEmpty() }
+            println("Elenco: ${cast?.size} atores")
+            
+            // ========== TRAILER ==========
+            val trailerKey = document.selectFirst("script:containsData(window.__trailerKeys)")?.data()
+                ?.let { Regex("window\\.__trailerKeys\\s*=\\s*\\[\"([^\"]+)\"\\]").find(it)?.groupValues?.get(1) }
+            println("Trailer key: $trailerKey")
+            
+            // ========== RECOMENDAÇÕES ==========
+            val recommendations = document.select("#relatedSection .swiper-slide a, .related-swiper .swiper-slide a")
+                .mapNotNull { element ->
+                    try {
+                        val recUrl = element.attr("href")
+                        if (recUrl.isBlank()) return@mapNotNull null
+                        
+                        val recImg = element.selectFirst("img")?.attr("src")?.let { fixImageUrl(it) }
+                        val recTitle = element.selectFirst("h3, .text-white.font-bold")?.text()?.trim()
+                            ?: return@mapNotNull null
+                        
+                        val recIsAnime = recUrl.contains("/anime/")
+                        val recIsSerie = recUrl.contains("/serie/") || recUrl.contains("/dorama/")
+                        val recYear = element.selectFirst(".text-white\\/70.text-xs")?.text()?.toIntOrNull()
+                        
+                        when {
+                            recIsAnime -> newAnimeSearchResponse(recTitle, fixUrl(recUrl), TvType.Anime) {
+                                this.posterUrl = recImg
+                                this.year = recYear
+                            }
+                            recIsSerie -> newTvSeriesSearchResponse(recTitle, fixUrl(recUrl), TvType.TvSeries) {
+                                this.posterUrl = recImg
+                                this.year = recYear
+                            }
+                            else -> newMovieSearchResponse(recTitle, fixUrl(recUrl), TvType.Movie) {
+                                this.posterUrl = recImg
+                                this.year = recYear
+                            }
+                        }
+                    } catch (e: Exception) { null }
+                }
+            println("Recomendações: ${recommendations.size}")
+            
+            // ========== PLAYER URL ==========
             val playerUrl = findPlayerUrl(document)
-
-            newMovieLoadResponse(cleanTitle, url, TvType.Movie, playerUrl ?: url) {
+            println("Player URL: $playerUrl")
+            
+            // ========== RETORNAR RESPOSTA ==========
+            if (!isAnime && !isSerie) {
+                return newMovieLoadResponse(cleanTitle, url, TvType.Movie, playerUrl ?: url) {
+                    this.posterUrl = poster
+                    this.backgroundPosterUrl = backdrop
+                    this.year = year
+                    this.plot = synopsis
+                    this.tags = tags
+                    this.duration = duration
+                    this.recommendations = recommendations.takeIf { it.isNotEmpty() }
+                    
+                    if (rating != null) {
+                        this.score = Score.from10(rating)
+                        println("Score definido: $rating")
+                    }
+                    
+                    if (cast != null && cast.isNotEmpty()) addActors(cast)
+                    if (trailerKey != null) addTrailer("https://www.youtube.com/watch?v=$trailerKey")
+                }
+            }
+            
+            // Para séries/animes
+            val episodes = extractEpisodesFromSite(document, url)
+            val type = if (isAnime) TvType.Anime else TvType.TvSeries
+            
+            return newTvSeriesLoadResponse(cleanTitle, url, type, episodes) {
                 this.posterUrl = poster
                 this.backgroundPosterUrl = backdrop
                 this.year = year
                 this.plot = synopsis
                 this.tags = tags
-                this.duration = duration
-                this.recommendations = siteRecommendations.takeIf { it.isNotEmpty() }
-                this.score = score
-
+                this.recommendations = recommendations.takeIf { it.isNotEmpty() }
+                
+                if (rating != null) this.score = Score.from10(rating)
                 if (cast != null && cast.isNotEmpty()) addActors(cast)
                 if (trailerKey != null) addTrailer("https://www.youtube.com/watch?v=$trailerKey")
             }
+            
+        } catch (e: Exception) {
+            println("ERRO em load: ${e.message}")
+            e.printStackTrace()
+            return null
         }
     }
 
@@ -444,7 +384,7 @@ class PobreFlix : MainAPI() {
         
         val episodes = mutableListOf<Episode>()
 
-        // Tenta extrair do JSON primeiro
+        // Tentar extrair do JSON
         val scriptData = document.selectFirst("script:containsData(window.allEpisodes)")?.data()
         if (scriptData != null) {
             println("  Script com allEpisodes encontrado")
@@ -462,16 +402,14 @@ class PobreFlix : MainAPI() {
                         val seasonNum = seasonMatch.groupValues[1].toIntOrNull() ?: 1
                         val episodesJson = seasonMatch.groupValues[2]
                         
-                        val episodePattern = Regex("\\{[^}]*\"epi_num\"\\s*:\\s*(\\d+)[^}]*\"title\"\\s*:\\s*\"([^\"]*)\"[^}]*\"thumb_url\"\\s*:\\s*\"([^\"]*)\"[^}]*\"duration\"\\s*:\\s*(\\d+)[^}]*\"air_date\"\\s*:\\s*\"([^\"]*)\"[^}]*\\}")
+                        val episodePattern = Regex("\\{[^}]*\"epi_num\"\\s*:\\s*(\\d+)[^}]*\"title\"\\s*:\\s*\"([^\"]*)\"[^}]*\"thumb_url\"\\s*:\\s*\"([^\"]*)\"[^}]*\\}")
                         val episodeMatches = episodePattern.findAll(episodesJson)
                         
                         for (epMatch in episodeMatches) {
                             val epNum = epMatch.groupValues[1].toIntOrNull() ?: continue
                             val epTitle = epMatch.groupValues[2].ifEmpty { "Episódio $epNum" }
                             var thumbUrl = epMatch.groupValues[3].takeIf { it.isNotEmpty() }
-                            thumbUrl = thumbUrl?.let { fixUrl(it) }
-                            val durationMin = epMatch.groupValues[4].toIntOrNull()
-                            val airDate = epMatch.groupValues[5].takeIf { it.isNotEmpty() }
+                            thumbUrl = thumbUrl?.let { fixImageUrl(it) }
                             
                             val episodeUrl = "$url/$seasonNum/$epNum"
                             
@@ -480,10 +418,6 @@ class PobreFlix : MainAPI() {
                                 this.season = seasonNum
                                 this.episode = epNum
                                 this.posterUrl = thumbUrl
-                                this.description = buildString {
-                                    if (durationMin != null && durationMin > 0) append("Duração: ${durationMin}min\n")
-                                    if (airDate != null) append("Data: $airDate")
-                                }.trim()
                             })
                             episodeCount++
                         }
@@ -509,27 +443,21 @@ class PobreFlix : MainAPI() {
                 val dataUrl = link.attr("href")
                 if (dataUrl.isBlank()) return@forEachIndexed
 
-                val seasonText = element.selectFirst(".text-lead.shrink-0")?.text() ?: "T1:E${index + 1}"
-                val seasonMatch = Regex("T(\\d+):E(\\d+)").find(seasonText)
-                val seasonNumber = seasonMatch?.groupValues?.get(1)?.toIntOrNull() ?: 1
-                val epNumber = seasonMatch?.groupValues?.get(2)?.toIntOrNull() ?: (index + 1)
-                
+                val epNumber = index + 1
                 val epTitle = element.selectFirst("h2, .truncate")?.text() ?: "Episódio $epNumber"
                 var thumb: String? = null
                 val imgElement = element.selectFirst("img")
                 if (imgElement != null) {
                     thumb = imgElement.attr("data-src")
                     if (thumb.isNullOrBlank()) thumb = imgElement.attr("src")
-                    if (!thumb.isNullOrBlank()) thumb = fixUrl(thumb)
+                    if (!thumb.isNullOrBlank()) thumb = fixImageUrl(thumb)
                 }
-                val description = element.selectFirst(".line-clamp-2.text-xs")?.text()
 
                 episodes.add(newEpisode(fixUrl(dataUrl)) {
                     this.name = epTitle
-                    this.season = seasonNumber
+                    this.season = 1
                     this.episode = epNumber
                     this.posterUrl = thumb
-                    this.description = description
                 })
             } catch (e: Exception) {
                 println("  ERRO ao processar elemento de episódio: ${e.message}")
@@ -563,56 +491,73 @@ class PobreFlix : MainAPI() {
                 val playerUrl = iframe.attr("src")
                 println("Iframe encontrado: $playerUrl")
                 
-                val links = M3u8Helper.generateM3u8(
-                    source = name,
-                    streamUrl = playerUrl,
-                    referer = playerUrl
+                callback.invoke(
+                    newExtractorLink(
+                        source = name,
+                        name = name,
+                        url = playerUrl,
+                        type = ExtractorLinkType.M3U8,
+                        quality = 720
+                    ) {
+                        this.referer = data
+                    }
                 )
-                
-                if (links.isNotEmpty()) {
-                    println("Links M3U8 gerados: ${links.size}")
-                    links.forEach { callback(it) }
-                    true
-                } else {
-                    println("Nenhum link M3U8, usando URL direta")
-                    callback.invoke(
-                        newExtractorLink(
-                            source = name,
-                            name = name,
-                            url = playerUrl,
-                            type = ExtractorLinkType.M3U8
-                        ) {
-                            this.referer = playerUrl
-                            this.quality = 720
-                        }
-                    )
-                    true
-                }
+                true
             } else {
-                val videoUrl = document.selectFirst("video source, source[src]")?.attr("src")
-                if (videoUrl != null) {
-                    println("Video URL encontrada: $videoUrl")
-                    callback.invoke(
-                        newExtractorLink(
-                            source = name,
-                            name = name,
-                            url = videoUrl,
-                            type = if (videoUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else null
-                        ) {
-                            this.referer = data
-                            this.quality = 720
-                        }
-                    )
-                    true
-                } else {
-                    println("Nenhum iframe ou video encontrado")
-                    false
-                }
+                println("Nenhum iframe encontrado")
+                false
             }
         } catch (e: Exception) {
             println("ERRO em loadLinks: ${e.message}")
             e.printStackTrace()
             false
         }
+    }
+    
+    // ========== FUNÇÕES AUXILIARES ==========
+    
+    private fun fixImageUrl(url: String?): String? {
+        if (url.isNullOrBlank()) return null
+        
+        var fixedUrl = url.trim()
+        
+        // URLs relativas
+        if (fixedUrl.startsWith("//")) {
+            fixedUrl = "https:$fixedUrl"
+        } else if (fixedUrl.startsWith("/") && !fixedUrl.startsWith("//")) {
+            fixedUrl = "$mainUrl$fixedUrl"
+        }
+        
+        // Remover wrapper do CDN
+        if (fixedUrl.contains("d1muf25xaso8hp.cloudfront.net/")) {
+            val afterCdn = fixedUrl.substringAfter("d1muf25xaso8hp.cloudfront.net/")
+            if (afterCdn.startsWith("https://")) {
+                fixedUrl = afterCdn
+            } else {
+                // Se for um caminho relativo, construir URL do TMDB
+                fixedUrl = "https://image.tmdb.org/t/p/w500$afterCdn"
+            }
+        }
+        
+        return fixedUrl
+    }
+    
+    private fun parseDuration(durationStr: String): Int? {
+        val str = durationStr.lowercase().trim()
+        
+        // Formato: "1h 36m"
+        val hoursMatch = Regex("(\\d+)\\s*h").find(str)
+        val minutesMatch = Regex("(\\d+)\\s*m(?:in)?").find(str)
+        
+        val hours = hoursMatch?.groupValues?.get(1)?.toIntOrNull() ?: 0
+        val minutes = minutesMatch?.groupValues?.get(1)?.toIntOrNull() ?: 0
+        
+        if (hours > 0 || minutes > 0) {
+            return (hours * 60) + minutes
+        }
+        
+        // Formato: "96 min"
+        val justMinutes = Regex("(\\d+)\\s*m(?:in)?").find(str)
+        return justMinutes?.groupValues?.get(1)?.toIntOrNull()
     }
 }
