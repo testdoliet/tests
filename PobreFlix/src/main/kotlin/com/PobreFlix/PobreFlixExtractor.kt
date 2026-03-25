@@ -5,6 +5,7 @@ import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.M3u8Helper
 import com.lagradost.cloudstream3.utils.newExtractorLink
+import okhttp3.Response
 import org.json.JSONObject
 import java.net.URLEncoder
 
@@ -35,7 +36,7 @@ object PobreFlixExtractor {
         "Connection" to "keep-alive"
     )
     
-    private fun updateCookies(response: okhttp3.Response) {
+    private fun updateCookies(response: Response) {
         val setCookie = response.header("set-cookie")
         if (setCookie != null) {
             sessionCookies = setCookie
@@ -170,7 +171,7 @@ object PobreFlixExtractor {
             if (!pageResponse.isSuccessful) return emptyList()
             updateCookies(pageResponse)
             
-            var html = pageResponse.text
+            val html = pageResponse.text
             
             // 2. Extrair tokens
             val csrfMatch = Regex("var CSRF_TOKEN\\s*=\\s*[\"']([^\"']+)[\"']").find(html)
@@ -218,18 +219,19 @@ object PobreFlixExtractor {
             if (contentId == null) return emptyList()
             
             // 4. Options
-            val optionsParams = mapOf(
-                "contentid" to contentId,
-                "type" to if (mediaType == "movie") "filme" else "serie",
-                "_token" to csrfToken,
-                "page_token" to pageToken,
-                "pageToken" to pageToken
-            )
+            val optionsParams = mutableListOf<String>()
+            optionsParams.add("contentid=${URLEncoder.encode(contentId, "UTF-8")}")
+            optionsParams.add("type=${URLEncoder.encode(if (mediaType == "movie") "filme" else "serie", "UTF-8")}")
+            optionsParams.add("_token=${URLEncoder.encode(csrfToken, "UTF-8")}")
+            optionsParams.add("page_token=${URLEncoder.encode(pageToken, "UTF-8")}")
+            optionsParams.add("pageToken=${URLEncoder.encode(pageToken, "UTF-8")}")
+            
+            val optionsBody = optionsParams.joinToString("&")
             
             val optionsResponse = app.post(
                 "$BASE_URL/player/options",
                 headers = API_HEADERS + getCookieHeader() + mapOf("X-Page-Token" to pageToken, "Referer" to pageUrl),
-                data = optionsParams.toFormData()
+                data = optionsBody
             )
             
             if (!optionsResponse.isSuccessful) return emptyList()
@@ -251,16 +253,17 @@ object PobreFlixExtractor {
                 if (videoId.isEmpty()) continue
                 
                 // Source
-                val sourceParams = mapOf(
-                    "video_id" to videoId,
-                    "page_token" to pageToken,
-                    "_token" to csrfToken
-                )
+                val sourceParams = mutableListOf<String>()
+                sourceParams.add("video_id=${URLEncoder.encode(videoId, "UTF-8")}")
+                sourceParams.add("page_token=${URLEncoder.encode(pageToken, "UTF-8")}")
+                sourceParams.add("_token=${URLEncoder.encode(csrfToken, "UTF-8")}")
+                
+                val sourceBody = sourceParams.joinToString("&")
                 
                 val sourceResponse = app.post(
                     "$BASE_URL/player/source",
                     headers = API_HEADERS + getCookieHeader() + mapOf("Referer" to pageUrl),
-                    data = sourceParams.toFormData()
+                    data = sourceBody
                 )
                 
                 if (!sourceResponse.isSuccessful) continue
@@ -271,9 +274,9 @@ object PobreFlixExtractor {
                 
                 // Seguir redirect
                 val redirectResponse = app.get(redirectUrl, headers = HEADERS + getCookieHeader())
-                val finalUrl = redirectResponse.headers["location"] ?: redirectResponse.request.url.toString()
+                val finalUrl = redirectResponse.header("location") ?: redirectUrl
                 
-                if (!redirectResponse.isSuccessful && redirectResponse.headers["location"] == null) continue
+                if (!redirectResponse.isSuccessful && redirectResponse.header("location") == null) continue
                 
                 // Verificar se é URL do Blogger
                 if (finalUrl.contains("blogger.com/video.g") || finalUrl.contains("blogger.com")) {
@@ -286,10 +289,11 @@ object PobreFlixExtractor {
                 // Processamento normal (HLS)
                 val playerHash = finalUrl.split("/").lastOrNull() ?: continue
                 
-                val videoParams = mapOf(
-                    "hash" to playerHash,
-                    "r" to ""
-                )
+                val videoParams = mutableListOf<String>()
+                videoParams.add("hash=${URLEncoder.encode(playerHash, "UTF-8")}")
+                videoParams.add("r=")
+                
+                val videoBody = videoParams.joinToString("&")
                 
                 val videoResponse = app.post(
                     "$CDN_BASE/player/index.php?data=$playerHash&do=getVideo",
@@ -302,7 +306,7 @@ object PobreFlixExtractor {
                         "X-Requested-With" to "XMLHttpRequest",
                         "User-Agent" to HEADERS["User-Agent"]!!
                     ),
-                    data = videoParams.toFormData()
+                    data = videoBody
                 )
                 
                 if (!videoResponse.isSuccessful) continue
@@ -348,12 +352,6 @@ object PobreFlixExtractor {
             
         } catch (e: Exception) {
             return emptyList()
-        }
-    }
-    
-    private fun Map<String, String>.toFormData(): String {
-        return this.entries.joinToString("&") { (key, value) ->
-            "$key=${URLEncoder.encode(value, "UTF-8")}"
         }
     }
 }
