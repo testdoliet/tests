@@ -221,15 +221,12 @@ class PobreFlix : MainAPI() {
             // ========== BACKDROP/BANNER ==========
             var backdrop: String? = null
             
-            // Tentativa 1: Do data-backdrop do container
             backdrop = document.selectFirst("#movie-player-container")?.attr("data-backdrop")
             
-            // Tentativa 2: Da imagem dentro do container
             if (backdrop.isNullOrBlank()) {
                 backdrop = document.selectFirst("#movie-player-container img")?.attr("src")
             }
             
-            // Tentativa 3: Do elemento com alt backdrop
             if (backdrop.isNullOrBlank()) {
                 backdrop = document.selectFirst("img[alt*='backdrop']")?.attr("src")
             }
@@ -243,21 +240,18 @@ class PobreFlix : MainAPI() {
             
             val infoBar = document.selectFirst(".flex.gap-2.text-sm.flex-wrap.items-center")
             if (infoBar != null) {
-                // Nota
                 val ratingSpan = infoBar.selectFirst(".text-lead")
                 if (ratingSpan != null) {
                     rating = ratingSpan.text().trim().toFloatOrNull()
                     println("Rating: $rating")
                 }
                 
-                // Ano
                 val yearSpan = infoBar.select("span").firstOrNull { it.text().matches(Regex("\\d{4}")) }
                 if (yearSpan != null && year == null) {
                     year = yearSpan.text().toIntOrNull()
                     println("Ano da barra: $year")
                 }
                 
-                // Duração
                 val durationSpan = infoBar.select("span").lastOrNull()
                 if (durationSpan != null) {
                     val durationText = durationSpan.text()
@@ -271,7 +265,6 @@ class PobreFlix : MainAPI() {
             if (synopsis.isNullOrBlank()) {
                 synopsis = document.selectFirst("meta[name='description']")?.attr("content")?.trim()
             }
-            // Limpar metadados da sinopse se existirem
             synopsis = synopsis?.replace(Regex("\\|.*$"), "")?.trim()
             println("Sinopse: ${synopsis?.take(100)}...")
             
@@ -491,17 +484,56 @@ class PobreFlix : MainAPI() {
                 val playerUrl = iframe.attr("src")
                 println("Iframe encontrado: $playerUrl")
                 
-                callback.invoke(
-                    newExtractorLink(
-                        source = name,
-                        name = name,
-                        url = playerUrl,
-                        type = ExtractorLinkType.M3U8,
-                        quality = 720
-                    ) {
-                        this.referer = data
+                // Tentar extrair URL m3u8 do player
+                try {
+                    val playerDocument = app.get(playerUrl).document
+                    val playerHtml = playerDocument.html()
+                    
+                    val m3u8Url = extractM3u8Url(playerHtml)
+                    if (m3u8Url != null) {
+                        println("M3U8 URL encontrada: $m3u8Url")
+                        
+                        val headers = mapOf(
+                            "Referer" to playerUrl,
+                            "Origin" to mainUrl
+                        )
+                        
+                        val directLink = newExtractorLink(
+                            source = name,
+                            name = name,
+                            url = m3u8Url,
+                            type = ExtractorLinkType.M3U8,
+                            quality = Qualities.Unknown.value
+                        ) {
+                            this.referer = playerUrl
+                            this.headers = headers
+                        }
+                        callback(directLink)
+                        return true
                     }
+                } catch (e: Exception) {
+                    println("ERRO ao extrair m3u8: ${e.message}")
+                }
+                
+                // Fallback: usar iframe diretamente
+                println("Usando iframe diretamente")
+                val headers = mapOf(
+                    "Referer" to data,
+                    "Origin" to mainUrl
                 )
+                
+                val extractor = newExtractorLink(
+                    source = name,
+                    name = name,
+                    url = playerUrl,
+                    type = ExtractorLinkType.M3U8,
+                    quality = Qualities.Unknown.value
+                ) {
+                    this.referer = data
+                    this.headers = headers
+                }
+                
+                callback(extractor)
                 true
             } else {
                 println("Nenhum iframe encontrado")
@@ -534,7 +566,6 @@ class PobreFlix : MainAPI() {
             if (afterCdn.startsWith("https://")) {
                 fixedUrl = afterCdn
             } else {
-                // Se for um caminho relativo, construir URL do TMDB
                 fixedUrl = "https://image.tmdb.org/t/p/w500$afterCdn"
             }
         }
@@ -545,7 +576,6 @@ class PobreFlix : MainAPI() {
     private fun parseDuration(durationStr: String): Int? {
         val str = durationStr.lowercase().trim()
         
-        // Formato: "1h 36m"
         val hoursMatch = Regex("(\\d+)\\s*h").find(str)
         val minutesMatch = Regex("(\\d+)\\s*m(?:in)?").find(str)
         
@@ -556,8 +586,26 @@ class PobreFlix : MainAPI() {
             return (hours * 60) + minutes
         }
         
-        // Formato: "96 min"
         val justMinutes = Regex("(\\d+)\\s*m(?:in)?").find(str)
         return justMinutes?.groupValues?.get(1)?.toIntOrNull()
+    }
+    
+    private fun extractM3u8Url(html: String): String? {
+        val patterns = listOf(
+            Regex("https?://[^\"]+\\.m3u8[^\"]*"),
+            Regex("https?://[^\\s]+\\/master\\.m3u8[^\\s]*"),
+            Regex("https?://[^\\s]+\\/index\\.m3u8[^\\s]*"),
+            Regex("https?://[^\\s]+\\/playlist\\.m3u8[^\\s]*"),
+            Regex("https?://[^\\s]+\\.m3u8\\?[^\"]*")
+        )
+        
+        for (pattern in patterns) {
+            val match = pattern.find(html)
+            if (match != null) {
+                return match.value
+            }
+        }
+        
+        return null
     }
 }
