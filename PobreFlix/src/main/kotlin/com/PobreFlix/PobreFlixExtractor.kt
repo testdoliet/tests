@@ -5,7 +5,6 @@ import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.M3u8Helper
 import com.lagradost.cloudstream3.utils.newExtractorLink
-import okhttp3.Response
 import org.json.JSONObject
 import java.net.URLEncoder
 
@@ -36,8 +35,8 @@ object PobreFlixExtractor {
         "Connection" to "keep-alive"
     )
     
-    private fun updateCookies(response: Response) {
-        val setCookie = response.header("set-cookie")
+    private fun updateCookies(response: com.lagradost.cloudstream3.app.Response) {
+        val setCookie = response.headers["set-cookie"]
         if (setCookie != null) {
             sessionCookies = setCookie
         }
@@ -219,14 +218,13 @@ object PobreFlixExtractor {
             if (contentId == null) return emptyList()
             
             // 4. Options
-            val optionsParams = mutableListOf<String>()
-            optionsParams.add("contentid=${URLEncoder.encode(contentId, "UTF-8")}")
-            optionsParams.add("type=${URLEncoder.encode(if (mediaType == "movie") "filme" else "serie", "UTF-8")}")
-            optionsParams.add("_token=${URLEncoder.encode(csrfToken, "UTF-8")}")
-            optionsParams.add("page_token=${URLEncoder.encode(pageToken, "UTF-8")}")
-            optionsParams.add("pageToken=${URLEncoder.encode(pageToken, "UTF-8")}")
-            
-            val optionsBody = optionsParams.joinToString("&")
+            val optionsBody = buildString {
+                append("contentid=${URLEncoder.encode(contentId, "UTF-8")}&")
+                append("type=${URLEncoder.encode(if (mediaType == "movie") "filme" else "serie", "UTF-8")}&")
+                append("_token=${URLEncoder.encode(csrfToken, "UTF-8")}&")
+                append("page_token=${URLEncoder.encode(pageToken, "UTF-8")}&")
+                append("pageToken=${URLEncoder.encode(pageToken, "UTF-8")}")
+            }
             
             val optionsResponse = app.post(
                 "$BASE_URL/player/options",
@@ -253,12 +251,11 @@ object PobreFlixExtractor {
                 if (videoId.isEmpty()) continue
                 
                 // Source
-                val sourceParams = mutableListOf<String>()
-                sourceParams.add("video_id=${URLEncoder.encode(videoId, "UTF-8")}")
-                sourceParams.add("page_token=${URLEncoder.encode(pageToken, "UTF-8")}")
-                sourceParams.add("_token=${URLEncoder.encode(csrfToken, "UTF-8")}")
-                
-                val sourceBody = sourceParams.joinToString("&")
+                val sourceBody = buildString {
+                    append("video_id=${URLEncoder.encode(videoId, "UTF-8")}&")
+                    append("page_token=${URLEncoder.encode(pageToken, "UTF-8")}&")
+                    append("_token=${URLEncoder.encode(csrfToken, "UTF-8")}")
+                }
                 
                 val sourceResponse = app.post(
                     "$BASE_URL/player/source",
@@ -274,9 +271,9 @@ object PobreFlixExtractor {
                 
                 // Seguir redirect
                 val redirectResponse = app.get(redirectUrl, headers = HEADERS + getCookieHeader())
-                val finalUrl = redirectResponse.header("location") ?: redirectUrl
+                val finalUrl = redirectResponse.headers["location"] ?: redirectUrl
                 
-                if (!redirectResponse.isSuccessful && redirectResponse.header("location") == null) continue
+                if (!redirectResponse.isSuccessful && redirectResponse.headers["location"] == null) continue
                 
                 // Verificar se é URL do Blogger
                 if (finalUrl.contains("blogger.com/video.g") || finalUrl.contains("blogger.com")) {
@@ -289,11 +286,10 @@ object PobreFlixExtractor {
                 // Processamento normal (HLS)
                 val playerHash = finalUrl.split("/").lastOrNull() ?: continue
                 
-                val videoParams = mutableListOf<String>()
-                videoParams.add("hash=${URLEncoder.encode(playerHash, "UTF-8")}")
-                videoParams.add("r=")
-                
-                val videoBody = videoParams.joinToString("&")
+                val videoBody = buildString {
+                    append("hash=${URLEncoder.encode(playerHash, "UTF-8")}&")
+                    append("r=")
+                }
                 
                 val videoResponse = app.post(
                     "$CDN_BASE/player/index.php?data=$playerHash&do=getVideo",
