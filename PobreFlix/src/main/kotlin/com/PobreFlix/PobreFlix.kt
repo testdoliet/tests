@@ -234,17 +234,17 @@ class PobreFlix : MainAPI() {
             backdrop = fixImageUrl(backdrop)
             println("Backdrop: $backdrop")
             
-            // ========== RATING (do círculo SVG) ==========
+            // ========== RATING ==========
             var rating: Float? = null
             
-            // Tentar extrair do círculo SVG (formato: 9.3)
+            // Tentar extrair do círculo SVG (para séries/animes)
             val ratingSvg = document.selectFirst(".inline-flex.items-center.gap-3.rounded-2xl .text-\\[12px\\].font-extrabold")
             if (ratingSvg != null) {
                 rating = ratingSvg.text().trim().toFloatOrNull()
                 println("Rating do SVG: $rating")
             }
             
-            // Fallback: tentar da barra superior
+            // Fallback: tentar da barra superior (para filmes)
             if (rating == null) {
                 val infoBar = document.selectFirst(".flex.gap-2.text-sm.flex-wrap.items-center")
                 if (infoBar != null) {
@@ -291,26 +291,9 @@ class PobreFlix : MainAPI() {
             synopsis = synopsis?.replace(Regex("\\|.*$"), "")?.trim()
             println("Sinopse: ${synopsis?.take(100)}...")
             
-            // ========== GÊNEROS/TAGS - APENAS GÊNEROS ==========
-            val tags = document.select(".flex.flex-wrap.gap-2 a, .flex.flex-wrap.gap-2 .px-3")
-                .filter { element ->
-                    // Excluir elementos que são do bloco de títulos alternativos
-                    val parent = element.parent()
-                    val isInDetails = parent?.attr("class")?.contains("details") == true ||
-                                     parent?.parent()?.attr("class")?.contains("details") == true
-                    
-                    // Excluir elementos que não são gêneros (HD, ano, etc)
-                    val text = element.text().trim()
-                    val isGenre = text !in listOf("HD", "4K", "Full HD") &&
-                                  !text.matches(Regex("\\d{4}")) &&
-                                  !text.contains("Temporada", ignoreCase = true) &&
-                                  !text.contains("Season", ignoreCase = true) &&
-                                  !text.contains("Episódio", ignoreCase = true) &&
-                                  !text.contains("Episode", ignoreCase = true) &&
-                                  !text.matches(Regex("T\\d+", RegexOption.IGNORE_CASE))
-                    
-                    !isInDetails && isGenre
-                }
+            // ========== GÊNEROS/TAGS - APENAS DA SEÇÃO DE GÊNEROS ==========
+            // Selecionar apenas os links dentro da div de gêneros (que vem depois da sinopse)
+            val tags = document.select(".flex.flex-wrap.gap-2.pt-4 a")
                 .map { it.text().trim() }
                 .filter { it.isNotBlank() }
                 .takeIf { it.isNotEmpty() }
@@ -478,7 +461,7 @@ class PobreFlix : MainAPI() {
                                 
                                 // Se não tem thumbnail, usar o backdrop como fallback
                                 if (thumbUrl.isNullOrBlank()) {
-                                    thumbUrl = document.selectFirst("#movie-player-container")?.attr("data-backdrop")?.let { fixImageUrl(it) }
+                                    thumbUrl = backdrop
                                 }
                                 
                                 val episodeUrl = "$url/$seasonNum/$epNum"
@@ -676,6 +659,8 @@ class PobreFlix : MainAPI() {
     }
     
     // ========== FUNÇÕES AUXILIARES ==========
+    
+    private var backdrop: String? = null
     
     private fun fixImageUrl(url: String?): String? {
         if (url.isNullOrBlank()) return null
