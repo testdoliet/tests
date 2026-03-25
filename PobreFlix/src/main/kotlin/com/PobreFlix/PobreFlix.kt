@@ -270,7 +270,6 @@ class PobreFlix : MainAPI() {
             println("Sinopse: ${synopsis?.take(100)}...")
             
             // ========== GÊNEROS/TAGS - APENAS OS BOTÕES DE GÊNERO ==========
-            // IMPORTANTE: Filtrar para não pegar títulos alternativos
             val tags = document.select(".flex.flex-wrap.gap-2 a, .flex.flex-wrap.gap-2 .px-3")
                 .filter { element ->
                     // Excluir elementos que são do bloco de títulos alternativos
@@ -291,10 +290,10 @@ class PobreFlix : MainAPI() {
                         val character = element.selectFirst(".text-xs.text-slate-600, .text-xs.text-slate-400")?.text()?.trim()
                         val imageUrl = element.selectFirst("img")?.attr("src")?.let { fixImageUrl(it) }
                         
+                        // Actor não tem parâmetro 'role', usar o construtor padrão
                         Actor(
                             name = name,
-                            image = imageUrl,
-                            role = character
+                            image = imageUrl
                         )
                     } catch (e: Exception) { null }
                 }
@@ -436,15 +435,9 @@ class PobreFlix : MainAPI() {
                                 this.episode = epNum
                                 this.posterUrl = thumbUrl
                                 this.description = sinopse
-                                if (durationMin != null && durationMin > 0) {
-                                    this.duration = durationMin
-                                }
+                                this.runTime = durationMin
                                 if (airDate != null) {
-                                    // Se tiver data de exibição, adicionar na descrição
-                                    this.description = buildString {
-                                        if (sinopse != null) append(sinopse).append("\n\n")
-                                        append("Data de exibição: $airDate")
-                                    }
+                                    this.addDate(airDate)
                                 }
                             })
                             episodeCount++
@@ -495,10 +488,10 @@ class PobreFlix : MainAPI() {
                 }
                 
                 // Extrair duração
-                var duration: Int? = null
+                var durationMin: Int? = null
                 val durationText = element.selectFirst(".text-\\[11px\\].font-bold.absolute.end-3.bottom-3")?.text()
                 if (!durationText.isNullOrBlank()) {
-                    duration = durationText.replace("min", "").trim().toIntOrNull()
+                    durationMin = durationText.replace("min", "").trim().toIntOrNull()
                 }
                 
                 // Extrair data de exibição
@@ -514,12 +507,9 @@ class PobreFlix : MainAPI() {
                     this.episode = epNumber
                     this.posterUrl = thumb
                     this.description = sinopse
-                    if (duration != null && duration > 0) this.duration = duration
+                    this.runTime = durationMin
                     if (airDate != null) {
-                        this.description = buildString {
-                            if (sinopse != null) append(sinopse).append("\n\n")
-                            append("Data: $airDate")
-                        }
+                        this.addDate(airDate)
                     }
                 })
             } catch (e: Exception) {
