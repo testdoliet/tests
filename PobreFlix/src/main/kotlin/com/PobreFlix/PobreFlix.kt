@@ -9,6 +9,7 @@ import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
 import com.lagradost.cloudstream3.plugins.Plugin
 import org.jsoup.nodes.Element
 import java.net.URLEncoder
+import com.PobreFlix.extractor.PobreFlixExtractor
 
 @CloudstreamPlugin
 class PobreFlixProvider : Plugin() {
@@ -600,7 +601,7 @@ class PobreFlix : MainAPI() {
         val document = app.get(data).document
         println("Documento carregado")
         
-        // ========== EXTRAIR TMDB ID ==========
+        // Extrair TMDB ID
         var tmdbId: Int? = null
         var mediaType = "serie"
         var season = 1
@@ -634,22 +635,14 @@ class PobreFlix : MainAPI() {
             mediaType = "serie"
             println("É episódio: S${season}E${episode}")
         } 
-        // Verificar se é filme (formato: /filme/nome)
+        // Verificar se é filme
         else if (urlPath.contains("/filme/") || urlPath.contains("/movie/")) {
             mediaType = "movie"
             season = 1
             episode = 1
             println("É filme")
         }
-        // Verificar se é série (formato: /serie/nome)
-        else if (urlPath.contains("/serie/") || urlPath.contains("/anime/") || urlPath.contains("/dorama/")) {
-            mediaType = "serie"
-            season = 1
-            episode = 1
-            println("É série (página principal)")
-        }
         
-        // ========== USAR EXTRACTOR ==========
         if (tmdbId == null) {
             println("TMDB ID não encontrado")
             return false
@@ -665,7 +658,9 @@ class PobreFlix : MainAPI() {
         }
         
         println("Extractor encontrou ${streams.size} streams")
-        streams.forEach { callback(it) }
+        streams.forEach { stream ->
+            callback(stream)
+        }
         true
         
     } catch (e: Exception) {
