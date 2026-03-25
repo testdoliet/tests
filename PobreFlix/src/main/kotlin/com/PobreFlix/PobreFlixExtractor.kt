@@ -4,36 +4,21 @@ import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.M3u8Helper
+import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import org.json.JSONObject
 import java.net.URLEncoder
 
 object PobreFlixExtractor {
     
-    private const val BASE_URL = "https://superflixapi.rest"
+    private const val BASE_API = "https://superflixapi.rest"
     private const val CDN_BASE = "https://llanfairpwllgwyngy.com"
+    private const val REFERER = "https://lospobreflix.site/"
+    private const val PRIMARY_SOURCE = "SuperFlix"
     
     private var sessionCookies: String = ""
     private var csrfToken: String = ""
     private var pageToken: String = ""
-    
-    private val HEADERS = mapOf(
-        "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
-        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-        "Accept-Language" to "pt-BR",
-        "Referer" to "https://lospobreflix.site/",
-        "Connection" to "keep-alive"
-    )
-    
-    private val API_HEADERS = mapOf(
-        "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
-        "Accept" to "application/json, text/plain, */*",
-        "Accept-Language" to "pt-BR",
-        "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8",
-        "X-Requested-With" to "XMLHttpRequest",
-        "Origin" to BASE_URL,
-        "Connection" to "keep-alive"
-    )
     
     private fun updateCookies(response: com.lagradost.cloudstream3.app.Response) {
         val setCookie = response.headers["set-cookie"]
@@ -80,7 +65,11 @@ object PobreFlixExtractor {
         return videos.distinct()
     }
     
-    private suspend fun extractBloggerVideo(bloggerUrl: String, serverType: String, callback: (ExtractorLink) -> Unit): Boolean {
+    private suspend fun extractBloggerVideo(
+        bloggerUrl: String, 
+        serverType: String, 
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
         val token = extractTokenFromUrl(bloggerUrl) ?: return false
         
         val apiUrl = "https://www.blogger.com/_/BloggerVideoPlayerUi/data/batchexecute"
@@ -94,7 +83,7 @@ object PobreFlixExtractor {
             "content-type" to "application/x-www-form-urlencoded;charset=UTF-8",
             "origin" to "https://www.blogger.com",
             "referer" to "https://www.blogger.com/",
-            "user-agent" to HEADERS["User-Agent"]!!,
+            "user-agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36",
             "x-same-domain" to "1"
         )
         
@@ -111,12 +100,12 @@ object PobreFlixExtractor {
             
             for (videoUrl in videoUrls) {
                 val links = M3u8Helper.generateM3u8(
-                    source = "SuperFlix",
+                    source = PRIMARY_SOURCE,
                     streamUrl = videoUrl,
                     referer = "https://youtube.googleapis.com/",
                     headers = mapOf(
                         "Referer" to "https://youtube.googleapis.com/",
-                        "User-Agent" to HEADERS["User-Agent"]!!
+                        "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36"
                     )
                 )
                 
@@ -125,16 +114,16 @@ object PobreFlixExtractor {
                 } else {
                     callback.invoke(
                         newExtractorLink(
-                            source = "SuperFlix",
-                            name = "SuperFlix $serverType HD",
+                            source = PRIMARY_SOURCE,
+                            name = "$PRIMARY_SOURCE $serverType HD",
                             url = videoUrl,
                             type = ExtractorLinkType.M3U8
                         ) {
                             this.referer = "https://youtube.googleapis.com/"
-                            this.quality = 720
+                            this.quality = Qualities.Unknown.value
                             this.headers = mapOf(
                                 "Referer" to "https://youtube.googleapis.com/",
-                                "User-Agent" to HEADERS["User-Agent"]!!
+                                "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36"
                             )
                         }
                     )
@@ -148,37 +137,43 @@ object PobreFlixExtractor {
         }
     }
     
-    suspend fun getStreams(
+    suspend fun extractStreams(
         tmdbId: Int,
         mediaType: String,
         season: Int = 1,
-        episode: Int = 1
-    ): List<ExtractorLink> {
-        val results = mutableListOf<ExtractorLink>()
+        episode: Int = 1,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
         val targetSeason = if (mediaType == "movie") 1 else season
         val targetEpisode = if (mediaType == "movie") 1 else episode
         
         try {
             // 1. Página inicial
             val pageUrl = if (mediaType == "movie") {
-                "$BASE_URL/filme/$tmdbId"
+                "$BASE_API/filme/$tmdbId"
             } else {
-                "$BASE_URL/serie/$tmdbId/$targetSeason/$targetEpisode"
+                "$BASE_API/serie/$tmdbId/$targetSeason/$targetEpisode"
             }
             
-            val pageResponse = app.get(pageUrl, headers = HEADERS + getCookieHeader())
-            if (!pageResponse.isSuccessful) return emptyList()
+            val pageResponse = app.get(pageUrl, headers = mapOf(
+                "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36",
+                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9",
+                "Accept-Language" to "pt-BR",
+                "Referer" to REFERER
+            ) + getCookieHeader())
+            
+            if (!pageResponse.isSuccessful) return false
             updateCookies(pageResponse)
             
             val html = pageResponse.text
             
             // 2. Extrair tokens
             val csrfMatch = Regex("var CSRF_TOKEN\\s*=\\s*[\"']([^\"']+)[\"']").find(html)
-            if (csrfMatch == null) return emptyList()
+            if (csrfMatch == null) return false
             csrfToken = csrfMatch.groupValues[1]
             
             val pageMatch = Regex("var PAGE_TOKEN\\s*=\\s*[\"']([^\"']+)[\"']").find(html)
-            if (pageMatch == null) return emptyList()
+            if (pageMatch == null) return false
             pageToken = pageMatch.groupValues[1]
             
             // 3. Extrair contentId
@@ -215,7 +210,7 @@ object PobreFlixExtractor {
                 }
             }
             
-            if (contentId == null) return emptyList()
+            if (contentId == null) return false
             
             // 4. Options
             val optionsBody = buildString {
@@ -227,17 +222,26 @@ object PobreFlixExtractor {
             }
             
             val optionsResponse = app.post(
-                "$BASE_URL/player/options",
-                headers = API_HEADERS + getCookieHeader() + mapOf("X-Page-Token" to pageToken, "Referer" to pageUrl),
+                "$BASE_API/player/options",
+                headers = mapOf(
+                    "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36",
+                    "Accept" to "application/json, text/plain, */*",
+                    "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8",
+                    "X-Requested-With" to "XMLHttpRequest",
+                    "Origin" to BASE_API,
+                    "X-Page-Token" to pageToken,
+                    "Referer" to pageUrl
+                ) + getCookieHeader(),
                 data = optionsBody
             )
             
-            if (!optionsResponse.isSuccessful) return emptyList()
+            if (!optionsResponse.isSuccessful) return false
             
             val optionsData = JSONObject(optionsResponse.text)
-            val optionsArray = optionsData.optJSONObject("data")?.optJSONArray("options") ?: return emptyList()
+            val optionsArray = optionsData.optJSONObject("data")?.optJSONArray("options") ?: return false
             
             // 5. Processar cada servidor
+            var found = false
             for (i in 0 until optionsArray.length()) {
                 val option = optionsArray.getJSONObject(i)
                 val videoId = option.optString("ID")
@@ -258,8 +262,15 @@ object PobreFlixExtractor {
                 }
                 
                 val sourceResponse = app.post(
-                    "$BASE_URL/player/source",
-                    headers = API_HEADERS + getCookieHeader() + mapOf("Referer" to pageUrl),
+                    "$BASE_API/player/source",
+                    headers = mapOf(
+                        "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36",
+                        "Accept" to "application/json, text/plain, */*",
+                        "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8",
+                        "X-Requested-With" to "XMLHttpRequest",
+                        "Origin" to BASE_API,
+                        "Referer" to pageUrl
+                    ) + getCookieHeader(),
                     data = sourceBody
                 )
                 
@@ -270,15 +281,22 @@ object PobreFlixExtractor {
                 if (redirectUrl.isNullOrEmpty()) continue
                 
                 // Seguir redirect
-                val redirectResponse = app.get(redirectUrl, headers = HEADERS + getCookieHeader())
+                val redirectResponse = app.get(redirectUrl, headers = mapOf(
+                    "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36",
+                    "Accept" to "text/html,application/xhtml+xml",
+                    "Accept-Language" to "pt-BR",
+                    "Referer" to pageUrl
+                ) + getCookieHeader())
+                
                 val finalUrl = redirectResponse.headers["location"] ?: redirectUrl
                 
                 if (!redirectResponse.isSuccessful && redirectResponse.headers["location"] == null) continue
                 
                 // Verificar se é URL do Blogger
                 if (finalUrl.contains("blogger.com/video.g") || finalUrl.contains("blogger.com")) {
-                    extractBloggerVideo(finalUrl, serverType) { stream ->
-                        results.add(stream)
+                    extractBloggerVideo(finalUrl, serverType) { link ->
+                        callback(link)
+                        found = true
                     }
                     continue
                 }
@@ -300,7 +318,7 @@ object PobreFlixExtractor {
                         "Origin" to CDN_BASE,
                         "Referer" to "$CDN_BASE/",
                         "X-Requested-With" to "XMLHttpRequest",
-                        "User-Agent" to HEADERS["User-Agent"]!!
+                        "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36"
                     ),
                     data = videoBody
                 )
@@ -314,40 +332,42 @@ object PobreFlixExtractor {
                 if (videoUrl.isNullOrEmpty()) continue
                 
                 val links = M3u8Helper.generateM3u8(
-                    source = "SuperFlix",
+                    source = PRIMARY_SOURCE,
                     streamUrl = videoUrl,
                     referer = "$CDN_BASE/",
                     headers = mapOf(
                         "Referer" to "$CDN_BASE/",
-                        "User-Agent" to HEADERS["User-Agent"]!!
+                        "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36"
                     )
                 )
                 
                 if (links.isNotEmpty()) {
-                    results.addAll(links)
+                    links.forEach { callback(it) }
+                    found = true
                 } else {
-                    results.add(
+                    callback.invoke(
                         newExtractorLink(
-                            source = "SuperFlix",
-                            name = "SuperFlix $serverType HD",
+                            source = PRIMARY_SOURCE,
+                            name = "$PRIMARY_SOURCE $serverType HD",
                             url = videoUrl,
                             type = ExtractorLinkType.M3U8
                         ) {
                             this.referer = "$CDN_BASE/"
-                            this.quality = 720
+                            this.quality = Qualities.Unknown.value
                             this.headers = mapOf(
                                 "Referer" to "$CDN_BASE/",
-                                "User-Agent" to HEADERS["User-Agent"]!!
+                                "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36"
                             )
                         }
                     )
+                    found = true
                 }
             }
             
-            return results
+            return found
             
         } catch (e: Exception) {
-            return emptyList()
+            return false
         }
     }
 }
