@@ -234,29 +234,51 @@ class PobreFlix : MainAPI() {
             backdrop = fixImageUrl(backdrop)
             println("Backdrop: $backdrop")
             
-            // ========== METADADOS DA BARRA SUPERIOR ==========
+            // ========== RATING (do círculo SVG) ==========
             var rating: Float? = null
-            var duration: Int? = null
             
-            val infoBar = document.selectFirst(".flex.gap-2.text-sm.flex-wrap.items-center")
-            if (infoBar != null) {
-                val ratingSpan = infoBar.selectFirst(".text-lead")
-                if (ratingSpan != null) {
-                    rating = ratingSpan.text().trim().toFloatOrNull()
-                    println("Rating: $rating")
+            // Tentar extrair do círculo SVG (formato: 9.3)
+            val ratingSvg = document.selectFirst(".inline-flex.items-center.gap-3.rounded-2xl .text-\\[12px\\].font-extrabold")
+            if (ratingSvg != null) {
+                rating = ratingSvg.text().trim().toFloatOrNull()
+                println("Rating do SVG: $rating")
+            }
+            
+            // Fallback: tentar da barra superior
+            if (rating == null) {
+                val infoBar = document.selectFirst(".flex.gap-2.text-sm.flex-wrap.items-center")
+                if (infoBar != null) {
+                    val ratingSpan = infoBar.selectFirst(".text-lead")
+                    if (ratingSpan != null) {
+                        rating = ratingSpan.text().trim().toFloatOrNull()
+                        println("Rating da barra: $rating")
+                    }
                 }
-                
-                val yearSpan = infoBar.select("span").firstOrNull { it.text().matches(Regex("\\d{4}")) }
-                if (yearSpan != null && year == null) {
-                    year = yearSpan.text().toIntOrNull()
-                    println("Ano da barra: $year")
+            }
+            
+            // ========== DURAÇÃO (apenas para filmes) ==========
+            var duration: Int? = null
+            if (!isAnime && !isSerie) {
+                val infoBar = document.selectFirst(".flex.gap-2.text-sm.flex-wrap.items-center")
+                if (infoBar != null) {
+                    val durationSpan = infoBar.select("span").lastOrNull()
+                    if (durationSpan != null) {
+                        val durationText = durationSpan.text()
+                        duration = parseDuration(durationText)
+                        println("Duração: $duration minutos")
+                    }
                 }
-                
-                val durationSpan = infoBar.select("span").lastOrNull()
-                if (durationSpan != null) {
-                    val durationText = durationSpan.text()
-                    duration = parseDuration(durationText)
-                    println("Duração: $duration minutos")
+            }
+            
+            // ========== ANO (se não encontrou no título) ==========
+            if (year == null) {
+                val infoBar = document.selectFirst(".flex.gap-2.text-sm.flex-wrap.items-center")
+                if (infoBar != null) {
+                    val yearSpan = infoBar.select("span").firstOrNull { it.text().matches(Regex("\\d{4}")) }
+                    if (yearSpan != null) {
+                        year = yearSpan.text().toIntOrNull()
+                        println("Ano da barra: $year")
+                    }
                 }
             }
             
@@ -269,7 +291,7 @@ class PobreFlix : MainAPI() {
             synopsis = synopsis?.replace(Regex("\\|.*$"), "")?.trim()
             println("Sinopse: ${synopsis?.take(100)}...")
             
-            // ========== GÊNEROS/TAGS - APENAS GÊNEROS, NADA MAIS ==========
+            // ========== GÊNEROS/TAGS - APENAS GÊNEROS ==========
             val tags = document.select(".flex.flex-wrap.gap-2 a, .flex.flex-wrap.gap-2 .px-3")
                 .filter { element ->
                     // Excluir elementos que são do bloco de títulos alternativos
@@ -277,14 +299,15 @@ class PobreFlix : MainAPI() {
                     val isInDetails = parent?.attr("class")?.contains("details") == true ||
                                      parent?.parent()?.attr("class")?.contains("details") == true
                     
-                    // Excluir elementos que não são gêneros (HD, ano, temporada, etc)
+                    // Excluir elementos que não são gêneros (HD, ano, etc)
                     val text = element.text().trim()
                     val isGenre = text !in listOf("HD", "4K", "Full HD") &&
                                   !text.matches(Regex("\\d{4}")) &&
                                   !text.contains("Temporada", ignoreCase = true) &&
                                   !text.contains("Season", ignoreCase = true) &&
                                   !text.contains("Episódio", ignoreCase = true) &&
-                                  !text.contains("Episode", ignoreCase = true)
+                                  !text.contains("Episode", ignoreCase = true) &&
+                                  !text.matches(Regex("T\\d+", RegexOption.IGNORE_CASE))
                     
                     !isInDetails && isGenre
                 }
@@ -353,6 +376,7 @@ class PobreFlix : MainAPI() {
             
             // ========== RETORNAR RESPOSTA ==========
             if (!isAnime && !isSerie) {
+                // FILMES
                 return newMovieLoadResponse(cleanTitle, url, TvType.Movie, playerUrl ?: url) {
                     this.posterUrl = poster
                     this.backgroundPosterUrl = backdrop
@@ -372,7 +396,7 @@ class PobreFlix : MainAPI() {
                 }
             }
             
-            // Para séries/animes
+            // SÉRIES/ANIMES
             val episodes = extractEpisodesFromSite(document, url)
             val type = if (isAnime) TvType.Anime else TvType.TvSeries
             
@@ -423,8 +447,8 @@ class PobreFlix : MainAPI() {
                         val seasonNum = seasonMatch.groupValues[1].toIntOrNull() ?: 1
                         val episodesJson = seasonMatch.groupValues[2]
                         
-                        // Padrão para extrair campos do JSON
-                        val episodePattern = Regex("\\{[^}]*\"epi_num\"\\s*:\\s*(\\d+)[^}]*\"title\"\\s*:\\s*\"([^\"]*)\"[^}]*\"sinopse\"\\s*:\\s*\"([^\"]*)\"[^}]*\"thumb_url\"\\s*:\\s*\"([^\"]*)\"[^}]*\"duration\"\\s*:\\s*(\\d+)[^}]*\"air_date\"\\s*:\\s*\"([^\"]*)\"[^}]*\\}")
+                        // Padrão para extrair campos do JSON incluindo has_dub e has_leg
+                        val episodePattern = Regex("\\{[^}]*\"epi_num\"\\s*:\\s*(\\d+)[^}]*\"title\"\\s*:\\s*\"([^\"]*)\"[^}]*\"sinopse\"\\s*:\\s*\"([^\"]*)\"[^}]*\"thumb_url\"\\s*:\\s*\"([^\"]*)\"[^}]*\"duration\"\\s*:\\s*(\\d+)[^}]*\"air_date\"\\s*:\\s*\"([^\"]*)\"[^}]*\"has_dub\"\\s*:\\s*(true|false)[^}]*\"has_leg\"\\s*:\\s*(true|false)[^}]*\\}")
                         val episodeMatches = episodePattern.findAll(episodesJson)
                         
                         for (epMatch in episodeMatches) {
@@ -432,37 +456,49 @@ class PobreFlix : MainAPI() {
                             val epTitle = epMatch.groupValues[2].ifEmpty { "Episódio $epNum" }
                             val sinopse = epMatch.groupValues[3].ifEmpty { null }
                             var thumbUrl = epMatch.groupValues[4].takeIf { it.isNotEmpty() }
-                            
-                            // CORREÇÃO: Construir URL correta da thumbnail
-                            thumbUrl = thumbUrl?.let { 
-                                if (it.startsWith("//")) {
-                                    "https:$it"
-                                } else if (it.startsWith("/")) {
-                                    "$mainUrl$it"
-                                } else if (!it.startsWith("http")) {
-                                    "https://image.tmdb.org/t/p/w500$it"
-                                } else {
-                                    it
-                                }
-                            }
-                            
                             val durationMin = epMatch.groupValues[5].toIntOrNull()
                             val airDate = epMatch.groupValues[6].takeIf { it.isNotEmpty() }
+                            val hasDub = epMatch.groupValues[7].toBoolean()
+                            val hasLeg = epMatch.groupValues[8].toBoolean()
                             
-                            val episodeUrl = "$url/$seasonNum/$epNum"
-                            
-                            episodes.add(newEpisode(fixUrl(episodeUrl)) {
-                                this.name = epTitle
-                                this.season = seasonNum
-                                this.episode = epNum
-                                this.posterUrl = thumbUrl
-                                this.description = sinopse
-                                this.runTime = durationMin
-                                if (airDate != null) {
-                                    this.addDate(airDate)
+                            // SÓ ADICIONAR EPISÓDIO SE TIVER ÁUDIO (DUB ou LEG)
+                            if (hasDub || hasLeg) {
+                                // Construir URL correta da thumbnail
+                                thumbUrl = thumbUrl?.let { 
+                                    if (it.startsWith("//")) {
+                                        "https:$it"
+                                    } else if (it.startsWith("/")) {
+                                        "$mainUrl$it"
+                                    } else if (!it.startsWith("http")) {
+                                        "https://image.tmdb.org/t/p/w500$it"
+                                    } else {
+                                        it
+                                    }
                                 }
-                            })
-                            episodeCount++
+                                
+                                // Se não tem thumbnail, usar o backdrop como fallback
+                                if (thumbUrl.isNullOrBlank()) {
+                                    thumbUrl = document.selectFirst("#movie-player-container")?.attr("data-backdrop")?.let { fixImageUrl(it) }
+                                }
+                                
+                                val episodeUrl = "$url/$seasonNum/$epNum"
+                                
+                                episodes.add(newEpisode(fixUrl(episodeUrl)) {
+                                    this.name = epTitle
+                                    this.season = seasonNum
+                                    this.episode = epNum
+                                    this.posterUrl = thumbUrl
+                                    this.description = sinopse
+                                    this.runTime = durationMin
+                                    if (airDate != null) {
+                                        this.addDate(airDate)
+                                    }
+                                })
+                                episodeCount++
+                                println("    Episódio $epNum adicionado (DUB=$hasDub, LEG=$hasLeg)")
+                            } else {
+                                println("    Episódio $epNum ignorado - sem áudio disponível")
+                            }
                         }
                     }
                     
@@ -482,6 +518,14 @@ class PobreFlix : MainAPI() {
         
         episodeElements.forEachIndexed { index, element ->
             try {
+                // Verificar se tem tags de áudio (DUB ou LEG)
+                val hasAudio = element.select(".absolute.start-3.bottom-3 .inline-flex").isNotEmpty()
+                
+                if (!hasAudio) {
+                    println("    Episódio ${index + 1} ignorado - sem áudio disponível")
+                    return@forEachIndexed
+                }
+                
                 val link = element.selectFirst("a[href]") ?: return@forEachIndexed
                 val dataUrl = link.attr("href")
                 if (dataUrl.isBlank()) return@forEachIndexed
@@ -500,7 +544,7 @@ class PobreFlix : MainAPI() {
                 // Extrair sinopse
                 val sinopse = element.selectFirst(".line-clamp-2.text-xs")?.text()?.trim()
                 
-                // CORREÇÃO: Extrair thumbnail com URL correta
+                // Extrair thumbnail
                 var thumb: String? = null
                 val imgElement = element.selectFirst("img")
                 if (imgElement != null) {
@@ -545,6 +589,7 @@ class PobreFlix : MainAPI() {
                         this.addDate(airDate)
                     }
                 })
+                println("    Episódio $epNumber adicionado via HTML")
             } catch (e: Exception) {
                 println("  ERRO ao processar elemento de episódio: ${e.message}")
             }
