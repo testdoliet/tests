@@ -484,60 +484,51 @@ class PobreFlix : MainAPI() {
                 val playerUrl = iframe.attr("src")
                 println("Iframe encontrado: $playerUrl")
                 
-                // Tentar extrair URL m3u8 do player
-                try {
-                    val playerDocument = app.get(playerUrl).document
-                    val playerHtml = playerDocument.html()
-                    
-                    val m3u8Url = extractM3u8Url(playerHtml)
-                    if (m3u8Url != null) {
-                        println("M3U8 URL encontrada: $m3u8Url")
-                        
-                        val headers = mapOf(
-                            "Referer" to playerUrl,
-                            "Origin" to mainUrl
-                        )
-                        
-                        val directLink = newExtractorLink(
-                            source = name,
-                            name = name,
-                            url = m3u8Url,
-                            type = ExtractorLinkType.M3U8,
-                            quality = Qualities.Unknown.value
-                        ) {
-                            this.referer = playerUrl
-                            this.headers = headers
-                        }
-                        callback(directLink)
-                        return true
-                    }
-                } catch (e: Exception) {
-                    println("ERRO ao extrair m3u8: ${e.message}")
-                }
-                
-                // Fallback: usar iframe diretamente
-                println("Usando iframe diretamente")
-                val headers = mapOf(
-                    "Referer" to data,
-                    "Origin" to mainUrl
+                val links = M3u8Helper.generateM3u8(
+                    source = name,
+                    streamUrl = playerUrl,
+                    referer = playerUrl
                 )
                 
-                val extractor = newExtractorLink(
-                    source = name,
-                    name = name,
-                    url = playerUrl,
-                    type = ExtractorLinkType.M3U8,
-                    quality = Qualities.Unknown.value
-                ) {
-                    this.referer = data
-                    this.headers = headers
+                if (links.isNotEmpty()) {
+                    println("Links M3U8 gerados: ${links.size}")
+                    links.forEach { callback(it) }
+                    true
+                } else {
+                    println("Nenhum link M3U8, usando URL direta")
+                    callback.invoke(
+                        newExtractorLink(
+                            source = name,
+                            name = name,
+                            url = playerUrl,
+                            type = ExtractorLinkType.M3U8
+                        ) {
+                            this.referer = playerUrl
+                            this.quality = Qualities.Unknown.value
+                        }
+                    )
+                    true
                 }
-                
-                callback(extractor)
-                true
             } else {
-                println("Nenhum iframe encontrado")
-                false
+                val videoUrl = document.selectFirst("video source, source[src]")?.attr("src")
+                if (videoUrl != null) {
+                    println("Video URL encontrada: $videoUrl")
+                    callback.invoke(
+                        newExtractorLink(
+                            source = name,
+                            name = name,
+                            url = videoUrl,
+                            type = if (videoUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else null
+                        ) {
+                            this.referer = data
+                            this.quality = Qualities.Unknown.value
+                        }
+                    )
+                    true
+                } else {
+                    println("Nenhum iframe ou video encontrado")
+                    false
+                }
             }
         } catch (e: Exception) {
             println("ERRO em loadLinks: ${e.message}")
@@ -588,24 +579,5 @@ class PobreFlix : MainAPI() {
         
         val justMinutes = Regex("(\\d+)\\s*m(?:in)?").find(str)
         return justMinutes?.groupValues?.get(1)?.toIntOrNull()
-    }
-    
-    private fun extractM3u8Url(html: String): String? {
-        val patterns = listOf(
-            Regex("https?://[^\"]+\\.m3u8[^\"]*"),
-            Regex("https?://[^\\s]+\\/master\\.m3u8[^\\s]*"),
-            Regex("https?://[^\\s]+\\/index\\.m3u8[^\\s]*"),
-            Regex("https?://[^\\s]+\\/playlist\\.m3u8[^\\s]*"),
-            Regex("https?://[^\\s]+\\.m3u8\\?[^\"]*")
-        )
-        
-        for (pattern in patterns) {
-            val match = pattern.find(html)
-            if (match != null) {
-                return match.value
-            }
-        }
-        
-        return null
     }
 }
