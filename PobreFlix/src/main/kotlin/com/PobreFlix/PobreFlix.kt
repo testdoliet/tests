@@ -265,19 +265,39 @@ class PobreFlix : MainAPI() {
             if (synopsis.isNullOrBlank()) {
                 synopsis = document.selectFirst("meta[name='description']")?.attr("content")?.trim()
             }
+            // Limpar metadados da sinopse
             synopsis = synopsis?.replace(Regex("\\|.*$"), "")?.trim()
             println("Sinopse: ${synopsis?.take(100)}...")
             
-            // ========== GÊNEROS/TAGS ==========
+            // ========== GÊNEROS/TAGS - APENAS OS BOTÕES DE GÊNERO ==========
+            // IMPORTANTE: Filtrar para não pegar títulos alternativos
             val tags = document.select(".flex.flex-wrap.gap-2 a, .flex.flex-wrap.gap-2 .px-3")
+                .filter { element ->
+                    // Excluir elementos que são do bloco de títulos alternativos
+                    val parent = element.parent()
+                    parent?.attr("class")?.contains("details") != true &&
+                    parent?.parent()?.attr("class")?.contains("details") != true
+                }
                 .map { it.text().trim() }
-                .filter { it.isNotBlank() }
+                .filter { it.isNotBlank() && !it.contains("CN") && !it.contains("US") && !it.contains("FR") }
                 .takeIf { it.isNotEmpty() }
             println("Tags: $tags")
             
-            // ========== ELENCO ==========
-            val cast = document.select("#cast-section .swiper-slide .text-sm.font-bold, .cast-swiper .text-sm.font-bold")
-                .map { Actor(name = it.text()) }
+            // ========== ELENCO COM FOTOS ==========
+            val cast = document.select("#cast-section .swiper-slide, .cast-swiper .swiper-slide")
+                .mapNotNull { element ->
+                    try {
+                        val name = element.selectFirst(".text-sm.font-bold")?.text()?.trim() ?: return@mapNotNull null
+                        val character = element.selectFirst(".text-xs.text-slate-600, .text-xs.text-slate-400")?.text()?.trim()
+                        val imageUrl = element.selectFirst("img")?.attr("src")?.let { fixImageUrl(it) }
+                        
+                        Actor(
+                            name = name,
+                            image = imageUrl,
+                            role = character
+                        )
+                    } catch (e: Exception) { null }
+                }
                 .takeIf { it.isNotEmpty() }
             println("Elenco: ${cast?.size} atores")
             
@@ -377,7 +397,7 @@ class PobreFlix : MainAPI() {
         
         val episodes = mutableListOf<Episode>()
 
-        // Tentar extrair do JSON
+        // Tentar extrair do JSON window.allEpisodes
         val scriptData = document.selectFirst("script:containsData(window.allEpisodes)")?.data()
         if (scriptData != null) {
             println("  Script com allEpisodes encontrado")
@@ -395,14 +415,18 @@ class PobreFlix : MainAPI() {
                         val seasonNum = seasonMatch.groupValues[1].toIntOrNull() ?: 1
                         val episodesJson = seasonMatch.groupValues[2]
                         
-                        val episodePattern = Regex("\\{[^}]*\"epi_num\"\\s*:\\s*(\\d+)[^}]*\"title\"\\s*:\\s*\"([^\"]*)\"[^}]*\"thumb_url\"\\s*:\\s*\"([^\"]*)\"[^}]*\\}")
+                        // Padrão para extrair campos do JSON
+                        val episodePattern = Regex("\\{[^}]*\"epi_num\"\\s*:\\s*(\\d+)[^}]*\"title\"\\s*:\\s*\"([^\"]*)\"[^}]*\"sinopse\"\\s*:\\s*\"([^\"]*)\"[^}]*\"thumb_url\"\\s*:\\s*\"([^\"]*)\"[^}]*\"duration\"\\s*:\\s*(\\d+)[^}]*\"air_date\"\\s*:\\s*\"([^\"]*)\"[^}]*\\}")
                         val episodeMatches = episodePattern.findAll(episodesJson)
                         
                         for (epMatch in episodeMatches) {
                             val epNum = epMatch.groupValues[1].toIntOrNull() ?: continue
                             val epTitle = epMatch.groupValues[2].ifEmpty { "Episódio $epNum" }
-                            var thumbUrl = epMatch.groupValues[3].takeIf { it.isNotEmpty() }
+                            val sinopse = epMatch.groupValues[3].ifEmpty { null }
+                            var thumbUrl = epMatch.groupValues[4].takeIf { it.isNotEmpty() }
                             thumbUrl = thumbUrl?.let { fixImageUrl(it) }
+                            val durationMin = epMatch.groupValues[5].toIntOrNull()
+                            val airDate = epMatch.groupValues[6].takeIf { it.isNotEmpty() }
                             
                             val episodeUrl = "$url/$seasonNum/$epNum"
                             
@@ -411,6 +435,17 @@ class PobreFlix : MainAPI() {
                                 this.season = seasonNum
                                 this.episode = epNum
                                 this.posterUrl = thumbUrl
+                                this.description = sinopse
+                                if (durationMin != null && durationMin > 0) {
+                                    this.duration = durationMin
+                                }
+                                if (airDate != null) {
+                                    // Se tiver data de exibição, adicionar na descrição
+                                    this.description = buildString {
+                                        if (sinopse != null) append(sinopse).append("\n\n")
+                                        append("Data de exibição: $airDate")
+                                    }
+                                }
                             })
                             episodeCount++
                         }
@@ -426,7 +461,7 @@ class PobreFlix : MainAPI() {
             }
         }
 
-        // Fallback: extrair do HTML
+        // Fallback: extrair do HTML (#episodes-list)
         val episodeElements = document.select("#episodes-list article, .episode-card, .episode-item")
         println("  Elementos de episódio encontrados: ${episodeElements.size}")
         
@@ -436,8 +471,21 @@ class PobreFlix : MainAPI() {
                 val dataUrl = link.attr("href")
                 if (dataUrl.isBlank()) return@forEachIndexed
 
-                val epNumber = index + 1
-                val epTitle = element.selectFirst("h2, .truncate")?.text() ?: "Episódio $epNumber"
+                // Extrair número do episódio do texto T1:E1
+                val epNumberText = element.selectFirst(".text-lead.shrink-0")?.text() ?: "E${index + 1}"
+                val epMatch = Regex("E(\\d+)", RegexOption.IGNORE_CASE).find(epNumberText)
+                val epNumber = epMatch?.groupValues?.get(1)?.toIntOrNull() ?: (index + 1)
+                
+                // Extrair título do episódio
+                var epTitle = element.selectFirst("h2, .truncate")?.text()?.trim()
+                if (epTitle.isNullOrBlank()) {
+                    epTitle = "Episódio $epNumber"
+                }
+                
+                // Extrair sinopse
+                val sinopse = element.selectFirst(".line-clamp-2.text-xs")?.text()?.trim()
+                
+                // Extrair thumbnail
                 var thumb: String? = null
                 val imgElement = element.selectFirst("img")
                 if (imgElement != null) {
@@ -445,12 +493,34 @@ class PobreFlix : MainAPI() {
                     if (thumb.isNullOrBlank()) thumb = imgElement.attr("src")
                     if (!thumb.isNullOrBlank()) thumb = fixImageUrl(thumb)
                 }
+                
+                // Extrair duração
+                var duration: Int? = null
+                val durationText = element.selectFirst(".text-\\[11px\\].font-bold.absolute.end-3.bottom-3")?.text()
+                if (!durationText.isNullOrBlank()) {
+                    duration = durationText.replace("min", "").trim().toIntOrNull()
+                }
+                
+                // Extrair data de exibição
+                var airDate: String? = null
+                val badgeText = element.selectFirst(".absolute.start-3.top-3")?.text()
+                if (badgeText != null && badgeText.contains("Em breve")) {
+                    airDate = badgeText.replace("Em breve •", "").trim()
+                }
 
                 episodes.add(newEpisode(fixUrl(dataUrl)) {
                     this.name = epTitle
                     this.season = 1
                     this.episode = epNumber
                     this.posterUrl = thumb
+                    this.description = sinopse
+                    if (duration != null && duration > 0) this.duration = duration
+                    if (airDate != null) {
+                        this.description = buildString {
+                            if (sinopse != null) append(sinopse).append("\n\n")
+                            append("Data: $airDate")
+                        }
+                    }
                 })
             } catch (e: Exception) {
                 println("  ERRO ao processar elemento de episódio: ${e.message}")
