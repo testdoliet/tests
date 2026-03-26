@@ -5,7 +5,7 @@ import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.M3u8Helper
 import com.lagradost.cloudstream3.utils.newExtractorLink
-import com.lagradost.cloudstream3.nicehttp.NiceResponse
+import com.lagradost.cloudstream3.utils.NiceResponse  // ← Import correto
 import org.json.JSONObject
 import java.net.URLEncoder
 
@@ -36,8 +36,9 @@ object PobreFlixExtractor {
         "Connection" to "keep-alive"
     )
     
+    // CORRIGIDO: parâmetro agora é NiceResponse e acesso via headers como Map
     private fun updateCookies(response: NiceResponse) {
-        val setCookie = response.headers["set-cookie"]
+        val setCookie = response.headers["set-cookie"]  // ← Map access
         if (setCookie != null) {
             sessionCookies = setCookie
         }
