@@ -16,6 +16,7 @@ object PobreFlixExtractor {
     private var csrfToken: String = ""
     private var pageToken: String = ""
 
+    // Cabeçalhos comuns para páginas HTML
     private val HEADERS = mapOf(
         "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
         "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
@@ -24,6 +25,7 @@ object PobreFlixExtractor {
         "Connection" to "keep-alive"
     )
 
+    // Cabeçalhos para chamadas API (JSON)
     private val API_HEADERS = mapOf(
         "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
         "Accept" to "application/json, text/plain, */*",
@@ -82,7 +84,7 @@ object PobreFlixExtractor {
             "content-type" to "application/x-www-form-urlencoded;charset=UTF-8",
             "origin" to "https://www.blogger.com",
             "referer" to "https://www.blogger.com/",
-            "user-agent" to HEADERS["User-Agent"]!!,
+            "user-agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
             "x-same-domain" to "1"
         )
 
@@ -104,7 +106,7 @@ object PobreFlixExtractor {
                     referer = "https://youtube.googleapis.com/",
                     headers = mapOf(
                         "Referer" to "https://youtube.googleapis.com/",
-                        "User-Agent" to HEADERS["User-Agent"]!!
+                        "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36"
                     )
                 )
 
@@ -122,7 +124,7 @@ object PobreFlixExtractor {
                             this.quality = 720
                             this.headers = mapOf(
                                 "Referer" to "https://youtube.googleapis.com/",
-                                "User-Agent" to HEADERS["User-Agent"]!!
+                                "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36"
                             )
                         }
                     )
@@ -214,12 +216,15 @@ object PobreFlixExtractor {
 
             val optionsBody = optionsParams.joinToString("&")
 
+            // Cabeçalhos para options: API_HEADERS + cabeçalhos adicionais
+            val optionsHeaders = mutableMapOf<String, String>()
+            optionsHeaders.putAll(API_HEADERS)
+            optionsHeaders["X-Page-Token"] = pageToken
+            optionsHeaders["Referer"] = pageUrl
+
             val optionsResponse = app.post(
                 "$BASE_URL/player/options",
-                headers = API_HEADERS + mapOf(
-                    "X-Page-Token" to pageToken,
-                    "Referer" to pageUrl
-                ),
+                headers = optionsHeaders,
                 data = optionsBody
             )
 
@@ -249,9 +254,13 @@ object PobreFlixExtractor {
 
                 val sourceBody = sourceParams.joinToString("&")
 
+                val sourceHeaders = mutableMapOf<String, String>()
+                sourceHeaders.putAll(API_HEADERS)
+                sourceHeaders["Referer"] = pageUrl
+
                 val sourceResponse = app.post(
                     "$BASE_URL/player/source",
-                    headers = API_HEADERS + mapOf("Referer" to pageUrl),
+                    headers = sourceHeaders,
                     data = sourceBody
                 )
 
@@ -261,11 +270,14 @@ object PobreFlixExtractor {
                 val redirectUrl = sourceData.optJSONObject("data")?.optString("video_url")
                 if (redirectUrl.isNullOrEmpty()) continue
 
-                // Seguir redirect – o app.get já segue redirecionamentos automaticamente,
-                // então a URL final é a da resposta, não precisamos de headers["location"].
+                // Seguir redirect – app.get já segue redirecionamentos automaticamente
                 val redirectResponse = app.get(redirectUrl, headers = HEADERS)
-                // A URL final é a propriedade 'url' da resposta (se disponível) ou a própria redirectUrl
-                val finalUrl = if (redirectResponse.url.isNotBlank()) redirectResponse.url else redirectUrl
+                // A URL final pode ser obtida via redirectResponse.url (se disponível) ou usar a própria redirectUrl
+                val finalUrl = try {
+                    redirectResponse.url
+                } catch (e: Exception) {
+                    redirectUrl
+                }
 
                 if (!redirectResponse.isSuccessful) continue
 
@@ -286,17 +298,19 @@ object PobreFlixExtractor {
 
                 val videoBody = videoParams.joinToString("&")
 
+                val videoHeaders = mapOf(
+                    "Accept" to "*/*",
+                    "Accept-Language" to "pt-BR",
+                    "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8",
+                    "Origin" to CDN_BASE,
+                    "Referer" to "$CDN_BASE/",
+                    "X-Requested-With" to "XMLHttpRequest",
+                    "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36"
+                )
+
                 val videoResponse = app.post(
                     "$CDN_BASE/player/index.php?data=$playerHash&do=getVideo",
-                    headers = mapOf(
-                        "Accept" to "*/*",
-                        "Accept-Language" to "pt-BR",
-                        "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8",
-                        "Origin" to CDN_BASE,
-                        "Referer" to "$CDN_BASE/",
-                        "X-Requested-With" to "XMLHttpRequest",
-                        "User-Agent" to HEADERS["User-Agent"]!!
-                    ),
+                    headers = videoHeaders,
                     data = videoBody
                 )
 
@@ -314,7 +328,7 @@ object PobreFlixExtractor {
                     referer = "$CDN_BASE/",
                     headers = mapOf(
                         "Referer" to "$CDN_BASE/",
-                        "User-Agent" to HEADERS["User-Agent"]!!
+                        "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36"
                     )
                 )
 
@@ -332,7 +346,7 @@ object PobreFlixExtractor {
                             this.quality = 720
                             this.headers = mapOf(
                                 "Referer" to "$CDN_BASE/",
-                                "User-Agent" to HEADERS["User-Agent"]!!
+                                "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36"
                             )
                         }
                     )
