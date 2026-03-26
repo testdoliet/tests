@@ -13,7 +13,6 @@ object PobreFlixExtractor {
     private const val BASE_URL = "https://superflixapi.rest"
     private const val CDN_BASE = "https://llanfairpwllgwyngy.com"
 
-    private var sessionCookies: String = ""
     private var csrfToken: String = ""
     private var pageToken: String = ""
 
@@ -34,19 +33,6 @@ object PobreFlixExtractor {
         "Origin" to BASE_URL,
         "Connection" to "keep-alive"
     )
-
-    // Função sem tipo explícito – usa a resposta como Any (ou o tipo real do CloudStream3)
-    private fun updateCookies(response: Any) {
-        // Acessa headers como Map – isso funciona porque o CloudStream3 expõe um atributo 'headers'
-        val setCookie = (response as? dynamic)?.headers?.get("set-cookie") as? String
-        if (setCookie != null) {
-            sessionCookies = setCookie
-        }
-    }
-
-    private fun getCookieHeader(): Map<String, String> {
-        return if (sessionCookies.isNotEmpty()) mapOf("Cookie" to sessionCookies) else emptyMap()
-    }
 
     private fun extractTokenFromUrl(url: String): String? {
         val match = Regex("token=([a-zA-Z0-9_\\-]+)").find(url)
@@ -168,9 +154,8 @@ object PobreFlixExtractor {
                 "$BASE_URL/serie/$tmdbId/$targetSeason/$targetEpisode"
             }
 
-            val pageResponse = app.get(pageUrl, headers = HEADERS + getCookieHeader())
+            val pageResponse = app.get(pageUrl, headers = HEADERS)
             if (!pageResponse.isSuccessful) return emptyList()
-            updateCookies(pageResponse)
 
             val html = pageResponse.text
 
@@ -231,7 +216,7 @@ object PobreFlixExtractor {
 
             val optionsResponse = app.post(
                 "$BASE_URL/player/options",
-                headers = API_HEADERS + getCookieHeader() + mapOf(
+                headers = API_HEADERS + mapOf(
                     "X-Page-Token" to pageToken,
                     "Referer" to pageUrl
                 ),
@@ -266,7 +251,7 @@ object PobreFlixExtractor {
 
                 val sourceResponse = app.post(
                     "$BASE_URL/player/source",
-                    headers = API_HEADERS + getCookieHeader() + mapOf("Referer" to pageUrl),
+                    headers = API_HEADERS + mapOf("Referer" to pageUrl),
                     data = sourceBody
                 )
 
@@ -276,12 +261,13 @@ object PobreFlixExtractor {
                 val redirectUrl = sourceData.optJSONObject("data")?.optString("video_url")
                 if (redirectUrl.isNullOrEmpty()) continue
 
-                // Seguir redirect
-                val redirectResponse = app.get(redirectUrl, headers = HEADERS + getCookieHeader())
-                // Acessa headers como Map – funciona mesmo sem tipagem explícita
-                val finalUrl = (redirectResponse as? dynamic)?.headers?.get("location") as? String ?: redirectUrl
+                // Seguir redirect – o app.get já segue redirecionamentos automaticamente,
+                // então a URL final é a da resposta, não precisamos de headers["location"].
+                val redirectResponse = app.get(redirectUrl, headers = HEADERS)
+                // A URL final é a propriedade 'url' da resposta (se disponível) ou a própria redirectUrl
+                val finalUrl = if (redirectResponse.url.isNotBlank()) redirectResponse.url else redirectUrl
 
-                if (!redirectResponse.isSuccessful && (redirectResponse as? dynamic)?.headers?.get("location") == null) continue
+                if (!redirectResponse.isSuccessful) continue
 
                 // Verificar se é URL do Blogger
                 if (finalUrl.contains("blogger.com/video.g") || finalUrl.contains("blogger.com")) {
