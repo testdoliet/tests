@@ -16,6 +16,14 @@ object PobreFlixExtractor {
     private var csrfToken: String = ""
     private var pageToken: String = ""
 
+    // Headers padrão como Map
+    private val defaultHeaders = mapOf(
+        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language" to "pt-BR,pt;q=0.9,en;q=0.8",
+        "Referer" to "https://lospobreflix.site/"
+    )
+
     private fun extractTokenFromUrl(url: String): String? {
         val match = Regex("token=([a-zA-Z0-9_\\-]+)").find(url)
         return match?.groupValues?.get(1)
@@ -58,7 +66,8 @@ object PobreFlixExtractor {
         val body = "f.req=%5B%5B%5B%22WcwnYd%22%2C%22%5B%5C%22$token%5C%22%2C%5C%22%5C%22%2C0%5D%22%2Cnull%2C%22generic%22%5D%5D%5D"
 
         try {
-            val response = app.post(urlWithParams, data = body)
+            // Usando um mapa de headers vazio (mapOf()) para evitar erro
+            val response = app.post(urlWithParams, headers = mapOf(), data = body)
             val responseText = response.text
             val videoUrls = extractVideoUrlsFromResponse(responseText)
             
@@ -111,7 +120,8 @@ object PobreFlixExtractor {
                 "$BASE_URL/serie/$tmdbId/$targetSeason/$targetEpisode"
             }
             
-            val pageResponse = app.get(pageUrl)
+            // Usando headers como Map
+            val pageResponse = app.get(pageUrl, headers = defaultHeaders)
             if (!pageResponse.isSuccessful) return emptyList()
             val html = pageResponse.text
             
@@ -160,7 +170,7 @@ object PobreFlixExtractor {
             
             if (contentId == null) return emptyList()
             
-            // 4. Options - SEM HEADERS COMPLEXOS
+            // 4. Options
             val optionsParams = mutableListOf<String>()
             optionsParams.add("contentid=${URLEncoder.encode(contentId, "UTF-8")}")
             optionsParams.add("type=${URLEncoder.encode(if (mediaType == "movie") "filme" else "serie", "UTF-8")}")
@@ -169,7 +179,15 @@ object PobreFlixExtractor {
             optionsParams.add("pageToken=${URLEncoder.encode(pageToken, "UTF-8")}")
             val optionsBody = optionsParams.joinToString("&")
             
-            val optionsResponse = app.post("$BASE_URL/player/options", data = optionsBody)
+            // Headers para API
+            val apiHeaders = mapOf(
+                "Content-Type" to "application/x-www-form-urlencoded",
+                "X-Requested-With" to "XMLHttpRequest",
+                "Referer" to pageUrl,
+                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            )
+            
+            val optionsResponse = app.post("$BASE_URL/player/options", headers = apiHeaders, data = optionsBody)
             if (!optionsResponse.isSuccessful) return emptyList()
             
             val optionsData = JSONObject(optionsResponse.text)
@@ -188,14 +206,14 @@ object PobreFlixExtractor {
                 
                 if (videoId.isEmpty()) continue
                 
-                // Source - SEM HEADERS COMPLEXOS
+                // Source
                 val sourceParams = mutableListOf<String>()
                 sourceParams.add("video_id=${URLEncoder.encode(videoId, "UTF-8")}")
                 sourceParams.add("page_token=${URLEncoder.encode(pageToken, "UTF-8")}")
                 sourceParams.add("_token=${URLEncoder.encode(csrfToken, "UTF-8")}")
                 val sourceBody = sourceParams.joinToString("&")
                 
-                val sourceResponse = app.post("$BASE_URL/player/source", data = sourceBody)
+                val sourceResponse = app.post("$BASE_URL/player/source", headers = apiHeaders, data = sourceBody)
                 if (!sourceResponse.isSuccessful) continue
                 
                 val sourceData = JSONObject(sourceResponse.text)
@@ -203,7 +221,7 @@ object PobreFlixExtractor {
                 if (redirectUrl.isNullOrEmpty()) continue
                 
                 // Seguir redirect
-                val redirectResponse = app.get(redirectUrl)
+                val redirectResponse = app.get(redirectUrl, headers = defaultHeaders)
                 if (!redirectResponse.isSuccessful) continue
                 
                 val finalUrl = try {
@@ -228,8 +246,16 @@ object PobreFlixExtractor {
                 videoParams.add("r=")
                 val videoBody = videoParams.joinToString("&")
                 
+                val videoHeaders = mapOf(
+                    "Content-Type" to "application/x-www-form-urlencoded",
+                    "X-Requested-With" to "XMLHttpRequest",
+                    "Referer" to "$CDN_BASE/",
+                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                )
+                
                 val videoResponse = app.post(
                     "$CDN_BASE/player/index.php?data=$playerHash&do=getVideo",
+                    headers = videoHeaders,
                     data = videoBody
                 )
                 
