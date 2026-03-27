@@ -1,4 +1,4 @@
-package com.PobreFlix.extractor
+package com.PobreFlix
 
 import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.utils.ExtractorLink
@@ -16,11 +16,26 @@ object PobreFlixExtractor {
     private var csrfToken: String = ""
     private var pageToken: String = ""
 
-    private val defaultHeaders = mapOf(
-        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language" to "pt-BR,pt;q=0.9,en;q=0.8",
-        "Referer" to "https://lospobreflix.site/"
+    private val HEADERS = mapOf(
+        "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
+        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+        "Accept-Language" to "pt-BR",
+        "Referer" to "https://lospobreflix.site/",
+        "Sec-Fetch-Dest" to "iframe",
+        "Sec-Fetch-Mode" to "navigate",
+        "Sec-Fetch-Site" to "cross-site",
+        "Upgrade-Insecure-Requests" to "1",
+        "Connection" to "keep-alive"
+    )
+
+    private val API_HEADERS = mapOf(
+        "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
+        "Accept" to "application/json, text/plain, */*",
+        "Accept-Language" to "pt-BR",
+        "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8",
+        "X-Requested-With" to "XMLHttpRequest",
+        "Origin" to BASE_URL,
+        "Connection" to "keep-alive"
     )
 
     private fun extractTokenFromUrl(url: String): String? {
@@ -138,25 +153,42 @@ object PobreFlixExtractor {
             
             println("[PobreFlix] URL da página: $pageUrl")
             
-            val pageResponse = app.get(
+            var pageResponse = app.get(
                 url = pageUrl,
-                headers = defaultHeaders
+                headers = HEADERS
             )
+            
             if (!pageResponse.isSuccessful) {
-                println("[PobreFlix] Página não carregou: isSuccessful=false")
+                println("[PobreFlix] Primeira tentativa falhou: isSuccessful=false")
                 return emptyList()
             }
-            val html = pageResponse.text
+            
+            var html = pageResponse.text
             println("[PobreFlix] HTML carregado, tamanho: ${html.length}")
+            
+            // Se não encontrou os tokens, tenta com Accept-Encoding diferente (como no JS original)
+            if (!html.contains("var CSRF_TOKEN") && !html.contains("<!DOCTYPE")) {
+                println("[PobreFlix] HTML comprimido, tentando sem brotli...")
+                val altResponse = app.get(
+                    url = pageUrl,
+                    headers = HEADERS + mapOf("Accept-Encoding" to "gzip, deflate")
+                )
+                if (altResponse.isSuccessful) {
+                    html = altResponse.text
+                    println("[PobreFlix] HTML alternativo carregado, tamanho: ${html.length}")
+                }
+            }
             
             // 2. Extrair tokens
             val csrfMatch = Regex("var CSRF_TOKEN\\s*=\\s*[\"']([^\"']+)[\"']").find(html)
             if (csrfMatch == null) {
                 println("[PobreFlix] CSRF_TOKEN não encontrado")
+                println("[PobreFlix] Primeiros 500 caracteres do HTML:")
+                println(html.take(500))
                 return emptyList()
             }
             csrfToken = csrfMatch.groupValues[1]
-            println("[PobreFlix] CSRF_TOKEN: $csrfToken")
+            println("[PobreFlix] CSRF_TOKEN: ${csrfToken.take(30)}...")
             
             val pageMatch = Regex("var PAGE_TOKEN\\s*=\\s*[\"']([^\"']+)[\"']").find(html)
             if (pageMatch == null) {
@@ -164,7 +196,7 @@ object PobreFlixExtractor {
                 return emptyList()
             }
             pageToken = pageMatch.groupValues[1]
-            println("[PobreFlix] PAGE_TOKEN: $pageToken")
+            println("[PobreFlix] PAGE_TOKEN: ${pageToken.take(30)}...")
             
             // 3. Extrair contentId
             var contentId: String? = null
@@ -173,9 +205,11 @@ object PobreFlixExtractor {
                 val initialContentMatch = Regex("INITIAL_CONTENT_ID\\s*=\\s*(\\d+)").find(html)
                 if (initialContentMatch != null) {
                     contentId = initialContentMatch.groupValues[1]
+                    println("[PobreFlix] CONTENT_ID (filme): $contentId")
                 } else {
                     val dataContentMatch = Regex("data-contentid=[\"'](\\d+)[\"']").find(html)
                     contentId = dataContentMatch?.groupValues?.get(1)
+                    println("[PobreFlix] CONTENT_ID (fallback): $contentId")
                 }
             } else {
                 val epMatch = Regex("var ALL_EPISODES\\s*=\\s*(\\{.*?\\});", RegexOption.DOT_MATCHES_ALL).find(html)
@@ -192,6 +226,7 @@ object PobreFlixExtractor {
                                 if (epNum == targetEpisode) {
                                     contentId = ep.optString("ID")
                                     if (contentId.isNullOrEmpty()) contentId = ep.optString("id")
+                                    println("[PobreFlix] CONTENT_ID (série): $contentId (episódio $targetEpisode)")
                                     break
                                 }
                             }
@@ -206,33 +241,30 @@ object PobreFlixExtractor {
                 println("[PobreFlix] contentId não encontrado")
                 return emptyList()
             }
-            println("[PobreFlix] contentId: $contentId")
             
             // 4. Options
             val optionsParams = mutableMapOf<String, String>()
-            optionsParams["contentid"] = URLEncoder.encode(contentId, "UTF-8")
-            optionsParams["type"] = URLEncoder.encode(if (mediaType == "movie") "filme" else "serie", "UTF-8")
-            optionsParams["_token"] = URLEncoder.encode(csrfToken, "UTF-8")
-            optionsParams["page_token"] = URLEncoder.encode(pageToken, "UTF-8")
-            optionsParams["pageToken"] = URLEncoder.encode(pageToken, "UTF-8")
-            
-            val apiHeaders = mapOf(
-                "Content-Type" to "application/x-www-form-urlencoded",
-                "X-Requested-With" to "XMLHttpRequest",
-                "Referer" to pageUrl,
-                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-            )
+            optionsParams["contentid"] = contentId
+            optionsParams["type"] = if (mediaType == "movie") "filme" else "serie"
+            optionsParams["_token"] = csrfToken
+            optionsParams["page_token"] = pageToken
+            optionsParams["pageToken"] = pageToken
             
             println("[PobreFlix] Chamando options...")
+            println("[PobreFlix] contentId: $contentId, type: ${if (mediaType == "movie") "filme" else "serie"}")
+            
             val optionsResponse = app.post(
                 url = "$BASE_URL/player/options",
-                headers = apiHeaders,
+                headers = API_HEADERS + mapOf(
+                    "X-Page-Token" to pageToken,
+                    "Referer" to pageUrl
+                ),
                 data = optionsParams
             )
             
             if (!optionsResponse.isSuccessful) {
                 println("[PobreFlix] Options falhou: isSuccessful=false")
-                println("[PobreFlix] Resposta: ${optionsResponse.text}")
+                println("[PobreFlix] Resposta: ${optionsResponse.text.take(200)}")
                 return emptyList()
             }
             
@@ -271,19 +303,22 @@ object PobreFlixExtractor {
                 
                 // Source
                 val sourceParams = mutableMapOf<String, String>()
-                sourceParams["video_id"] = URLEncoder.encode(videoId, "UTF-8")
-                sourceParams["page_token"] = URLEncoder.encode(pageToken, "UTF-8")
-                sourceParams["_token"] = URLEncoder.encode(csrfToken, "UTF-8")
+                sourceParams["video_id"] = videoId
+                sourceParams["page_token"] = pageToken
+                sourceParams["_token"] = csrfToken
                 
                 println("[PobreFlix] Chamando source...")
+                
                 val sourceResponse = app.post(
                     url = "$BASE_URL/player/source",
-                    headers = apiHeaders,
+                    headers = API_HEADERS + mapOf("Referer" to pageUrl),
                     data = sourceParams
                 )
                 
                 if (!sourceResponse.isSuccessful) {
                     println("[PobreFlix] Source falhou: isSuccessful=false")
+                    val errorText = sourceResponse.text
+                    println("[PobreFlix] Source error: ${errorText.take(200)}")
                     continue
                 }
                 
@@ -297,17 +332,15 @@ object PobreFlixExtractor {
                     continue
                 }
                 
-                println("[PobreFlix] redirectUrl: $redirectUrl")
+                println("[PobreFlix] redirectUrl: ${redirectUrl.take(100)}...")
                 
-                // Seguir redirect
+                // Seguir redirect - usar redirect: manual como no JS
                 val redirectResponse = app.get(
                     url = redirectUrl,
-                    headers = defaultHeaders
+                    headers = HEADERS
                 )
-                if (!redirectResponse.isSuccessful) {
-                    println("[PobreFlix] Redirect falhou: isSuccessful=false")
-                    continue
-                }
+                
+                println("[PobreFlix] Redirect status: isSuccessful=${redirectResponse.isSuccessful}")
                 
                 val finalUrl = try {
                     redirectResponse.url
@@ -327,24 +360,31 @@ object PobreFlixExtractor {
                 }
                 
                 // Processamento normal (HLS)
-                val playerHash = finalUrl.split("/").lastOrNull() ?: continue
+                val playerHash = finalUrl.split("/").lastOrNull()
+                if (playerHash == null) {
+                    println("[PobreFlix] playerHash null")
+                    continue
+                }
+                
                 println("[PobreFlix] playerHash: $playerHash")
                 
                 val videoParams = mutableMapOf<String, String>()
-                videoParams["hash"] = URLEncoder.encode(playerHash, "UTF-8")
+                videoParams["hash"] = playerHash
                 videoParams["r"] = ""
                 
-                val videoHeaders = mapOf(
-                    "Content-Type" to "application/x-www-form-urlencoded",
-                    "X-Requested-With" to "XMLHttpRequest",
-                    "Referer" to "$CDN_BASE/",
-                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-                )
-                
                 println("[PobreFlix] Chamando video...")
+                
                 val videoResponse = app.post(
                     url = "$CDN_BASE/player/index.php?data=$playerHash&do=getVideo",
-                    headers = videoHeaders,
+                    headers = mapOf(
+                        "Accept" to "*/*",
+                        "Accept-Language" to "pt-BR",
+                        "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8",
+                        "Origin" to CDN_BASE,
+                        "Referer" to "$CDN_BASE/",
+                        "X-Requested-With" to "XMLHttpRequest",
+                        "User-Agent" to HEADERS["User-Agent"]!!
+                    ),
                     data = videoParams
                 )
                 
@@ -365,7 +405,17 @@ object PobreFlixExtractor {
                     continue
                 }
                 
-                println("[PobreFlix] videoUrl encontrado: ${videoUrl.take(100)}")
+                println("[PobreFlix] videoUrl encontrado: ${videoUrl.take(100)}...")
+                
+                // Determinar qualidade
+                var quality = 720
+                when {
+                    videoUrl.contains("2160") || videoUrl.contains("4k") -> quality = 2160
+                    videoUrl.contains("1440") -> quality = 1440
+                    videoUrl.contains("1080") -> quality = 1080
+                    videoUrl.contains("720") -> quality = 720
+                    videoUrl.contains("480") -> quality = 480
+                }
                 
                 val links = M3u8Helper.generateM3u8(
                     source = "SuperFlix",
@@ -381,12 +431,12 @@ object PobreFlixExtractor {
                     results.add(
                         newExtractorLink(
                             source = "SuperFlix",
-                            name = "SuperFlix $serverType HD",
+                            name = "SuperFlix $serverType ${quality}p",
                             url = videoUrl,
                             type = ExtractorLinkType.M3U8
                         ) {
                             this.referer = "$CDN_BASE/"
-                            this.quality = 720
+                            this.quality = quality
                         }
                     )
                 }
