@@ -23,10 +23,6 @@ object PobreFlixExtractor {
         "Referer" to "https://lospobreflix.site/"
     )
 
-    private fun log(message: String) {
-        println("[PobreFlixExtractor] $message")
-    }
-
     private fun extractTokenFromUrl(url: String): String? {
         val match = Regex("token=([a-zA-Z0-9_\\-]+)").find(url)
         return match?.groupValues?.get(1)
@@ -59,7 +55,7 @@ object PobreFlixExtractor {
     }
 
     private suspend fun extractBloggerVideo(bloggerUrl: String, serverType: String, callback: (ExtractorLink) -> Unit): Boolean {
-        log("extractBloggerVideo: $bloggerUrl")
+        println("[PobreFlix] extractBloggerVideo: $bloggerUrl")
         val token = extractTokenFromUrl(bloggerUrl) ?: return false
 
         val apiUrl = "https://www.blogger.com/_/BloggerVideoPlayerUi/data/batchexecute"
@@ -78,15 +74,15 @@ object PobreFlixExtractor {
                 data = body
             )
             val responseText = response.text
-            log("Blogger response size: ${responseText.length}")
+            println("[PobreFlix] Blogger response size: ${responseText.length}")
             
             val videoUrls = extractVideoUrlsFromResponse(responseText)
-            log("Video URLs encontradas: ${videoUrls.size}")
+            println("[PobreFlix] Video URLs encontradas: ${videoUrls.size}")
             
             if (videoUrls.isEmpty()) return false
             
             for (videoUrl in videoUrls) {
-                log("Processando URL: ${videoUrl.take(100)}")
+                println("[PobreFlix] Processando URL: ${videoUrl.take(100)}")
                 val links = M3u8Helper.generateM3u8(
                     source = "SuperFlix",
                     streamUrl = videoUrl,
@@ -94,10 +90,10 @@ object PobreFlixExtractor {
                 )
                 
                 if (links.isNotEmpty()) {
-                    log("Links M3U8 gerados: ${links.size}")
+                    println("[PobreFlix] Links M3U8 gerados: ${links.size}")
                     links.forEach { callback(it) }
                 } else {
-                    log("Criando link direto")
+                    println("[PobreFlix] Criando link direto")
                     callback.invoke(
                         newExtractorLink(
                             source = "SuperFlix",
@@ -113,7 +109,7 @@ object PobreFlixExtractor {
             }
             return true
         } catch (e: Exception) {
-            log("Erro no extractBloggerVideo: ${e.message}")
+            println("[PobreFlix] Erro no extractBloggerVideo: ${e.message}")
             e.printStackTrace()
             return false
         }
@@ -129,8 +125,8 @@ object PobreFlixExtractor {
         val targetSeason = if (mediaType == "movie") 1 else season
         val targetEpisode = if (mediaType == "movie") 1 else episode
 
-        log("=== getStreams INICIADO ===")
-        log("tmdbId: $tmdbId, mediaType: $mediaType, season: $season, episode: $episode")
+        println("[PobreFlix] === getStreams INICIADO ===")
+        println("[PobreFlix] tmdbId: $tmdbId, mediaType: $mediaType, season: $season, episode: $episode")
 
         try {
             // 1. Página inicial
@@ -140,35 +136,35 @@ object PobreFlixExtractor {
                 "$BASE_URL/serie/$tmdbId/$targetSeason/$targetEpisode"
             }
             
-            log("URL da página: $pageUrl")
+            println("[PobreFlix] URL da página: $pageUrl")
             
             val pageResponse = app.get(
                 url = pageUrl,
                 headers = defaultHeaders
             )
             if (!pageResponse.isSuccessful) {
-                log("Página não carregou: ${pageResponse.statusCode}")
+                println("[PobreFlix] Página não carregou: isSuccessful=false")
                 return emptyList()
             }
             val html = pageResponse.text
-            log("HTML carregado, tamanho: ${html.length}")
+            println("[PobreFlix] HTML carregado, tamanho: ${html.length}")
             
             // 2. Extrair tokens
             val csrfMatch = Regex("var CSRF_TOKEN\\s*=\\s*[\"']([^\"']+)[\"']").find(html)
             if (csrfMatch == null) {
-                log("CSRF_TOKEN não encontrado")
+                println("[PobreFlix] CSRF_TOKEN não encontrado")
                 return emptyList()
             }
             csrfToken = csrfMatch.groupValues[1]
-            log("CSRF_TOKEN: $csrfToken")
+            println("[PobreFlix] CSRF_TOKEN: $csrfToken")
             
             val pageMatch = Regex("var PAGE_TOKEN\\s*=\\s*[\"']([^\"']+)[\"']").find(html)
             if (pageMatch == null) {
-                log("PAGE_TOKEN não encontrado")
+                println("[PobreFlix] PAGE_TOKEN não encontrado")
                 return emptyList()
             }
             pageToken = pageMatch.groupValues[1]
-            log("PAGE_TOKEN: $pageToken")
+            println("[PobreFlix] PAGE_TOKEN: $pageToken")
             
             // 3. Extrair contentId
             var contentId: String? = null
@@ -201,16 +197,16 @@ object PobreFlixExtractor {
                             }
                         }
                     } catch (e: Exception) {
-                        log("Erro ao parsear JSON: ${e.message}")
+                        println("[PobreFlix] Erro ao parsear JSON: ${e.message}")
                     }
                 }
             }
             
             if (contentId == null) {
-                log("contentId não encontrado")
+                println("[PobreFlix] contentId não encontrado")
                 return emptyList()
             }
-            log("contentId: $contentId")
+            println("[PobreFlix] contentId: $contentId")
             
             // 4. Options
             val optionsParams = mutableMapOf<String, String>()
@@ -227,7 +223,7 @@ object PobreFlixExtractor {
                 "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
             )
             
-            log("Chamando options...")
+            println("[PobreFlix] Chamando options...")
             val optionsResponse = app.post(
                 url = "$BASE_URL/player/options",
                 headers = apiHeaders,
@@ -235,28 +231,28 @@ object PobreFlixExtractor {
             )
             
             if (!optionsResponse.isSuccessful) {
-                log("Options falhou: ${optionsResponse.statusCode}")
-                log("Resposta: ${optionsResponse.text}")
+                println("[PobreFlix] Options falhou: isSuccessful=false")
+                println("[PobreFlix] Resposta: ${optionsResponse.text}")
                 return emptyList()
             }
             
             val optionsText = optionsResponse.text
-            log("Options resposta: ${optionsText.take(200)}")
+            println("[PobreFlix] Options resposta: ${optionsText.take(200)}")
             
             val optionsData = JSONObject(optionsText)
             val dataObj = optionsData.optJSONObject("data")
             if (dataObj == null) {
-                log("data object não encontrado no options")
+                println("[PobreFlix] data object não encontrado no options")
                 return emptyList()
             }
             
             val optionsArray = dataObj.optJSONArray("options")
             if (optionsArray == null) {
-                log("options array não encontrado")
+                println("[PobreFlix] options array não encontrado")
                 return emptyList()
             }
             
-            log("Options encontradas: ${optionsArray.length()}")
+            println("[PobreFlix] Options encontradas: ${optionsArray.length()}")
             
             // 5. Processar cada servidor
             for (i in 0 until optionsArray.length()) {
@@ -269,7 +265,7 @@ object PobreFlixExtractor {
                     else -> "Tipo $type"
                 }
                 
-                log("Processando server $i: videoId=$videoId, type=$serverType")
+                println("[PobreFlix] Processando server $i: videoId=$videoId, type=$serverType")
                 
                 if (videoId.isEmpty()) continue
                 
@@ -279,7 +275,7 @@ object PobreFlixExtractor {
                 sourceParams["page_token"] = URLEncoder.encode(pageToken, "UTF-8")
                 sourceParams["_token"] = URLEncoder.encode(csrfToken, "UTF-8")
                 
-                log("Chamando source...")
+                println("[PobreFlix] Chamando source...")
                 val sourceResponse = app.post(
                     url = "$BASE_URL/player/source",
                     headers = apiHeaders,
@@ -287,21 +283,21 @@ object PobreFlixExtractor {
                 )
                 
                 if (!sourceResponse.isSuccessful) {
-                    log("Source falhou: ${sourceResponse.statusCode}")
+                    println("[PobreFlix] Source falhou: isSuccessful=false")
                     continue
                 }
                 
                 val sourceText = sourceResponse.text
-                log("Source resposta: ${sourceText.take(200)}")
+                println("[PobreFlix] Source resposta: ${sourceText.take(200)}")
                 
                 val sourceData = JSONObject(sourceText)
                 val redirectUrl = sourceData.optJSONObject("data")?.optString("video_url")
                 if (redirectUrl.isNullOrEmpty()) {
-                    log("redirectUrl vazio")
+                    println("[PobreFlix] redirectUrl vazio")
                     continue
                 }
                 
-                log("redirectUrl: $redirectUrl")
+                println("[PobreFlix] redirectUrl: $redirectUrl")
                 
                 // Seguir redirect
                 val redirectResponse = app.get(
@@ -309,7 +305,7 @@ object PobreFlixExtractor {
                     headers = defaultHeaders
                 )
                 if (!redirectResponse.isSuccessful) {
-                    log("Redirect falhou: ${redirectResponse.statusCode}")
+                    println("[PobreFlix] Redirect falhou: isSuccessful=false")
                     continue
                 }
                 
@@ -319,11 +315,11 @@ object PobreFlixExtractor {
                     redirectUrl
                 }
                 
-                log("finalUrl: $finalUrl")
+                println("[PobreFlix] finalUrl: $finalUrl")
                 
                 // Verificar se é URL do Blogger
                 if (finalUrl.contains("blogger.com/video.g") || finalUrl.contains("blogger.com")) {
-                    log("É URL do Blogger, chamando extractBloggerVideo")
+                    println("[PobreFlix] É URL do Blogger, chamando extractBloggerVideo")
                     extractBloggerVideo(finalUrl, serverType) { stream ->
                         results.add(stream)
                     }
@@ -332,7 +328,7 @@ object PobreFlixExtractor {
                 
                 // Processamento normal (HLS)
                 val playerHash = finalUrl.split("/").lastOrNull() ?: continue
-                log("playerHash: $playerHash")
+                println("[PobreFlix] playerHash: $playerHash")
                 
                 val videoParams = mutableMapOf<String, String>()
                 videoParams["hash"] = URLEncoder.encode(playerHash, "UTF-8")
@@ -345,7 +341,7 @@ object PobreFlixExtractor {
                     "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
                 )
                 
-                log("Chamando video...")
+                println("[PobreFlix] Chamando video...")
                 val videoResponse = app.post(
                     url = "$CDN_BASE/player/index.php?data=$playerHash&do=getVideo",
                     headers = videoHeaders,
@@ -353,23 +349,23 @@ object PobreFlixExtractor {
                 )
                 
                 if (!videoResponse.isSuccessful) {
-                    log("Video falhou: ${videoResponse.statusCode}")
+                    println("[PobreFlix] Video falhou: isSuccessful=false")
                     continue
                 }
                 
                 val videoText = videoResponse.text
-                log("Video resposta: ${videoText.take(200)}")
+                println("[PobreFlix] Video resposta: ${videoText.take(200)}")
                 
                 val videoData = JSONObject(videoText)
                 val videoUrl = videoData.optString("securedLink").takeIf { it.isNotEmpty() } 
                     ?: videoData.optString("videoSource")
                 
                 if (videoUrl.isNullOrEmpty()) {
-                    log("videoUrl vazio")
+                    println("[PobreFlix] videoUrl vazio")
                     continue
                 }
                 
-                log("videoUrl encontrado: ${videoUrl.take(100)}")
+                println("[PobreFlix] videoUrl encontrado: ${videoUrl.take(100)}")
                 
                 val links = M3u8Helper.generateM3u8(
                     source = "SuperFlix",
@@ -378,10 +374,10 @@ object PobreFlixExtractor {
                 )
                 
                 if (links.isNotEmpty()) {
-                    log("Links M3U8 gerados: ${links.size}")
+                    println("[PobreFlix] Links M3U8 gerados: ${links.size}")
                     results.addAll(links)
                 } else {
-                    log("Criando link direto")
+                    println("[PobreFlix] Criando link direto")
                     results.add(
                         newExtractorLink(
                             source = "SuperFlix",
@@ -396,11 +392,11 @@ object PobreFlixExtractor {
                 }
             }
             
-            log("Total de links encontrados: ${results.size}")
+            println("[PobreFlix] Total de links encontrados: ${results.size}")
             return results
             
         } catch (e: Exception) {
-            log("Erro geral: ${e.message}")
+            println("[PobreFlix] Erro geral: ${e.message}")
             e.printStackTrace()
             return emptyList()
         }
