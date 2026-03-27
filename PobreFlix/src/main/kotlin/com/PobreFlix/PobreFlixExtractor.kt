@@ -62,13 +62,16 @@ object PobreFlixExtractor {
         val fSid = "-7535563745894756252"
         val bl = "boq_bloggeruiserver_20260223.02_p0"
         val urlWithParams = "$apiUrl?rpcids=WcwnYd&source-path=%2Fvideo.g&f.sid=$fSid&bl=$bl&hl=pt-BR&_reqid=$reqid&rt=c"
-        val body = "f.req=%5B%5B%5B%22WcwnYd%22%2C%22%5B%5C%22$token%5C%22%2C%5C%22%5C%22%2C0%5D%22%2Cnull%2C%22generic%22%5D%5D%5D"
+        
+        // CORRIGIDO: body agora é um Map, igual ao AniTube
+        val body = mapOf(
+            "f.req" to "%5B%5B%5B%22WcwnYd%22%2C%22%5B%5C%22$token%5C%22%2C%5C%22%5C%22%2C0%5D%22%2Cnull%2C%22generic%22%5D%5D%5D"
+        )
 
         try {
-            // USANDO PARÂMETROS NOMEADOS como no Goyabu
             val response = app.post(
                 url = urlWithParams,
-                data = body
+                data = body  // ← Agora é Map, não String!
             )
             val responseText = response.text
             val videoUrls = extractVideoUrlsFromResponse(responseText)
@@ -122,7 +125,6 @@ object PobreFlixExtractor {
                 "$BASE_URL/serie/$tmdbId/$targetSeason/$targetEpisode"
             }
             
-            // USANDO PARÂMETROS NOMEADOS
             val pageResponse = app.get(
                 url = pageUrl,
                 headers = defaultHeaders
@@ -175,14 +177,13 @@ object PobreFlixExtractor {
             
             if (contentId == null) return emptyList()
             
-            // 4. Options
-            val optionsParams = mutableListOf<String>()
-            optionsParams.add("contentid=${URLEncoder.encode(contentId, "UTF-8")}")
-            optionsParams.add("type=${URLEncoder.encode(if (mediaType == "movie") "filme" else "serie", "UTF-8")}")
-            optionsParams.add("_token=${URLEncoder.encode(csrfToken, "UTF-8")}")
-            optionsParams.add("page_token=${URLEncoder.encode(pageToken, "UTF-8")}")
-            optionsParams.add("pageToken=${URLEncoder.encode(pageToken, "UTF-8")}")
-            val optionsBody = optionsParams.joinToString("&")
+            // 4. Options - CORRIGIDO: optionsBody agora é Map
+            val optionsParams = mutableMapOf<String, String>()
+            optionsParams["contentid"] = URLEncoder.encode(contentId, "UTF-8")
+            optionsParams["type"] = URLEncoder.encode(if (mediaType == "movie") "filme" else "serie", "UTF-8")
+            optionsParams["_token"] = URLEncoder.encode(csrfToken, "UTF-8")
+            optionsParams["page_token"] = URLEncoder.encode(pageToken, "UTF-8")
+            optionsParams["pageToken"] = URLEncoder.encode(pageToken, "UTF-8")
             
             val apiHeaders = mapOf(
                 "Content-Type" to "application/x-www-form-urlencoded",
@@ -191,11 +192,10 @@ object PobreFlixExtractor {
                 "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
             )
             
-            // USANDO PARÂMETROS NOMEADOS
             val optionsResponse = app.post(
                 url = "$BASE_URL/player/options",
                 headers = apiHeaders,
-                data = optionsBody
+                data = optionsParams  // ← Agora é Map!
             )
             if (!optionsResponse.isSuccessful) return emptyList()
             
@@ -215,18 +215,16 @@ object PobreFlixExtractor {
                 
                 if (videoId.isEmpty()) continue
                 
-                // Source
-                val sourceParams = mutableListOf<String>()
-                sourceParams.add("video_id=${URLEncoder.encode(videoId, "UTF-8")}")
-                sourceParams.add("page_token=${URLEncoder.encode(pageToken, "UTF-8")}")
-                sourceParams.add("_token=${URLEncoder.encode(csrfToken, "UTF-8")}")
-                val sourceBody = sourceParams.joinToString("&")
+                // Source - CORRIGIDO: sourceBody agora é Map
+                val sourceParams = mutableMapOf<String, String>()
+                sourceParams["video_id"] = URLEncoder.encode(videoId, "UTF-8")
+                sourceParams["page_token"] = URLEncoder.encode(pageToken, "UTF-8")
+                sourceParams["_token"] = URLEncoder.encode(csrfToken, "UTF-8")
                 
-                // USANDO PARÂMETROS NOMEADOS
                 val sourceResponse = app.post(
                     url = "$BASE_URL/player/source",
                     headers = apiHeaders,
-                    data = sourceBody
+                    data = sourceParams  // ← Agora é Map!
                 )
                 if (!sourceResponse.isSuccessful) continue
                 
@@ -255,13 +253,12 @@ object PobreFlixExtractor {
                     continue
                 }
                 
-                // Processamento normal (HLS)
+                // Processamento normal (HLS) - CORRIGIDO: videoBody agora é Map
                 val playerHash = finalUrl.split("/").lastOrNull() ?: continue
                 
-                val videoParams = mutableListOf<String>()
-                videoParams.add("hash=${URLEncoder.encode(playerHash, "UTF-8")}")
-                videoParams.add("r=")
-                val videoBody = videoParams.joinToString("&")
+                val videoParams = mutableMapOf<String, String>()
+                videoParams["hash"] = URLEncoder.encode(playerHash, "UTF-8")
+                videoParams["r"] = ""
                 
                 val videoHeaders = mapOf(
                     "Content-Type" to "application/x-www-form-urlencoded",
@@ -270,11 +267,10 @@ object PobreFlixExtractor {
                     "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
                 )
                 
-                // USANDO PARÂMETROS NOMEADOS
                 val videoResponse = app.post(
                     url = "$CDN_BASE/player/index.php?data=$playerHash&do=getVideo",
                     headers = videoHeaders,
-                    data = videoBody
+                    data = videoParams  // ← Agora é Map!
                 )
                 
                 if (!videoResponse.isSuccessful) continue
