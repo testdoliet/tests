@@ -1,4 +1,4 @@
-package com.PobreFlix
+package com.PobreFlix.extractor
 
 import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.utils.ExtractorLink
