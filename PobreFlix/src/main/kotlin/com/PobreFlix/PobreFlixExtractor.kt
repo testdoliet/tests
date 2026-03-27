@@ -166,7 +166,7 @@ object PobreFlixExtractor {
             var html = pageResponse.text
             println("[PobreFlix] HTML carregado, tamanho: ${html.length}")
             
-            // Se não encontrou os tokens, tenta com Accept-Encoding diferente (como no JS original)
+            // Se não encontrou os tokens, tenta com Accept-Encoding diferente
             if (!html.contains("var CSRF_TOKEN") && !html.contains("<!DOCTYPE")) {
                 println("[PobreFlix] HTML comprimido, tentando sem brotli...")
                 val altResponse = app.get(
@@ -183,8 +183,6 @@ object PobreFlixExtractor {
             val csrfMatch = Regex("var CSRF_TOKEN\\s*=\\s*[\"']([^\"']+)[\"']").find(html)
             if (csrfMatch == null) {
                 println("[PobreFlix] CSRF_TOKEN não encontrado")
-                println("[PobreFlix] Primeiros 500 caracteres do HTML:")
-                println(html.take(500))
                 return emptyList()
             }
             csrfToken = csrfMatch.groupValues[1]
@@ -212,28 +210,58 @@ object PobreFlixExtractor {
                     println("[PobreFlix] CONTENT_ID (fallback): $contentId")
                 }
             } else {
+                // Para séries/animes
                 val epMatch = Regex("var ALL_EPISODES\\s*=\\s*(\\{.*?\\});", RegexOption.DOT_MATCHES_ALL).find(html)
                 if (epMatch != null) {
                     try {
                         val jsonString = epMatch.groupValues[1]
+                        println("[PobreFlix] JSON de episódios encontrado, tamanho: ${jsonString.length}")
+                        println("[PobreFlix] JSON (primeiros 500 chars): ${jsonString.take(500)}")
+                        
                         val jsonObject = JSONObject(jsonString)
-                        val seasonData = jsonObject.optJSONArray(targetSeason.toString())
+                        
+                        // Listar todas as chaves disponíveis
+                        val keys = jsonObject.keys()
+                        println("[PobreFlix] Chaves no JSON:")
+                        while (keys.hasNext()) {
+                            val key = keys.next()
+                            println("[PobreFlix]   - $key")
+                        }
+                        
+                        // Tentar pegar a temporada específica
+                        val seasonKey = targetSeason.toString()
+                        println("[PobreFlix] Procurando temporada: $seasonKey")
+                        
+                        val seasonData = jsonObject.optJSONArray(seasonKey)
                         
                         if (seasonData != null) {
+                            println("[PobreFlix] Temporada $seasonKey encontrada, episódios: ${seasonData.length()}")
+                            
                             for (i in 0 until seasonData.length()) {
                                 val ep = seasonData.getJSONObject(i)
                                 val epNum = ep.optInt("epi_num")
+                                println("[PobreFlix] Episódio $i: epi_num = $epNum")
+                                
                                 if (epNum == targetEpisode) {
+                                    // Tentar diferentes nomes de campo para o ID
                                     contentId = ep.optString("ID")
                                     if (contentId.isNullOrEmpty()) contentId = ep.optString("id")
-                                    println("[PobreFlix] CONTENT_ID (série): $contentId (episódio $targetEpisode)")
+                                    if (contentId.isNullOrEmpty()) contentId = ep.optString("video_id")
+                                    
+                                    println("[PobreFlix] ✓ Episódio $targetEpisode encontrado! contentId = $contentId")
                                     break
                                 }
                             }
+                        } else {
+                            println("[PobreFlix] Temporada $seasonKey NÃO encontrada diretamente")
                         }
+                        
                     } catch (e: Exception) {
                         println("[PobreFlix] Erro ao parsear JSON: ${e.message}")
+                        e.printStackTrace()
                     }
+                } else {
+                    println("[PobreFlix] Padrão 'var ALL_EPISODES' não encontrado no HTML")
                 }
             }
             
@@ -317,8 +345,6 @@ object PobreFlixExtractor {
                 
                 if (!sourceResponse.isSuccessful) {
                     println("[PobreFlix] Source falhou: isSuccessful=false")
-                    val errorText = sourceResponse.text
-                    println("[PobreFlix] Source error: ${errorText.take(200)}")
                     continue
                 }
                 
@@ -334,7 +360,7 @@ object PobreFlixExtractor {
                 
                 println("[PobreFlix] redirectUrl: ${redirectUrl.take(100)}...")
                 
-                // Seguir redirect - usar redirect: manual como no JS
+                // Seguir redirect
                 val redirectResponse = app.get(
                     url = redirectUrl,
                     headers = HEADERS
@@ -397,11 +423,20 @@ object PobreFlixExtractor {
                 println("[PobreFlix] Video resposta: ${videoText.take(200)}")
                 
                 val videoData = JSONObject(videoText)
+                
+                // Pular streams sem áudio (como no JS original, verificamos se tem áudio)
+                val hasAudio = videoData.optBoolean("has_audio", true)
                 val videoUrl = videoData.optString("securedLink").takeIf { it.isNotEmpty() } 
                     ?: videoData.optString("videoSource")
                 
                 if (videoUrl.isNullOrEmpty()) {
                     println("[PobreFlix] videoUrl vazio")
+                    continue
+                }
+                
+                // Se não tem áudio, pular este stream (como no JS original)
+                if (!hasAudio) {
+                    println("[PobreFlix] Stream sem áudio, pulando...")
                     continue
                 }
                 
