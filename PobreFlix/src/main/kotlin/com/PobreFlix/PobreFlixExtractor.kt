@@ -42,21 +42,6 @@ object PobreFlixExtractor {
         "Connection" to "keep-alive"
     )
 
-    // Função para atualizar cookies - CORRIGIDA
-    private fun updateCookies(response: com.lagradost.cloudstream3.nicehttp.Response) {
-        try {
-            // Acessar o header set-cookie corretamente usando o método headers()
-            val headers = response.headers()
-            val setCookie = headers["set-cookie"]
-            if (setCookie != null && setCookie.isNotEmpty()) {
-                sessionCookies = setCookie
-                println("[PobreFlix] Cookie atualizado: ${sessionCookies.take(50)}...")
-            }
-        } catch (e: Exception) {
-            println("[PobreFlix] Não foi possível extrair cookie: ${e.message}")
-        }
-    }
-
     private fun getCookieHeader(): Map<String, String> {
         return if (sessionCookies.isNotEmpty()) mapOf("Cookie" to sessionCookies) else emptyMap()
     }
@@ -138,11 +123,6 @@ object PobreFlixExtractor {
             url.contains("itag=59") -> 59
             else -> 18
         }
-    }
-
-    private fun extractVideoId(url: String): String {
-        val match = Regex("id=([a-f0-9]+)").find(url)
-        return match?.groupValues?.get(1) ?: "picasacid"
     }
 
     private val itagQualityMap = mapOf(
@@ -263,8 +243,12 @@ object PobreFlixExtractor {
                 return emptyList()
             }
             
-            // Atualizar cookies
-            updateCookies(pageResponse)
+            // Extrair cookies da resposta
+            val cookies = pageResponse.headers["set-cookie"]
+            if (cookies != null && cookies.isNotEmpty()) {
+                sessionCookies = cookies
+                println("[PobreFlix] Cookie obtido: ${sessionCookies.take(50)}...")
+            }
             
             var html = pageResponse.text
             println("[PobreFlix] HTML carregado, tamanho: ${html.length}")
@@ -277,7 +261,10 @@ object PobreFlixExtractor {
                     headers = HEADERS + getCookieHeader() + mapOf("Accept-Encoding" to "gzip, deflate")
                 )
                 if (altResponse.isSuccessful) {
-                    updateCookies(altResponse)
+                    val altCookies = altResponse.headers["set-cookie"]
+                    if (altCookies != null && altCookies.isNotEmpty()) {
+                        sessionCookies = altCookies
+                    }
                     html = altResponse.text
                     println("[PobreFlix] HTML alternativo carregado, tamanho: ${html.length}")
                 }
