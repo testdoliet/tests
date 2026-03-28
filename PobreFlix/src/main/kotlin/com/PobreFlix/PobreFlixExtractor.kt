@@ -15,7 +15,6 @@ object PobreFlixExtractor {
 
     private var csrfToken: String = ""
     private var pageToken: String = ""
-    private var sessionCookies: String = ""
 
     // Headers idênticos ao curl que funcionou
     private val HEADERS = mapOf(
@@ -43,17 +42,6 @@ object PobreFlixExtractor {
         "Origin" to BASE_URL,
         "Connection" to "keep-alive"
     )
-
-    private fun updateCookies(responseHeaders: Map<String, String>) {
-        val setCookie = responseHeaders["set-cookie"]
-        if (setCookie != null) {
-            sessionCookies = setCookie
-        }
-    }
-
-    private fun getCookieHeader(): Map<String, String> {
-        return if (sessionCookies.isNotEmpty()) mapOf("Cookie" to sessionCookies) else emptyMap()
-    }
 
     private fun extractTokenFromUrl(url: String): String? {
         val match = Regex("token=([a-zA-Z0-9_\\-]+)").find(url)
@@ -183,19 +171,13 @@ object PobreFlixExtractor {
             
             val pageResponse = app.get(
                 url = pageUrl,
-                headers = HEADERS + getCookieHeader()
+                headers = HEADERS
             )
             
             if (!pageResponse.isSuccessful) {
                 println("[PobreFlix] Primeira tentativa falhou: isSuccessful=false")
                 return emptyList()
             }
-            
-            // Atualizar cookies
-            try {
-                val responseHeaders = pageResponse.headers
-                updateCookies(responseHeaders)
-            } catch (e: Exception) {}
             
             var html = pageResponse.text
             println("[PobreFlix] HTML carregado, tamanho: ${html.length}")
@@ -205,13 +187,9 @@ object PobreFlixExtractor {
                 println("[PobreFlix] HTML comprimido, tentando sem brotli...")
                 val altResponse = app.get(
                     url = pageUrl,
-                    headers = HEADERS + getCookieHeader() + mapOf("Accept-Encoding" to "gzip, deflate")
+                    headers = HEADERS + mapOf("Accept-Encoding" to "gzip, deflate")
                 )
                 if (altResponse.isSuccessful) {
-                    try {
-                        val responseHeaders = altResponse.headers
-                        updateCookies(responseHeaders)
-                    } catch (e: Exception) {}
                     html = altResponse.text
                     println("[PobreFlix] HTML alternativo carregado, tamanho: ${html.length}")
                 }
@@ -253,7 +231,6 @@ object PobreFlixExtractor {
                     try {
                         val jsonString = epMatch.groupValues[1]
                         println("[PobreFlix] JSON de episódios encontrado, tamanho: ${jsonString.length}")
-                        println("[PobreFlix] JSON: ${jsonString.take(500)}")
                         
                         val jsonObject = JSONObject(jsonString)
                         val seasonData = jsonObject.optJSONArray(targetSeason.toString())
@@ -263,7 +240,6 @@ object PobreFlixExtractor {
                             for (i in 0 until seasonData.length()) {
                                 val ep = seasonData.getJSONObject(i)
                                 val epNum = ep.optInt("epi_num")
-                                println("[PobreFlix] Episódio $i: epi_num = $epNum, ID = ${ep.optString("ID")}")
                                 if (epNum == targetEpisode) {
                                     contentId = ep.optString("ID")
                                     if (contentId.isNullOrEmpty()) contentId = ep.optString("id")
@@ -298,7 +274,7 @@ object PobreFlixExtractor {
             
             val optionsResponse = app.post(
                 url = "$BASE_URL/player/options",
-                headers = API_HEADERS + getCookieHeader() + mapOf(
+                headers = API_HEADERS + mapOf(
                     "X-Page-Token" to pageToken,
                     "Referer" to pageUrl
                 ),
@@ -354,7 +330,7 @@ object PobreFlixExtractor {
                 
                 val sourceResponse = app.post(
                     url = "$BASE_URL/player/source",
-                    headers = API_HEADERS + getCookieHeader() + mapOf("Referer" to pageUrl),
+                    headers = API_HEADERS + mapOf("Referer" to pageUrl),
                     data = sourceParams
                 )
                 
@@ -378,7 +354,7 @@ object PobreFlixExtractor {
                 // Seguir redirect
                 val redirectResponse = app.get(
                     url = redirectUrl,
-                    headers = HEADERS + getCookieHeader()
+                    headers = HEADERS
                 )
                 
                 println("[PobreFlix] Redirect status: isSuccessful=${redirectResponse.isSuccessful}")
