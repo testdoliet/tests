@@ -10,22 +10,28 @@ import java.net.URLEncoder
 
 object PobreFlixExtractor {
 
-    private const val BASE_URL = "https://superflixapi.rest"
+    private const val BASE_URL = "https://warezcdn.site"
     private const val CDN_BASE = "https://llanfairpwllgwyngy.com"
 
     private var csrfToken: String = ""
     private var pageToken: String = ""
+    private var sessionCookies: String = ""
 
+    // Headers idênticos ao curl que funcionou
     private val HEADERS = mapOf(
-        "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
-        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-        "Accept-Language" to "pt-BR",
-        "Referer" to "https://lospobreflix.site/",
-        "Sec-Fetch-Dest" to "iframe",
-        "Sec-Fetch-Mode" to "navigate",
-        "Sec-Fetch-Site" to "cross-site",
-        "Upgrade-Insecure-Requests" to "1",
-        "Connection" to "keep-alive"
+        "accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+        "accept-language" to "pt-BR",
+        "priority" to "u=0, i",
+        "referer" to "https://lospobreflix.site/",
+        "sec-ch-ua" to "\"Chromium\";v=\"127\", \"Not)A;Brand\";v=\"99\", \"Microsoft Edge Simulate\";v=\"127\", \"Lemur\";v=\"127\"",
+        "sec-ch-ua-mobile" to "?1",
+        "sec-ch-ua-platform" to "\"Android\"",
+        "sec-fetch-dest" to "iframe",
+        "sec-fetch-mode" to "navigate",
+        "sec-fetch-site" to "cross-site",
+        "sec-fetch-user" to "?1",
+        "upgrade-insecure-requests" to "1",
+        "user-agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36"
     )
 
     private val API_HEADERS = mapOf(
@@ -37,6 +43,17 @@ object PobreFlixExtractor {
         "Origin" to BASE_URL,
         "Connection" to "keep-alive"
     )
+
+    private fun updateCookies(responseHeaders: Map<String, String>) {
+        val setCookie = responseHeaders["set-cookie"]
+        if (setCookie != null) {
+            sessionCookies = setCookie
+        }
+    }
+
+    private fun getCookieHeader(): Map<String, String> {
+        return if (sessionCookies.isNotEmpty()) mapOf("Cookie" to sessionCookies) else emptyMap()
+    }
 
     private fun extractTokenFromUrl(url: String): String? {
         val match = Regex("token=([a-zA-Z0-9_\\-]+)").find(url)
@@ -85,11 +102,10 @@ object PobreFlixExtractor {
             "content-type" to "application/x-www-form-urlencoded;charset=UTF-8",
             "origin" to "https://www.blogger.com",
             "referer" to "https://www.blogger.com/",
-            "user-agent" to HEADERS["User-Agent"]!!,
+            "user-agent" to HEADERS["user-agent"]!!,
             "x-same-domain" to "1"
         )
         
-        // CORRIGIDO: body agora é Map, não String
         val body = mapOf(
             "f.req" to "%5B%5B%5B%22WcwnYd%22%2C%22%5B%5C%22$token%5C%22%2C%5C%22%5C%22%2C0%5D%22%2Cnull%2C%22generic%22%5D%5D%5D"
         )
@@ -167,13 +183,19 @@ object PobreFlixExtractor {
             
             val pageResponse = app.get(
                 url = pageUrl,
-                headers = HEADERS
+                headers = HEADERS + getCookieHeader()
             )
             
             if (!pageResponse.isSuccessful) {
                 println("[PobreFlix] Primeira tentativa falhou: isSuccessful=false")
                 return emptyList()
             }
+            
+            // Atualizar cookies
+            try {
+                val responseHeaders = pageResponse.headers
+                updateCookies(responseHeaders)
+            } catch (e: Exception) {}
             
             var html = pageResponse.text
             println("[PobreFlix] HTML carregado, tamanho: ${html.length}")
@@ -183,9 +205,13 @@ object PobreFlixExtractor {
                 println("[PobreFlix] HTML comprimido, tentando sem brotli...")
                 val altResponse = app.get(
                     url = pageUrl,
-                    headers = HEADERS + mapOf("Accept-Encoding" to "gzip, deflate")
+                    headers = HEADERS + getCookieHeader() + mapOf("Accept-Encoding" to "gzip, deflate")
                 )
                 if (altResponse.isSuccessful) {
+                    try {
+                        val responseHeaders = altResponse.headers
+                        updateCookies(responseHeaders)
+                    } catch (e: Exception) {}
                     html = altResponse.text
                     println("[PobreFlix] HTML alternativo carregado, tamanho: ${html.length}")
                 }
@@ -226,19 +252,27 @@ object PobreFlixExtractor {
                 if (epMatch != null) {
                     try {
                         val jsonString = epMatch.groupValues[1]
+                        println("[PobreFlix] JSON de episódios encontrado, tamanho: ${jsonString.length}")
+                        println("[PobreFlix] JSON: ${jsonString.take(500)}")
+                        
                         val jsonObject = JSONObject(jsonString)
                         val seasonData = jsonObject.optJSONArray(targetSeason.toString())
                         
                         if (seasonData != null) {
+                            println("[PobreFlix] Temporada $targetSeason encontrada, episódios: ${seasonData.length()}")
                             for (i in 0 until seasonData.length()) {
                                 val ep = seasonData.getJSONObject(i)
                                 val epNum = ep.optInt("epi_num")
+                                println("[PobreFlix] Episódio $i: epi_num = $epNum, ID = ${ep.optString("ID")}")
                                 if (epNum == targetEpisode) {
                                     contentId = ep.optString("ID")
                                     if (contentId.isNullOrEmpty()) contentId = ep.optString("id")
+                                    println("[PobreFlix] CONTENT_ID encontrado: $contentId")
                                     break
                                 }
                             }
+                        } else {
+                            println("[PobreFlix] Temporada $targetSeason não encontrada")
                         }
                     } catch (e: Exception) {
                         println("[PobreFlix] Erro ao parsear JSON: ${e.message}")
@@ -264,7 +298,7 @@ object PobreFlixExtractor {
             
             val optionsResponse = app.post(
                 url = "$BASE_URL/player/options",
-                headers = API_HEADERS + mapOf(
+                headers = API_HEADERS + getCookieHeader() + mapOf(
                     "X-Page-Token" to pageToken,
                     "Referer" to pageUrl
                 ),
@@ -320,7 +354,7 @@ object PobreFlixExtractor {
                 
                 val sourceResponse = app.post(
                     url = "$BASE_URL/player/source",
-                    headers = API_HEADERS + mapOf("Referer" to pageUrl),
+                    headers = API_HEADERS + getCookieHeader() + mapOf("Referer" to pageUrl),
                     data = sourceParams
                 )
                 
@@ -344,7 +378,7 @@ object PobreFlixExtractor {
                 // Seguir redirect
                 val redirectResponse = app.get(
                     url = redirectUrl,
-                    headers = HEADERS
+                    headers = HEADERS + getCookieHeader()
                 )
                 
                 println("[PobreFlix] Redirect status: isSuccessful=${redirectResponse.isSuccessful}")
@@ -390,7 +424,7 @@ object PobreFlixExtractor {
                         "Origin" to CDN_BASE,
                         "Referer" to "$CDN_BASE/",
                         "X-Requested-With" to "XMLHttpRequest",
-                        "User-Agent" to HEADERS["User-Agent"]!!
+                        "User-Agent" to HEADERS["user-agent"]!!
                     ),
                     data = videoParams
                 )
@@ -444,6 +478,10 @@ object PobreFlixExtractor {
                         ) {
                             this.referer = "$CDN_BASE/"
                             this.quality = quality
+                            this.headers = mapOf(
+                                "Referer" to "$CDN_BASE/",
+                                "User-Agent" to HEADERS["user-agent"]!!
+                            )
                         }
                     )
                 }
