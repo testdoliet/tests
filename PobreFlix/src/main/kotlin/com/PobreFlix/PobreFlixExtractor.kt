@@ -6,6 +6,7 @@ import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.M3u8Helper
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import org.json.JSONObject
+import org.json.JSONException
 
 object PobreFlixExtractor {
 
@@ -253,6 +254,15 @@ object PobreFlixExtractor {
             var html = pageResponse.text
             println("[PobreFlix] HTML carregado, tamanho: ${html.length}")
             
+            // DEBUG: Mostrar parte do HTML
+            println("[PobreFlix] ========== HTML PRIMEIRAS 2000 LINHAS ==========")
+            println(html.take(2000))
+            println("[PobreFlix] ========== FIM DO HEADER HTML ==========")
+            
+            println("[PobreFlix] ========== HTML ÚLTIMAS 2000 LINHAS ==========")
+            println(html.takeLast(2000))
+            println("[PobreFlix] ========== FIM DO HTML ==========")
+            
             // Se não encontrou os tokens, tenta com Accept-Encoding diferente
             if (!html.contains("var CSRF_TOKEN") && !html.contains("<!DOCTYPE")) {
                 println("[PobreFlix] HTML comprimido, tentando sem brotli...")
@@ -288,136 +298,141 @@ object PobreFlixExtractor {
             println("[PobreFlix] PAGE_TOKEN: ${pageToken.take(30)}...")
             
             // 3. Extrair contentId
-var contentId: String? = null
-
-if (mediaType == "movie") {
-    val initialContentMatch = Regex("INITIAL_CONTENT_ID\\s*=\\s*(\\d+)").find(html)
-    if (initialContentMatch != null) {
-        contentId = initialContentMatch.groupValues[1]
-        println("[PobreFlix] CONTENT_ID (filme): $contentId")
-    } else {
-        val dataContentMatch = Regex("data-contentid=[\"'](\\d+)[\"']").find(html)
-        contentId = dataContentMatch?.groupValues?.get(1)
-        println("[PobreFlix] CONTENT_ID (fallback): $contentId")
-    }
-} else {
-    val epMatch = Regex("var ALL_EPISODES\\s*=\\s*(\\{.*?\\});", RegexOption.DOT_MATCHES_ALL).find(html)
-    if (epMatch != null) {
-        try {
-            val jsonString = epMatch.groupValues[1]
-            println("[PobreFlix] ========== JSON DE EPISÓDIOS ==========")
-            println("[PobreFlix] Tamanho do JSON: ${jsonString.length}")
-            println("[PobreFlix] JSON completo:")
-            println(jsonString)
-            println("[PobreFlix] ========================================")
+            var contentId: String? = null
             
-            // Tentar parsear como JSON puro primeiro
-            try {
-                val jsonObject = JSONObject(jsonString)
-                println("[PobreFlix] JSON parseado com sucesso!")
-                println("[PobreFlix] Keys disponíveis: ${jsonObject.keys().asSequence().toList()}")
-                
-                // Tentar acessar a temporada
-                val seasonKey = targetSeason.toString()
-                println("[PobreFlix] Procurando temporada: $seasonKey")
-                
-                if (jsonObject.has(seasonKey)) {
-                    val seasonData = jsonObject.getJSONObject(seasonKey)
-                    println("[PobreFlix] Temporada $seasonKey encontrada!")
-                    println("[PobreFlix] Estrutura da temporada: $seasonData")
-                    
-                    // Verificar se é um array ou objeto
-                    if (seasonData.length() > 0) {
-                        // Tentar encontrar o episódio
-                        val keys = seasonData.keys()
-                        while (keys.hasNext()) {
-                            val key = keys.next()
-                            val ep = seasonData.getJSONObject(key)
-                            val epNum = ep.optInt("epi_num")
-                            println("[PobreFlix] Episódio $key: epi_num = $epNum, dados = $ep")
+            if (mediaType == "movie") {
+                val initialContentMatch = Regex("INITIAL_CONTENT_ID\\s*=\\s*(\\d+)").find(html)
+                if (initialContentMatch != null) {
+                    contentId = initialContentMatch.groupValues[1]
+                    println("[PobreFlix] CONTENT_ID (filme): $contentId")
+                } else {
+                    val dataContentMatch = Regex("data-contentid=[\"'](\\d+)[\"']").find(html)
+                    contentId = dataContentMatch?.groupValues?.get(1)
+                    println("[PobreFlix] CONTENT_ID (fallback): $contentId")
+                }
+            } else {
+                val epMatch = Regex("var ALL_EPISODES\\s*=\\s*(\\{.*?\\});", RegexOption.DOT_MATCHES_ALL).find(html)
+                if (epMatch != null) {
+                    try {
+                        val jsonString = epMatch.groupValues[1]
+                        println("[PobreFlix] ========== JSON DE EPISÓDIOS ==========")
+                        println("[PobreFlix] Tamanho do JSON: ${jsonString.length}")
+                        println("[PobreFlix] JSON completo:")
+                        println(jsonString)
+                        println("[PobreFlix] ========================================")
+                        
+                        // Tentar parsear como JSON puro primeiro
+                        try {
+                            val jsonObject = JSONObject(jsonString)
+                            println("[PobreFlix] JSON parseado com sucesso!")
+                            println("[PobreFlix] Keys disponíveis: ${jsonObject.keys().asSequence().toList()}")
                             
-                            if (epNum == targetEpisode) {
-                                contentId = ep.optString("ID")
-                                if (contentId.isNullOrEmpty()) contentId = ep.optString("id")
-                                if (contentId.isNullOrEmpty()) contentId = ep.optString("video_id")
-                                println("[PobreFlix] ✅ CONTENT_ID encontrado: $contentId")
-                                break
+                            // Tentar acessar a temporada
+                            val seasonKey = targetSeason.toString()
+                            println("[PobreFlix] Procurando temporada: $seasonKey")
+                            
+                            if (jsonObject.has(seasonKey)) {
+                                val seasonData = jsonObject.getJSONObject(seasonKey)
+                                println("[PobreFlix] Temporada $seasonKey encontrada!")
+                                println("[PobreFlix] Estrutura da temporada: $seasonData")
+                                
+                                // Verificar se é um array ou objeto
+                                if (seasonData.length() > 0) {
+                                    // Tentar encontrar o episódio
+                                    val keys = seasonData.keys()
+                                    while (keys.hasNext()) {
+                                        val key = keys.next()
+                                        val ep = seasonData.getJSONObject(key)
+                                        val epNum = ep.optInt("epi_num")
+                                        println("[PobreFlix] Episódio $key: epi_num = $epNum, dados = $ep")
+                                        
+                                        if (epNum == targetEpisode) {
+                                            contentId = ep.optString("ID")
+                                            if (contentId.isNullOrEmpty()) contentId = ep.optString("id")
+                                            if (contentId.isNullOrEmpty()) contentId = ep.optString("video_id")
+                                            println("[PobreFlix] ✅ CONTENT_ID encontrado: $contentId")
+                                            break
+                                        }
+                                    }
+                                } else {
+                                    println("[PobreFlix] Temporada $seasonKey está vazia!")
+                                }
+                            } else {
+                                println("[PobreFlix] Temporada $seasonKey NÃO encontrada no JSON")
+                                println("[PobreFlix] Tentando estrutura alternativa...")
+                                
+                                // Tentar estrutura alternativa (pode ser um array direto)
+                                if (jsonObject.has("episodes")) {
+                                    val episodesArray = jsonObject.getJSONArray("episodes")
+                                    println("[PobreFlix] Encontrado array 'episodes' com ${episodesArray.length()} itens")
+                                    for (i in 0 until episodesArray.length()) {
+                                        val ep = episodesArray.getJSONObject(i)
+                                        val epSeason = ep.optInt("season")
+                                        val epNum = ep.optInt("episode")
+                                        println("[PobreFlix] Episódio $i: season=$epSeason, episode=$epNum, ID=${ep.optString("id")}")
+                                        if (epSeason == targetSeason && epNum == targetEpisode) {
+                                            contentId = ep.optString("id")
+                                            println("[PobreFlix] ✅ CONTENT_ID encontrado: $contentId")
+                                            break
+                                        }
+                                    }
+                                }
+                            }
+                        } catch (e: JSONException) {
+                            println("[PobreFlix] Erro ao parsear como JSON: ${e.message}")
+                            println("[PobreFlix] Tentando parsear como string bruta...")
+                            
+                            // Se não for JSON válido, tentar extrair com regex
+                            val episodePattern = Regex("\"$targetSeason\"\\s*:\\s*\\[([^\\]]+)\\]")
+                            val epMatch2 = episodePattern.find(jsonString)
+                            if (epMatch2 != null) {
+                                println("[PobreFlix] Encontrado array de episódios para temporada $targetSeason")
+                                val episodesStr = epMatch2.groupValues[1]
+                                println("[PobreFlix] Episódios: $episodesStr")
+                                
+                                // Procurar pelo episódio específico
+                                val episodeObjPattern = Regex("\\{[^}]*\"epi_num\"\\s*:\\s*$targetEpisode[^}]*\\}")
+                                val episodeMatch = episodeObjPattern.find(episodesStr)
+                                if (episodeMatch != null) {
+                                    val episodeObj = episodeMatch.value
+                                    println("[PobreFlix] Episódio encontrado: $episodeObj")
+                                    
+                                    val idMatch = Regex("\"ID\"\\s*:\\s*\"?(\\d+)\"?").find(episodeObj)
+                                    if (idMatch != null) {
+                                        contentId = idMatch.groupValues[1]
+                                        println("[PobreFlix] ✅ CONTENT_ID encontrado via regex: $contentId")
+                                    }
+                                }
                             }
                         }
-                    } else {
-                        println("[PobreFlix] Temporada $seasonKey está vazia!")
+                    } catch (e: Exception) {
+                        println("[PobreFlix] Erro geral ao processar JSON: ${e.message}")
+                        e.printStackTrace()
                     }
                 } else {
-                    println("[PobreFlix] Temporada $seasonKey NÃO encontrada no JSON")
-                    println("[PobreFlix] Tentando estrutura alternativa...")
+                    println("[PobreFlix] Padrão var ALL_EPISODES não encontrado no HTML")
+                    // Tentar encontrar outras possíveis estruturas
+                    val altPatterns = listOf(
+                        Regex("ALL_EPISODES\\s*=\\s*(\\{.*?\\});", RegexOption.DOT_MATCHES_ALL),
+                        Regex("episodesData\\s*=\\s*(\\{.*?\\});", RegexOption.DOT_MATCHES_ALL),
+                        Regex("seasonData\\s*=\\s*(\\{.*?\\});", RegexOption.DOT_MATCHES_ALL),
+                        Regex("<script[^>]*>.*?ALL_EPISODES.*?=.*?(\\{.*?\\}).*?</script>", RegexOption.DOT_MATCHES_ALL)
+                    )
                     
-                    // Tentar estrutura alternativa (pode ser um array direto)
-                    if (jsonObject.has("episodes")) {
-                        val episodesArray = jsonObject.getJSONArray("episodes")
-                        println("[PobreFlix] Encontrado array 'episodes' com ${episodesArray.length()} itens")
-                        for (i in 0 until episodesArray.length()) {
-                            val ep = episodesArray.getJSONObject(i)
-                            val epSeason = ep.optInt("season")
-                            val epNum = ep.optInt("episode")
-                            println("[PobreFlix] Episódio $i: season=$epSeason, episode=$epNum, ID=${ep.optString("id")}")
-                            if (epSeason == targetSeason && epNum == targetEpisode) {
-                                contentId = ep.optString("id")
-                                println("[PobreFlix] ✅ CONTENT_ID encontrado: $contentId")
-                                break
-                            }
-                        }
-                    }
-                }
-            } catch (e: JSONException) {
-                println("[PobreFlix] Erro ao parsear como JSON: ${e.message}")
-                println("[PobreFlix] Tentando parsear como string bruta...")
-                
-                // Se não for JSON válido, tentar extrair com regex
-                val episodePattern = Regex("\"$targetSeason\"\\s*:\\s*\\[([^\\]]+)\\]")
-                val epMatch2 = episodePattern.find(jsonString)
-                if (epMatch2 != null) {
-                    println("[PobreFlix] Encontrado array de episódios para temporada $targetSeason")
-                    val episodesStr = epMatch2.groupValues[1]
-                    println("[PobreFlix] Episódios: $episodesStr")
-                    
-                    // Procurar pelo episódio específico
-                    val episodeObjPattern = Regex("\\{[^}]*\"epi_num\"\\s*:\\s*$targetEpisode[^}]*\\}")
-                    val episodeMatch = episodeObjPattern.find(episodesStr)
-                    if (episodeMatch != null) {
-                        val episodeObj = episodeMatch.value
-                        println("[PobreFlix] Episódio encontrado: $episodeObj")
-                        
-                        val idMatch = Regex("\"ID\"\\s*:\\s*\"?(\\d+)\"?").find(episodeObj)
-                        if (idMatch != null) {
-                            contentId = idMatch.groupValues[1]
-                            println("[PobreFlix] ✅ CONTENT_ID encontrado via regex: $contentId")
+                    for ((index, pattern) in altPatterns.withIndex()) {
+                        val altMatch = pattern.find(html)
+                        if (altMatch != null) {
+                            println("[PobreFlix] Encontrado padrão alternativo $index: ${pattern.pattern}")
+                            println("[PobreFlix] Conteúdo: ${altMatch.groupValues[1].take(500)}")
                         }
                     }
                 }
             }
-        } catch (e: Exception) {
-            println("[PobreFlix] Erro geral ao processar JSON: ${e.message}")
-            e.printStackTrace()
-        }
-    } else {
-        println("[PobreFlix] Padrão var ALL_EPISODES não encontrado no HTML")
-        // Tentar encontrar outras possíveis estruturas
-        val altPatterns = listOf(
-            Regex("ALL_EPISODES\\s*=\\s*(\\{.*?\\});", RegexOption.DOT_MATCHES_ALL),
-            Regex("episodesData\\s*=\\s*(\\{.*?\\});", RegexOption.DOT_MATCHES_ALL),
-            Regex("seasonData\\s*=\\s*(\\{.*?\\});", RegexOption.DOT_MATCHES_ALL),
-            Regex("<script[^>]*>.*?ALL_EPISODES.*?=.*?(\\{.*?\\}).*?</script>", RegexOption.DOT_MATCHES_ALL)
-        )
-        
-        for ((index, pattern) in altPatterns.withIndex()) {
-            val altMatch = pattern.find(html)
-            if (altMatch != null) {
-                println("[PobreFlix] Encontrado padrão alternativo $index: ${pattern.pattern}")
-                println("[PobreFlix] Conteúdo: ${altMatch.groupValues[1].take(500)}")
+            
+            if (contentId == null || contentId == "0") {
+                println("[PobreFlix] contentId inválido (null ou 0)")
+                return emptyList()
             }
-        }
-    }
-}
             
             // 4. Options
             val optionsParams = mutableMapOf<String, String>()
