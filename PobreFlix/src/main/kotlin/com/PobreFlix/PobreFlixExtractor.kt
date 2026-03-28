@@ -89,7 +89,10 @@ object PobreFlixExtractor {
             "x-same-domain" to "1"
         )
         
-        val body = "f.req=%5B%5B%5B%22WcwnYd%22%2C%22%5B%5C%22$token%5C%22%2C%5C%22%5C%22%2C0%5D%22%2Cnull%2C%22generic%22%5D%5D%5D"
+        // CORRIGIDO: body agora é Map, não String
+        val body = mapOf(
+            "f.req" to "%5B%5B%5B%22WcwnYd%22%2C%22%5B%5C%22$token%5C%22%2C%5C%22%5C%22%2C0%5D%22%2Cnull%2C%22generic%22%5D%5D%5D"
+        )
 
         try {
             val response = app.post(
