@@ -43,11 +43,12 @@ object PobreFlixExtractor {
     )
 
     // Função para atualizar cookies - CORRIGIDA
-    private fun updateCookies(response: com.lagradost.cloudstream3.nicehttp.NiceResponse) {
+    private fun updateCookies(response: com.lagradost.cloudstream3.nicehttp.Response) {
         try {
-            // Acessar o header set-cookie corretamente
-            val setCookie = response.headers?.get("set-cookie")
-            if (setCookie != null) {
+            // Acessar o header set-cookie corretamente usando o método headers()
+            val headers = response.headers()
+            val setCookie = headers["set-cookie"]
+            if (setCookie != null && setCookie.isNotEmpty()) {
                 sessionCookies = setCookie
                 println("[PobreFlix] Cookie atualizado: ${sessionCookies.take(50)}...")
             }
@@ -324,7 +325,9 @@ object PobreFlixExtractor {
                         
                         if (seasonData != null) {
                             println("[PobreFlix] Temporada $targetSeason encontrada")
-                            for (key in seasonData.keys()) {
+                            val keys = seasonData.keys()
+                            while (keys.hasNext()) {
+                                val key = keys.next()
                                 val ep = seasonData.getJSONObject(key)
                                 val epNum = ep.optInt("epi_num")
                                 if (epNum == targetEpisode) {
