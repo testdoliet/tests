@@ -6,6 +6,8 @@ import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.M3u8Helper
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import org.json.JSONObject
+import org.json.JSONException
+import java.util.Base64
 
 object PobreFlixExtractor {
 
@@ -17,19 +19,16 @@ object PobreFlixExtractor {
     private var sessionCookies: String = ""
 
     private val HEADERS = mapOf(
-        "accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-        "accept-language" to "pt-BR",
-        "priority" to "u=0, i",
-        "referer" to "https://lospobreflix.site/",
-        "sec-ch-ua" to "\"Chromium\";v=\"127\", \"Not)A;Brand\";v=\"99\", \"Microsoft Edge Simulate\";v=\"127\", \"Lemur\";v=\"127\"",
-        "sec-ch-ua-mobile" to "?1",
-        "sec-ch-ua-platform" to "\"Android\"",
-        "sec-fetch-dest" to "iframe",
-        "sec-fetch-mode" to "navigate",
-        "sec-fetch-site" to "cross-site",
-        "sec-fetch-user" to "?1",
-        "upgrade-insecure-requests" to "1",
-        "user-agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36"
+        "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
+        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+        "Accept-Language" to "pt-BR",
+        "Accept-Encoding" to "gzip, deflate",  // Remove 'br' para evitar Brotli
+        "Referer" to "https://lospobreflix.site/",
+        "Sec-Fetch-Dest" to "iframe",
+        "Sec-Fetch-Mode" to "navigate",
+        "Sec-Fetch-Site" to "cross-site",
+        "Upgrade-Insecure-Requests" to "1",
+        "Connection" to "keep-alive"
     )
 
     private val API_HEADERS = mapOf(
@@ -65,10 +64,8 @@ object PobreFlixExtractor {
     private fun extractVideoUrlsFromResponse(response: String): List<Pair<String, Int>> {
         val videos = mutableListOf<Pair<String, Int>>()
         
-        // Remover o prefixo )]}'\n
         var data = response.replace(Regex("^\\]\\]\\)\\]\\}'\\n"), "")
         
-        // Extrair URLs com itag
         val urlPattern = Regex("\"((?:https?:\\\\?/\\\\?/)?[^\"]+?googlevideo[^\"]+?)\",\\[(\\d+)\\]")
         val matches = urlPattern.findAll(data)
         
@@ -80,7 +77,6 @@ object PobreFlixExtractor {
             videos.add(Pair(url, itag))
         }
         
-        // Se não encontrou, tentar padrão mais simples
         if (videos.isEmpty()) {
             val simplePattern = Regex("https?:\\\\?/\\\\?/[^\"'\\s]+?googlevideo[^\"'\\s]+")
             val simpleMatches = simplePattern.findAll(data)
@@ -93,11 +89,9 @@ object PobreFlixExtractor {
             }
         }
         
-        // Ordenar por qualidade (1080p > 720p > 480p > 360p)
         val qualityOrder = listOf(37, 22, 18, 59)
         videos.sortBy { (_, itag) -> qualityOrder.indexOf(itag) }
         
-        // Remover duplicados
         return videos.distinctBy { "${it.first}_${it.second}" }
     }
 
@@ -222,7 +216,6 @@ object PobreFlixExtractor {
         println("[PobreFlix] tmdbId: $tmdbId, mediaType: $mediaType, season: $season, episode: $episode")
 
         try {
-            // 1. Página inicial
             val pageUrl = if (mediaType == "movie") {
                 "$BASE_URL/filme/$tmdbId"
             } else {
@@ -231,6 +224,10 @@ object PobreFlixExtractor {
             
             println("[PobreFlix] URL da página: $pageUrl")
             
+            // ========== DEBUG: HEADERS SENDO ENVIADOS ==========
+            println("[PobreFlix] ========== HEADERS SENDO ENVIADOS ==========")
+            println("[PobreFlix] HEADERS: ${HEADERS + getCookieHeader()}")
+            
             val pageResponse = app.get(
                 url = pageUrl,
                 headers = HEADERS + getCookieHeader()
@@ -238,12 +235,18 @@ object PobreFlixExtractor {
             
             println("[PobreFlix] Status: ${pageResponse.code}")
             
+            // ========== DEBUG: HEADERS RECEBIDOS ==========
+            println("[PobreFlix] ========== HEADERS RECEBIDOS ==========")
+            println("[PobreFlix] Content-Type: ${pageResponse.headers["content-type"]}")
+            println("[PobreFlix] Content-Encoding: ${pageResponse.headers["content-encoding"]}")
+            println("[PobreFlix] Content-Length: ${pageResponse.headers["content-length"]}")
+            println("[PobreFlix] Set-Cookie: ${pageResponse.headers["set-cookie"]?.take(200)}...")
+            
             if (!pageResponse.isSuccessful) {
                 println("[PobreFlix] Primeira tentativa falhou: isSuccessful=false")
                 return emptyList()
             }
             
-            // Extrair cookies da resposta
             val cookies = pageResponse.headers["set-cookie"]
             if (cookies != null && cookies.isNotEmpty()) {
                 sessionCookies = cookies
@@ -253,27 +256,56 @@ object PobreFlixExtractor {
             var html = pageResponse.text
             println("[PobreFlix] HTML carregado, tamanho: ${html.length}")
             
+            // ========== DEBUG: SALVAR HTML CRU (PRIMEIROS 5000 CARACTERES) ==========
+            println("[PobreFlix] ========== HTML CRU (PRIMEIROS 5000) ==========")
+            println(html.take(5000))
+            println("[PobreFlix] ========== FIM DO HTML CRU ==========")
+            
+            // ========== DEBUG: PROCURAR PADRÕES ESPECÍFICOS ==========
+            println("[PobreFlix] ========== PROCURANDO PADRÕES ==========")
+            val hasAllEpisodes = html.contains("ALL_EPISODES")
+            val hasCsrfToken = html.contains("CSRF_TOKEN")
+            val hasPageToken = html.contains("PAGE_TOKEN")
+            val hasInitialContentId = html.contains("INITIAL_CONTENT_ID")
+            
+            println("[PobreFlix] ALL_EPISODES encontrado: $hasAllEpisodes")
+            println("[PobreFlix] CSRF_TOKEN encontrado: $hasCsrfToken")
+            println("[PobreFlix] PAGE_TOKEN encontrado: $hasPageToken")
+            println("[PobreFlix] INITIAL_CONTENT_ID encontrado: $hasInitialContentId")
+            
             // Se não encontrou os tokens, tenta com Accept-Encoding diferente
-            if (!html.contains("var CSRF_TOKEN") && !html.contains("<!DOCTYPE")) {
-                println("[PobreFlix] HTML comprimido, tentando sem brotli...")
-                val altResponse = app.get(
+            if (!hasCsrfToken || !hasPageToken) {
+                println("[PobreFlix] Tokens não encontrados! Tentando com headers diferentes...")
+                val retryResponse = app.get(
                     url = pageUrl,
-                    headers = HEADERS + getCookieHeader() + mapOf("Accept-Encoding" to "gzip, deflate")
+                    headers = HEADERS + getCookieHeader() + mapOf(
+                        "Accept-Encoding" to "identity",
+                        "Cache-Control" to "no-cache"
+                    )
                 )
-                if (altResponse.isSuccessful) {
-                    val altCookies = altResponse.headers["set-cookie"]
-                    if (altCookies != null && altCookies.isNotEmpty()) {
-                        sessionCookies = altCookies
+                if (retryResponse.isSuccessful) {
+                    val retryCookies = retryResponse.headers["set-cookie"]
+                    if (retryCookies != null && retryCookies.isNotEmpty()) {
+                        sessionCookies = retryCookies
                     }
-                    html = altResponse.text
-                    println("[PobreFlix] HTML alternativo carregado, tamanho: ${html.length}")
+                    html = retryResponse.text
+                    println("[PobreFlix] HTML retentativa, tamanho: ${html.length}")
+                    
+                    // Mostrar parte do HTML da retentativa
+                    println("[PobreFlix] ========== HTML RETENTATIVA (PRIMEIROS 3000) ==========")
+                    println(html.take(3000))
+                    println("[PobreFlix] ========== FIM HTML RETENTATIVA ==========")
                 }
             }
             
             // 2. Extrair tokens
             val csrfMatch = Regex("var CSRF_TOKEN\\s*=\\s*[\"']([^\"']+)[\"']").find(html)
             if (csrfMatch == null) {
-                println("[PobreFlix] CSRF_TOKEN não encontrado")
+                println("[PobreFlix] CSRF_TOKEN não encontrado - HTML parece estar incompleto/minificado")
+                println("[PobreFlix] Salvando HTML para debug...")
+                // Salvar HTML em base64 para debug
+                val htmlBase64 = Base64.getEncoder().encodeToString(html.toByteArray())
+                println("[PobreFlix] HTML_BASE64: ${htmlBase64.take(500)}...")
                 return emptyList()
             }
             csrfToken = csrfMatch.groupValues[1]
@@ -305,28 +337,72 @@ object PobreFlixExtractor {
                 if (epMatch != null) {
                     try {
                         val jsonString = epMatch.groupValues[1]
-                        println("[PobreFlix] JSON de episódios encontrado, tamanho: ${jsonString.length}")
+                        println("[PobreFlix] ========== JSON DE EPISÓDIOS ==========")
+                        println("[PobreFlix] Tamanho do JSON: ${jsonString.length}")
+                        println("[PobreFlix] JSON completo:")
+                        println(jsonString)
+                        println("[PobreFlix] ========================================")
                         
                         val jsonObject = JSONObject(jsonString)
-                        val seasonData = jsonObject.optJSONObject(targetSeason.toString())
+                        println("[PobreFlix] JSON parseado com sucesso!")
+                        println("[PobreFlix] Keys disponíveis: ${jsonObject.keys().asSequence().toList()}")
                         
-                        if (seasonData != null) {
-                            println("[PobreFlix] Temporada $targetSeason encontrada")
-                            val keys = seasonData.keys()
-                            while (keys.hasNext()) {
-                                val key = keys.next()
-                                val ep = seasonData.getJSONObject(key)
-                                val epNum = ep.optInt("epi_num")
-                                if (epNum == targetEpisode) {
-                                    contentId = ep.optString("ID")
-                                    if (contentId.isNullOrEmpty()) contentId = ep.optString("id")
-                                    println("[PobreFlix] CONTENT_ID encontrado: $contentId")
-                                    break
+                        val seasonKey = targetSeason.toString()
+                        println("[PobreFlix] Procurando temporada: $seasonKey")
+                        
+                        if (jsonObject.has(seasonKey)) {
+                            val seasonValue = jsonObject.get(seasonKey)
+                            
+                            when (seasonValue) {
+                                is org.json.JSONArray -> {
+                                    println("[PobreFlix] Temporada $seasonKey é um ARRAY com ${seasonValue.length()} episódios")
+                                    
+                                    for (i in 0 until seasonValue.length()) {
+                                        val ep = seasonValue.getJSONObject(i)
+                                        val epNum = ep.optInt("epi_num")
+                                        val id = ep.optInt("ID")
+                                        println("[PobreFlix] Episódio $i: epi_num=$epNum, ID=$id, title=${ep.optString("title")}")
+                                        
+                                        if (epNum == targetEpisode) {
+                                            contentId = id.toString()
+                                            println("[PobreFlix] ✅ CONTENT_ID encontrado: $contentId")
+                                            break
+                                        }
+                                    }
+                                }
+                                is JSONObject -> {
+                                    println("[PobreFlix] Temporada $seasonKey é um OBJETO")
+                                    val keys = seasonValue.keys()
+                                    while (keys.hasNext()) {
+                                        val key = keys.next()
+                                        val ep = seasonValue.getJSONObject(key)
+                                        val epNum = ep.optInt("epi_num")
+                                        println("[PobreFlix] Episódio $key: epi_num=$epNum, ID=${ep.optInt("ID")}")
+                                        if (epNum == targetEpisode) {
+                                            contentId = ep.optString("ID")
+                                            println("[PobreFlix] ✅ CONTENT_ID encontrado: $contentId")
+                                            break
+                                        }
+                                    }
                                 }
                             }
+                        } else {
+                            println("[PobreFlix] Temporada $seasonKey NÃO encontrada no JSON")
                         }
                     } catch (e: Exception) {
-                        println("[PobreFlix] Erro ao parsear JSON: ${e.message}")
+                        println("[PobreFlix] Erro ao processar JSON: ${e.message}")
+                        e.printStackTrace()
+                    }
+                } else {
+                    println("[PobreFlix] ALL_EPISODES não encontrado no HTML")
+                    // Mostrar parte do HTML onde pode estar
+                    val scriptMatch = Regex("<script[^>]*>([\\s\\S]*?)</script>").findAll(html)
+                    println("[PobreFlix] Procurando em scripts...")
+                    scriptMatch.forEachIndexed { index, match ->
+                        if (match.value.contains("episode") || match.value.contains("ALL_EPISODES")) {
+                            println("[PobreFlix] Script $index contém dados de episódios:")
+                            println(match.value.take(500))
+                        }
                     }
                 }
             }
@@ -335,6 +411,8 @@ object PobreFlixExtractor {
                 println("[PobreFlix] contentId inválido (null ou 0)")
                 return emptyList()
             }
+            
+            println("[PobreFlix] CONTENT_ID final: $contentId")
             
             // 4. Options
             val optionsParams = mutableMapOf<String, String>()
@@ -396,7 +474,6 @@ object PobreFlixExtractor {
                 
                 if (videoId.isEmpty()) continue
                 
-                // Source
                 val sourceParams = mutableMapOf<String, String>()
                 sourceParams["video_id"] = videoId
                 sourceParams["page_token"] = pageToken
@@ -429,7 +506,6 @@ object PobreFlixExtractor {
                 
                 println("[PobreFlix] redirectUrl: ${redirectUrl.take(100)}...")
                 
-                // Seguir redirect
                 val redirectResponse = app.get(
                     url = redirectUrl,
                     headers = HEADERS + getCookieHeader()
@@ -440,7 +516,6 @@ object PobreFlixExtractor {
                 val finalUrl = redirectResponse.url
                 println("[PobreFlix] finalUrl: $finalUrl")
                 
-                // Verificar se é URL do Blogger
                 if (finalUrl.contains("blogger.com/video.g") || finalUrl.contains("blogger.com")) {
                     println("[PobreFlix] É URL do Blogger, chamando extractBloggerVideo")
                     
@@ -456,7 +531,6 @@ object PobreFlixExtractor {
                     continue
                 }
                 
-                // Processamento normal (HLS)
                 val playerHash = finalUrl.split("/").lastOrNull()
                 if (playerHash == null) {
                     println("[PobreFlix] playerHash null")
@@ -506,7 +580,6 @@ object PobreFlixExtractor {
                 
                 println("[PobreFlix] videoUrl encontrado: ${videoUrl.take(100)}...")
                 
-                // Determinar qualidade
                 var quality = 720
                 when {
                     videoUrl.contains("2160") || videoUrl.contains("4k") -> quality = 2160
