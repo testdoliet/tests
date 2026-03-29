@@ -10,7 +10,7 @@ import org.json.JSONException
 
 object PobreFlixExtractor {
 
-    private const val BASE_URL = "https://warezcdn.site"
+    private const val BASE_URL = "https://superflixapi.rest"
     private const val CDN_BASE = "https://llanfairpwllgwyngy.com"
 
     private var csrfToken: String = ""
