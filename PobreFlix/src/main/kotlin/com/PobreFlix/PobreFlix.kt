@@ -575,119 +575,80 @@ class PobreFlix : MainAPI() {
     }
 
     override suspend fun loadLinks(
-        data: String,
-        isCasting: Boolean,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        println("=== loadLinks INICIADO ===")
-        println("Data: $data")
+    data: String,
+    isCasting: Boolean,
+    subtitleCallback: (SubtitleFile) -> Unit,
+    callback: (ExtractorLink) -> Unit
+): Boolean {
+    println("=== loadLinks INICIADO ===")
+    println("Data: $data")
+    
+    return try {
+        val document = app.get(data).document
+        println("Documento carregado")
         
-        return try {
-            val document = app.get(data).document
-            println("Documento carregado")
+        // Extrair season e episode da URL
+        val seasonEpisodeMatch = Regex("-(\\d+)x(\\d+)$").find(data)
+        val season = seasonEpisodeMatch?.groupValues?.get(1)?.toIntOrNull() ?: 1
+        val episode = seasonEpisodeMatch?.groupValues?.get(2)?.toIntOrNull() ?: 1
+        println("Season: $season, Episode: $episode")
+        
+        // EXTRAIR A URL DA SÉRIE - pegar o link dentro do header (primeiro link com ícone de seta)
+        var seriesUrl: String? = null
+        
+        // Método 1: link com ícone de seta dentro do header (é o link "Voltar")
+        val backLink = document.selectFirst(".flex.items-start.gap-4.flex-wrap .fa-arrow-left")?.parent()
+        if (backLink != null) {
+            seriesUrl = backLink.attr("href")
+            println("Link Voltar encontrado: $seriesUrl")
+        }
+        
+        // Método 2: se não encontrou, tenta pelo breadcrumb
+        if (seriesUrl == null) {
+            seriesUrl = document.selectFirst(".flex.items-start.gap-4.flex-wrap header a[href]")?.attr("href")
+            println("Link do header encontrado: $seriesUrl")
+        }
+        
+        // Método 3: fallback - extrair slug da URL do episódio
+        if (seriesUrl == null) {
+            val slugMatch = Regex("/episodio/(.+)-\\d+x\\d+").find(data)
+            val slug = slugMatch?.groupValues?.get(1)
+            if (slug != null) {
+                val type = when {
+                    data.contains("/anime/") -> "anime"
+                    data.contains("/dorama/") -> "dorama"
+                    else -> "serie"
+                }
+                seriesUrl = "$mainUrl/$type/$slug"
+                println("URL construída do slug: $seriesUrl")
+            }
+        }
+        
+        if (seriesUrl != null) {
+            seriesUrl = fixUrl(seriesUrl)
+            println("URL da série final: $seriesUrl")
             
-            // Extrair informações da URL do episódio
-            val urlPath = data.substringAfter(mainUrl).substringBefore("?")
-            println("URL Path: $urlPath")
+            val streams = PobreFlixExtractor.getStreams(seriesUrl, season, episode)
             
-            // Extrair season e episode da URL
-            val episodeMatch = Regex("-(\\d+)x(\\d+)$").find(data)
-            val season = episodeMatch?.groupValues?.get(1)?.toIntOrNull() ?: 1
-            val episode = episodeMatch?.groupValues?.get(2)?.toIntOrNull() ?: 1
-            println("Season: $season, Episode: $episode")
-            
-            // EXTRAIR A URL DA SÉRIE DO HTML DO EPISÓDIO
-            // Procura o link "Voltar" ou o breadcrumb que leva à página da série
-            var seriesUrl = document.selectFirst("a[href*='/anime/'], a[href*='/serie/'], a[href*='/dorama/']")?.attr("href")
-            
-            // Se não encontrou, tenta extrair do link "Voltar" específico
-            if (seriesUrl == null) {
-                seriesUrl = document.selectFirst(".flex.items-start.gap-4.flex-wrap a[href]")?.attr("href")
+            if (streams.isEmpty()) {
+                println("Nenhum stream encontrado")
+                return false
             }
             
-            // Se ainda não encontrou, tenta pelo data-contentid ou slug
-            if (seriesUrl == null) {
-                val contentIdElement = document.selectFirst("section[data-contentid]")
-                if (contentIdElement != null) {
-                    val tmdbId = contentIdElement.attr("data-contentid")
-                    // Determinar o tipo da série pela URL atual
-                    val type = when {
-                        data.contains("/anime/") -> "anime"
-                        data.contains("/dorama/") -> "dorama"
-                        else -> "serie"
-                    }
-                    seriesUrl = "$mainUrl/$type/$tmdbId"
-                }
+            println("Extractor encontrou ${streams.size} streams")
+            streams.forEach { stream ->
+                callback(stream)
             }
-            
-            if (seriesUrl != null) {
-                seriesUrl = fixUrl(seriesUrl)
-                println("URL da série extraída: $seriesUrl")
-                
-                val streams = PobreFlixExtractor.getStreams(seriesUrl, season, episode)
-                
-                if (streams.isEmpty()) {
-                    println("Nenhum stream encontrado")
-                    return false
-                }
-                
-                println("Extractor encontrou ${streams.size} streams")
-                streams.forEach { stream ->
-                    callback(stream)
-                }
-                true
-            } else {
-                println("Não foi possível encontrar a URL da série")
-                false
-            }
-            
-        } catch (e: Exception) {
-            println("ERRO em loadLinks: ${e.message}")
-            e.printStackTrace()
+            true
+        } else {
+            println("Não foi possível encontrar a URL da série")
             false
         }
+        
+    } catch (e: Exception) {
+        println("ERRO em loadLinks: ${e.message}")
+        e.printStackTrace()
+        false
     }
-    
-    // ========== FUNÇÕES AUXILIARES ==========
-    
-    private fun fixImageUrl(url: String?): String? {
-        if (url.isNullOrBlank()) return null
-        
-        var fixedUrl = url.trim()
-        
-        if (fixedUrl.startsWith("//")) {
-            fixedUrl = "https:$fixedUrl"
-        } else if (fixedUrl.startsWith("/") && !fixedUrl.startsWith("//")) {
-            fixedUrl = "$mainUrl$fixedUrl"
-        }
-        
-        if (fixedUrl.contains("d1muf25xaso8hp.cloudfront.net/")) {
-            val afterCdn = fixedUrl.substringAfter("d1muf25xaso8hp.cloudfront.net/")
-            if (afterCdn.startsWith("https://")) {
-                fixedUrl = afterCdn
-            } else {
-                fixedUrl = "https://image.tmdb.org/t/p/w500$afterCdn"
-            }
-        }
-        
-        return fixedUrl
-    }
-    
-    private fun parseDuration(durationStr: String): Int? {
-        val str = durationStr.lowercase().trim()
-        
-        val hoursMatch = Regex("(\\d+)\\s*h").find(str)
-        val minutesMatch = Regex("(\\d+)\\s*m(?:in)?").find(str)
-        
-        val hours = hoursMatch?.groupValues?.get(1)?.toIntOrNull() ?: 0
-        val minutes = minutesMatch?.groupValues?.get(1)?.toIntOrNull() ?: 0
-        
-        if (hours > 0 || minutes > 0) {
-            return (hours * 60) + minutes
-        }
-        
-        val justMinutes = Regex("(\\d+)\\s*m(?:in)?").find(str)
-        return justMinutes?.groupValues?.get(1)?.toIntOrNull()
-    }
+}
 }
