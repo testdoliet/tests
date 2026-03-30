@@ -203,13 +203,34 @@ object PobreFlixExtractor {
      * Extrai o Content ID do episódio a partir do HTML da página da série
      */
     private fun extractEpisodeContentId(html: String, season: Int, episode: Int): String? {
+        println("[PobreFlix] Procurando Content ID para S${season}E${episode}")
+        
+        // Verificar se o HTML contém links de episódio
+        val hasEpisodeLinks = html.contains("/episodio/")
+        println("[PobreFlix] HTML contém links de episódio: $hasEpisodeLinks")
+        
+        // Verificar se contém allEpisodes JSON
+        val hasAllEpisodes = html.contains("allEpisodes")
+        println("[PobreFlix] HTML contém allEpisodes: $hasAllEpisodes")
+        
+        // Procurar por episódios na lista
+        val episodeListPattern = Regex("data-episode-id=[\"'](\\d+)[\"'].*?data-episode=[\"']$episode[\"']")
+        val episodeListMatch = episodeListPattern.find(html)
+        if (episodeListMatch != null) {
+            val contentId = episodeListMatch.groupValues[1]
+            if (contentId != "0") {
+                println("[PobreFlix] ✅ Content ID encontrado via lista de episódios: $contentId")
+                return contentId
+            }
+        }
+        
         // Procura pelo link do episódio com o data-episode-id
         val pattern = Regex("href=[\"']/episodio/[^\"']*-${season}x$episode[\"'][^>]*data-episode-id=[\"'](\\d+)[\"']")
         val match = pattern.find(html)
         if (match != null) {
             val contentId = match.groupValues[1]
             if (contentId != "0") {
-                println("[PobreFlix] ✅ Content ID encontrado: $contentId")
+                println("[PobreFlix] ✅ Content ID encontrado via link: $contentId")
                 return contentId
             }
         }
@@ -217,28 +238,49 @@ object PobreFlixExtractor {
         // Fallback: procura no allEpisodes JSON
         val allEpisodesMatch = Regex("window\\.allEpisodes\\s*=\\s*(\\{[^;]+\\});", RegexOption.DOT_MATCHES_ALL).find(html)
         if (allEpisodesMatch != null) {
+            println("[PobreFlix] allEpisodes JSON encontrado")
             try {
                 val jsonString = allEpisodesMatch.groupValues[1]
+                println("[PobreFlix] JSON tamanho: ${jsonString.length}")
+                println("[PobreFlix] JSON (primeiros 500 chars): ${jsonString.take(500)}")
+                
                 val jsonObject = JSONObject(jsonString)
                 val seasonKey = season.toString()
+                println("[PobreFlix] Keys disponíveis: ${jsonObject.keys().asSequence().toList()}")
                 
                 if (jsonObject.has(seasonKey)) {
                     val seasonArray = jsonObject.getJSONArray(seasonKey)
+                    println("[PobreFlix] Temporada $seasonKey tem ${seasonArray.length()} episódios")
+                    
                     for (i in 0 until seasonArray.length()) {
                         val ep = seasonArray.getJSONObject(i)
-                        if (ep.optInt("epi_num") == episode) {
-                            val contentId = ep.optInt("id").toString()
+                        val epNum = ep.optInt("epi_num")
+                        val epId = ep.optInt("id")
+                        val epTitle = ep.optString("title")
+                        println("[PobreFlix] Episódio $i: epi_num=$epNum, id=$epId, title=$epTitle")
+                        
+                        if (epNum == episode) {
+                            val contentId = epId.toString()
                             if (contentId != "0") {
                                 println("[PobreFlix] ✅ Content ID via allEpisodes: $contentId")
                                 return contentId
                             }
                         }
                     }
+                } else {
+                    println("[PobreFlix] Temporada $seasonKey NÃO encontrada no JSON")
                 }
             } catch (e: Exception) {
                 println("[PobreFlix] Erro ao parsear allEpisodes: ${e.message}")
+                e.printStackTrace()
             }
+        } else {
+            println("[PobreFlix] allEpisodes JSON NÃO encontrado no HTML")
         }
+        
+        // Se não encontrou, mostrar parte do HTML para debug
+        println("[PobreFlix] HTML (primeiros 2000 chars) para debug:")
+        println(html.take(2000))
         
         println("[PobreFlix] ❌ Content ID não encontrado para S${season}E$episode")
         return null
