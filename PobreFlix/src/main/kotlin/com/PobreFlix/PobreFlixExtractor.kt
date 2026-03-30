@@ -200,86 +200,25 @@ object PobreFlixExtractor {
     }
 
     /**
-     * Busca o slug da série pelo TMDB ID
-     * Exemplo: /anime/rooster-fighter ou /serie/privilegios
+     * Extrai o Content ID do episódio a partir do HTML da página da série
      */
-    private suspend fun getSeriesSlug(tmdbId: Int): String? {
-        try {
-            val searchUrl = "$POBREFLIX_URL/pesquisar?s=$tmdbId"
-            println("[PobreFlix] Buscando slug em: $searchUrl")
-            
-            val response = app.get(searchUrl, headers = HEADERS + getCookieHeader())
-            if (!response.isSuccessful) return null
-            
-            val html = response.text
-            
-            // Procura por link do tipo /anime/nome-da-serie ou /serie/nome-da-serie
-            val patterns = listOf(
-                Regex("/anime/([a-z0-9\\-]+)\"", RegexOption.IGNORE_CASE),
-                Regex("/serie/([a-z0-9\\-]+)\"", RegexOption.IGNORE_CASE),
-                Regex("/dorama/([a-z0-9\\-]+)\"", RegexOption.IGNORE_CASE)
-            )
-            
-            for (pattern in patterns) {
-                val match = pattern.find(html)
-                if (match != null) {
-                    val slug = match.groupValues[1]
-                    println("[PobreFlix] Slug encontrado: $slug")
-                    return slug
-                }
-            }
-            
-            return null
-        } catch (e: Exception) {
-            println("[PobreFlix] Erro ao buscar slug: ${e.message}")
-            return null
-        }
-    }
-
-    /**
-     * Extrai o Content ID diretamente da página do episódio
-     * URL: https://lospobreflix.site/episodio/{slug}-{season}x{episode}
-     */
-    private suspend fun getContentIdFromEpisodePage(
-        slug: String,
-        season: Int,
-        episode: Int
-    ): String? {
-        val episodeUrl = "$POBREFLIX_URL/episodio/$slug-${season}x$episode"
-        println("[PobreFlix] URL do episódio: $episodeUrl")
-        
-        val response = app.get(episodeUrl, headers = HEADERS + getCookieHeader())
-        if (!response.isSuccessful) {
-            println("[PobreFlix] Falha ao acessar página do episódio: ${response.code}")
-            return null
-        }
-        
-        // Atualizar cookies
-        val cookies = response.headers["set-cookie"]
-        if (cookies != null && cookies.isNotEmpty()) {
-            sessionCookies = cookies
-            println("[PobreFlix] Cookie atualizado")
-        }
-        
-        val html = response.text
-        
-        // Método 1: Extrair data-episode-id do link do episódio atual
-        val episodeIdMatch = Regex("data-episode-id=[\"'](\\d+)[\"']").find(html)
-        if (episodeIdMatch != null) {
-            val contentId = episodeIdMatch.groupValues[1]
+    private fun extractEpisodeContentId(html: String, season: Int, episode: Int): String? {
+        // Procura pelo link do episódio com o data-episode-id
+        val pattern = Regex("href=[\"']/episodio/[^\"']*-${season}x$episode[\"'][^>]*data-episode-id=[\"'](\\d+)[\"']")
+        val match = pattern.find(html)
+        if (match != null) {
+            val contentId = match.groupValues[1]
             if (contentId != "0") {
-                println("[PobreFlix] ✅ Content ID via data-episode-id: $contentId")
+                println("[PobreFlix] ✅ Content ID encontrado: $contentId")
                 return contentId
             }
         }
         
-        // Método 2: Extrair do window.allEpisodes
+        // Fallback: procura no allEpisodes JSON
         val allEpisodesMatch = Regex("window\\.allEpisodes\\s*=\\s*(\\{[^;]+\\});", RegexOption.DOT_MATCHES_ALL).find(html)
         if (allEpisodesMatch != null) {
-            val jsonString = allEpisodesMatch.groupValues[1]
-            println("[PobreFlix] allEpisodes encontrado, tamanho: ${jsonString.length}")
-            
             try {
+                val jsonString = allEpisodesMatch.groupValues[1]
                 val jsonObject = JSONObject(jsonString)
                 val seasonKey = season.toString()
                 
@@ -301,15 +240,7 @@ object PobreFlixExtractor {
             }
         }
         
-        // Método 3: Procurar no player container
-        val apiContentIdMatch = Regex("data-apicontentid=[\"'](\\d+)[\"']").find(html)
-        if (apiContentIdMatch != null) {
-            val contentId = apiContentIdMatch.groupValues[1]
-            println("[PobreFlix] ✅ Content ID via data-apicontentid: $contentId")
-            return contentId
-        }
-        
-        println("[PobreFlix] ❌ Content ID não encontrado na página do episódio")
+        println("[PobreFlix] ❌ Content ID não encontrado para S${season}E$episode")
         return null
     }
 
@@ -338,59 +269,54 @@ object PobreFlixExtractor {
 
     /**
      * Método principal para obter streams
-     * Funciona apenas para séries (mediaType = "serie" ou "tv")
+     * 
+     * @param seriesUrl URL da série que o app já carregou (ex: https://lospobreflix.site/anime/rooster-fighter)
+     * @param season Temporada
+     * @param episode Episódio
      */
     suspend fun getStreams(
-        tmdbId: Int,
-        mediaType: String,
-        season: Int = 1,
-        episode: Int = 1
+        seriesUrl: String,
+        season: Int,
+        episode: Int
     ): List<ExtractorLink> {
-        // SÓ FUNCIONA PARA SÉRIES!
-        if (mediaType != "serie" && mediaType != "tv") {
-            println("[PobreFlix] Este extractor só funciona para séries! MediaType: $mediaType")
-            return emptyList()
-        }
-        
         val results = mutableListOf<ExtractorLink>()
         
         println("[PobreFlix] === getStreams PARA SÉRIES INICIADO ===")
-        println("[PobreFlix] tmdbId: $tmdbId, season: $season, episode: $episode")
+        println("[PobreFlix] seriesUrl: $seriesUrl, season: $season, episode: $episode")
 
         try {
-            // 1. Obter o slug da série
-            val slug = getSeriesSlug(tmdbId)
-            if (slug == null) {
-                println("[PobreFlix] ❌ Slug não encontrado para TMDB ID: $tmdbId")
+            // 1. Fazer requisição para a página da série (que o app já tem)
+            val response = app.get(seriesUrl, headers = HEADERS + getCookieHeader())
+            if (!response.isSuccessful) {
+                println("[PobreFlix] Falha ao acessar página: ${response.code}")
                 return emptyList()
             }
-            println("[PobreFlix] Slug obtido: $slug")
             
-            // 2. Obter Content ID da página do episódio
-            val contentId = getContentIdFromEpisodePage(slug, season, episode)
+            // Atualizar cookies
+            val cookies = response.headers["set-cookie"]
+            if (cookies != null && cookies.isNotEmpty()) {
+                sessionCookies = cookies
+                println("[PobreFlix] Cookie atualizado")
+            }
+            
+            val html = response.text
+            println("[PobreFlix] HTML carregado, tamanho: ${html.length}")
+            
+            // 2. Extrair Content ID do episódio
+            val contentId = extractEpisodeContentId(html, season, episode)
             if (contentId == null || contentId == "0") {
                 println("[PobreFlix] ❌ Content ID não encontrado")
                 return emptyList()
             }
             println("[PobreFlix] Content ID: $contentId")
             
-            // 3. Buscar a página do episódio novamente para extrair tokens
-            val episodeUrl = "$POBREFLIX_URL/episodio/$slug-${season}x$episode"
-            val episodeResponse = app.get(episodeUrl, headers = HEADERS + getCookieHeader())
-            if (!episodeResponse.isSuccessful) {
-                println("[PobreFlix] Falha ao acessar página do episódio para tokens")
-                return emptyList()
-            }
-            
-            val episodeHtml = episodeResponse.text
-            
-            // 4. Extrair tokens
-            if (!extractTokens(episodeHtml)) {
+            // 3. Extrair tokens
+            if (!extractTokens(html)) {
                 println("[PobreFlix] ❌ Falha ao extrair tokens")
                 return emptyList()
             }
             
-            // 5. Chamar options API
+            // 4. Chamar options API
             val optionsParams = mutableMapOf<String, String>()
             optionsParams["contentid"] = contentId
             optionsParams["type"] = "serie"
@@ -404,7 +330,7 @@ object PobreFlixExtractor {
                 url = "$BASE_URL/player/options",
                 headers = API_HEADERS + getCookieHeader() + mapOf(
                     "X-Page-Token" to pageToken,
-                    "Referer" to "$POBREFLIX_URL/"
+                    "Referer" to seriesUrl
                 ),
                 data = optionsParams
             )
@@ -432,7 +358,7 @@ object PobreFlixExtractor {
             
             println("[PobreFlix] Options encontradas: ${optionsArray.length()}")
             
-            // 6. Processar cada servidor
+            // 5. Processar cada servidor
             for (i in 0 until optionsArray.length()) {
                 val option = optionsArray.getJSONObject(i)
                 val videoId = option.optString("ID")
