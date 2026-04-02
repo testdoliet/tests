@@ -15,7 +15,7 @@ object PobreFlixExtractor {
         "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
         "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
         "Accept-Language" to "pt-BR",
-        "Accept-Encoding" to "gzip, deflate",
+        "Accept-Encoding" to "identity",
         "Referer" to "https://lospobreflix.site/",
         "Sec-Fetch-Dest" to "iframe",
         "Sec-Fetch-Mode" to "navigate",
@@ -38,14 +38,6 @@ object PobreFlixExtractor {
 
     private fun getCookieHeader(): Map<String, String> {
         return if (sessionCookies.isNotEmpty()) mapOf("Cookie" to sessionCookies) else emptyMap()
-    }
-
-    private fun updateCookies(response: com.lagradost.cloudstream3.app.Response) {
-        val setCookie = response.headers["set-cookie"]
-        if (setCookie != null && setCookie.isNotEmpty()) {
-            sessionCookies = setCookie
-            println("[PobreFlix] Cookie atualizado")
-        }
     }
 
     suspend fun getStreams(
@@ -71,27 +63,21 @@ object PobreFlixExtractor {
             
             println("[PobreFlix] URL da página: $pageUrl")
             
-            var response = app.get(pageUrl, headers = HEADERS + getCookieHeader())
+            val response = app.get(pageUrl, headers = HEADERS + getCookieHeader())
             if (!response.isSuccessful) {
                 println("[PobreFlix] Falha na requisição: ${response.code}")
                 return emptyList()
             }
             
-            updateCookies(response)
-            
-            var html = response.text
-            println("[PobreFlix] HTML carregado, tamanho: ${html.length}")
-            
-            // Tentar com Accept-Encoding diferente se necessário
-            if (!html.contains("CSRF_TOKEN") && !html.contains("<!DOCTYPE")) {
-                println("[PobreFlix] HTML comprimido, tentando sem compressão...")
-                val altResponse = app.get(pageUrl, headers = HEADERS + getCookieHeader() + mapOf("Accept-Encoding" to "identity"))
-                if (altResponse.isSuccessful) {
-                    updateCookies(altResponse)
-                    html = altResponse.text
-                    println("[PobreFlix] HTML alternativo, tamanho: ${html.length}")
-                }
+            // Atualizar cookies
+            val setCookie = response.headers["set-cookie"]
+            if (setCookie != null && setCookie.isNotEmpty()) {
+                sessionCookies = setCookie
+                println("[PobreFlix] Cookie atualizado")
             }
+            
+            val html = response.text
+            println("[PobreFlix] HTML carregado, tamanho: ${html.length}")
             
             // 2. Extrair tokens
             val csrfMatch = Regex("CSRF_TOKEN\\s*=\\s*[\"']([^\"']+)[\"']").find(html)
@@ -171,9 +157,15 @@ object PobreFlixExtractor {
             }
             
             val optionsData = JSONObject(optionsResponse.text)
-            val optionsArray = optionsData.optJSONObject("data")?.optJSONArray("options")
+            val dataObj = optionsData.optJSONObject("data")
+            if (dataObj == null) {
+                println("[PobreFlix] data object não encontrado")
+                return emptyList()
+            }
+            
+            val optionsArray = dataObj.optJSONArray("options")
             if (optionsArray == null) {
-                println("[PobreFlix] Options array não encontrado")
+                println("[PobreFlix] options array não encontrado")
                 return emptyList()
             }
             
@@ -205,11 +197,17 @@ object PobreFlixExtractor {
                     data = sourceParams
                 )
                 
-                if (!sourceResponse.isSuccessful) continue
+                if (!sourceResponse.isSuccessful) {
+                    println("[PobreFlix] Source falhou: ${sourceResponse.code}")
+                    continue
+                }
                 
                 val sourceData = JSONObject(sourceResponse.text)
                 val redirectUrl = sourceData.optJSONObject("data")?.optString("video_url")
-                if (redirectUrl.isNullOrEmpty()) continue
+                if (redirectUrl.isNullOrEmpty()) {
+                    println("[PobreFlix] redirectUrl vazio")
+                    continue
+                }
                 
                 println("[PobreFlix] redirectUrl: ${redirectUrl.take(100)}...")
                 
@@ -217,7 +215,11 @@ object PobreFlixExtractor {
                 val finalUrl = redirectResponse.url
                 println("[PobreFlix] finalUrl: $finalUrl")
                 
-                val playerHash = finalUrl.split("/").lastOrNull() ?: continue
+                val playerHash = finalUrl.split("/").lastOrNull()
+                if (playerHash == null) {
+                    println("[PobreFlix] playerHash null")
+                    continue
+                }
                 
                 val videoParams = mutableMapOf<String, String>()
                 videoParams["hash"] = playerHash
@@ -237,13 +239,19 @@ object PobreFlixExtractor {
                     data = videoParams
                 )
                 
-                if (!videoResponse.isSuccessful) continue
+                if (!videoResponse.isSuccessful) {
+                    println("[PobreFlix] Video falhou: ${videoResponse.code}")
+                    continue
+                }
                 
                 val videoData = JSONObject(videoResponse.text)
                 val videoUrl = videoData.optString("securedLink").takeIf { it.isNotEmpty() } 
                     ?: videoData.optString("videoSource")
                 
-                if (videoUrl.isNullOrEmpty()) continue
+                if (videoUrl.isNullOrEmpty()) {
+                    println("[PobreFlix] videoUrl vazio")
+                    continue
+                }
                 
                 var quality = 720
                 when {
