@@ -18,17 +18,17 @@ object PobreFlixExtractor {
     private var sessionCookies: String = ""
 
     private val HEADERS = mapOf(
-        "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
-        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-        "Accept-Language" to "pt-BR",
-        "Accept-Encoding" to "gzip, deflate",
-        "Referer" to "$POBREFLIX_URL/",
-        "Sec-Fetch-Dest" to "iframe",
-        "Sec-Fetch-Mode" to "navigate",
-        "Sec-Fetch-Site" to "cross-site",
-        "Upgrade-Insecure-Requests" to "1",
-        "Connection" to "keep-alive"
-    )
+    "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
+    "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+    "Accept-Language" to "pt-BR",
+    "Accept-Encoding" to "identity",  // ← MUDAR de "gzip, deflate" para "identity"
+    "Referer" to "$POBREFLIX_URL/",
+    "Sec-Fetch-Dest" to "iframe",
+    "Sec-Fetch-Mode" to "navigate",
+    "Sec-Fetch-Site" to "cross-site",
+    "Upgrade-Insecure-Requests" to "1",
+    "Connection" to "keep-alive"
+)
 
     private val API_HEADERS = mapOf(
         "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
