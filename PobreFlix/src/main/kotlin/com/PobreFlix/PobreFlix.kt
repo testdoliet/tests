@@ -196,22 +196,18 @@ class PobreFlix : MainAPI() {
             val document = app.get(url).document
             println("Título da página: ${document.title()}")
 
-            // ========== TÍTULO ==========
             val titleElement = document.selectFirst("h1.text-3xl.text-lead.font-bold")
             val title = titleElement?.text()?.trim() ?: return null
             println("Título: $title")
 
-            // ========== ANO ==========
             var year = Regex("\\((\\d{4})\\)").find(title)?.groupValues?.get(1)?.toIntOrNull()
             val cleanTitle = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
             println("Título limpo: $cleanTitle, ano: $year")
 
-            // ========== TIPO ==========
             val isAnime = url.contains("/anime/")
             val isSerie = url.contains("/serie/") || url.contains("/dorama/")
             println("isAnime: $isAnime, isSerie: $isSerie")
 
-            // ========== POSTER ==========
             var poster = document.selectFirst("meta[property='og:image']")?.attr("content")
             if (poster.isNullOrBlank()) {
                 poster = document.selectFirst("img.w-full.aspect-\\[2\\/3\\]")?.attr("src")
@@ -219,7 +215,6 @@ class PobreFlix : MainAPI() {
             poster = fixImageUrl(poster)
             println("Poster: $poster")
             
-            // ========== BACKDROP/BANNER ==========
             var backdrop: String? = null
             
             backdrop = document.selectFirst("#movie-player-container")?.attr("data-backdrop")
@@ -235,7 +230,6 @@ class PobreFlix : MainAPI() {
             backdrop = fixImageUrl(backdrop)
             println("Backdrop: $backdrop")
             
-            // ========== RATING ==========
             var rating: Float? = null
             
             val ratingSvg = document.selectFirst(".inline-flex.items-center.gap-3.rounded-2xl .text-\\[12px\\].font-extrabold")
@@ -255,7 +249,6 @@ class PobreFlix : MainAPI() {
                 }
             }
             
-            // ========== DURAÇÃO (apenas para filmes) ==========
             var duration: Int? = null
             if (!isAnime && !isSerie) {
                 val infoBar = document.selectFirst(".flex.gap-2.text-sm.flex-wrap.items-center")
@@ -269,7 +262,6 @@ class PobreFlix : MainAPI() {
                 }
             }
             
-            // ========== ANO (se não encontrou no título) ==========
             if (year == null) {
                 val infoBar = document.selectFirst(".flex.gap-2.text-sm.flex-wrap.items-center")
                 if (infoBar != null) {
@@ -281,7 +273,6 @@ class PobreFlix : MainAPI() {
                 }
             }
             
-            // ========== SINOPSE ==========
             var synopsis = document.selectFirst(".text-slate-700.dark\\:text-slate-200.md\\:text-lg")?.text()?.trim()
             if (synopsis.isNullOrBlank()) {
                 synopsis = document.selectFirst("meta[name='description']")?.attr("content")?.trim()
@@ -289,14 +280,12 @@ class PobreFlix : MainAPI() {
             synopsis = synopsis?.replace(Regex("\\|.*$"), "")?.trim()
             println("Sinopse: ${synopsis?.take(100)}...")
             
-            // ========== GÊNEROS/TAGS ==========
             val tags = document.select(".flex.flex-wrap.gap-2.pt-4 a")
                 .map { it.text().trim() }
                 .filter { it.isNotBlank() }
                 .takeIf { it.isNotEmpty() }
             println("Tags: $tags")
             
-            // ========== ELENCO ==========
             val cast = document.select("#cast-section .swiper-slide, .cast-swiper .swiper-slide")
                 .mapNotNull { element ->
                     try {
@@ -312,12 +301,10 @@ class PobreFlix : MainAPI() {
                 .takeIf { it.isNotEmpty() }
             println("Elenco: ${cast?.size} atores")
             
-            // ========== TRAILER ==========
             val trailerKey = document.selectFirst("script:containsData(window.__trailerKeys)")?.data()
                 ?.let { Regex("window\\.__trailerKeys\\s*=\\s*\\[\"([^\"]+)\"\\]").find(it)?.groupValues?.get(1) }
             println("Trailer key: $trailerKey")
             
-            // ========== RECOMENDAÇÕES ==========
             val recommendations = document.select("#relatedSection .swiper-slide a, .related-swiper .swiper-slide a")
                 .mapNotNull { element ->
                     try {
@@ -350,11 +337,9 @@ class PobreFlix : MainAPI() {
                 }
             println("Recomendações: ${recommendations.size}")
             
-            // ========== PLAYER URL ==========
             val playerUrl = findPlayerUrl(document)
             println("Player URL: $playerUrl")
             
-            // ========== RETORNAR RESPOSTA ==========
             if (!isAnime && !isSerie) {
                 return newMovieLoadResponse(cleanTitle, url, TvType.Movie, playerUrl ?: url) {
                     this.posterUrl = poster
@@ -375,7 +360,6 @@ class PobreFlix : MainAPI() {
                 }
             }
             
-            // SÉRIES/ANIMES
             val episodes = extractEpisodesFromSite(document, url)
             val type = if (isAnime) TvType.Anime else TvType.TvSeries
             
@@ -487,7 +471,6 @@ class PobreFlix : MainAPI() {
             }
         }
 
-        // Fallback: extrair do HTML
         val episodeElements = document.select("#episodes-list article, .episode-card, .episode-item")
         println("  Elementos de episódio encontrados: ${episodeElements.size}")
         
@@ -582,7 +565,9 @@ class PobreFlix : MainAPI() {
         println("Data: $data")
         
         return try {
-            val document = app.get(data).document
+            val response = app.get(data)
+            val document = response.document
+            val episodeHtml = response.text  // ← Guardar o HTML completo
             println("Documento carregado")
             
             // Extrair season e episode da URL
@@ -591,10 +576,9 @@ class PobreFlix : MainAPI() {
             val episode = seasonEpisodeMatch?.groupValues?.get(2)?.toIntOrNull() ?: 1
             println("Season: $season, Episode: $episode")
             
-            // EXTRAIR A URL DA SÉRIE - pegar o link de voltar com o ícone de seta
+            // Extrair a URL da série do link de voltar
             var seriesUrl: String? = null
             
-            // Método 1: link com ícone de seta (é o link "Voltar" para a série)
             val backIcon = document.selectFirst(".fa-arrow-left")
             if (backIcon != null) {
                 val backLink = backIcon.parent()
@@ -604,13 +588,11 @@ class PobreFlix : MainAPI() {
                 }
             }
             
-            // Método 2: se não encontrou, tenta pelo breadcrumb específico
             if (seriesUrl == null) {
                 seriesUrl = document.selectFirst(".flex.items-start.gap-4.flex-wrap .inline-flex.items-center.gap-2.text-sm")?.attr("href")
                 println("Link do breadcrumb encontrado: $seriesUrl")
             }
             
-            // Método 3: fallback - extrair slug da URL do episódio
             if (seriesUrl == null) {
                 val slugMatch = Regex("/episodio/(.+)-\\d+x\\d+").find(data)
                 val slug = slugMatch?.groupValues?.get(1)
@@ -629,7 +611,8 @@ class PobreFlix : MainAPI() {
                 seriesUrl = fixUrl(seriesUrl)
                 println("URL da série final: $seriesUrl")
                 
-                val streams = PobreFlixExtractor.getStreams(seriesUrl, season, episode)
+                // Passar o HTML do episódio para o extractor (contém os tokens)
+                val streams = PobreFlixExtractor.getStreams(seriesUrl, episodeHtml, season, episode)
                 
                 if (streams.isEmpty()) {
                     println("Nenhum stream encontrado")
@@ -652,8 +635,6 @@ class PobreFlix : MainAPI() {
             false
         }
     }
-    
-    // ========== FUNÇÕES AUXILIARES ==========
     
     private fun fixImageUrl(url: String?): String? {
         if (url.isNullOrBlank()) return null
