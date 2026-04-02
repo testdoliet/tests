@@ -18,17 +18,17 @@ object PobreFlixExtractor {
     private var sessionCookies: String = ""
 
     private val HEADERS = mapOf(
-    "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
-    "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-    "Accept-Language" to "pt-BR",
-    "Accept-Encoding" to "identity",  // ← MUDAR de "gzip, deflate" para "identity"
-    "Referer" to "$POBREFLIX_URL/",
-    "Sec-Fetch-Dest" to "iframe",
-    "Sec-Fetch-Mode" to "navigate",
-    "Sec-Fetch-Site" to "cross-site",
-    "Upgrade-Insecure-Requests" to "1",
-    "Connection" to "keep-alive"
-)
+        "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
+        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+        "Accept-Language" to "pt-BR",
+        "Accept-Encoding" to "identity",
+        "Referer" to "$POBREFLIX_URL/",
+        "Sec-Fetch-Dest" to "iframe",
+        "Sec-Fetch-Mode" to "navigate",
+        "Sec-Fetch-Site" to "cross-site",
+        "Upgrade-Insecure-Requests" to "1",
+        "Connection" to "keep-alive"
+    )
 
     private val API_HEADERS = mapOf(
         "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36",
@@ -205,24 +205,11 @@ object PobreFlixExtractor {
     private fun extractEpisodeContentId(html: String, season: Int, episode: Int): String? {
         println("[PobreFlix] Procurando Content ID para S${season}E${episode}")
         
-        // Verificar se o HTML contém links de episódio
         val hasEpisodeLinks = html.contains("/episodio/")
         println("[PobreFlix] HTML contém links de episódio: $hasEpisodeLinks")
         
-        // Verificar se contém allEpisodes JSON
         val hasAllEpisodes = html.contains("allEpisodes")
         println("[PobreFlix] HTML contém allEpisodes: $hasAllEpisodes")
-        
-        // Procurar por episódios na lista
-        val episodeListPattern = Regex("data-episode-id=[\"'](\\d+)[\"'].*?data-episode=[\"']$episode[\"']")
-        val episodeListMatch = episodeListPattern.find(html)
-        if (episodeListMatch != null) {
-            val contentId = episodeListMatch.groupValues[1]
-            if (contentId != "0") {
-                println("[PobreFlix] ✅ Content ID encontrado via lista de episódios: $contentId")
-                return contentId
-            }
-        }
         
         // Procura pelo link do episódio com o data-episode-id
         val pattern = Regex("href=[\"']/episodio/[^\"']*-${season}x$episode[\"'][^>]*data-episode-id=[\"'](\\d+)[\"']")
@@ -238,56 +225,35 @@ object PobreFlixExtractor {
         // Fallback: procura no allEpisodes JSON
         val allEpisodesMatch = Regex("window\\.allEpisodes\\s*=\\s*(\\{[^;]+\\});", RegexOption.DOT_MATCHES_ALL).find(html)
         if (allEpisodesMatch != null) {
-            println("[PobreFlix] allEpisodes JSON encontrado")
             try {
                 val jsonString = allEpisodesMatch.groupValues[1]
-                println("[PobreFlix] JSON tamanho: ${jsonString.length}")
-                println("[PobreFlix] JSON (primeiros 500 chars): ${jsonString.take(500)}")
-                
                 val jsonObject = JSONObject(jsonString)
                 val seasonKey = season.toString()
-                println("[PobreFlix] Keys disponíveis: ${jsonObject.keys().asSequence().toList()}")
                 
                 if (jsonObject.has(seasonKey)) {
                     val seasonArray = jsonObject.getJSONArray(seasonKey)
-                    println("[PobreFlix] Temporada $seasonKey tem ${seasonArray.length()} episódios")
-                    
                     for (i in 0 until seasonArray.length()) {
                         val ep = seasonArray.getJSONObject(i)
-                        val epNum = ep.optInt("epi_num")
-                        val epId = ep.optInt("id")
-                        val epTitle = ep.optString("title")
-                        println("[PobreFlix] Episódio $i: epi_num=$epNum, id=$epId, title=$epTitle")
-                        
-                        if (epNum == episode) {
-                            val contentId = epId.toString()
+                        if (ep.optInt("epi_num") == episode) {
+                            val contentId = ep.optInt("id").toString()
                             if (contentId != "0") {
                                 println("[PobreFlix] ✅ Content ID via allEpisodes: $contentId")
                                 return contentId
                             }
                         }
                     }
-                } else {
-                    println("[PobreFlix] Temporada $seasonKey NÃO encontrada no JSON")
                 }
             } catch (e: Exception) {
                 println("[PobreFlix] Erro ao parsear allEpisodes: ${e.message}")
-                e.printStackTrace()
             }
-        } else {
-            println("[PobreFlix] allEpisodes JSON NÃO encontrado no HTML")
         }
-        
-        // Se não encontrou, mostrar parte do HTML para debug
-        println("[PobreFlix] HTML (primeiros 2000 chars) para debug:")
-        println(html.take(2000))
         
         println("[PobreFlix] ❌ Content ID não encontrado para S${season}E$episode")
         return null
     }
 
     /**
-     * Extrai tokens CSRF_TOKEN e PAGE_TOKEN do HTML
+     * Extrai tokens CSRF_TOKEN e PAGE_TOKEN do HTML do episódio
      */
     private fun extractTokens(html: String): Boolean {
         val csrfMatch = Regex("CSRF_TOKEN\\s*=\\s*[\"']([^\"']+)[\"']").find(html)
@@ -312,12 +278,14 @@ object PobreFlixExtractor {
     /**
      * Método principal para obter streams
      * 
-     * @param seriesUrl URL da série que o app já carregou (ex: https://lospobreflix.site/anime/rooster-fighter)
+     * @param seriesUrl URL da série (para buscar o Content ID)
+     * @param episodeHtml HTML da página do episódio (para buscar os tokens)
      * @param season Temporada
      * @param episode Episódio
      */
     suspend fun getStreams(
         seriesUrl: String,
+        episodeHtml: String,
         season: Int,
         episode: Int
     ): List<ExtractorLink> {
@@ -327,34 +295,33 @@ object PobreFlixExtractor {
         println("[PobreFlix] seriesUrl: $seriesUrl, season: $season, episode: $episode")
 
         try {
-            // 1. Fazer requisição para a página da série (que o app já tem)
+            // 1. Fazer requisição para a página da série para extrair o Content ID
             val response = app.get(seriesUrl, headers = HEADERS + getCookieHeader())
             if (!response.isSuccessful) {
-                println("[PobreFlix] Falha ao acessar página: ${response.code}")
+                println("[PobreFlix] Falha ao acessar página da série: ${response.code}")
                 return emptyList()
             }
             
-            // Atualizar cookies
             val cookies = response.headers["set-cookie"]
             if (cookies != null && cookies.isNotEmpty()) {
                 sessionCookies = cookies
                 println("[PobreFlix] Cookie atualizado")
             }
             
-            val html = response.text
-            println("[PobreFlix] HTML carregado, tamanho: ${html.length}")
+            val seriesHtml = response.text
+            println("[PobreFlix] HTML da série carregado, tamanho: ${seriesHtml.length}")
             
-            // 2. Extrair Content ID do episódio
-            val contentId = extractEpisodeContentId(html, season, episode)
+            // 2. Extrair Content ID do episódio (da página da série)
+            val contentId = extractEpisodeContentId(seriesHtml, season, episode)
             if (contentId == null || contentId == "0") {
                 println("[PobreFlix] ❌ Content ID não encontrado")
                 return emptyList()
             }
             println("[PobreFlix] Content ID: $contentId")
             
-            // 3. Extrair tokens
-            if (!extractTokens(html)) {
-                println("[PobreFlix] ❌ Falha ao extrair tokens")
+            // 3. Extrair tokens do HTML do episódio (passado como parâmetro)
+            if (!extractTokens(episodeHtml)) {
+                println("[PobreFlix] ❌ Falha ao extrair tokens do HTML do episódio")
                 return emptyList()
             }
             
