@@ -196,22 +196,18 @@ class PobreFlix : MainAPI() {
             val document = app.get(url).document
             println("Título da página: ${document.title()}")
 
-            // ========== TÍTULO ==========
             val titleElement = document.selectFirst("h1.text-3xl.text-lead.font-bold")
             val title = titleElement?.text()?.trim() ?: return null
             println("Título: $title")
 
-            // ========== ANO ==========
             var year = Regex("\\((\\d{4})\\)").find(title)?.groupValues?.get(1)?.toIntOrNull()
             val cleanTitle = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
             println("Título limpo: $cleanTitle, ano: $year")
 
-            // ========== TIPO ==========
             val isAnime = url.contains("/anime/")
             val isSerie = url.contains("/serie/") || url.contains("/dorama/")
             println("isAnime: $isAnime, isSerie: $isSerie")
 
-            // ========== POSTER ==========
             var poster = document.selectFirst("meta[property='og:image']")?.attr("content")
             if (poster.isNullOrBlank()) {
                 poster = document.selectFirst("img.w-full.aspect-\\[2\\/3\\]")?.attr("src")
@@ -219,7 +215,6 @@ class PobreFlix : MainAPI() {
             poster = fixImageUrl(poster)
             println("Poster: $poster")
             
-            // ========== BACKDROP/BANNER ==========
             var backdrop: String? = null
             
             backdrop = document.selectFirst("#movie-player-container")?.attr("data-backdrop")
@@ -235,7 +230,6 @@ class PobreFlix : MainAPI() {
             backdrop = fixImageUrl(backdrop)
             println("Backdrop: $backdrop")
             
-            // ========== RATING ==========
             var rating: Float? = null
             
             val ratingSvg = document.selectFirst(".inline-flex.items-center.gap-3.rounded-2xl .text-\\[12px\\].font-extrabold")
@@ -255,7 +249,6 @@ class PobreFlix : MainAPI() {
                 }
             }
             
-            // ========== DURAÇÃO (apenas para filmes) ==========
             var duration: Int? = null
             if (!isAnime && !isSerie) {
                 val infoBar = document.selectFirst(".flex.gap-2.text-sm.flex-wrap.items-center")
@@ -269,7 +262,6 @@ class PobreFlix : MainAPI() {
                 }
             }
             
-            // ========== ANO (se não encontrou no título) ==========
             if (year == null) {
                 val infoBar = document.selectFirst(".flex.gap-2.text-sm.flex-wrap.items-center")
                 if (infoBar != null) {
@@ -281,7 +273,6 @@ class PobreFlix : MainAPI() {
                 }
             }
             
-            // ========== SINOPSE ==========
             var synopsis = document.selectFirst(".text-slate-700.dark\\:text-slate-200.md\\:text-lg")?.text()?.trim()
             if (synopsis.isNullOrBlank()) {
                 synopsis = document.selectFirst("meta[name='description']")?.attr("content")?.trim()
@@ -289,14 +280,12 @@ class PobreFlix : MainAPI() {
             synopsis = synopsis?.replace(Regex("\\|.*$"), "")?.trim()
             println("Sinopse: ${synopsis?.take(100)}...")
             
-            // ========== GÊNEROS/TAGS ==========
             val tags = document.select(".flex.flex-wrap.gap-2.pt-4 a")
                 .map { it.text().trim() }
                 .filter { it.isNotBlank() }
                 .takeIf { it.isNotEmpty() }
             println("Tags: $tags")
             
-            // ========== ELENCO ==========
             val cast = document.select("#cast-section .swiper-slide, .cast-swiper .swiper-slide")
                 .mapNotNull { element ->
                     try {
@@ -312,12 +301,10 @@ class PobreFlix : MainAPI() {
                 .takeIf { it.isNotEmpty() }
             println("Elenco: ${cast?.size} atores")
             
-            // ========== TRAILER ==========
             val trailerKey = document.selectFirst("script:containsData(window.__trailerKeys)")?.data()
                 ?.let { Regex("window\\.__trailerKeys\\s*=\\s*\\[\"([^\"]+)\"\\]").find(it)?.groupValues?.get(1) }
             println("Trailer key: $trailerKey")
             
-            // ========== RECOMENDAÇÕES ==========
             val recommendations = document.select("#relatedSection .swiper-slide a, .related-swiper .swiper-slide a")
                 .mapNotNull { element ->
                     try {
@@ -350,11 +337,10 @@ class PobreFlix : MainAPI() {
                 }
             println("Recomendações: ${recommendations.size}")
             
-            // ========== PLAYER URL ==========
             val playerUrl = findPlayerUrl(document)
             println("Player URL: $playerUrl")
             
-            // ========== EXTRAIR TMDB ID DO HTML ==========
+            // EXTRAIR TMDB ID DO HTML
             val tmdbId = document.selectFirst("section[data-contentid]")?.attr("data-contentid")?.toIntOrNull()
             println("TMDB ID encontrado: $tmdbId")
             
@@ -376,11 +362,6 @@ class PobreFlix : MainAPI() {
                     
                     if (cast != null && cast.isNotEmpty()) addActors(cast)
                     if (trailerKey != null) addTrailer("https://www.youtube.com/watch?v=$trailerKey")
-                    
-                    // Guardar TMDB ID no data do filme
-                    if (tmdbId != null) {
-                        this.data = tmdbId.toString()
-                    }
                 }
             }
             
@@ -399,11 +380,6 @@ class PobreFlix : MainAPI() {
                 if (rating != null) this.score = Score.from10(rating)
                 if (cast != null && cast.isNotEmpty()) addActors(cast)
                 if (trailerKey != null) addTrailer("https://www.youtube.com/watch?v=$trailerKey")
-                
-                // Guardar TMDB ID no data da série
-                if (tmdbId != null) {
-                    this.data = tmdbId.toString()
-                }
             }
             
         } catch (e: Exception) {
@@ -595,34 +571,79 @@ class PobreFlix : MainAPI() {
         println("Data: $data")
         
         return try {
-            // Extrair TMDB ID do data (salvo no load())
-            val tmdbId = data.toIntOrNull()
-            if (tmdbId == null) {
-                println("TMDB ID não encontrado no data")
-                return false
-            }
+            val document = app.get(data).document
+            println("Documento carregado")
             
-            // Determinar o tipo (filme ou série)
+            // Extrair informações da URL
+            val urlPath = data.substringAfter(mainUrl).substringBefore("?")
+            println("URL Path: $urlPath")
+            
+            // Verificar se é episódio ou filme
             val episodeMatch = Regex("-(\\d+)x(\\d+)$").find(data)
-            val mediaType = if (episodeMatch != null) "serie" else "filme"
             
-            val season = episodeMatch?.groupValues?.get(1)?.toIntOrNull() ?: 1
-            val episode = episodeMatch?.groupValues?.get(2)?.toIntOrNull() ?: 1
-            
-            println("TMDB ID: $tmdbId, MediaType: $mediaType, Season: $season, Episode: $episode")
-            
-            val streams = PobreFlixExtractor.getStreams(tmdbId, mediaType, season, episode)
-            
-            if (streams.isEmpty()) {
-                println("Nenhum stream encontrado")
-                return false
+            if (episodeMatch != null) {
+                // É episódio
+                val slug = Regex("/episodio/(.+)-\\d+x\\d+").find(data)?.groupValues?.get(1)
+                val season = episodeMatch.groupValues[1].toIntOrNull() ?: 1
+                val episode = episodeMatch.groupValues[2].toIntOrNull() ?: 1
+                
+                println("É episódio: slug=$slug, S${season}E${episode}")
+                
+                // Extrair TMDB ID do HTML do episódio
+                var tmdbId = document.selectFirst("section[data-contentid]")?.attr("data-contentid")?.toIntOrNull()
+                
+                // Se não encontrou, tentar do container do player
+                if (tmdbId == null) {
+                    tmdbId = document.selectFirst("#movie-player-container")?.attr("data-apicontentid")?.toIntOrNull()
+                }
+                
+                if (tmdbId == null) {
+                    println("TMDB ID não encontrado")
+                    return false
+                }
+                
+                println("TMDB ID: $tmdbId")
+                
+                val streams = PobreFlixExtractor.getStreams(tmdbId, "serie", season, episode)
+                
+                if (streams.isEmpty()) {
+                    println("Nenhum stream encontrado")
+                    return false
+                }
+                
+                println("Extractor encontrou ${streams.size} streams")
+                streams.forEach { stream ->
+                    callback(stream)
+                }
+                true
+            } else if (urlPath.contains("/filme/")) {
+                // É filme
+                val tmdbId = document.selectFirst("section[data-contentid]")?.attr("data-contentid")?.toIntOrNull()
+                    ?: document.selectFirst("#movie-player-container")?.attr("data-apicontentid")?.toIntOrNull()
+                
+                if (tmdbId == null) {
+                    println("TMDB ID não encontrado para filme")
+                    return false
+                }
+                
+                println("Filme TMDB ID: $tmdbId")
+                
+                val streams = PobreFlixExtractor.getStreams(tmdbId, "filme", 1, 1)
+                
+                if (streams.isEmpty()) {
+                    println("Nenhum stream encontrado")
+                    return false
+                }
+                
+                println("Extractor encontrou ${streams.size} streams")
+                streams.forEach { stream ->
+                    callback(stream)
+                }
+                true
+            } else {
+                println("Não é episódio nem filme")
+                false
             }
-            
-            println("Extractor encontrou ${streams.size} streams")
-            streams.forEach { stream ->
-                callback(stream)
-            }
-            true
             
         } catch (e: Exception) {
             println("ERRO em loadLinks: ${e.message}")
