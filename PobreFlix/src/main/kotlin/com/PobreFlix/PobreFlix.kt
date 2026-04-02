@@ -365,7 +365,7 @@ class PobreFlix : MainAPI() {
                 }
             }
             
-            // SÉRIES/ANIMES - EXTRAIR EPISÓDIOS E PASSAR TMDB ID NO DATA
+            // SÉRIES/ANIMES
             val episodes = extractEpisodesFromSite(document, url, tmdbId)
             val type = if (isAnime) TvType.Anime else TvType.TvSeries
             
@@ -392,7 +392,7 @@ class PobreFlix : MainAPI() {
     private suspend fun extractEpisodesFromSite(
         document: org.jsoup.nodes.Document,
         seriesUrl: String,
-        tmdbId: Int?  // ← RECEBE O TMDB ID
+        tmdbId: Int?
     ): List<Episode> {
         println("  >>> extractEpisodesFromSite INICIADO")
         println("  URL: $seriesUrl")
@@ -460,9 +460,9 @@ class PobreFlix : MainAPI() {
                                     if (airDate != null) {
                                         this.addDate(airDate)
                                     }
-                                    // ← GUARDAR TMDB ID NO DATA DO EPISÓDIO!
+                                    // GUARDA TMDB ID, SEASON E EPISODE NO DATA
                                     if (tmdbId != null) {
-                                        this.data = tmdbId.toString()
+                                        this.data = "$tmdbId|$seasonNum|$epNum"
                                     }
                                 })
                                 episodeCount++
@@ -552,9 +552,9 @@ class PobreFlix : MainAPI() {
                     if (airDate != null) {
                         this.addDate(airDate)
                     }
-                    // ← GUARDAR TMDB ID NO DATA DO EPISÓDIO!
+                    // GUARDA TMDB ID, SEASON E EPISODE NO DATA
                     if (tmdbId != null) {
-                        this.data = tmdbId.toString()
+                        this.data = "$tmdbId|1|$epNumber"
                     }
                 })
                 println("    Episódio $epNumber adicionado via HTML")
@@ -582,37 +582,53 @@ class PobreFlix : MainAPI() {
         println("Data: $data")
         
         return try {
-            // Tentar converter data para Int (TMDB ID)
-            val tmdbId = data.toIntOrNull()
+            // Tentar parsear o data como "tmdbId|season|episode"
+            val parts = data.split("|")
             
-            if (tmdbId != null) {
-                // É uma SÉRIE! (o data contém o TMDB ID)
-                // Extrair season e episode da URL original (precisamos saber qual episódio foi clicado)
-                // Para isso, precisamos do documento HTML para extrair essas informações
-                println("TMDB ID da série: $tmdbId")
+            if (parts.size == 3) {
+                // É uma SÉRIE!
+                val tmdbId = parts[0].toIntOrNull()
+                val season = parts[1].toIntOrNull() ?: 1
+                val episode = parts[2].toIntOrNull() ?: 1
                 
-                // Infelizmente não temos season e episode aqui...
-                // Precisamos de uma abordagem diferente
-                return false
+                if (tmdbId == null) {
+                    println("TMDB ID inválido na string: $data")
+                    return false
+                }
+                
+                println("Série - TMDB ID: $tmdbId, Season: $season, Episode: $episode")
+                
+                val streams = PobreFlixExtractor.getStreams(tmdbId, "serie", season, episode)
+                
+                if (streams.isEmpty()) {
+                    println("Nenhum stream encontrado")
+                    return false
+                }
+                
+                println("Extractor encontrou ${streams.size} streams")
+                streams.forEach { stream ->
+                    callback(stream)
+                }
+                true
             } else {
-                // Pode ser um FILME (URL completa)
+                // Tentar como FILME (URL completa)
                 val document = app.get(data).document
                 println("Documento carregado")
                 
                 val urlPath = data.substringAfter(mainUrl).substringBefore("?")
                 
                 if (urlPath.contains("/filme/")) {
-                    val tmdbIdFromDoc = document.selectFirst("section[data-contentid]")?.attr("data-contentid")?.toIntOrNull()
+                    val tmdbId = document.selectFirst("section[data-contentid]")?.attr("data-contentid")?.toIntOrNull()
                         ?: document.selectFirst("#movie-player-container")?.attr("data-apicontentid")?.toIntOrNull()
                     
-                    if (tmdbIdFromDoc == null) {
+                    if (tmdbId == null) {
                         println("TMDB ID não encontrado para filme")
                         return false
                     }
                     
-                    println("Filme TMDB ID: $tmdbIdFromDoc")
+                    println("Filme TMDB ID: $tmdbId")
                     
-                    val streams = PobreFlixExtractor.getStreams(tmdbIdFromDoc, "filme", 1, 1)
+                    val streams = PobreFlixExtractor.getStreams(tmdbId, "filme", 1, 1)
                     
                     if (streams.isEmpty()) {
                         println("Nenhum stream encontrado")
@@ -624,7 +640,7 @@ class PobreFlix : MainAPI() {
                     }
                     true
                 } else {
-                    println("Não é filme e nem TMDB ID")
+                    println("Formato não reconhecido: $data")
                     false
                 }
             }
