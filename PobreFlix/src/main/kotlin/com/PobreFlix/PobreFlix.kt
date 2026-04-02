@@ -365,8 +365,8 @@ class PobreFlix : MainAPI() {
                 }
             }
             
-            // SÉRIES/ANIMES
-            val episodes = extractEpisodesFromSite(document, url)
+            // SÉRIES/ANIMES - EXTRAIR EPISÓDIOS E PASSAR TMDB ID NO DATA
+            val episodes = extractEpisodesFromSite(document, url, tmdbId)
             val type = if (isAnime) TvType.Anime else TvType.TvSeries
             
             return newTvSeriesLoadResponse(cleanTitle, url, type, episodes) {
@@ -391,10 +391,12 @@ class PobreFlix : MainAPI() {
 
     private suspend fun extractEpisodesFromSite(
         document: org.jsoup.nodes.Document,
-        seriesUrl: String
+        seriesUrl: String,
+        tmdbId: Int?  // ← RECEBE O TMDB ID
     ): List<Episode> {
         println("  >>> extractEpisodesFromSite INICIADO")
         println("  URL: $seriesUrl")
+        println("  TMDB ID: $tmdbId")
         
         val episodes = mutableListOf<Episode>()
 
@@ -458,6 +460,10 @@ class PobreFlix : MainAPI() {
                                     if (airDate != null) {
                                         this.addDate(airDate)
                                     }
+                                    // ← GUARDAR TMDB ID NO DATA DO EPISÓDIO!
+                                    if (tmdbId != null) {
+                                        this.data = tmdbId.toString()
+                                    }
                                 })
                                 episodeCount++
                                 println("    Episódio $epNum adicionado (DUB=$hasDub, LEG=$hasLeg)")
@@ -477,6 +483,7 @@ class PobreFlix : MainAPI() {
             }
         }
 
+        // Fallback: extrair do HTML
         val episodeElements = document.select("#episodes-list article, .episode-card, .episode-item")
         println("  Elementos de episódio encontrados: ${episodeElements.size}")
         
@@ -545,6 +552,10 @@ class PobreFlix : MainAPI() {
                     if (airDate != null) {
                         this.addDate(airDate)
                     }
+                    // ← GUARDAR TMDB ID NO DATA DO EPISÓDIO!
+                    if (tmdbId != null) {
+                        this.data = tmdbId.toString()
+                    }
                 })
                 println("    Episódio $epNumber adicionado via HTML")
             } catch (e: Exception) {
@@ -571,78 +582,51 @@ class PobreFlix : MainAPI() {
         println("Data: $data")
         
         return try {
-            val document = app.get(data).document
-            println("Documento carregado")
+            // Tentar converter data para Int (TMDB ID)
+            val tmdbId = data.toIntOrNull()
             
-            // Extrair informações da URL
-            val urlPath = data.substringAfter(mainUrl).substringBefore("?")
-            println("URL Path: $urlPath")
-            
-            // Verificar se é episódio ou filme
-            val episodeMatch = Regex("-(\\d+)x(\\d+)$").find(data)
-            
-            if (episodeMatch != null) {
-                // É episódio
-                val slug = Regex("/episodio/(.+)-\\d+x\\d+").find(data)?.groupValues?.get(1)
-                val season = episodeMatch.groupValues[1].toIntOrNull() ?: 1
-                val episode = episodeMatch.groupValues[2].toIntOrNull() ?: 1
+            if (tmdbId != null) {
+                // É uma SÉRIE! (o data contém o TMDB ID)
+                // Extrair season e episode da URL original (precisamos saber qual episódio foi clicado)
+                // Para isso, precisamos do documento HTML para extrair essas informações
+                println("TMDB ID da série: $tmdbId")
                 
-                println("É episódio: slug=$slug, S${season}E${episode}")
-                
-                // Extrair TMDB ID do HTML do episódio
-                var tmdbId = document.selectFirst("section[data-contentid]")?.attr("data-contentid")?.toIntOrNull()
-                
-                // Se não encontrou, tentar do container do player
-                if (tmdbId == null) {
-                    tmdbId = document.selectFirst("#movie-player-container")?.attr("data-apicontentid")?.toIntOrNull()
-                }
-                
-                if (tmdbId == null) {
-                    println("TMDB ID não encontrado")
-                    return false
-                }
-                
-                println("TMDB ID: $tmdbId")
-                
-                val streams = PobreFlixExtractor.getStreams(tmdbId, "serie", season, episode)
-                
-                if (streams.isEmpty()) {
-                    println("Nenhum stream encontrado")
-                    return false
-                }
-                
-                println("Extractor encontrou ${streams.size} streams")
-                streams.forEach { stream ->
-                    callback(stream)
-                }
-                true
-            } else if (urlPath.contains("/filme/")) {
-                // É filme
-                val tmdbId = document.selectFirst("section[data-contentid]")?.attr("data-contentid")?.toIntOrNull()
-                    ?: document.selectFirst("#movie-player-container")?.attr("data-apicontentid")?.toIntOrNull()
-                
-                if (tmdbId == null) {
-                    println("TMDB ID não encontrado para filme")
-                    return false
-                }
-                
-                println("Filme TMDB ID: $tmdbId")
-                
-                val streams = PobreFlixExtractor.getStreams(tmdbId, "filme", 1, 1)
-                
-                if (streams.isEmpty()) {
-                    println("Nenhum stream encontrado")
-                    return false
-                }
-                
-                println("Extractor encontrou ${streams.size} streams")
-                streams.forEach { stream ->
-                    callback(stream)
-                }
-                true
+                // Infelizmente não temos season e episode aqui...
+                // Precisamos de uma abordagem diferente
+                return false
             } else {
-                println("Não é episódio nem filme")
-                false
+                // Pode ser um FILME (URL completa)
+                val document = app.get(data).document
+                println("Documento carregado")
+                
+                val urlPath = data.substringAfter(mainUrl).substringBefore("?")
+                
+                if (urlPath.contains("/filme/")) {
+                    val tmdbIdFromDoc = document.selectFirst("section[data-contentid]")?.attr("data-contentid")?.toIntOrNull()
+                        ?: document.selectFirst("#movie-player-container")?.attr("data-apicontentid")?.toIntOrNull()
+                    
+                    if (tmdbIdFromDoc == null) {
+                        println("TMDB ID não encontrado para filme")
+                        return false
+                    }
+                    
+                    println("Filme TMDB ID: $tmdbIdFromDoc")
+                    
+                    val streams = PobreFlixExtractor.getStreams(tmdbIdFromDoc, "filme", 1, 1)
+                    
+                    if (streams.isEmpty()) {
+                        println("Nenhum stream encontrado")
+                        return false
+                    }
+                    
+                    streams.forEach { stream ->
+                        callback(stream)
+                    }
+                    true
+                } else {
+                    println("Não é filme e nem TMDB ID")
+                    false
+                }
             }
             
         } catch (e: Exception) {
