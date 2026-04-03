@@ -41,44 +41,33 @@ object PobreFlixExtractor {
     }
 
     /**
-     * Extrai o contentId do episódio usando Regex (sem parsear JSON inteiro)
-     * Isso evita problemas com JSON gigante que o parser pode não conseguir processar
+     * Extrai o contentId do episódio usando Regex puro
+     * Isso funciona mesmo com JSON truncado porque busca padrões específicos
      */
-    private fun extractContentIdFromHtml(html: String, targetSeason: Int, targetEpisode: Int): String? {
-        // Método 1: Buscar o bloco ALL_EPISODES e extrair com Regex específico
-        val allEpisodesMatch = Regex("ALL_EPISODES\\s*=\\s*(\\{[^;]+\\})", RegexOption.DOT_MATCHES_ALL).find(html)
+    private fun extractContentIdFromTruncatedJson(html: String, targetSeason: Int, targetEpisode: Int): String? {
+        // Busca o padrão específico para o episódio desejado
+        // Exemplo: "epi_num":1,"title":"Piloto"... "ID":107081
+        val pattern = Regex("\"epi_num\":$targetEpisode[^}]*?\"ID\":(\\d+)")
+        val match = pattern.find(html)
         
-        if (allEpisodesMatch != null) {
-            val jsonString = allEpisodesMatch.groupValues[1]
-            
-            // Regex específico para encontrar o ID do episódio
-            // Procura por "season":targetSeason, depois encontra o episódio com epi_num:targetEpisode
-            val episodeIdPattern = Regex(
-                """"season":$targetSeason[^}]*?"epi_num":$targetEpisode[^}]*?"ID":(\d+)""",
-                RegexOption.DOT_MATCHES_ALL
-            )
-            
-            val idMatch = episodeIdPattern.find(jsonString)
-            if (idMatch != null) {
-                return idMatch.groupValues[1]
-            }
-            
-            // Fallback: tentar extrair o bloco da temporada primeiro
-            val seasonPattern = Regex("\"season\":$targetSeason\\s*,\\s*\"episodes\":\\s*\\[([\\s\\S]*?)\\]")
-            val seasonMatch = seasonPattern.find(jsonString)
-            
-            if (seasonMatch != null) {
-                val episodesBlock = seasonMatch.groupValues[1]
-                val episodePattern = Regex("\"epi_num\":$targetEpisode[^}]*\"ID\":(\\d+)")
-                val episodeMatch = episodePattern.find(episodesBlock)
-                return episodeMatch?.groupValues?.get(1)
-            }
+        if (match != null) {
+            val contentId = match.groupValues[1]
+            println("[PobreFlix] ✅ Content ID encontrado via Regex: $contentId")
+            return contentId
         }
         
-        // Método 2: Se o ALL_EPISODES não for encontrado, tentar buscar direto
-        val directPattern = Regex(""""epi_num":$targetEpisode[^}]*"ID":(\d+)""")
-        val directMatch = directPattern.find(html)
-        return directMatch?.groupValues?.get(1)
+        // Fallback: tentar com padrão mais específico incluindo a season
+        val seasonPattern = Regex("\"season\":$targetSeason[^}]*?\"epi_num\":$targetEpisode[^}]*?\"ID\":(\\d+)")
+        val seasonMatch = seasonPattern.find(html)
+        
+        if (seasonMatch != null) {
+            val contentId = seasonMatch.groupValues[1]
+            println("[PobreFlix] ✅ Content ID encontrado via Season Regex: $contentId")
+            return contentId
+        }
+        
+        println("[PobreFlix] ❌ Content ID não encontrado via Regex")
+        return null
     }
 
     suspend fun getStreams(
@@ -95,7 +84,6 @@ object PobreFlixExtractor {
         println("[PobreFlix] tmdbId: $tmdbId, mediaType: $mediaType, season: $targetSeason, episode: $targetEpisode")
 
         try {
-            // 1. Fazer requisição para a página do player
             val pageUrl = if (mediaType == "filme") {
                 "$BASE_URL/filme/$tmdbId"
             } else {
@@ -110,7 +98,6 @@ object PobreFlixExtractor {
                 return emptyList()
             }
             
-            // Atualizar cookies
             val setCookie = response.headers["set-cookie"]
             if (setCookie != null && setCookie.isNotEmpty()) {
                 sessionCookies = setCookie
@@ -120,7 +107,7 @@ object PobreFlixExtractor {
             val html = response.text
             println("[PobreFlix] HTML carregado, tamanho: ${html.length}")
             
-            // 2. Extrair tokens
+            // Extrair tokens
             val csrfMatch = Regex("CSRF_TOKEN\\s*=\\s*[\"']([^\"']+)[\"']").find(html)
             if (csrfMatch == null) {
                 println("[PobreFlix] CSRF_TOKEN não encontrado")
@@ -137,7 +124,7 @@ object PobreFlixExtractor {
             val pageToken = pageMatch.groupValues[1]
             println("[PobreFlix] PAGE_TOKEN obtido")
             
-            // 3. Extrair contentId - USANDO REGEX (sem JSONObject)
+            // Extrair contentId - USANDO REGEX (evita JSON truncado)
             var contentId: String? = null
             
             if (mediaType == "filme") {
@@ -147,38 +134,8 @@ object PobreFlixExtractor {
                     println("[PobreFlix] CONTENT_ID (filme): $contentId")
                 }
             } else {
-                // Usar nossa função de extração por Regex
-                contentId = extractContentIdFromHtml(html, targetSeason, targetEpisode)
-                if (contentId != null) {
-                    println("[PobreFlix] CONTENT_ID (série via Regex): $contentId")
-                }
-                
-                // Fallback: tentar método antigo com JSONObject se o Regex falhar
-                if (contentId == null) {
-                    println("[PobreFlix] Regex falhou, tentando JSONObject fallback...")
-                    val allEpisodesMatch = Regex("ALL_EPISODES\\s*=\\s*(\\{[^;]+\\})", RegexOption.DOT_MATCHES_ALL).find(html)
-                    if (allEpisodesMatch != null) {
-                        try {
-                            val jsonString = allEpisodesMatch.groupValues[1]
-                            val jsonObject = JSONObject(jsonString)
-                            val seasonKey = targetSeason.toString()
-                            
-                            if (jsonObject.has(seasonKey)) {
-                                val seasonArray = jsonObject.getJSONArray(seasonKey)
-                                for (i in 0 until seasonArray.length()) {
-                                    val ep = seasonArray.getJSONObject(i)
-                                    if (ep.optInt("epi_num") == targetEpisode) {
-                                        contentId = ep.optInt("ID").toString()
-                                        println("[PobreFlix] CONTENT_ID (série via JSONObject): $contentId")
-                                        break
-                                    }
-                                }
-                            }
-                        } catch (e: Exception) {
-                            println("[PobreFlix] Erro no JSONObject fallback: ${e.message}")
-                        }
-                    }
-                }
+                // Usar Regex em vez de JSONObject
+                contentId = extractContentIdFromTruncatedJson(html, targetSeason, targetEpisode)
             }
             
             if (contentId == null) {
@@ -186,7 +143,7 @@ object PobreFlixExtractor {
                 return emptyList()
             }
             
-            // 4. Chamar options
+            // Chamar options
             val optionsParams = mutableMapOf<String, String>()
             optionsParams["contentid"] = contentId
             optionsParams["type"] = if (mediaType == "filme") "filme" else "serie"
@@ -222,7 +179,7 @@ object PobreFlixExtractor {
             
             println("[PobreFlix] Options encontradas: ${optionsArray.length()}")
             
-            // 5. Processar cada servidor
+            // Processar cada servidor
             for (i in 0 until optionsArray.length()) {
                 val option = optionsArray.getJSONObject(i)
                 val videoId = option.optString("ID")
