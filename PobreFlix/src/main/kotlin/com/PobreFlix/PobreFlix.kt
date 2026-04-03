@@ -365,7 +365,7 @@ class PobreFlix : MainAPI() {
                 }
             }
             
-            // SÉRIES/ANIMES
+            // SÉRIES/ANIMES - CORREÇÃO AQUI!
             val episodes = extractEpisodesFromSite(document, url, tmdbId)
             val type = if (isAnime) TvType.Anime else TvType.TvSeries
             
@@ -389,6 +389,9 @@ class PobreFlix : MainAPI() {
         }
     }
 
+    /**
+     * CORREÇÃO: Extrai TODOS os episódios, incluindo os que não têm áudio
+     */
     private suspend fun extractEpisodesFromSite(
         document: org.jsoup.nodes.Document,
         seriesUrl: String,
@@ -409,16 +412,24 @@ class PobreFlix : MainAPI() {
                 
                 if (jsonString != null) {
                     println("  JSON encontrado, tamanho: ${jsonString.length}")
-                    val seasonPattern = Regex("\"(\\d+)\":\\s*\\[([^\\]]+)\\]")
+                    
+                    // Regex mais robusto para capturar todas as temporadas
+                    val seasonPattern = Regex("\"(\\d+)\":\\s*\\[([\\s\\S]*?)\\](?=\\s*,\\s*\"\\d+\"|\\s*\\})")
                     val seasonMatches = seasonPattern.findAll(jsonString)
                     
-                    var episodeCount = 0
+                    var totalEpisodes = 0
+                    
                     for (seasonMatch in seasonMatches) {
-                        val seasonNum = seasonMatch.groupValues[1].toIntOrNull() ?: 1
+                        val seasonNum = seasonMatch.groupValues[1].toIntOrNull() ?: continue
                         val episodesJson = seasonMatch.groupValues[2]
                         
-                        val episodePattern = Regex("\\{[^}]*\"epi_num\"\\s*:\\s*(\\d+)[^}]*\"title\"\\s*:\\s*\"([^\"]*)\"[^}]*\"sinopse\"\\s*:\\s*\"([^\"]*)\"[^}]*\"thumb_url\"\\s*:\\s*\"([^\"]*)\"[^}]*\"duration\"\\s*:\\s*(\\d+)[^}]*\"air_date\"\\s*:\\s*\"([^\"]*)\"[^}]*\"has_dub\"\\s*:\\s*(true|false)[^}]*\"has_leg\"\\s*:\\s*(true|false)[^}]*\\}")
+                        println("  Processando Temporada $seasonNum")
+                        
+                        // Regex para capturar cada episódio individualmente
+                        val episodePattern = Regex("""\{[^{}]*?"epi_num"\s*:\s*(\d+)[^{}]*?"title"\s*:\s*"([^"]*)"[^{}]*?"sinopse"\s*:\s*"([^"]*)"[^{}]*?"thumb_url"\s*:\s*"([^"]*)"[^{}]*?"duration"\s*:\s*(\d+)[^{}]*?"air_date"\s*:\s*"([^"]*)"[^{}]*?"has_dub"\s*:\s*(true|false)[^{}]*?"has_leg"\s*:\s*(true|false)[^{}]*?\}""")
+                        
                         val episodeMatches = episodePattern.findAll(episodesJson)
+                        var seasonEpCount = 0
                         
                         for (epMatch in episodeMatches) {
                             val epNum = epMatch.groupValues[1].toIntOrNull() ?: continue
@@ -430,56 +441,60 @@ class PobreFlix : MainAPI() {
                             val hasDub = epMatch.groupValues[7].toBoolean()
                             val hasLeg = epMatch.groupValues[8].toBoolean()
                             
-                            if (hasDub || hasLeg) {
-                                thumbUrl = thumbUrl?.let { 
-                                    if (it.startsWith("//")) {
-                                        "https:$it"
-                                    } else if (it.startsWith("/")) {
-                                        "$mainUrl$it"
-                                    } else if (!it.startsWith("http")) {
-                                        "https://image.tmdb.org/t/p/w500$it"
-                                    } else {
-                                        it
-                                    }
-                                }
-                                
-                                if (thumbUrl.isNullOrBlank()) {
-                                    val backdropElement = document.selectFirst("#movie-player-container")?.attr("data-backdrop")
-                                    thumbUrl = backdropElement?.let { fixImageUrl(it) }
-                                }
-                                
-                                val episodeUrl = "$seriesUrl/$seasonNum/$epNum"
-                                
-                                episodes.add(newEpisode(fixUrl(episodeUrl)) {
-                                    this.name = epTitle
-                                    this.season = seasonNum
-                                    this.episode = epNum
-                                    this.posterUrl = thumbUrl
-                                    this.description = sinopse
-                                    this.runTime = durationMin
-                                    if (airDate != null) {
-                                        this.addDate(airDate)
-                                    }
-                                    // GUARDA TMDB ID, SEASON E EPISODE NO DATA
-                                    if (tmdbId != null) {
-                                        this.data = "$tmdbId|$seasonNum|$epNum"
-                                    }
-                                })
-                                episodeCount++
-                                println("    Episódio $epNum adicionado (DUB=$hasDub, LEG=$hasLeg)")
+                            // CORREÇÃO: NÃO IGNORAR episódios sem áudio!
+                            if (!hasDub && !hasLeg) {
+                                println("    Episódio $epNum - SEM ÁUDIO (adicionando mesmo assim)")
                             } else {
-                                println("    Episódio $epNum ignorado - sem áudio disponível")
+                                println("    Episódio $epNum - DUB=$hasDub, LEG=$hasLeg")
                             }
+                            
+                            // Corrigir URL da thumbnail
+                            thumbUrl = thumbUrl?.let {
+                                when {
+                                    it.startsWith("//") -> "https:$it"
+                                    it.startsWith("/") && !it.startsWith("//") -> "$mainUrl$it"
+                                    !it.startsWith("http") && it.isNotBlank() -> "https://image.tmdb.org/t/p/w500$it"
+                                    else -> it
+                                }
+                            }
+                            
+                            if (thumbUrl.isNullOrBlank()) {
+                                val backdropElement = document.selectFirst("#movie-player-container")?.attr("data-backdrop")
+                                thumbUrl = backdropElement?.let { fixImageUrl(it) }
+                            }
+                            
+                            val episodeUrl = "$seriesUrl/$seasonNum/$epNum"
+                            
+                            episodes.add(newEpisode(fixUrl(episodeUrl)) {
+                                this.name = epTitle
+                                this.season = seasonNum
+                                this.episode = epNum
+                                this.posterUrl = thumbUrl
+                                this.description = sinopse
+                                this.runTime = durationMin
+                                if (airDate != null) {
+                                    this.addDate(airDate)
+                                }
+                                if (tmdbId != null) {
+                                    this.data = "$tmdbId|$seasonNum|$epNum"
+                                }
+                            })
+                            
+                            seasonEpCount++
+                            totalEpisodes++
                         }
+                        
+                        println("  Temporada $seasonNum: $seasonEpCount episódios")
                     }
                     
                     if (episodes.isNotEmpty()) {
-                        println("  Extraídos $episodeCount episódios do JSON")
+                        println("  ✅ Total de $totalEpisodes episódios extraídos do JSON em ${episodes.groupBy { it.season }.size} temporadas")
                         return episodes
                     }
                 }
             } catch (e: Exception) {
                 println("  ERRO ao processar JSON: ${e.message}")
+                e.printStackTrace()
             }
         }
 
@@ -489,13 +504,6 @@ class PobreFlix : MainAPI() {
         
         episodeElements.forEachIndexed { index, element ->
             try {
-                val hasAudio = element.select(".absolute.start-3.bottom-3 .inline-flex").isNotEmpty()
-                
-                if (!hasAudio) {
-                    println("    Episódio ${index + 1} ignorado - sem áudio disponível")
-                    return@forEachIndexed
-                }
-                
                 val link = element.selectFirst("a[href]") ?: return@forEachIndexed
                 val episodeUrl = link.attr("href")
                 if (episodeUrl.isBlank()) return@forEachIndexed
@@ -518,14 +526,11 @@ class PobreFlix : MainAPI() {
                     if (thumb.isNullOrBlank()) thumb = imgElement.attr("src")
                     
                     thumb = thumb?.let {
-                        if (it.startsWith("//")) {
-                            "https:$it"
-                        } else if (it.startsWith("/")) {
-                            "$mainUrl$it"
-                        } else if (!it.startsWith("http")) {
-                            "https://image.tmdb.org/t/p/w500$it"
-                        } else {
-                            it
+                        when {
+                            it.startsWith("//") -> "https:$it"
+                            it.startsWith("/") -> "$mainUrl$it"
+                            !it.startsWith("http") -> "https://image.tmdb.org/t/p/w500$it"
+                            else -> it
                         }
                     }
                 }
@@ -552,7 +557,6 @@ class PobreFlix : MainAPI() {
                     if (airDate != null) {
                         this.addDate(airDate)
                     }
-                    // GUARDA TMDB ID, SEASON E EPISODE NO DATA
                     if (tmdbId != null) {
                         this.data = "$tmdbId|1|$epNumber"
                     }
@@ -582,7 +586,6 @@ class PobreFlix : MainAPI() {
         println("Data: $data")
         
         return try {
-            // Tentar parsear o data como "tmdbId|season|episode"
             val parts = data.split("|")
             
             if (parts.size == 3) {
@@ -601,7 +604,7 @@ class PobreFlix : MainAPI() {
                 val streams = PobreFlixExtractor.getStreams(tmdbId, "serie", season, episode)
                 
                 if (streams.isEmpty()) {
-                    println("Nenhum stream encontrado")
+                    println("Nenhum stream encontrado para S${season}E${episode}")
                     return false
                 }
                 
@@ -611,7 +614,7 @@ class PobreFlix : MainAPI() {
                 }
                 true
             } else {
-                // Tentar como FILME (URL completa)
+                // Tentar como FILME
                 val document = app.get(data).document
                 println("Documento carregado")
                 
