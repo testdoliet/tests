@@ -239,7 +239,7 @@ class EmbedTv : MainAPI() {
         return try {
             // Usa o WebViewResolver igual ao DonghuaNoSekai
             val streamResolver = WebViewResolver(
-                interceptUrl = Regex("""\.(txt|m3u8)$"""),  // Intercepta .txt e .m3u8
+                interceptUrl = Regex("""\.(txt|m3u8)$"""),
                 additionalUrls = listOf(Regex("""\.(txt|m3u8)$""")),
                 useOkhttp = false,
                 timeout = 30_000L
@@ -275,10 +275,11 @@ class EmbedTv : MainAPI() {
                     }
                 }
 
+                // Usa o M3u8Helper.generateM3u8 exatamente como no DonghuaNoSekai
                 M3u8Helper.generateM3u8(
-                    name = "EmbedTV - Live",
-                    url = finalUrl,
-                    referer = baseUrl,
+                    name,
+                    finalUrl,
+                    baseUrl,
                     headers = headers
                 ).forEach(callback)
 
