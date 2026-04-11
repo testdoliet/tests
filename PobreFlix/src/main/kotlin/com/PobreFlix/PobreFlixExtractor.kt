@@ -43,7 +43,27 @@ object PobreFlixExtractor {
     private fun extractContentIdFromTruncatedJson(html: String, targetSeason: Int, targetEpisode: Int): String? {
         println("[PobreFlix] 🔍 Buscando episódio S${targetSeason}E${targetEpisode}")
         
-        // Método 1: Buscar padrão exato
+        // ===== DEBUG: Mostrar parte do HTML para entender o formato =====
+        val sample = html.substring(0, minOf(3000, html.length))
+        println("[PobreFlix] 📄 SAMPLE DO HTML (primeiros 3000 chars):")
+        println("[PobreFlix] $sample")
+        
+        // ===== DEBUG: Verificar se existem padrões conhecidos =====
+        val hasSeasonPattern = html.contains("\"season\":$targetSeason")
+        val hasEpiNumPattern = html.contains("\"epi_num\":$targetEpisode")
+        val hasIdPattern = html.contains("\"ID\"")
+        
+        println("[PobreFlix] 🔍 Contém '\"season\":$targetSeason': $hasSeasonPattern")
+        println("[PobreFlix] 🔍 Contém '\"epi_num\":$targetEpisode': $hasEpiNumPattern")
+        println("[PobreFlix] 🔍 Contém '\"ID\"': $hasIdPattern")
+        
+        // Também procurar por ALL_EPISODES
+        val hasAllEpisodes = html.contains("allEpisodes")
+        println("[PobreFlix] 🔍 Contém 'allEpisodes': $hasAllEpisodes")
+        
+        // ===== FIM DOS DEBUGS =====
+        
+        // CÓDIGO ORIGINAL - Método 1
         val pattern = Regex("\"season\":$targetSeason,\"epi_num\":$targetEpisode[^}]*?\"ID\":(\\d+)")
         val match = pattern.find(html)
         
@@ -53,7 +73,7 @@ object PobreFlixExtractor {
             return contentId
         }
         
-        // Método 2: Buscar dentro da temporada
+        // CÓDIGO ORIGINAL - Método 2
         val seasonPattern = Regex("\"$targetSeason\":\\s*\\[([\\s\\S]*?)\\]")
         val seasonMatch = seasonPattern.find(html)
         
@@ -69,7 +89,7 @@ object PobreFlixExtractor {
             }
         }
         
-        // Método 3: Fallback simples
+        // CÓDIGO ORIGINAL - Método 3
         val simplePattern = Regex("\"epi_num\":$targetEpisode[,\\s]*?\"ID\":(\\d+)")
         val simpleMatch = simplePattern.find(html)
         
@@ -171,7 +191,6 @@ object PobreFlixExtractor {
             optionsParams["pageToken"] = pageToken
             
             println("[PobreFlix] 📡 Chamando API /player/options...")
-            println("[PobreFlix] 📡 Params: contentid=$contentId, type=${optionsParams["type"]}")
             
             val optionsResponse = app.post(
                 url = "$BASE_URL/player/options",
@@ -185,8 +204,6 @@ object PobreFlixExtractor {
             }
             
             val optionsData = JSONObject(optionsResponse.text)
-            println("[PobreFlix] 📦 Options response: ${optionsResponse.text.take(200)}")
-            
             val dataObj = optionsData.optJSONObject("data")
             if (dataObj == null) {
                 println("[PobreFlix] ❌ data object não encontrado")
@@ -227,8 +244,6 @@ object PobreFlixExtractor {
                 sourceParams["page_token"] = pageToken
                 sourceParams["_token"] = csrfToken
                 
-                println("[PobreFlix] 📡 Chamando API /player/source para videoId: $videoId")
-                
                 val sourceResponse = app.post(
                     url = "$BASE_URL/player/source",
                     headers = API_HEADERS + getCookieHeader(),
@@ -259,13 +274,9 @@ object PobreFlixExtractor {
                     continue
                 }
                 
-                println("[PobreFlix] 🔑 playerHash: $playerHash")
-                
                 val videoParams = mutableMapOf<String, String>()
                 videoParams["hash"] = playerHash
                 videoParams["r"] = ""
-                
-                println("[PobreFlix] 📡 Chamando CDN para obter vídeo...")
                 
                 val videoResponse = app.post(
                     url = "$CDN_BASE/player/index.php?data=$playerHash&do=getVideo",
@@ -311,9 +322,7 @@ object PobreFlixExtractor {
                 }
                 
                 println("[PobreFlix] ✅✅✅ SUCESSO! ✅✅✅")
-                println("[PobreFlix] 🎬 Título: $title")
-                println("[PobreFlix] 🎬 Servidor: $serverType")
-                println("[PobreFlix] 🎬 Qualidade: ${quality}p")
+                println("[PobreFlix] 🎬 $serverType ${quality}p")
                 println("[PobreFlix] 🎬 URL: ${videoUrl.take(150)}...")
                 
                 results.add(
@@ -334,10 +343,7 @@ object PobreFlixExtractor {
             }
             
             println("[PobreFlix] ═══════════════════════════════════════")
-            println("[PobreFlix] 📊 RESUMO FINAL")
             println("[PobreFlix] 📊 Total de links encontrados: ${results.size}")
-            println("[PobreFlix] 📊 Temporada solicitada: $targetSeason")
-            println("[PobreFlix] 📊 Episódio solicitado: $targetEpisode")
             println("[PobreFlix] ═══════════════════════════════════════")
             
             return results
