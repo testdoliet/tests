@@ -5,6 +5,7 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.plugins.BasePlugin
 import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
+import com.lagradost.cloudstream3.network.WebViewResolver
 import java.io.ByteArrayOutputStream
 
 @CloudstreamPlugin
@@ -236,7 +237,7 @@ class EmbedTv : MainAPI() {
         val channelUrl = cleanUrl.ifEmpty { return false }
 
         try {
-            // Headers padrão
+            // Headers padrão para a requisição
             val headers = mapOf(
                 "Referer" to baseUrl,
                 "Origin" to baseUrl,
@@ -244,52 +245,23 @@ class EmbedTv : MainAPI() {
                 "Accept" to "*/*"
             )
 
-            // Carrega a página do canal
-            val doc = app.get(channelUrl, headers = headers).document
-            val html = doc.html()
+            // WebViewResolver para interceptar requisições .txt e .m3u8
+            // Este é o coração da solução - intercepta as requisições que o JavaScript faz
+            val streamResolver = WebViewResolver(
+                interceptUrl = Regex("""\.(txt|m3u8)$"""),  // Intercepta .txt e .m3u8
+                additionalUrls = listOf(Regex("""\.(txt|m3u8)$""")),
+                useOkhttp = false,
+                timeout = 30_000L  // Timeout maior para lives
+            )
 
-            // 1. Tenta encontrar a URL criptografada no padrão dc("...")
-            val encodedPattern = Regex("""dc\("([A-Za-z0-9+/=]+)"\)""")
-            val encodedMatch = encodedPattern.find(html)
-            var streamUrl: String? = null
+            // Carrega a página com WebView e captura a URL do stream
+            val interceptedUrl = app.get(channelUrl, interceptor = streamResolver).url
 
-            if (encodedMatch != null) {
-                val encodedString = encodedMatch.groupValues[1]
-                val decryptedUrl = decryptStreamUrl(encodedString)
-                
-                if (decryptedUrl != null) {
-                    streamUrl = decryptedUrl
-                }
+            if (interceptedUrl.isEmpty()) {
+                return false
             }
 
-            // 2. Se não encontrou criptografado, procura URL direta de m3u8
-            if (streamUrl == null) {
-                val directPattern = Regex("""https?://[^\s"'<>]+\.m3u8[^\s"'<>]*""")
-                streamUrl = directPattern.find(html)?.value
-            }
-
-            // 3. Se ainda não tem URL, procura por URLs .txt (que são m3u8 disfarçados)
-            if (streamUrl == null) {
-                val txtPattern = Regex("""https?://[^\s"'<>]+\.txt[^\s"'<>]*""")
-                val txtUrl = txtPattern.find(html)?.value
-                
-                if (txtUrl != null) {
-                    // Verifica se o .txt é realmente um m3u8
-                    try {
-                        val testResponse = app.get(txtUrl, headers = headers).text
-                        if (testResponse.contains("#EXTM3U")) {
-                            streamUrl = txtUrl
-                        }
-                    } catch (e: Exception) {
-                        // Ignora erro e continua
-                    }
-                }
-            }
-
-            // Se não encontrou nenhuma URL, falha
-            if (streamUrl == null) return false
-
-            // Headers adicionais para o stream (baseados no curl que você mostrou)
+            // Headers para o stream (baseados no curl que você mostrou)
             val streamHeaders = mapOf(
                 "Referer" to baseUrl,
                 "Origin" to baseUrl,
@@ -301,6 +273,20 @@ class EmbedTv : MainAPI() {
                 "Sec-Fetch-Mode" to "cors",
                 "Sec-Fetch-Site" to "cross-site"
             )
+
+            var streamUrl = interceptedUrl
+
+            // Se for um arquivo .txt, verifica se é realmente um m3u8
+            if (interceptedUrl.endsWith(".txt", ignoreCase = true)) {
+                try {
+                    val testResponse = app.get(interceptedUrl, headers = streamHeaders).text
+                    if (testResponse.contains("#EXTM3U")) {
+                        streamUrl = interceptedUrl  // É um m3u8 disfarçado
+                    }
+                } catch (e: Exception) {
+                    // Se falhar, tenta usar como está
+                }
+            }
 
             // Adiciona o link do stream
             callback.invoke(
