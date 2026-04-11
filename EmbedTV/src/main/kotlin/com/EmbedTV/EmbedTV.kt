@@ -285,7 +285,7 @@ class EmbedTv : MainAPI() {
             "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36"
         )
         
-        // Baixa o HTML da página
+        // 1. Baixa o HTML para extrair a URL do stream
         val html = app.get(channelUrl, headers = headers).text
         
         // Extrai a URL do stream do objeto data.stream
@@ -296,33 +296,31 @@ class EmbedTv : MainAPI() {
             val streamUrl = streamMatch.groupValues[1]
             println("✅ Found stream URL: $streamUrl")
             
-            // Em vez de tentar baixar com OkHttp (que falha), vamos usar WebView para carregar o stream
+            // 2. Agora usa WebView para CARREGAR o stream (não apenas capturar)
+            // O WebView suporta domínios xn-- que o OkHttp não suporta
             val streamResolver = WebViewResolver(
-                interceptUrl = Regex("""\.(ts|m3u8|txt)$"""),
-                additionalUrls = listOf(Regex("""\.(ts|m3u8|txt)$""")),
+                interceptUrl = Regex("""\.(ts|m3u8|m4s)$"""), // Intercepta segmentos de vídeo
+                additionalUrls = listOf(Regex("""\.(ts|m3u8|m4s)$""")),
                 useOkhttp = false,
                 timeout = 60_000L
             )
             
-            // Carrega a URL do stream no WebView - isso vai funcionar porque o WebView suporta domínios xn--
             println("🔄 Loading stream URL in WebView...")
-            val intercepted = app.get(streamUrl, interceptor = streamResolver).url
-            println("🎯 Intercepted: $intercepted")
             
-            // O WebView pode redirecionar para um m3u8 real
-            var finalUrl = intercepted
-            if (intercepted.contains(".txt")) {
-                // Se ainda for .txt, tenta extrair o m3u8 do conteúdo
-                try {
-                    val txtContent = app.get(intercepted, headers = headers).text
-                    if (txtContent.contains("#EXTM3U")) {
-                        finalUrl = intercepted
-                        println("✅ .txt is actually m3u8")
-                    }
-                } catch (e: Exception) {
-                    println("Could not fetch .txt content, using URL as is")
-                }
+            // Carrega o stream no WebView - isso vai funcionar porque o WebView suporta xn--
+            // O WebViewResolver vai interceptar os segmentos e nos dar a URL base
+            val intercepted = app.get(streamUrl, interceptor = streamResolver).url
+            
+            println("🎯 Intercepted URL: $intercepted")
+            
+            // A URL interceptada pode ser o próprio stream ou um redirecionamento
+            val finalStreamUrl = if (intercepted.isNotEmpty() && intercepted != streamUrl) {
+                intercepted
+            } else {
+                streamUrl
             }
+            
+            println("✅ Final stream URL: $finalStreamUrl")
             
             val streamHeaders = mapOf(
                 "Accept" to "*/*",
@@ -336,9 +334,10 @@ class EmbedTv : MainAPI() {
                 "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36"
             )
             
+            // Tenta gerar o m3u8
             M3u8Helper.generateM3u8(
                 name,
-                finalUrl,
+                finalStreamUrl,
                 baseUrl,
                 headers = streamHeaders
             ).forEach(callback)
@@ -355,4 +354,3 @@ class EmbedTv : MainAPI() {
         false
     }
 }
-                                  }
