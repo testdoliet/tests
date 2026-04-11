@@ -278,20 +278,20 @@ class EmbedTv : MainAPI() {
     println("🌐 Channel URL: $channelUrl")
 
     return try {
-        // Usa o WebViewResolver APENAS para interceptar e encontrar a URL do .txt
+        // WebViewResolver APENAS para capturar a URL do .txt
         val streamResolver = WebViewResolver(
-            interceptUrl = Regex("""\.txt$"""),  // Só intercepta .txt
+            interceptUrl = Regex("""\.txt$"""),
             additionalUrls = listOf(Regex("""\.txt$""")),
             useOkhttp = false,
             timeout = 30_000L
         )
 
         println("🚀 Loading page in WebView...")
-        val intercepted = app.get(channelUrl, interceptor = streamResolver).url
-        println("🎯 Intercepted URL: $intercepted")
+        val txtUrl = app.get(channelUrl, interceptor = streamResolver).url
+        println("🎯 Captured .txt URL: $txtUrl")
 
-        if (intercepted.isNotEmpty() && intercepted.endsWith(".txt", ignoreCase = true)) {
-            println("✅ Found .txt URL: $intercepted")
+        if (txtUrl.isNotEmpty() && txtUrl.endsWith(".txt", ignoreCase = true)) {
+            println("✅ Valid .txt URL captured!")
             
             val headers = mapOf(
                 "Accept" to "*/*",
@@ -305,31 +305,19 @@ class EmbedTv : MainAPI() {
                 "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36"
             )
             
-            // Baixa o .txt diretamente
-            println("📥 Downloading .txt file...")
-            val txtContent = app.get(intercepted, headers = headers).text
-            println("📄 .txt content preview: ${txtContent.take(200)}")
+            // O .txt É o m3u8! Usa ele diretamente
+            println("🎬 Using .txt as m3u8 stream")
+            M3u8Helper.generateM3u8(
+                name,
+                txtUrl,  // A URL do .txt é o stream!
+                baseUrl,
+                headers = headers
+            ).forEach(callback)
             
-            // Verifica se o conteúdo é um m3u8
-            if (txtContent.contains("#EXTM3U")) {
-                println("✅ Content is valid m3u8!")
-                
-                // Usa o próprio conteúdo como m3u8, ou a URL original
-                M3u8Helper.generateM3u8(
-                    name,
-                    intercepted,  // A URL do .txt já é o m3u8
-                    baseUrl,
-                    headers = headers
-                ).forEach(callback)
-                
-                println("🎉 Success!")
-                true
-            } else {
-                println("❌ .txt content is not m3u8")
-                false
-            }
+            println("🎉 Success! Stream added")
+            true
         } else {
-            println("❌ No .txt URL intercepted")
+            println("❌ No .txt URL captured")
             false
         }
     } catch (e: Exception) {
