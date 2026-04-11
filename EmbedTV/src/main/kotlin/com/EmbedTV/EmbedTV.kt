@@ -29,6 +29,7 @@ class EmbedTv : MainAPI() {
     private val blockedChannels = listOf("sexyhot", "playboy")
 
     private fun fixImageUrl(url: String): String {
+        println("🖼️ fixImageUrl: $url")
         return when {
             url.contains("cloudfront.net") -> {
                 val cleanUrl = url.split("?")[0]
@@ -42,10 +43,16 @@ class EmbedTv : MainAPI() {
     }
 
     private fun decryptStreamUrl(encodedString: String): String? {
+        println("🔓 decryptStreamUrl: string length = ${encodedString.length}")
         return try {
             val decodedBytes = Base64.decode(encodedString, Base64.DEFAULT)
+            println("📦 decoded bytes: ${decodedBytes.size}")
+            
             val decodedString = String(decodedBytes, Charsets.ISO_8859_1)
+            println("📝 decoded: $decodedString")
+            
             val reversedString = decodedString.reversed()
+            println("🔄 reversed: $reversedString")
 
             val keyBytes = decryptionKey.toByteArray(Charsets.ISO_8859_1)
             val inputBytes = reversedString.toByteArray(Charsets.ISO_8859_1)
@@ -56,17 +63,23 @@ class EmbedTv : MainAPI() {
                 outputStream.write((inputBytes[i].toInt() xor keyByte.toInt()).toByte().toInt())
             }
 
-            outputStream.toString(Charsets.UTF_8.name())
+            val result = outputStream.toString(Charsets.UTF_8.name())
+            println("✅ decrypted: $result")
+            result
         } catch (e: Exception) {
+            println("❌ decryption failed: ${e.message}")
             null
         }
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
+        println("🏠 getMainPage called - page: $page")
         val doc = app.get(mainSite).document
         val allCategories = mutableListOf<HomePageList>()
+        
         val jogosSection = doc.selectFirst(".session.futebol")
         if (jogosSection != null) {
+            println("⚽ Jogos section found!")
             val jogosCards = jogosSection.select(".card")
 
             val jogosList = mutableListOf<SearchResponse>()
@@ -85,6 +98,7 @@ class EmbedTv : MainAPI() {
                 val displayName = if (!time.isNullOrBlank()) "$gameName ($time)" else gameName
 
                 val jogoUrl = "$baseUrl/$channelId?source=jogos"
+                println("🎮 Game found: $displayName - $channelId")
 
                 jogosList.add(
                     newLiveSearchResponse(
@@ -103,10 +117,12 @@ class EmbedTv : MainAPI() {
         }
 
         val categories = doc.select(".categorie")
+        println("📂 Categories found: ${categories.size}")
 
         for (category in categories) {
             val titleElement = category.selectFirst(".title") ?: continue
             val categoryTitle = titleElement.text().trim()
+            println("📁 Category: $categoryTitle")
 
             val channelList = mutableListOf<SearchResponse>()
             val cards = category.select(".card")
@@ -122,6 +138,7 @@ class EmbedTv : MainAPI() {
                 val imageUrl = imgElement.attr("src").ifEmpty { imgElement.attr("data-src") }
 
                 val canalUrl = "$baseUrl/$channelId"
+                println("📺 Channel: $channelName - $channelId")
 
                 channelList.add(
                     newLiveSearchResponse(
@@ -140,29 +157,40 @@ class EmbedTv : MainAPI() {
         }
 
         if (allCategories.isEmpty()) {
+            println("❌ No categories found!")
             throw ErrorLoadingException("Nenhum canal encontrado.")
         }
 
+        println("✅ Returning ${allCategories.size} categories")
         return newHomePageResponse(allCategories, hasNext = false)
     }
 
     override suspend fun load(url: String): LoadResponse {
+        println("📥 load: $url")
         val isFromJogos = url.contains("source=jogos")
         val cleanUrl = url.replace("?source=jogos", "")
 
         val channelId = cleanUrl.substringAfterLast("/")
+        println("🔑 Channel ID: $channelId")
+        
         if (channelId in blockedChannels) {
+            println("🚫 Blocked channel: $channelId")
             throw ErrorLoadingException("Canal não disponível")
         }
 
         val mainPage = app.get(mainSite).document
-        val card = mainPage.selectFirst(".card[data-channel=\"$channelId\"]") ?: return newMovieLoadResponse(
-            "Canal $channelId",
-            cleanUrl,
-            TvType.Live,
-            cleanUrl
-        ) {
-            this.posterUrl = "https://embedtv.best/assets/icon.png"
+        val card = mainPage.selectFirst(".card[data-channel=\"$channelId\"]")
+        
+        if (card == null) {
+            println("⚠️ Card not found for channel: $channelId")
+            return newMovieLoadResponse(
+                "Canal $channelId",
+                cleanUrl,
+                TvType.Live,
+                cleanUrl
+            ) {
+                this.posterUrl = "https://embedtv.best/assets/icon.png"
+            }
         }
 
         val name = card.selectFirst("h3")?.text()?.trim() ?: "Canal $channelId"
@@ -172,6 +200,7 @@ class EmbedTv : MainAPI() {
 
         val time = card.selectFirst("span")?.text()?.trim()
         val displayName = if (!time.isNullOrBlank() && isFromJogos) "$name ($time)" else name
+        println("✅ Loaded: $displayName")
 
         return newMovieLoadResponse(
             displayName,
@@ -185,6 +214,7 @@ class EmbedTv : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse>? {
+        println("🔍 Searching for: $query")
         val doc = app.get(mainSite).document
         val allCards = doc.select(".card")
         val results = mutableListOf<SearchResponse>()
@@ -212,6 +242,8 @@ class EmbedTv : MainAPI() {
 
             val time = timeElement?.text()?.trim()
             val displayName = if (!time.isNullOrBlank()) "$channelName ($time)" else channelName
+            
+            println("🔎 Found: $displayName - $channelId")
 
             results.add(
                 newLiveSearchResponse(
@@ -224,6 +256,7 @@ class EmbedTv : MainAPI() {
             )
         }
 
+        println("✅ Search results: ${results.size}")
         return results
     }
 
@@ -233,10 +266,19 @@ class EmbedTv : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
+        println("🔗 loadLinks called")
+        println("📡 Data: $data")
+        
         val cleanUrl = data.split("?")[0]
-        val channelUrl = cleanUrl.ifEmpty { return false }
+        val channelUrl = cleanUrl.ifEmpty { 
+            println("❌ Empty channel URL")
+            return false 
+        }
+        
+        println("🌐 Channel URL: $channelUrl")
 
         return try {
+            println("🕸️ Creating WebViewResolver...")
             // Usa o WebViewResolver igual ao DonghuaNoSekai
             val streamResolver = WebViewResolver(
                 interceptUrl = Regex("""\.(txt|m3u8)$"""),
@@ -244,10 +286,14 @@ class EmbedTv : MainAPI() {
                 useOkhttp = false,
                 timeout = 30_000L
             )
+            println("✅ WebViewResolver created")
 
+            println("🚀 Loading page in WebView...")
             val intercepted = app.get(channelUrl, interceptor = streamResolver).url
+            println("🎯 Intercepted URL: $intercepted")
 
             if (intercepted.isNotEmpty() && (intercepted.contains(".txt") || intercepted.contains(".m3u8"))) {
+                println("✅ Valid stream URL intercepted!")
                 val streamUrl = intercepted
 
                 val headers = mapOf(
@@ -261,33 +307,51 @@ class EmbedTv : MainAPI() {
                     "Origin" to baseUrl,
                     "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36"
                 )
+                println("📋 Headers configured")
 
                 // Se for .txt, verifica se é m3u8
                 var finalUrl = streamUrl
                 if (streamUrl.endsWith(".txt", ignoreCase = true)) {
+                    println("📄 Stream is .txt file, checking if it's actually m3u8...")
                     try {
                         val testResponse = app.get(streamUrl, headers = headers).text
                         if (testResponse.contains("#EXTM3U")) {
+                            println("✅ It IS an m3u8 disguised as .txt!")
                             finalUrl = streamUrl
+                        } else {
+                            println("⚠️ .txt does not contain #EXTM3U, first 200 chars: ${testResponse.take(200)}")
                         }
                     } catch (e: Exception) {
-                        // Se falhar, tenta usar como está
+                        println("❌ Failed to check .txt content: ${e.message}")
                     }
+                } else {
+                    println("🎬 Stream is direct m3u8: $finalUrl")
                 }
 
                 // Usa o M3u8Helper.generateM3u8 exatamente como no DonghuaNoSekai
+                println("🔄 Generating m3u8 playlist...")
                 M3u8Helper.generateM3u8(
                     name,
                     finalUrl,
                     baseUrl,
                     headers = headers
-                ).forEach(callback)
+                ).forEach { link ->
+                    println("✅ Adding link: ${link.url}")
+                    callback(link)
+                }
 
+                println("🎉 Success! Stream links added")
                 true
             } else {
+                println("❌ No valid stream URL intercepted")
+                println("📊 intercepted = '$intercepted'")
+                println("📊 contains .txt? ${intercepted.contains(".txt")}")
+                println("📊 contains .m3u8? ${intercepted.contains(".m3u8")}")
                 false
             }
         } catch (e: Exception) {
+            println("💥 Exception in loadLinks: ${e.message}")
+            e.printStackTrace()
             false
         }
     }
