@@ -43,12 +43,11 @@ class EmbedTv : MainAPI() {
         val doc = app.get(mainSite).document
         val allCategories = mutableListOf<HomePageList>()
         
-        // Seção de Jogos de Hoje
         val jogosSection = doc.selectFirst(".session.futebol")
         if (jogosSection != null) {
             val jogosCards = jogosSection.select(".card")
-
             val jogosList = mutableListOf<SearchResponse>()
+            
             for (card in jogosCards) {
                 val channelId = card.attr("data-channel")
                 if (channelId.isBlank() || channelId in blockedChannels) continue
@@ -57,7 +56,6 @@ class EmbedTv : MainAPI() {
                 val imageUrl = card.selectFirst("img")?.attr("data-src")?.ifEmpty { card.selectFirst("img")?.attr("src") } ?: continue
                 val time = card.selectFirst("span")?.text()?.trim() ?: ""
                 val displayName = if (time.isNotBlank()) "$gameName ($time)" else gameName
-
                 val jogoUrl = "$baseUrl/$channelId?source=jogos"
 
                 jogosList.add(
@@ -76,13 +74,10 @@ class EmbedTv : MainAPI() {
             }
         }
 
-        // Demais categorias de canais
         val categories = doc.select(".categorie")
-
         for (category in categories) {
             val titleElement = category.selectFirst(".title") ?: continue
             val categoryTitle = titleElement.text().trim()
-
             val channelList = mutableListOf<SearchResponse>()
             val cards = category.select(".card")
 
@@ -92,7 +87,6 @@ class EmbedTv : MainAPI() {
 
                 val channelName = card.selectFirst("h3")?.text()?.trim() ?: continue
                 val imageUrl = card.selectFirst("img")?.attr("data-src")?.ifEmpty { card.selectFirst("img")?.attr("src") } ?: continue
-
                 val canalUrl = "$baseUrl/$channelId"
 
                 channelList.add(
@@ -128,8 +122,6 @@ class EmbedTv : MainAPI() {
         }
 
         val mainPage = app.get(mainSite).document
-        
-        // Busca o card do canal pelo data-channel para pegar o nome REAL do canal
         val channelCard = mainPage.selectFirst(".card[data-channel=\"$channelId\"]")
         
         if (channelCard == null) {
@@ -143,10 +135,8 @@ class EmbedTv : MainAPI() {
             }
         }
 
-        // Nome REAL do canal
         val realChannelName = channelCard.selectFirst("h3")?.text()?.trim() ?: "Canal $channelId"
         
-        // Imagem: se veio da seção de jogos, tenta pegar a imagem do jogo
         val displayImage = if (isFromJogos) {
             val gameCard = mainPage.selectFirst(".session.futebol .card[data-channel=\"$channelId\"]")
             gameCard?.selectFirst("img")?.let { img ->
@@ -156,7 +146,6 @@ class EmbedTv : MainAPI() {
             channelCard.selectFirst("img")?.attr("data-src")?.ifEmpty { channelCard.selectFirst("img")?.attr("src") }
         } ?: "https://embedtv.best/assets/icon.png"
         
-        // Título: se veio da seção de jogos, mostra "Canal - Jogo (Horário)"
         val displayTitle = if (isFromJogos) {
             val gameCard = mainPage.selectFirst(".session.futebol .card[data-channel=\"$channelId\"]")
             val gameName = gameCard?.selectFirst("h3")?.text()?.trim() ?: realChannelName
@@ -166,12 +155,11 @@ class EmbedTv : MainAPI() {
             realChannelName
         }
         
-        // Descrição
         val plot = if (isFromJogos) {
             val gameCard = mainPage.selectFirst(".session.futebol .card[data-channel=\"$channelId\"]")
             val gameName = gameCard?.selectFirst("h3")?.text()?.trim() ?: realChannelName
             val time = gameCard?.selectFirst("span")?.text()?.trim() ?: ""
-            "📺 $realChannelName\n⚽ $gameName\n🕐 $time"
+            "$realChannelName - $gameName ($time)"
         } else {
             "Assista $realChannelName ao vivo no EmbedTv"
         }
@@ -196,14 +184,10 @@ class EmbedTv : MainAPI() {
             val channelId = card.attr("data-channel")
             if (channelId.isBlank() || channelId in blockedChannels) continue
 
-            val nameElement = card.selectFirst("h3") ?: continue
-            val channelName = nameElement.text().trim()
-
+            val channelName = card.selectFirst("h3")?.text()?.trim() ?: continue
             if (!channelName.contains(query, ignoreCase = true)) continue
 
-            val imgElement = card.selectFirst("img") ?: continue
-            val imageUrl = imgElement.attr("data-src").ifEmpty { imgElement.attr("src") }
-
+            val imageUrl = card.selectFirst("img")?.attr("data-src").ifEmpty { card.selectFirst("img")?.attr("src") } ?: continue
             val timeElement = card.selectFirst("span")
             val hasHorario = timeElement != null
 
@@ -246,17 +230,12 @@ class EmbedTv : MainAPI() {
                 "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36"
             )
             
-            // Baixa o HTML para extrair a URL do stream
             val html = app.get(channelUrl, headers = headers).text
-            
-            // Extrai a URL do .txt do objeto data.stream
             val streamPattern = Regex("""stream:\s*"([^"]+\.txt)"""")
             val streamMatch = streamPattern.find(html)
             
             if (streamMatch != null) {
                 var streamUrl = streamMatch.groupValues[1]
-                
-                // Remove o xn-- do domínio para o OkHttp aceitar
                 streamUrl = streamUrl.replace("xn--d1ma04s8hp12.cloudfront.lat", "d1ma04s8hp12.cloudfront.lat")
                 
                 val streamHeaders = mapOf(
