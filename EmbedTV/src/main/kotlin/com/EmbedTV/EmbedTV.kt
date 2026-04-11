@@ -5,7 +5,6 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.plugins.BasePlugin
 import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
-import com.lagradost.cloudstream3.network.WebViewResolver
 import java.io.ByteArrayOutputStream
 
 @CloudstreamPlugin
@@ -25,11 +24,9 @@ class EmbedTv : MainAPI() {
 
     private val mainSite = "https://embedtv.cv"
     private val baseUrl = "https://www4.embedtv.cv"
-    private val decryptionKey = "embedtv@123"
     private val blockedChannels = listOf("sexyhot", "playboy")
 
     private fun fixImageUrl(url: String): String {
-        println("🖼️ fixImageUrl: $url")
         return when {
             url.contains("cloudfront.net") -> {
                 val cleanUrl = url.split("?")[0]
@@ -42,44 +39,13 @@ class EmbedTv : MainAPI() {
         }
     }
 
-    private fun decryptStreamUrl(encodedString: String): String? {
-        println("🔓 decryptStreamUrl: string length = ${encodedString.length}")
-        return try {
-            val decodedBytes = Base64.decode(encodedString, Base64.DEFAULT)
-            println("📦 decoded bytes: ${decodedBytes.size}")
-            
-            val decodedString = String(decodedBytes, Charsets.ISO_8859_1)
-            println("📝 decoded: $decodedString")
-            
-            val reversedString = decodedString.reversed()
-            println("🔄 reversed: $reversedString")
-
-            val keyBytes = decryptionKey.toByteArray(Charsets.ISO_8859_1)
-            val inputBytes = reversedString.toByteArray(Charsets.ISO_8859_1)
-            val outputStream = ByteArrayOutputStream()
-
-            for (i in inputBytes.indices) {
-                val keyByte = keyBytes[i % keyBytes.size]
-                outputStream.write((inputBytes[i].toInt() xor keyByte.toInt()).toByte().toInt())
-            }
-
-            val result = outputStream.toString(Charsets.UTF_8.name())
-            println("✅ decrypted: $result")
-            result
-        } catch (e: Exception) {
-            println("❌ decryption failed: ${e.message}")
-            null
-        }
-    }
-
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        println("🏠 getMainPage called - page: $page")
         val doc = app.get(mainSite).document
         val allCategories = mutableListOf<HomePageList>()
         
+        // Seção de Jogos de Hoje
         val jogosSection = doc.selectFirst(".session.futebol")
         if (jogosSection != null) {
-            println("⚽ Jogos section found!")
             val jogosCards = jogosSection.select(".card")
 
             val jogosList = mutableListOf<SearchResponse>()
@@ -97,8 +63,8 @@ class EmbedTv : MainAPI() {
                 val time = timeElement?.text()?.trim()
                 val displayName = if (!time.isNullOrBlank()) "$gameName ($time)" else gameName
 
+                // Adiciona ?source=jogos para identificar que veio da seção de jogos
                 val jogoUrl = "$baseUrl/$channelId?source=jogos"
-                println("🎮 Game found: $displayName - $channelId")
 
                 jogosList.add(
                     newLiveSearchResponse(
@@ -116,13 +82,12 @@ class EmbedTv : MainAPI() {
             }
         }
 
+        // Demais categorias de canais
         val categories = doc.select(".categorie")
-        println("📂 Categories found: ${categories.size}")
 
         for (category in categories) {
             val titleElement = category.selectFirst(".title") ?: continue
             val categoryTitle = titleElement.text().trim()
-            println("📁 Category: $categoryTitle")
 
             val channelList = mutableListOf<SearchResponse>()
             val cards = category.select(".card")
@@ -138,7 +103,6 @@ class EmbedTv : MainAPI() {
                 val imageUrl = imgElement.attr("src").ifEmpty { imgElement.attr("data-src") }
 
                 val canalUrl = "$baseUrl/$channelId"
-                println("📺 Channel: $channelName - $channelId")
 
                 channelList.add(
                     newLiveSearchResponse(
@@ -157,24 +121,18 @@ class EmbedTv : MainAPI() {
         }
 
         if (allCategories.isEmpty()) {
-            println("❌ No categories found!")
             throw ErrorLoadingException("Nenhum canal encontrado.")
         }
 
-        println("✅ Returning ${allCategories.size} categories")
         return newHomePageResponse(allCategories, hasNext = false)
     }
 
     override suspend fun load(url: String): LoadResponse {
-        println("📥 load: $url")
         val isFromJogos = url.contains("source=jogos")
         val cleanUrl = url.replace("?source=jogos", "")
 
         val channelId = cleanUrl.substringAfterLast("/")
-        println("🔑 Channel ID: $channelId")
-        
         if (channelId in blockedChannels) {
-            println("🚫 Blocked channel: $channelId")
             throw ErrorLoadingException("Canal não disponível")
         }
 
@@ -182,7 +140,6 @@ class EmbedTv : MainAPI() {
         val card = mainPage.selectFirst(".card[data-channel=\"$channelId\"]")
         
         if (card == null) {
-            println("⚠️ Card not found for channel: $channelId")
             return newMovieLoadResponse(
                 "Canal $channelId",
                 cleanUrl,
@@ -193,28 +150,53 @@ class EmbedTv : MainAPI() {
             }
         }
 
-        val name = card.selectFirst("h3")?.text()?.trim() ?: "Canal $channelId"
+        val channelName = card.selectFirst("h3")?.text()?.trim() ?: "Canal $channelId"
         val img = card.selectFirst("img")?.let { img ->
             img.attr("src").ifEmpty { img.attr("data-src") }
         } ?: "https://embedtv.best/assets/icon.png"
 
         val time = card.selectFirst("span")?.text()?.trim()
-        val displayName = if (!time.isNullOrBlank() && isFromJogos) "$name ($time)" else name
-        println("✅ Loaded: $displayName")
+        
+        // Título diferente dependendo de onde veio o clique
+        val displayTitle = if (isFromJogos && !time.isNullOrBlank()) {
+            // Veio da seção "Jogos de Hoje" - mostra o JOGO
+            val gameName = card.selectFirst("h3")?.text()?.trim() ?: channelName
+            "$gameName ($time)"
+        } else {
+            // Veio da lista normal de canais - mostra o CANAL
+            channelName
+        }
+        
+        // Imagem diferente dependendo de onde veio o clique
+        val displayImage = if (isFromJogos && !time.isNullOrBlank()) {
+            // Para jogos, usa a imagem do jogo (que está no data-src do card)
+            val imgElement = card.selectFirst("img")
+            imgElement?.attr("data-src")?.ifEmpty { imgElement.attr("src") } ?: img
+        } else {
+            // Para canais normais, usa a imagem do canal
+            img
+        }
+        
+        // Descrição diferente dependendo de onde veio o clique
+        val plot = if (isFromJogos && !time.isNullOrBlank()) {
+            val gameName = card.selectFirst("h3")?.text()?.trim() ?: channelName
+            "📺 $channelName\n⚽ $gameName\n🕐 $time"
+        } else {
+            "Assista $channelName ao vivo no EmbedTv"
+        }
 
         return newMovieLoadResponse(
-            displayName,
+            displayTitle,
             cleanUrl,
             TvType.Live,
             cleanUrl
         ) {
-            this.posterUrl = fixImageUrl(img)
-            this.plot = "Assista $displayName ao vivo no EmbedTv"
+            this.posterUrl = fixImageUrl(displayImage)
+            this.plot = plot
         }
     }
 
     override suspend fun search(query: String): List<SearchResponse>? {
-        println("🔍 Searching for: $query")
         val doc = app.get(mainSite).document
         val allCards = doc.select(".card")
         val results = mutableListOf<SearchResponse>()
@@ -242,8 +224,6 @@ class EmbedTv : MainAPI() {
 
             val time = timeElement?.text()?.trim()
             val displayName = if (!time.isNullOrBlank()) "$channelName ($time)" else channelName
-            
-            println("🔎 Found: $displayName - $channelId")
 
             results.add(
                 newLiveSearchResponse(
@@ -256,79 +236,63 @@ class EmbedTv : MainAPI() {
             )
         }
 
-        println("✅ Search results: ${results.size}")
         return results
     }
 
     override suspend fun loadLinks(
-    data: String,
-    isCasting: Boolean,
-    subtitleCallback: (SubtitleFile) -> Unit,
-    callback: (ExtractorLink) -> Unit
-): Boolean {
-    println("🔗 loadLinks called")
-    println("📡 Data: $data")
-    
-    val cleanUrl = data.split("?")[0]
-    val channelUrl = cleanUrl.ifEmpty { 
-        println("❌ Empty channel URL")
-        return false 
-    }
-    
-    println("🌐 Channel URL: $channelUrl")
+        data: String,
+        isCasting: Boolean,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        val cleanUrl = data.split("?")[0]
+        val channelUrl = cleanUrl.ifEmpty { return false }
 
-    return try {
-        val headers = mapOf(
-            "Referer" to baseUrl,
-            "Origin" to baseUrl,
-            "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36"
-        )
-        
-        // 1. Baixa o HTML para extrair a URL do stream
-        val html = app.get(channelUrl, headers = headers).text
-        
-        // 2. Extrai a URL do .txt
-        val streamPattern = Regex("""stream:\s*"([^"]+\.txt)"""")
-        val streamMatch = streamPattern.find(html)
-        
-        if (streamMatch != null) {
-            var streamUrl = streamMatch.groupValues[1]
-            println("✅ Found stream URL: $streamUrl")
-            
-            // 3. SUBSTITUI o domínio problemático pelo formato que o OkHttp aceita
-            streamUrl = streamUrl.replace("xn--d1ma04s8hp12.cloudfront.lat", "d1ma04s8hp12.cloudfront.lat")
-            println("🔄 Modified URL: $streamUrl")
-            
-            val streamHeaders = mapOf(
-                "Accept" to "*/*",
-                "Accept-Language" to "pt-BR,pt;q=0.9",
-                "Connection" to "keep-alive",
-                "Sec-Fetch-Dest" to "empty",
-                "Sec-Fetch-Mode" to "cors",
-                "Sec-Fetch-Site" to "cross-site",
+        return try {
+            val headers = mapOf(
                 "Referer" to baseUrl,
                 "Origin" to baseUrl,
                 "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36"
             )
             
-            // 4. Gera o m3u8 - agora o OkHttp aceita a URL!
-            M3u8Helper.generateM3u8(
-                name,
-                streamUrl,
-                baseUrl,
-                headers = streamHeaders
-            ).forEach(callback)
+            // Baixa o HTML para extrair a URL do stream
+            val html = app.get(channelUrl, headers = headers).text
             
-            println("🎉 Success!")
-            true
-        } else {
-            println("❌ Could not find stream URL in HTML")
+            // Extrai a URL do .txt do objeto data.stream
+            val streamPattern = Regex("""stream:\s*"([^"]+\.txt)"""")
+            val streamMatch = streamPattern.find(html)
+            
+            if (streamMatch != null) {
+                var streamUrl = streamMatch.groupValues[1]
+                
+                // Remove o xn-- do domínio para o OkHttp aceitar
+                streamUrl = streamUrl.replace("xn--d1ma04s8hp12.cloudfront.lat", "d1ma04s8hp12.cloudfront.lat")
+                
+                val streamHeaders = mapOf(
+                    "Accept" to "*/*",
+                    "Accept-Language" to "pt-BR,pt;q=0.9",
+                    "Connection" to "keep-alive",
+                    "Sec-Fetch-Dest" to "empty",
+                    "Sec-Fetch-Mode" to "cors",
+                    "Sec-Fetch-Site" to "cross-site",
+                    "Referer" to baseUrl,
+                    "Origin" to baseUrl,
+                    "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36"
+                )
+                
+                M3u8Helper.generateM3u8(
+                    name,
+                    streamUrl,
+                    baseUrl,
+                    headers = streamHeaders
+                ).forEach(callback)
+                
+                true
+            } else {
+                false
+            }
+        } catch (e: Exception) {
             false
         }
-    } catch (e: Exception) {
-        println("💥 Exception: ${e.message}")
-        e.printStackTrace()
-        false
     }
 }
-                                  }
