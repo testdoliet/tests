@@ -278,22 +278,27 @@ class EmbedTv : MainAPI() {
     println("🌐 Channel URL: $channelUrl")
 
     return try {
-        // WebViewResolver APENAS para capturar a URL do .txt
-        val streamResolver = WebViewResolver(
-            interceptUrl = Regex("""\.txt$"""),
-            additionalUrls = listOf(Regex("""\.txt$""")),
-            useOkhttp = false,
-            timeout = 30_000L
+        // Headers para a requisição
+        val headers = mapOf(
+            "Referer" to baseUrl,
+            "Origin" to baseUrl,
+            "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36"
         )
-
-        println("🚀 Loading page in WebView...")
-        val txtUrl = app.get(channelUrl, interceptor = streamResolver).url
-        println("🎯 Captured .txt URL: $txtUrl")
-
-        if (txtUrl.isNotEmpty() && txtUrl.endsWith(".txt", ignoreCase = true)) {
-            println("✅ Valid .txt URL captured!")
+        
+        // Baixa o HTML da página
+        val html = app.get(channelUrl, headers = headers).text
+        println("📄 HTML loaded, length: ${html.length}")
+        
+        // Extrai a URL do stream do objeto data.stream
+        // Padrão: stream: "https://..."
+        val streamPattern = Regex("""stream:\s*"([^"]+\.txt)"""")
+        val streamMatch = streamPattern.find(html)
+        
+        if (streamMatch != null) {
+            val streamUrl = streamMatch.groupValues[1]
+            println("✅ Found stream URL: $streamUrl")
             
-            val headers = mapOf(
+            val streamHeaders = mapOf(
                 "Accept" to "*/*",
                 "Accept-Language" to "pt-BR,pt;q=0.9",
                 "Connection" to "keep-alive",
@@ -305,19 +310,18 @@ class EmbedTv : MainAPI() {
                 "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36"
             )
             
-            // O .txt É o m3u8! Usa ele diretamente
-            println("🎬 Using .txt as m3u8 stream")
+            // O .txt É o m3u8!
             M3u8Helper.generateM3u8(
                 name,
-                txtUrl,  // A URL do .txt é o stream!
+                streamUrl,
                 baseUrl,
-                headers = headers
+                headers = streamHeaders
             ).forEach(callback)
             
             println("🎉 Success! Stream added")
             true
         } else {
-            println("❌ No .txt URL captured")
+            println("❌ Could not find stream URL in HTML")
             false
         }
     } catch (e: Exception) {
@@ -325,5 +329,4 @@ class EmbedTv : MainAPI() {
         e.printStackTrace()
         false
     }
-}
 }
