@@ -365,7 +365,7 @@ class PobreFlix : MainAPI() {
                 }
             }
             
-            // SÉRIES/ANIMES
+            // SÉRIES/ANIMES - CORREÇÃO AQUI!
             val episodes = extractEpisodesFromSite(document, url, tmdbId)
             val type = if (isAnime) TvType.Anime else TvType.TvSeries
             
@@ -390,7 +390,7 @@ class PobreFlix : MainAPI() {
     }
 
     /**
-     * Extrai TODOS os episódios, incluindo os que não têm áudio
+     * CORREÇÃO: Extrai TODOS os episódios do JSON, incluindo todas as temporadas
      */
     private suspend fun extractEpisodesFromSite(
         document: org.jsoup.nodes.Document,
@@ -403,44 +403,59 @@ class PobreFlix : MainAPI() {
         
         val episodes = mutableListOf<Episode>()
 
+        // Procura o script que contém o window.allEpisodes
         val scriptData = document.selectFirst("script:containsData(window.allEpisodes)")?.data()
         if (scriptData != null) {
             println("  Script com allEpisodes encontrado")
             try {
-                // Extrai o JSON completo de forma mais robusta
-                val jsonMatch = Regex("window\\.allEpisodes\\s*=\\s*\\{([\\s\\S]+?)\\};").find(scriptData)
-                val jsonContent = jsonMatch?.groupValues?.get(1)
+                // Extrai o objeto JSON completo
+                val jsonMatch = Regex("window\\.allEpisodes\\s*=\\s*(\\{[\\s\\S]+?\\});").find(scriptData)
+                val jsonString = jsonMatch?.groupValues?.get(1)
                 
-                if (jsonContent != null) {
-                    println("  JSON encontrado, processando...")
+                if (jsonString != null) {
+                    println("  JSON encontrado, tamanho: ${jsonString.length}")
                     
-                    // Extrai temporada por temporada com regex mais flexível
-                    val seasonPattern = Regex("\"(\\d+)\"\\s*:\\s*\\[([\\s\\S]*?)(?=\\s*,\\s*\"\\d+\"\\s*:|\\s*\\})")
-                    val seasonMatches = seasonPattern.findAll(jsonContent)
+                    // Regex para encontrar todas as temporadas
+                    val seasonPattern = Regex("\"(\\d+)\"\\s*:\\s*\\[")
+                    val seasonMatches = seasonPattern.findAll(jsonString).toList()
                     
-                    var totalEpisodes = 0
+                    println("  Temporadas encontradas: ${seasonMatches.size}")
                     
-                    for (seasonMatch in seasonMatches) {
+                    for ((index, seasonMatch) in seasonMatches.withIndex()) {
                         val seasonNum = seasonMatch.groupValues[1].toIntOrNull() ?: continue
-                        val episodesArray = seasonMatch.groupValues[2]
                         
+                        // Encontra o início e fim do array desta temporada
+                        val startIndex = seasonMatch.range.last + 1
+                        
+                        // Conta colchetes para encontrar o fim do array
+                        var bracketCount = 1
+                        var endIndex = startIndex
+                        while (endIndex < jsonString.length && bracketCount > 0) {
+                            when (jsonString[endIndex]) {
+                                '[' -> bracketCount++
+                                ']' -> bracketCount--
+                            }
+                            endIndex++
+                        }
+                        
+                        val seasonJson = jsonString.substring(startIndex, endIndex - 1)
                         println("  Processando Temporada $seasonNum")
                         
-                        // Regex mais flexível para cada episódio
+                        // Extrai cada episódio individualmente
                         val episodePattern = Regex("""\{([^{}]*?)\}""")
-                        val episodeMatches = episodePattern.findAll(episodesArray)
+                        val episodeMatches = episodePattern.findAll(seasonJson)
                         var seasonEpCount = 0
                         
                         for (epMatch in episodeMatches) {
                             val episodeData = epMatch.groupValues[1]
                             
-                            // Extrai cada campo individualmente (mais robusto)
+                            // Extrai cada campo individualmente
                             val epNum = Regex("\"epi_num\"\\s*:\\s*(\\d+)").find(episodeData)?.groupValues?.get(1)?.toIntOrNull() ?: continue
                             val epTitle = Regex("\"title\"\\s*:\\s*\"([^\"]*)\"").find(episodeData)?.groupValues?.get(1)?.ifEmpty { "Episódio $epNum" } ?: "Episódio $epNum"
-                            val sinopse = Regex("\"sinopse\"\\s*:\\s*\"([^\"]*)\"").find(episodeData)?.groupValues?.get(1)?.takeIf { it.isNotEmpty() }
-                            var thumbUrl = Regex("\"thumb_url\"\\s*:\\s*\"([^\"]*)\"").find(episodeData)?.groupValues?.get(1)?.takeIf { it.isNotEmpty() }
+                            val sinopse = Regex("\"sinopse\"\\s*:\\s*\"([^\"]*)\"").find(episodeData)?.groupValues?.get(1)?.takeIf { it.isNotEmpty() && it != "null" }
+                            var thumbUrl = Regex("\"thumb_url\"\\s*:\\s*\"([^\"]*)\"").find(episodeData)?.groupValues?.get(1)?.takeIf { it.isNotEmpty() && it != "null" }
                             val durationMin = Regex("\"duration\"\\s*:\\s*(\\d+)").find(episodeData)?.groupValues?.get(1)?.toIntOrNull()
-                            val airDate = Regex("\"air_date\"\\s*:\\s*\"([^\"]*)\"").find(episodeData)?.groupValues?.get(1)?.takeIf { it.isNotEmpty() }
+                            val airDate = Regex("\"air_date\"\\s*:\\s*\"([^\"]*)\"").find(episodeData)?.groupValues?.get(1)?.takeIf { it.isNotEmpty() && it != "null" }
                             val hasDub = Regex("\"has_dub\"\\s*:\\s*(true|false)").find(episodeData)?.groupValues?.get(1)?.toBoolean() ?: false
                             val hasLeg = Regex("\"has_leg\"\\s*:\\s*(true|false)").find(episodeData)?.groupValues?.get(1)?.toBoolean() ?: false
                             
@@ -483,14 +498,14 @@ class PobreFlix : MainAPI() {
                             })
                             
                             seasonEpCount++
-                            totalEpisodes++
                         }
                         
                         println("  Temporada $seasonNum: $seasonEpCount episódios")
                     }
                     
                     if (episodes.isNotEmpty()) {
-                        println("  ✅ Total de $totalEpisodes episódios extraídos do JSON em ${episodes.groupBy { it.season }.size} temporadas")
+                        val uniqueSeasons = episodes.map { it.season }.distinct().size
+                        println("  ✅ Total de ${episodes.size} episódios extraídos do JSON em $uniqueSeasons temporadas")
                         return episodes
                     }
                 }
@@ -498,10 +513,13 @@ class PobreFlix : MainAPI() {
                 println("  ERRO ao processar JSON: ${e.message}")
                 e.printStackTrace()
             }
+        } else {
+            println("  Script com allEpisodes NÃO encontrado!")
         }
 
-        // Fallback: extrair do HTML
-        val episodeElements = document.select("#episodes-list article, .episode-card, .episode-item")
+        // Fallback: extrair do HTML (apenas a temporada visível)
+        println("  Usando fallback HTML...")
+        val episodeElements = document.select("#episodes-list article")
         println("  Elementos de episódio encontrados: ${episodeElements.size}")
         
         episodeElements.forEachIndexed { index, element ->
