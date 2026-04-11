@@ -53,7 +53,8 @@ class EmbedTv : MainAPI() {
                 if (channelId.isBlank() || channelId in blockedChannels) continue
 
                 val gameName = card.selectFirst("h3")?.text()?.trim() ?: continue
-                val imageUrl = card.selectFirst("img")?.attr("data-src")?.ifEmpty { card.selectFirst("img")?.attr("src") } ?: continue
+                val imgElement = card.selectFirst("img")
+                val imageUrl = imgElement?.attr("data-src")?.ifEmpty { imgElement.attr("src") } ?: continue
                 val time = card.selectFirst("span")?.text()?.trim() ?: ""
                 val displayName = if (time.isNotBlank()) "$gameName ($time)" else gameName
                 val jogoUrl = "$baseUrl/$channelId?source=jogos"
@@ -86,7 +87,8 @@ class EmbedTv : MainAPI() {
                 if (channelId.isBlank() || channelId in blockedChannels) continue
 
                 val channelName = card.selectFirst("h3")?.text()?.trim() ?: continue
-                val imageUrl = card.selectFirst("img")?.attr("data-src")?.ifEmpty { card.selectFirst("img")?.attr("src") } ?: continue
+                val imgElement = card.selectFirst("img")
+                val imageUrl = imgElement?.attr("data-src")?.ifEmpty { imgElement.attr("src") } ?: continue
                 val canalUrl = "$baseUrl/$channelId"
 
                 channelList.add(
@@ -137,14 +139,16 @@ class EmbedTv : MainAPI() {
 
         val realChannelName = channelCard.selectFirst("h3")?.text()?.trim() ?: "Canal $channelId"
         
+        val channelImg = channelCard.selectFirst("img")
+        val defaultImage = channelImg?.attr("data-src")?.ifEmpty { channelImg.attr("src") } ?: "https://embedtv.best/assets/icon.png"
+        
         val displayImage = if (isFromJogos) {
             val gameCard = mainPage.selectFirst(".session.futebol .card[data-channel=\"$channelId\"]")
-            gameCard?.selectFirst("img")?.let { img ->
-                img.attr("data-src").ifEmpty { img.attr("src") }
-            } ?: channelCard.selectFirst("img")?.attr("data-src")?.ifEmpty { channelCard.selectFirst("img")?.attr("src") }
+            val gameImg = gameCard?.selectFirst("img")
+            gameImg?.attr("data-src")?.ifEmpty { gameImg.attr("src") } ?: defaultImage
         } else {
-            channelCard.selectFirst("img")?.attr("data-src")?.ifEmpty { channelCard.selectFirst("img")?.attr("src") }
-        } ?: "https://embedtv.best/assets/icon.png"
+            defaultImage
+        }
         
         val displayTitle = if (isFromJogos) {
             val gameCard = mainPage.selectFirst(".session.futebol .card[data-channel=\"$channelId\"]")
@@ -187,7 +191,8 @@ class EmbedTv : MainAPI() {
             val channelName = card.selectFirst("h3")?.text()?.trim() ?: continue
             if (!channelName.contains(query, ignoreCase = true)) continue
 
-            val imageUrl = card.selectFirst("img")?.attr("data-src").ifEmpty { card.selectFirst("img")?.attr("src") } ?: continue
+            val imgElement = card.selectFirst("img")
+            val imageUrl = imgElement?.attr("data-src")?.ifEmpty { imgElement.attr("src") } ?: continue
             val timeElement = card.selectFirst("span")
             val hasHorario = timeElement != null
 
