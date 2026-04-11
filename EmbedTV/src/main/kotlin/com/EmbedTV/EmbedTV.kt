@@ -261,98 +261,81 @@ class EmbedTv : MainAPI() {
     }
 
     override suspend fun loadLinks(
-        data: String,
-        isCasting: Boolean,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        println("🔗 loadLinks called")
-        println("📡 Data: $data")
-        
-        val cleanUrl = data.split("?")[0]
-        val channelUrl = cleanUrl.ifEmpty { 
-            println("❌ Empty channel URL")
-            return false 
-        }
-        
-        println("🌐 Channel URL: $channelUrl")
+    data: String,
+    isCasting: Boolean,
+    subtitleCallback: (SubtitleFile) -> Unit,
+    callback: (ExtractorLink) -> Unit
+): Boolean {
+    println("🔗 loadLinks called")
+    println("📡 Data: $data")
+    
+    val cleanUrl = data.split("?")[0]
+    val channelUrl = cleanUrl.ifEmpty { 
+        println("❌ Empty channel URL")
+        return false 
+    }
+    
+    println("🌐 Channel URL: $channelUrl")
 
-        return try {
-            println("🕸️ Creating WebViewResolver...")
-            // Usa o WebViewResolver igual ao DonghuaNoSekai
-            val streamResolver = WebViewResolver(
-                interceptUrl = Regex("""\.(txt|m3u8)$"""),
-                additionalUrls = listOf(Regex("""\.(txt|m3u8)$""")),
-                useOkhttp = false,
-                timeout = 30_000L
+    return try {
+        // Usa o WebViewResolver APENAS para interceptar e encontrar a URL do .txt
+        val streamResolver = WebViewResolver(
+            interceptUrl = Regex("""\.txt$"""),  // Só intercepta .txt
+            additionalUrls = listOf(Regex("""\.txt$""")),
+            useOkhttp = false,
+            timeout = 30_000L
+        )
+
+        println("🚀 Loading page in WebView...")
+        val intercepted = app.get(channelUrl, interceptor = streamResolver).url
+        println("🎯 Intercepted URL: $intercepted")
+
+        if (intercepted.isNotEmpty() && intercepted.endsWith(".txt", ignoreCase = true)) {
+            println("✅ Found .txt URL: $intercepted")
+            
+            val headers = mapOf(
+                "Accept" to "*/*",
+                "Accept-Language" to "pt-BR,pt;q=0.9",
+                "Connection" to "keep-alive",
+                "Sec-Fetch-Dest" to "empty",
+                "Sec-Fetch-Mode" to "cors",
+                "Sec-Fetch-Site" to "cross-site",
+                "Referer" to baseUrl,
+                "Origin" to baseUrl,
+                "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36"
             )
-            println("✅ WebViewResolver created")
-
-            println("🚀 Loading page in WebView...")
-            val intercepted = app.get(channelUrl, interceptor = streamResolver).url
-            println("🎯 Intercepted URL: $intercepted")
-
-            if (intercepted.isNotEmpty() && (intercepted.contains(".txt") || intercepted.contains(".m3u8"))) {
-                println("✅ Valid stream URL intercepted!")
-                val streamUrl = intercepted
-
-                val headers = mapOf(
-                    "Accept" to "*/*",
-                    "Accept-Language" to "pt-BR,pt;q=0.9",
-                    "Connection" to "keep-alive",
-                    "Sec-Fetch-Dest" to "empty",
-                    "Sec-Fetch-Mode" to "cors",
-                    "Sec-Fetch-Site" to "cross-site",
-                    "Referer" to baseUrl,
-                    "Origin" to baseUrl,
-                    "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36"
-                )
-                println("📋 Headers configured")
-
-                // Se for .txt, verifica se é m3u8
-                var finalUrl = streamUrl
-                if (streamUrl.endsWith(".txt", ignoreCase = true)) {
-                    println("📄 Stream is .txt file, checking if it's actually m3u8...")
-                    try {
-                        val testResponse = app.get(streamUrl, headers = headers).text
-                        if (testResponse.contains("#EXTM3U")) {
-                            println("✅ It IS an m3u8 disguised as .txt!")
-                            finalUrl = streamUrl
-                        } else {
-                            println("⚠️ .txt does not contain #EXTM3U, first 200 chars: ${testResponse.take(200)}")
-                        }
-                    } catch (e: Exception) {
-                        println("❌ Failed to check .txt content: ${e.message}")
-                    }
-                } else {
-                    println("🎬 Stream is direct m3u8: $finalUrl")
-                }
-
-                // Usa o M3u8Helper.generateM3u8 exatamente como no DonghuaNoSekai
-                println("🔄 Generating m3u8 playlist...")
+            
+            // Baixa o .txt diretamente
+            println("📥 Downloading .txt file...")
+            val txtContent = app.get(intercepted, headers = headers).text
+            println("📄 .txt content preview: ${txtContent.take(200)}")
+            
+            // Verifica se o conteúdo é um m3u8
+            if (txtContent.contains("#EXTM3U")) {
+                println("✅ Content is valid m3u8!")
+                
+                // Usa o próprio conteúdo como m3u8, ou a URL original
                 M3u8Helper.generateM3u8(
                     name,
-                    finalUrl,
+                    intercepted,  // A URL do .txt já é o m3u8
                     baseUrl,
                     headers = headers
-                ).forEach { link ->
-                    println("✅ Adding link: ${link.url}")
-                    callback(link)
-                }
-
-                println("🎉 Success! Stream links added")
+                ).forEach(callback)
+                
+                println("🎉 Success!")
                 true
             } else {
-                println("❌ No valid stream URL intercepted")
-                println("📊 intercepted = '$intercepted'")
-                println("📊 contains .txt? ${intercepted.contains(".txt")}")
-                println("📊 contains .m3u8? ${intercepted.contains(".m3u8")}")
+                println("❌ .txt content is not m3u8")
                 false
             }
-        } catch (e: Exception) {
-            println("💥 Exception in loadLinks: ${e.message}")
-            e.printStackTrace()
+        } else {
+            println("❌ No .txt URL intercepted")
             false
         }
+    } catch (e: Exception) {
+        println("💥 Exception: ${e.message}")
+        e.printStackTrace()
+        false
     }
+}
 }
