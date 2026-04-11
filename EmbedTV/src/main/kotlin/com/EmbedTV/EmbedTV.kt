@@ -278,7 +278,7 @@ class EmbedTv : MainAPI() {
     println("🌐 Channel URL: $channelUrl")
 
     return try {
-        // Headers para a requisição
+        // Headers para a requisição do HTML
         val headers = mapOf(
             "Referer" to baseUrl,
             "Origin" to baseUrl,
@@ -287,16 +287,42 @@ class EmbedTv : MainAPI() {
         
         // Baixa o HTML da página
         val html = app.get(channelUrl, headers = headers).text
-        println("📄 HTML loaded, length: ${html.length}")
         
         // Extrai a URL do stream do objeto data.stream
-        // Padrão: stream: "https://..."
         val streamPattern = Regex("""stream:\s*"([^"]+\.txt)"""")
         val streamMatch = streamPattern.find(html)
         
         if (streamMatch != null) {
             val streamUrl = streamMatch.groupValues[1]
             println("✅ Found stream URL: $streamUrl")
+            
+            // Em vez de tentar baixar com OkHttp (que falha), vamos usar WebView para carregar o stream
+            val streamResolver = WebViewResolver(
+                interceptUrl = Regex("""\.(ts|m3u8|txt)$"""),
+                additionalUrls = listOf(Regex("""\.(ts|m3u8|txt)$""")),
+                useOkhttp = false,
+                timeout = 60_000L
+            )
+            
+            // Carrega a URL do stream no WebView - isso vai funcionar porque o WebView suporta domínios xn--
+            println("🔄 Loading stream URL in WebView...")
+            val intercepted = app.get(streamUrl, interceptor = streamResolver).url
+            println("🎯 Intercepted: $intercepted")
+            
+            // O WebView pode redirecionar para um m3u8 real
+            var finalUrl = intercepted
+            if (intercepted.contains(".txt")) {
+                // Se ainda for .txt, tenta extrair o m3u8 do conteúdo
+                try {
+                    val txtContent = app.get(intercepted, headers = headers).text
+                    if (txtContent.contains("#EXTM3U")) {
+                        finalUrl = intercepted
+                        println("✅ .txt is actually m3u8")
+                    }
+                } catch (e: Exception) {
+                    println("Could not fetch .txt content, using URL as is")
+                }
+            }
             
             val streamHeaders = mapOf(
                 "Accept" to "*/*",
@@ -307,18 +333,17 @@ class EmbedTv : MainAPI() {
                 "Sec-Fetch-Site" to "cross-site",
                 "Referer" to baseUrl,
                 "Origin" to baseUrl,
-                "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36"
+                "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36"
             )
             
-            // O .txt É o m3u8!
             M3u8Helper.generateM3u8(
                 name,
-                streamUrl,
+                finalUrl,
                 baseUrl,
                 headers = streamHeaders
             ).forEach(callback)
             
-            println("🎉 Success! Stream added")
+            println("🎉 Success!")
             true
         } else {
             println("❌ Could not find stream URL in HTML")
