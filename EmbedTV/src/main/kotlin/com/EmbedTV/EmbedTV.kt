@@ -236,76 +236,58 @@ class EmbedTv : MainAPI() {
         val cleanUrl = data.split("?")[0]
         val channelUrl = cleanUrl.ifEmpty { return false }
 
-        try {
-            // Headers padrão para a requisição
-            val headers = mapOf(
-                "Referer" to baseUrl,
-                "Origin" to baseUrl,
-                "User-Agent" to USER_AGENT,
-                "Accept" to "*/*"
-            )
-
-            // WebViewResolver para interceptar requisições .txt e .m3u8
-            // Este é o coração da solução - intercepta as requisições que o JavaScript faz
+        return try {
+            // Usa o WebViewResolver igual ao DonghuaNoSekai
             val streamResolver = WebViewResolver(
                 interceptUrl = Regex("""\.(txt|m3u8)$"""),  // Intercepta .txt e .m3u8
                 additionalUrls = listOf(Regex("""\.(txt|m3u8)$""")),
                 useOkhttp = false,
-                timeout = 30_000L  // Timeout maior para lives
+                timeout = 30_000L
             )
 
-            // Carrega a página com WebView e captura a URL do stream
-            val interceptedUrl = app.get(channelUrl, interceptor = streamResolver).url
+            val intercepted = app.get(channelUrl, interceptor = streamResolver).url
 
-            if (interceptedUrl.isEmpty()) {
-                return false
-            }
+            if (intercepted.isNotEmpty() && (intercepted.contains(".txt") || intercepted.contains(".m3u8"))) {
+                val streamUrl = intercepted
 
-            // Headers para o stream (baseados no curl que você mostrou)
-            val streamHeaders = mapOf(
-                "Referer" to baseUrl,
-                "Origin" to baseUrl,
-                "User-Agent" to USER_AGENT,
-                "Accept" to "*/*",
-                "Accept-Language" to "pt-BR,pt;q=0.9",
-                "Connection" to "keep-alive",
-                "Sec-Fetch-Dest" to "empty",
-                "Sec-Fetch-Mode" to "cors",
-                "Sec-Fetch-Site" to "cross-site"
-            )
-
-            var streamUrl = interceptedUrl
-
-            // Se for um arquivo .txt, verifica se é realmente um m3u8
-            if (interceptedUrl.endsWith(".txt", ignoreCase = true)) {
-                try {
-                    val testResponse = app.get(interceptedUrl, headers = streamHeaders).text
-                    if (testResponse.contains("#EXTM3U")) {
-                        streamUrl = interceptedUrl  // É um m3u8 disfarçado
-                    }
-                } catch (e: Exception) {
-                    // Se falhar, tenta usar como está
-                }
-            }
-
-            // Adiciona o link do stream
-            callback.invoke(
-                ExtractorLink(
-                    source = name,
-                    name = "EmbedTV - Live",
-                    url = streamUrl,
-                    referer = baseUrl,
-                    quality = Qualities.Unknown.value,
-                    type = ExtractorLinkType.M3U8,
-                    headers = streamHeaders
+                val headers = mapOf(
+                    "Accept" to "*/*",
+                    "Accept-Language" to "pt-BR,pt;q=0.9",
+                    "Connection" to "keep-alive",
+                    "Sec-Fetch-Dest" to "empty",
+                    "Sec-Fetch-Mode" to "cors",
+                    "Sec-Fetch-Site" to "cross-site",
+                    "Referer" to baseUrl,
+                    "Origin" to baseUrl,
+                    "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36"
                 )
-            )
 
-            return true
+                // Se for .txt, verifica se é m3u8
+                var finalUrl = streamUrl
+                if (streamUrl.endsWith(".txt", ignoreCase = true)) {
+                    try {
+                        val testResponse = app.get(streamUrl, headers = headers).text
+                        if (testResponse.contains("#EXTM3U")) {
+                            finalUrl = streamUrl
+                        }
+                    } catch (e: Exception) {
+                        // Se falhar, tenta usar como está
+                    }
+                }
 
+                M3u8Helper.generateM3u8(
+                    name = "EmbedTV - Live",
+                    url = finalUrl,
+                    referer = baseUrl,
+                    headers = headers
+                ).forEach(callback)
+
+                true
+            } else {
+                false
+            }
         } catch (e: Exception) {
-            e.printStackTrace()
-            return false
+            false
         }
     }
 }
