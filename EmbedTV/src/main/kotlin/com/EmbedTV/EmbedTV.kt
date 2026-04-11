@@ -278,49 +278,26 @@ class EmbedTv : MainAPI() {
     println("🌐 Channel URL: $channelUrl")
 
     return try {
-        // Headers para a requisição do HTML
         val headers = mapOf(
             "Referer" to baseUrl,
             "Origin" to baseUrl,
-            "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36"
+            "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36"
         )
         
         // 1. Baixa o HTML para extrair a URL do stream
         val html = app.get(channelUrl, headers = headers).text
         
-        // Extrai a URL do stream do objeto data.stream
+        // 2. Extrai a URL do .txt
         val streamPattern = Regex("""stream:\s*"([^"]+\.txt)"""")
         val streamMatch = streamPattern.find(html)
         
         if (streamMatch != null) {
-            val streamUrl = streamMatch.groupValues[1]
+            var streamUrl = streamMatch.groupValues[1]
             println("✅ Found stream URL: $streamUrl")
             
-            // 2. Agora usa WebView para CARREGAR o stream (não apenas capturar)
-            // O WebView suporta domínios xn-- que o OkHttp não suporta
-            val streamResolver = WebViewResolver(
-                interceptUrl = Regex("""\.(ts|m3u8|m4s)$"""), // Intercepta segmentos de vídeo
-                additionalUrls = listOf(Regex("""\.(ts|m3u8|m4s)$""")),
-                useOkhttp = false,
-                timeout = 60_000L
-            )
-            
-            println("🔄 Loading stream URL in WebView...")
-            
-            // Carrega o stream no WebView - isso vai funcionar porque o WebView suporta xn--
-            // O WebViewResolver vai interceptar os segmentos e nos dar a URL base
-            val intercepted = app.get(streamUrl, interceptor = streamResolver).url
-            
-            println("🎯 Intercepted URL: $intercepted")
-            
-            // A URL interceptada pode ser o próprio stream ou um redirecionamento
-            val finalStreamUrl = if (intercepted.isNotEmpty() && intercepted != streamUrl) {
-                intercepted
-            } else {
-                streamUrl
-            }
-            
-            println("✅ Final stream URL: $finalStreamUrl")
+            // 3. SUBSTITUI o domínio problemático pelo formato que o OkHttp aceita
+            streamUrl = streamUrl.replace("xn--d1ma04s8hp12.cloudfront.lat", "d1ma04s8hp12.cloudfront.lat")
+            println("🔄 Modified URL: $streamUrl")
             
             val streamHeaders = mapOf(
                 "Accept" to "*/*",
@@ -334,10 +311,10 @@ class EmbedTv : MainAPI() {
                 "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36"
             )
             
-            // Tenta gerar o m3u8
+            // 4. Gera o m3u8 - agora o OkHttp aceita a URL!
             M3u8Helper.generateM3u8(
                 name,
-                finalStreamUrl,
+                streamUrl,
                 baseUrl,
                 headers = streamHeaders
             ).forEach(callback)
@@ -354,4 +331,3 @@ class EmbedTv : MainAPI() {
         false
     }
 }
-                                  }
