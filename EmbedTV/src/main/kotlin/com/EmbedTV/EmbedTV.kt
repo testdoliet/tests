@@ -21,9 +21,9 @@ class EmbedTv : MainAPI() {
     override val hasDownloadSupport = false
     override val hasQuickSearch = true
     override val supportedTypes = setOf(TvType.Live)
-    
-    private val mainSite = "https://embedtv.best"
-    private val baseUrl = "https://www3.embedtv.best"
+
+    private val mainSite = "https://embedtv.cv"
+    private val baseUrl = "https://www4.embedtv.cv"
     private val decryptionKey = "embedtv@123"
     private val blockedChannels = listOf("sexyhot", "playboy")
 
@@ -45,16 +45,16 @@ class EmbedTv : MainAPI() {
             val decodedBytes = Base64.decode(encodedString, Base64.DEFAULT)
             val decodedString = String(decodedBytes, Charsets.ISO_8859_1)
             val reversedString = decodedString.reversed()
-            
+
             val keyBytes = decryptionKey.toByteArray(Charsets.ISO_8859_1)
             val inputBytes = reversedString.toByteArray(Charsets.ISO_8859_1)
             val outputStream = ByteArrayOutputStream()
-            
+
             for (i in inputBytes.indices) {
                 val keyByte = keyBytes[i % keyBytes.size]
                 outputStream.write((inputBytes[i].toInt() xor keyByte.toInt()).toByte().toInt())
             }
-            
+
             outputStream.toString(Charsets.UTF_8.name())
         } catch (e: Exception) {
             null
@@ -67,24 +67,24 @@ class EmbedTv : MainAPI() {
         val jogosSection = doc.selectFirst(".session.futebol")
         if (jogosSection != null) {
             val jogosCards = jogosSection.select(".card")
-            
+
             val jogosList = mutableListOf<SearchResponse>()
             for (card in jogosCards) {
                 val channelId = card.attr("data-channel")
                 if (channelId.isBlank() || channelId in blockedChannels) continue
-                
+
                 val nameElement = card.selectFirst("h3") ?: continue
                 val gameName = nameElement.text().trim()
-                
+
                 val imgElement = card.selectFirst("img") ?: continue
                 val imageUrl = imgElement.attr("src").ifEmpty { imgElement.attr("data-src") }
-                
+
                 val timeElement = card.selectFirst("span")
                 val time = timeElement?.text()?.trim()
                 val displayName = if (!time.isNullOrBlank()) "$gameName ($time)" else gameName
-                
+
                 val jogoUrl = "$baseUrl/$channelId?source=jogos"
-                
+
                 jogosList.add(
                     newLiveSearchResponse(
                         displayName,
@@ -95,33 +95,33 @@ class EmbedTv : MainAPI() {
                     }
                 )
             }
-            
+
             if (jogosList.isNotEmpty()) {
-                allCategories.add(HomePageList("Jogos de Hoje", jogosList, isHorizontalImages = true))
+                allCategories.add(HomePageList("📺 Jogos de Hoje", jogosList, isHorizontalImages = true))
             }
         }
-        
+
         val categories = doc.select(".categorie")
-        
+
         for (category in categories) {
             val titleElement = category.selectFirst(".title") ?: continue
             val categoryTitle = titleElement.text().trim()
-            
+
             val channelList = mutableListOf<SearchResponse>()
             val cards = category.select(".card")
-            
+
             for (card in cards) {
                 val channelId = card.attr("data-channel")
                 if (channelId.isBlank() || channelId in blockedChannels) continue
-                
+
                 val nameElement = card.selectFirst("h3") ?: continue
                 val channelName = nameElement.text().trim()
-                
+
                 val imgElement = card.selectFirst("img") ?: continue
                 val imageUrl = imgElement.attr("src").ifEmpty { imgElement.attr("data-src") }
-                
+
                 val canalUrl = "$baseUrl/$channelId"
-                
+
                 channelList.add(
                     newLiveSearchResponse(
                         channelName,
@@ -132,28 +132,28 @@ class EmbedTv : MainAPI() {
                     }
                 )
             }
-            
+
             if (channelList.isNotEmpty()) {
                 allCategories.add(HomePageList(categoryTitle, channelList, isHorizontalImages = true))
             }
         }
-        
+
         if (allCategories.isEmpty()) {
             throw ErrorLoadingException("Nenhum canal encontrado.")
         }
-        
+
         return newHomePageResponse(allCategories, hasNext = false)
     }
 
     override suspend fun load(url: String): LoadResponse {
         val isFromJogos = url.contains("source=jogos")
         val cleanUrl = url.replace("?source=jogos", "")
-        
+
         val channelId = cleanUrl.substringAfterLast("/")
         if (channelId in blockedChannels) {
             throw ErrorLoadingException("Canal não disponível")
         }
-        
+
         val mainPage = app.get(mainSite).document
         val card = mainPage.selectFirst(".card[data-channel=\"$channelId\"]") ?: return newMovieLoadResponse(
             "Canal $channelId",
@@ -163,12 +163,12 @@ class EmbedTv : MainAPI() {
         ) {
             this.posterUrl = "https://embedtv.best/assets/icon.png"
         }
-        
+
         val name = card.selectFirst("h3")?.text()?.trim() ?: "Canal $channelId"
         val img = card.selectFirst("img")?.let { img ->
             img.attr("src").ifEmpty { img.attr("data-src") }
         } ?: "https://embedtv.best/assets/icon.png"
-        
+
         val time = card.selectFirst("span")?.text()?.trim()
         val displayName = if (!time.isNullOrBlank() && isFromJogos) "$name ($time)" else name
 
@@ -187,31 +187,31 @@ class EmbedTv : MainAPI() {
         val doc = app.get(mainSite).document
         val allCards = doc.select(".card")
         val results = mutableListOf<SearchResponse>()
-        
+
         for (card in allCards) {
             val channelId = card.attr("data-channel")
             if (channelId.isBlank() || channelId in blockedChannels) continue
-            
+
             val nameElement = card.selectFirst("h3") ?: continue
             val channelName = nameElement.text().trim()
-            
+
             if (!channelName.contains(query, ignoreCase = true)) continue
-            
+
             val imgElement = card.selectFirst("img") ?: continue
             val imageUrl = imgElement.attr("src").ifEmpty { imgElement.attr("data-src") }
-            
+
             val timeElement = card.selectFirst("span")
             val hasHorario = timeElement != null
-            
+
             val finalUrl = if (hasHorario) {
                 "$baseUrl/$channelId?source=jogos"
             } else {
                 "$baseUrl/$channelId"
             }
-            
+
             val time = timeElement?.text()?.trim()
             val displayName = if (!time.isNullOrBlank()) "$channelName ($time)" else channelName
-            
+
             results.add(
                 newLiveSearchResponse(
                     displayName,
@@ -222,7 +222,7 @@ class EmbedTv : MainAPI() {
                 }
             )
         }
-        
+
         return results
     }
 
@@ -234,65 +234,91 @@ class EmbedTv : MainAPI() {
     ): Boolean {
         val cleanUrl = data.split("?")[0]
         val channelUrl = cleanUrl.ifEmpty { return false }
-        
+
         try {
-            val doc = app.get(channelUrl).document
+            // Headers padrão
+            val headers = mapOf(
+                "Referer" to baseUrl,
+                "Origin" to baseUrl,
+                "User-Agent" to USER_AGENT,
+                "Accept" to "*/*"
+            )
+
+            // Carrega a página do canal
+            val doc = app.get(channelUrl, headers = headers).document
             val html = doc.html()
-            
+
+            // 1. Tenta encontrar a URL criptografada no padrão dc("...")
             val encodedPattern = Regex("""dc\("([A-Za-z0-9+/=]+)"\)""")
             val encodedMatch = encodedPattern.find(html)
-            val encodedString = encodedMatch?.groupValues?.get(1)
-            
-            var finalUrl: String? = null
-            
-            if (encodedString != null) {
-                val tokenUrl = decryptStreamUrl(encodedString)
+            var streamUrl: String? = null
+
+            if (encodedMatch != null) {
+                val encodedString = encodedMatch.groupValues[1]
+                val decryptedUrl = decryptStreamUrl(encodedString)
                 
-                if (tokenUrl != null) {
-                    if (tokenUrl.endsWith(".txt", ignoreCase = true)) {
-                        val testResponse = app.get(tokenUrl, headers = mapOf(
-                            "User-Agent" to USER_AGENT
-                        )).text
-                        
+                if (decryptedUrl != null) {
+                    streamUrl = decryptedUrl
+                }
+            }
+
+            // 2. Se não encontrou criptografado, procura URL direta de m3u8
+            if (streamUrl == null) {
+                val directPattern = Regex("""https?://[^\s"'<>]+\.m3u8[^\s"'<>]*""")
+                streamUrl = directPattern.find(html)?.value
+            }
+
+            // 3. Se ainda não tem URL, procura por URLs .txt (que são m3u8 disfarçados)
+            if (streamUrl == null) {
+                val txtPattern = Regex("""https?://[^\s"'<>]+\.txt[^\s"'<>]*""")
+                val txtUrl = txtPattern.find(html)?.value
+                
+                if (txtUrl != null) {
+                    // Verifica se o .txt é realmente um m3u8
+                    try {
+                        val testResponse = app.get(txtUrl, headers = headers).text
                         if (testResponse.contains("#EXTM3U")) {
-                            finalUrl = tokenUrl
+                            streamUrl = txtUrl
                         }
-                    } else {
-                        finalUrl = tokenUrl
+                    } catch (e: Exception) {
+                        // Ignora erro e continua
                     }
                 }
             }
-            
-            if (finalUrl == null) {
-                val directPattern = Regex("""https?://[^\s"'<>]+\.m3u8[^\s"'<>]*""")
-                finalUrl = directPattern.find(html)?.value
-            }
-            
-            if (finalUrl == null) return false
-            
-            val headers = mapOf(
-                "referer" to baseUrl,
-                "origin" to baseUrl,
-                "user-agent" to USER_AGENT,
-                "accept" to "*/*"
+
+            // Se não encontrou nenhuma URL, falha
+            if (streamUrl == null) return false
+
+            // Headers adicionais para o stream (baseados no curl que você mostrou)
+            val streamHeaders = mapOf(
+                "Referer" to baseUrl,
+                "Origin" to baseUrl,
+                "User-Agent" to USER_AGENT,
+                "Accept" to "*/*",
+                "Accept-Language" to "pt-BR,pt;q=0.9",
+                "Connection" to "keep-alive",
+                "Sec-Fetch-Dest" to "empty",
+                "Sec-Fetch-Mode" to "cors",
+                "Sec-Fetch-Site" to "cross-site"
             )
-            
+
+            // Adiciona o link do stream
             callback.invoke(
-                newExtractorLink(
+                ExtractorLink(
                     source = name,
-                    name = "EmbedTv Live",
-                    url = finalUrl,
-                    type = ExtractorLinkType.M3U8
-                ) {
-                    this.referer = baseUrl
-                    this.headers = headers
-                    this.quality = Qualities.Unknown.value
-                }
+                    name = "EmbedTV - Live",
+                    url = streamUrl,
+                    referer = baseUrl,
+                    quality = Qualities.Unknown.value,
+                    type = ExtractorLinkType.M3U8,
+                    headers = streamHeaders
+                )
             )
-            
+
             return true
-            
+
         } catch (e: Exception) {
+            e.printStackTrace()
             return false
         }
     }
