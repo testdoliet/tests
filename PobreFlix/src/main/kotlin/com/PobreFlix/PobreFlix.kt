@@ -210,8 +210,23 @@ class PobreFlix : MainAPI() {
         
         if (query.length < 2) return emptyList()
         
+        return search(query, 1)
+    }
+
+    // Método sobrecarregado para suportar paginação na busca
+    suspend fun search(query: String, page: Int): List<SearchResponse> {
+        println("=== search INICIADO: $query, página: $page")
+        
+        if (query.length < 2) return emptyList()
+        
         val encodedQuery = URLEncoder.encode(query, "UTF-8")
-        val searchUrl = "$mainUrl$SEARCH_PATH?s=$encodedQuery"
+        val searchUrl = if (page > 1) {
+            "$mainUrl$SEARCH_PATH?s=$encodedQuery&page=$page"
+        } else {
+            "$mainUrl$SEARCH_PATH?s=$encodedQuery"
+        }
+        
+        println("URL da busca: $searchUrl")
         
         try {
             val document = app.get(searchUrl).document
@@ -227,7 +242,7 @@ class PobreFlix : MainAPI() {
                     }
                 }
             
-            println("Resultados encontrados: ${results.size}")
+            println("Resultados encontrados na página $page: ${results.size}")
             return results
             
         } catch (e: Exception) {
