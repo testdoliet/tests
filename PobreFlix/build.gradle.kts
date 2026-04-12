@@ -66,7 +66,7 @@ cloudstream {
     authors = listOf("lawlietbr")
     status = 1 
     tvTypes = listOf("Movies", "Series", "Animes", "AsianDrama")
-    iconUrl = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxODAiIGhlaWdodD0iMTgwIiB2aWV3Qm94PSIwIDAgMTgwIDE4MCI+PHJlY3Qgd2lkdGg9IjEwMCUiIGhlaWdodD0iMTAwJSIgcng9IjQwIiBmaWxsPSIjZWY0NDQ0Ii8+PHRleHQgeD0iNTAlIiB5PSI1NCUiIGRvbWluYW50LWJhc2VsaW5lPSJtaWRkbGUiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZvbnQtZmFtaWx5PSJBcmlhbCxIZWx2ZXRpY2Esc2Fucy1zZXJpZiIgZm9udC1zaXplPSI2OCIgZm9udC13ZWlnaHQ9IjgwMCIgZmlsbD0iI2ZmZmZmZiI+UEY8L3RleHQ+PC9zdmc+"
+    iconUrl = "https://www.image2url.com/r2/default/images/1776018665375-eafe8c65-10f1-490c-9994-2f519402b6e3.png"
     isCrossPlatform = true
     requiresResources = false
 }
