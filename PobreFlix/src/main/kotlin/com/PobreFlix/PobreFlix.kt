@@ -178,50 +178,57 @@ class PobreFlix : MainAPI() {
         }
     }
 
-    override suspend fun search(query: String): List<SearchResponse> {
-        println("=== search INICIADO: $query")
-        
-        if (query.length < 2) return emptyList()
-        
-        return search(query, 1)
-    }
+    
+override suspend fun search(query: String): List<SearchResponse> {
+    return searchWithPage(query, 1)
+}
 
-    suspend fun search(query: String, page: Int): List<SearchResponse> {
-        println("=== search INICIADO: $query, página: $page")
-        
-        if (query.length < 2) return emptyList()
-        
-        val encodedQuery = URLEncoder.encode(query, "UTF-8")
-        val searchUrl = if (page > 1) {
-            "$mainUrl$SEARCH_PATH?s=$encodedQuery&page=$page"
-        } else {
-            "$mainUrl$SEARCH_PATH?s=$encodedQuery"
-        }
-        
-        println("URL da busca: $searchUrl")
-        
-        try {
-            val document = app.get(searchUrl).document
-            println("Título da página: ${document.title()}")
-            
-            val results = document.select("article.group, .grid article, .group\\/card")
-                .mapNotNull { element ->
-                    try {
-                        element.toSearchResult()
-                    } catch (e: Exception) {
-                        println("ERRO no resultado: ${e.message}")
-                        null
-                    }
-                }
-            
-            println("Resultados encontrados na página $page: ${results.size}")
-            return results
-            
-        } catch (e: Exception) {
-            println("ERRO na busca: ${e.message}")
-            return emptyList()
-        }
+override suspend fun search(query: String, page: Int): SearchResponseList? {
+    println("=== search INICIADO: $query, página: $page")
+    
+    if (query.length < 2) return null
+    
+    val encodedQuery = URLEncoder.encode(query, "UTF-8")
+    val searchUrl = if (page > 1) {
+        "$mainUrl$SEARCH_PATH?s=$encodedQuery&page=$page"
+    } else {
+        "$mainUrl$SEARCH_PATH?s=$encodedQuery"
     }
+    
+    println("URL da busca: $searchUrl")
+    
+    try {
+        val document = app.get(searchUrl).document
+        println("Título da página: ${document.title()}")
+        
+        val results = document.select("article.group, .grid article, .group\\/card")
+            .mapNotNull { element ->
+                try {
+                    element.toSearchResult()
+                } catch (e: Exception) {
+                    println("ERRO no resultado: ${e.message}")
+                    null
+                }
+            }
+        
+        // Verificar se existe próxima página
+        val hasNextPage = document.select("a[href*='&page=${page + 1}'], a[href*='?page=${page + 1}'], a:contains(Próxima)").isNotEmpty()
+        
+        println("Resultados encontrados na página $page: ${results.size}, hasNextPage: $hasNextPage")
+        
+        return SearchResponseList(results, hasNextPage)
+        
+    } catch (e: Exception) {
+        println("ERRO na busca: ${e.message}")
+        return null
+    }
+}
+
+// Método auxiliar para busca sem paginação
+suspend fun searchSimple(query: String): List<SearchResponse> {
+    return search(query, 1)?.results ?: emptyList()
+}
+    
 
     override suspend fun load(url: String): LoadResponse? {
         println("=== load INICIADO ===")
