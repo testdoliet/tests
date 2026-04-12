@@ -178,61 +178,88 @@ class PobreFlix : MainAPI() {
         }
     }
 
-override suspend fun search(query: String, page: Int): SearchResponseList? {
-    println("=== search INICIADO (com paginação): $query, página: $page")
-    
-    if (query.length < 2) return null
-    
-    val encodedQuery = URLEncoder.encode(query, "UTF-8")
-    val searchUrl = if (page > 1) {
-        "$mainUrl$SEARCH_PATH?s=$encodedQuery&page=$page"
-    } else {
-        "$mainUrl$SEARCH_PATH?s=$encodedQuery"
-    }
-    
-    println("URL da busca: $searchUrl")
-    
-    return try {
-        val document = app.get(searchUrl).document
-        println("Título da página: ${document.title()}")
+    override suspend fun search(query: String): List<SearchResponse> {
+        println("=== search INICIADO: $query")
         
-        val results = document.select("article.group, .grid article, .group\\/card")
-            .mapNotNull { element ->
-                try {
-                    element.toSearchResult()
-                } catch (e: Exception) {
-                    println("ERRO no resultado: ${e.message}")
-                    null
+        if (query.length < 2) return emptyList()
+        
+        val encodedQuery = URLEncoder.encode(query, "UTF-8")
+        val searchUrl = "$mainUrl$SEARCH_PATH?s=$encodedQuery"
+        
+        println("URL da busca: $searchUrl")
+        
+        return try {
+            val document = app.get(searchUrl).document
+            println("Título da página: ${document.title()}")
+            
+            document.select("article.group, .grid article, .group\\/card")
+                .mapNotNull { element ->
+                    try {
+                        element.toSearchResult()
+                    } catch (e: Exception) {
+                        println("ERRO no resultado: ${e.message}")
+                        null
+                    }
                 }
-            }
+            
+        } catch (e: Exception) {
+            println("ERRO na busca: ${e.message}")
+            emptyList()
+        }
+    }
+
+    override suspend fun search(query: String, page: Int): SearchResponseList? {
+        println("=== search INICIADO (com paginação): $query, página: $page")
         
-        // CORREÇÃO: Verificar se existe próxima página tentando acessar page+1
-        var hasNextPage = false
+        if (query.length < 2) return null
         
-        if (results.isNotEmpty()) {
-            // Tentar acessar a próxima página para ver se existe conteúdo
-            val nextPageUrl = "$mainUrl$SEARCH_PATH?s=$encodedQuery&page=${page + 1}"
-            try {
-                val nextPageDoc = app.get(nextPageUrl).document
-                val nextPageResults = nextPageDoc.select("article.group, .grid article, .group\\/card")
-                hasNextPage = nextPageResults.isNotEmpty()
-                println("Próxima página ${page + 1}: ${if (hasNextPage) "tem conteúdo" else "vazia"}")
-            } catch (e: Exception) {
-                println("Erro ao verificar próxima página: ${e.message}")
-                hasNextPage = false
-            }
+        val encodedQuery = URLEncoder.encode(query, "UTF-8")
+        val searchUrl = if (page > 1) {
+            "$mainUrl$SEARCH_PATH?s=$encodedQuery&page=$page"
+        } else {
+            "$mainUrl$SEARCH_PATH?s=$encodedQuery"
         }
         
-        println("Resultados encontrados na página $page: ${results.size}, hasNextPage: $hasNextPage")
+        println("URL da busca: $searchUrl")
         
-        results.toNewSearchResponseList(hasNextPage)
-        
-    } catch (e: Exception) {
-        println("ERRO na busca: ${e.message}")
-        null
+        return try {
+            val document = app.get(searchUrl).document
+            println("Título da página: ${document.title()}")
+            
+            val results = document.select("article.group, .grid article, .group\\/card")
+                .mapNotNull { element ->
+                    try {
+                        element.toSearchResult()
+                    } catch (e: Exception) {
+                        println("ERRO no resultado: ${e.message}")
+                        null
+                    }
+                }
+            
+            // Verificar se existe próxima página
+            var hasNextPage = false
+            if (results.isNotEmpty()) {
+                val nextPageUrl = "$mainUrl$SEARCH_PATH?s=$encodedQuery&page=${page + 1}"
+                try {
+                    val nextPageDoc = app.get(nextPageUrl).document
+                    val nextPageResults = nextPageDoc.select("article.group, .grid article, .group\\/card")
+                    hasNextPage = nextPageResults.isNotEmpty()
+                    println("Próxima página ${page + 1}: ${if (hasNextPage) "tem conteúdo" else "vazia"}")
+                } catch (e: Exception) {
+                    println("Erro ao verificar próxima página: ${e.message}")
+                    hasNextPage = false
+                }
+            }
+            
+            println("Resultados encontrados na página $page: ${results.size}, hasNextPage: $hasNextPage")
+            
+            results.toNewSearchResponseList(hasNextPage)
+            
+        } catch (e: Exception) {
+            println("ERRO na busca: ${e.message}")
+            null
+        }
     }
-}
-
 
     override suspend fun load(url: String): LoadResponse? {
         println("=== load INICIADO ===")
@@ -353,18 +380,34 @@ override suspend fun search(query: String, page: Int): SearchResponseList? {
                 .takeIf { it.isNotEmpty() }
             println("Elenco: ${cast?.size} atores")
             
-            val trailerKey = document.selectFirst("script:containsData(window.__trailerKeys)")?.data()
-                ?.let { Regex("window\\.__trailerKeys\\s*=\\s*\\[\"([^\"]+)\"\\]").find(it)?.groupValues?.get(1) }
-            println("Trailer key: $trailerKey")
+            // ===== TRAILER - CORREÇÃO =====
+            var trailerUrl: String? = null
+            try {
+                val scripts = document.select("script")
+                for (script in scripts) {
+                    val data = script.data()
+                    if (data.contains("__trailerKeys")) {
+                        val keyPattern = Regex("""__trailerKeys\s*=\s*\[["']([^"']+)["']\]""")
+                        val match = keyPattern.find(data)
+                        if (match != null) {
+                            val trailerKey = match.groupValues[1]
+                            trailerUrl = "https://www.youtube.com/watch?v=$trailerKey"
+                            println("[PobreFlix] Trailer encontrado: $trailerUrl")
+                            break
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                println("[PobreFlix] Erro ao extrair trailer: ${e.message}")
+            }
             
-            // ===== RECOMENDAÇÕES CORRIGIDAS =====
+            // ===== RECOMENDAÇÕES =====
             val recommendations = document.select("#relatedSection .swiper-slide a, .related-swiper .swiper-slide a")
                 .mapNotNull { element ->
                     try {
                         val recUrl = element.attr("href")
                         if (recUrl.isBlank()) return@mapNotNull null
                         
-                        // CORREÇÃO: Buscar a imagem de forma mais robusta
                         var recImg: String? = null
                         val imgElement = element.selectFirst("img")
                         if (imgElement != null) {
@@ -372,7 +415,6 @@ override suspend fun search(query: String, page: Int): SearchResponseList? {
                             if (recImg.isNullOrBlank()) recImg = imgElement.attr("data-src")
                             if (!recImg.isNullOrBlank()) {
                                 recImg = fixImageUrl(recImg)
-                                println("[PobreFlix] Recomendação imagem: $recImg")
                             }
                         }
                         
@@ -383,7 +425,6 @@ override suspend fun search(query: String, page: Int): SearchResponseList? {
                         val recIsSerie = recUrl.contains("/serie/") || recUrl.contains("/dorama/")
                         val recYear = element.selectFirst(".text-white\\/70.text-xs")?.text()?.toIntOrNull()
                         
-                        // Extrair score da recomendação
                         var recScore: Float? = null
                         val scoreText = element.selectFirst(".absolute.top-2.right-2 .text-\\[10px\\].font-bold, .absolute.top-2.right-2 text")?.text()
                         if (!scoreText.isNullOrBlank()) {
@@ -422,6 +463,7 @@ override suspend fun search(query: String, page: Int): SearchResponseList? {
             println("TMDB ID encontrado: $tmdbId")
             
             if (!isAnime && !isSerie) {
+                // FILMES
                 return newMovieLoadResponse(cleanTitle, url, TvType.Movie, playerUrl ?: url) {
                     this.posterUrl = poster
                     this.backgroundPosterUrl = backdrop
@@ -433,10 +475,14 @@ override suspend fun search(query: String, page: Int): SearchResponseList? {
                     
                     if (rating != null) this.score = Score.from10(rating)
                     if (cast != null && cast.isNotEmpty()) addActors(cast)
-                    if (trailerKey != null) addTrailer("https://www.youtube.com/watch?v=$trailerKey")
+                    if (trailerUrl != null) {
+                        println("[PobreFlix] Adicionando trailer ao filme: $trailerUrl")
+                        addTrailer(trailerUrl)
+                    }
                 }
             }
             
+            // SÉRIES/ANIMES
             val episodes = extractEpisodesFromSite(document, url, tmdbId)
             val type = if (isAnime) TvType.Anime else TvType.TvSeries
             
@@ -450,7 +496,10 @@ override suspend fun search(query: String, page: Int): SearchResponseList? {
                 
                 if (rating != null) this.score = Score.from10(rating)
                 if (cast != null && cast.isNotEmpty()) addActors(cast)
-                if (trailerKey != null) addTrailer("https://www.youtube.com/watch?v=$trailerKey")
+                if (trailerUrl != null) {
+                    println("[PobreFlix] Adicionando trailer à série: $trailerUrl")
+                    addTrailer(trailerUrl)
+                }
             }
             
         } catch (e: Exception) {
