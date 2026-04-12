@@ -133,30 +133,44 @@ class PobreFlix : MainAPI() {
         
         val finalTitle = title.trim()
         
-        // ===== BADGE DE AVALIAÇÃO - EXTRAIR SCORE =====
+        // ===== BADGE DE AVALIAÇÃO - EXTRAIR DO CARD =====
         var scoreValue: Float? = null
         
-        // Tentar extrair do SVG de rating (formato: 7.6 ou 76%)
-        val svgText = selectFirst("text[x='18'][y='21']")?.text()
-        if (!svgText.isNullOrBlank()) {
-            // Se tiver % (ex: 76%), converte dividindo por 10
-            if (svgText.contains("%")) {
-                val percent = svgText.replace("%", "").trim().toFloatOrNull()
+        // Método 1: Procurar o texto de porcentagem dentro do SVG
+        val scoreTextElement = selectFirst(".absolute.top-2.right-2 .text-\\[10px\\].font-bold, .absolute.top-2.right-2 text")
+        if (scoreTextElement != null) {
+            val scoreText = scoreTextElement.text().trim()
+            val scoreMatch = Regex("(\\d+)").find(scoreText)
+            if (scoreMatch != null) {
+                val percent = scoreMatch.groupValues[1].toFloatOrNull()
                 scoreValue = percent?.let { it / 10 }
-                println("[PobreFlix] Score via SVG (%): ${percent}% -> ${scoreValue}/10")
-            } else {
-                // Se for número direto (ex: 7.6)
-                scoreValue = svgText.trim().toFloatOrNull()
-                println("[PobreFlix] Score via SVG (direto): $scoreValue/10")
+                println("[PobreFlix] Score encontrado no card: ${percent}% -> ${scoreValue}/10")
             }
         }
         
-        // Se não encontrou, tentar rating no card
+        // Método 2: Tentar pelo stroke-dasharray (alternativa)
         if (scoreValue == null) {
-            val ratingDiv = selectFirst(".rating, .score, [class*='rating'], [class*='score']")?.text()?.trim()
-            if (!ratingDiv.isNullOrBlank()) {
-                scoreValue = ratingDiv.replace("/10", "").trim().toFloatOrNull()
-                println("[PobreFlix] Score via rating div: $scoreValue/10")
+            val dashArray = selectFirst("path[stroke-dasharray]")?.attr("stroke-dasharray") ?: ""
+            if (dashArray.isNotBlank()) {
+                val dashMatch = Regex("(\\d+(?:\\.\\d+)?)").find(dashArray)
+                if (dashMatch != null) {
+                    val percent = dashMatch.groupValues[1].toFloatOrNull()
+                    if (percent != null && percent <= 100) {
+                        scoreValue = percent / 10
+                        println("[PobreFlix] Score via stroke-dasharray: ${percent}% -> ${scoreValue}/10")
+                    }
+                }
+            }
+        }
+        
+        // Método 3: Tentar qualquer número que pareça uma porcentagem
+        if (scoreValue == null) {
+            val allText = this.text()
+            val percentMatch = Regex("(\\d{2})%").find(allText)
+            if (percentMatch != null) {
+                val percent = percentMatch.groupValues[1].toFloatOrNull()
+                scoreValue = percent?.let { it / 10 }
+                println("[PobreFlix] Score via texto: ${percent}% -> ${scoreValue}/10")
             }
         }
         
