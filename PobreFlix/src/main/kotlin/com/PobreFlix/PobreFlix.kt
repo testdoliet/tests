@@ -113,10 +113,27 @@ class PobreFlix : MainAPI() {
         val finalTitle = title.trim()
         
         var scoreValue: Float? = null
-        val scoreText = selectFirst("text[x='18'][y='21']")?.text()
-        if (!scoreText.isNullOrBlank()) {
-            val percent = scoreText.replace("%", "").trim().toFloatOrNull()
-            scoreValue = percent?.let { it / 10 }
+        val scoreTextElement = selectFirst(".absolute.top-2.right-2 .text-\\[10px\\].font-bold, .absolute.top-2.right-2 text")
+        if (scoreTextElement != null) {
+            val scoreText = scoreTextElement.text().trim()
+            val scoreMatch = Regex("(\\d+)").find(scoreText)
+            if (scoreMatch != null) {
+                val percent = scoreMatch.groupValues[1].toFloatOrNull()
+                scoreValue = percent?.let { it / 10 }
+            }
+        }
+        
+        if (scoreValue == null) {
+            val dashArray = selectFirst("path[stroke-dasharray]")?.attr("stroke-dasharray") ?: ""
+            if (dashArray.isNotBlank()) {
+                val dashMatch = Regex("(\\d+(?:\\.\\d+)?)").find(dashArray)
+                if (dashMatch != null) {
+                    val percent = dashMatch.groupValues[1].toFloatOrNull()
+                    if (percent != null && percent <= 100) {
+                        scoreValue = percent / 10
+                    }
+                }
+            }
         }
         
         val isAnime = href.contains("/anime/")
@@ -193,7 +210,12 @@ class PobreFlix : MainAPI() {
             
             val ratingSvg = document.selectFirst(".inline-flex.items-center.gap-3.rounded-2xl .text-\\[12px\\].font-extrabold")
             if (ratingSvg != null) {
-                rating = ratingSvg.text().trim().toFloatOrNull()
+                val ratingText = ratingSvg.text().trim()
+                rating = if (ratingText.contains("%")) {
+                    ratingText.replace("%", "").trim().toFloatOrNull()?.let { it / 10 }
+                } else {
+                    ratingText.toFloatOrNull()
+                }
             }
             
             if (rating == null) {
@@ -249,8 +271,44 @@ class PobreFlix : MainAPI() {
                 }
                 .takeIf { it.isNotEmpty() }
             
-            val trailerKey = document.selectFirst("script:containsData(window.__trailerKeys)")?.data()
-                ?.let { Regex("window\\.__trailerKeys\\s*=\\s*\\[\"([^\"]+)\"\\]").find(it)?.groupValues?.get(1) }
+            var trailerUrl: String? = null
+            try {
+                val scripts = document.select("script")
+                for (script in scripts) {
+                    val data = script.data()
+                    if (data.contains("__trailerKeys")) {
+                        val pattern = Regex("""__trailerKeys\s*=\s*\[([^\]]+)\]""")
+                        val match = pattern.find(data)
+                        if (match != null) {
+                            val keysString = match.groupValues[1]
+                            val keyPattern = Regex("[\"']([^\"']+)[\"']")
+                            val keyMatch = keyPattern.find(keysString)
+                            if (keyMatch != null) {
+                                val trailerKey = keyMatch.groupValues[1]
+                                trailerUrl = "https://www.youtube.com/watch?v=$trailerKey"
+                                break
+                            }
+                        }
+                    }
+                }
+                
+                if (trailerUrl == null) {
+                    val trailerSection = document.selectFirst("#trailers-section .trailer-thumb-btn")
+                    if (trailerSection != null) {
+                        val trailerKey = trailerSection.attr("data-yt")
+                        if (trailerKey.isNotBlank()) {
+                            trailerUrl = "https://www.youtube.com/watch?v=$trailerKey"
+                        }
+                    }
+                }
+                
+                if (trailerUrl == null) {
+                    val youtubeLink = document.selectFirst("a[href*='youtube.com/watch']")?.attr("href")
+                    if (youtubeLink != null && youtubeLink.isNotBlank()) {
+                        trailerUrl = youtubeLink
+                    }
+                }
+            } catch (e: Exception) { }
             
             val recommendations = document.select("#relatedSection .swiper-slide a, .related-swiper .swiper-slide a")
                 .mapNotNull { element ->
@@ -258,7 +316,16 @@ class PobreFlix : MainAPI() {
                         val recUrl = element.attr("href")
                         if (recUrl.isBlank()) return@mapNotNull null
                         
-                        val recImg = element.selectFirst("img")?.attr("src")?.let { fixImageUrl(it) }
+                        var recImg: String? = null
+                        val imgElement = element.selectFirst("img")
+                        if (imgElement != null) {
+                            recImg = imgElement.attr("src")
+                            if (recImg.isNullOrBlank()) recImg = imgElement.attr("data-src")
+                            if (!recImg.isNullOrBlank()) {
+                                recImg = fixImageUrl(recImg)
+                            }
+                        }
+                        
                         val recTitle = element.selectFirst("h3, .text-white.font-bold")?.text()?.trim()
                             ?: return@mapNotNull null
                         
@@ -266,18 +333,28 @@ class PobreFlix : MainAPI() {
                         val recIsSerie = recUrl.contains("/serie/") || recUrl.contains("/dorama/")
                         val recYear = element.selectFirst(".text-white\\/70.text-xs")?.text()?.toIntOrNull()
                         
+                        var recScore: Float? = null
+                        val scoreText = element.selectFirst(".absolute.top-2.right-2 .text-\\[10px\\].font-bold, .absolute.top-2.right-2 text")?.text()
+                        if (!scoreText.isNullOrBlank()) {
+                            val percent = scoreText.replace("%", "").trim().toFloatOrNull()
+                            recScore = percent?.let { it / 10 }
+                        }
+                        
                         when {
                             recIsAnime -> newAnimeSearchResponse(recTitle, fixUrl(recUrl), TvType.Anime) {
                                 this.posterUrl = recImg
                                 this.year = recYear
+                                if (recScore != null) this.score = Score.from10(recScore)
                             }
                             recIsSerie -> newTvSeriesSearchResponse(recTitle, fixUrl(recUrl), TvType.TvSeries) {
                                 this.posterUrl = recImg
                                 this.year = recYear
+                                if (recScore != null) this.score = Score.from10(recScore)
                             }
                             else -> newMovieSearchResponse(recTitle, fixUrl(recUrl), TvType.Movie) {
                                 this.posterUrl = recImg
                                 this.year = recYear
+                                if (recScore != null) this.score = Score.from10(recScore)
                             }
                         }
                     } catch (e: Exception) { null }
@@ -297,7 +374,7 @@ class PobreFlix : MainAPI() {
                     this.recommendations = recommendations.takeIf { it.isNotEmpty() }
                     if (rating != null) this.score = Score.from10(rating)
                     if (cast != null && cast.isNotEmpty()) addActors(cast)
-                    if (trailerKey != null) addTrailer("https://www.youtube.com/watch?v=$trailerKey")
+                    if (trailerUrl != null) addTrailer(trailerUrl)
                 }
             }
             
@@ -313,7 +390,7 @@ class PobreFlix : MainAPI() {
                 this.recommendations = recommendations.takeIf { it.isNotEmpty() }
                 if (rating != null) this.score = Score.from10(rating)
                 if (cast != null && cast.isNotEmpty()) addActors(cast)
-                if (trailerKey != null) addTrailer("https://www.youtube.com/watch?v=$trailerKey")
+                if (trailerUrl != null) addTrailer(trailerUrl)
             }
             
         } catch (e: Exception) {
@@ -331,28 +408,41 @@ class PobreFlix : MainAPI() {
         val scriptData = document.selectFirst("script:containsData(window.allEpisodes)")?.data()
         if (scriptData != null) {
             try {
-                val jsonMatch = Regex("window\\.allEpisodes\\s*=\\s*(\\{[^;]+\\})").find(scriptData)
+                val jsonMatch = Regex("window\\.allEpisodes\\s*=\\s*(\\{[\\s\\S]+?\\});").find(scriptData)
                 val jsonString = jsonMatch?.groupValues?.get(1)
                 
                 if (jsonString != null) {
-                    val seasonPattern = Regex("\"(\\d+)\":\\s*\\[([\\s\\S]*?)\\](?=\\s*,\\s*\"\\d+\"|\\s*\\})")
-                    val seasonMatches = seasonPattern.findAll(jsonString)
+                    val seasonPattern = Regex("\"(\\d+)\"\\s*:\\s*\\[")
+                    val seasonMatches = seasonPattern.findAll(jsonString).toList()
                     
                     for (seasonMatch in seasonMatches) {
                         val seasonNum = seasonMatch.groupValues[1].toIntOrNull() ?: continue
-                        val episodesJson = seasonMatch.groupValues[2]
+                        val startIndex = seasonMatch.range.last + 1
                         
-                        val episodePattern = Regex("""\{[^{}]*?"epi_num"\s*:\s*(\d+)[^{}]*?"title"\s*:\s*"([^"]*)"[^{}]*?"sinopse"\s*:\s*"([^"]*)"[^{}]*?"thumb_url"\s*:\s*"([^"]*)"[^{}]*?"duration"\s*:\s*(\d+)[^{}]*?"air_date"\s*:\s*"([^"]*)"[^{}]*?"has_dub"\s*:\s*(true|false)[^{}]*?"has_leg"\s*:\s*(true|false)[^{}]*?\}""")
+                        var bracketCount = 1
+                        var endIndex = startIndex
+                        while (endIndex < jsonString.length && bracketCount > 0) {
+                            when (jsonString[endIndex]) {
+                                '[' -> bracketCount++
+                                ']' -> bracketCount--
+                            }
+                            endIndex++
+                        }
                         
-                        val episodeMatches = episodePattern.findAll(episodesJson)
+                        val seasonJson = jsonString.substring(startIndex, endIndex - 1)
+                        
+                        val episodePattern = Regex("""\{([^{}]*?)\}""")
+                        val episodeMatches = episodePattern.findAll(seasonJson)
                         
                         for (epMatch in episodeMatches) {
-                            val epNum = epMatch.groupValues[1].toIntOrNull() ?: continue
-                            val epTitle = epMatch.groupValues[2].ifEmpty { "Episódio $epNum" }
-                            val sinopse = epMatch.groupValues[3].ifEmpty { null }
-                            var thumbUrl = epMatch.groupValues[4].takeIf { it.isNotEmpty() }
-                            val durationMin = epMatch.groupValues[5].toIntOrNull()
-                            val airDate = epMatch.groupValues[6].takeIf { it.isNotEmpty() }
+                            val episodeData = epMatch.groupValues[1]
+                            
+                            val epNum = Regex("\"epi_num\"\\s*:\\s*(\\d+)").find(episodeData)?.groupValues?.get(1)?.toIntOrNull() ?: continue
+                            val epTitle = Regex("\"title\"\\s*:\\s*\"([^\"]*)\"").find(episodeData)?.groupValues?.get(1)?.ifEmpty { "Episódio $epNum" } ?: "Episódio $epNum"
+                            val sinopse = Regex("\"sinopse\"\\s*:\\s*\"([^\"]*)\"").find(episodeData)?.groupValues?.get(1)?.takeIf { it.isNotEmpty() && it != "null" }
+                            var thumbUrl = Regex("\"thumb_url\"\\s*:\\s*\"([^\"]*)\"").find(episodeData)?.groupValues?.get(1)?.takeIf { it.isNotEmpty() && it != "null" }
+                            val durationMin = Regex("\"duration\"\\s*:\\s*(\\d+)").find(episodeData)?.groupValues?.get(1)?.toIntOrNull()
+                            val airDate = Regex("\"air_date\"\\s*:\\s*\"([^\"]*)\"").find(episodeData)?.groupValues?.get(1)?.takeIf { it.isNotEmpty() && it != "null" }
                             
                             thumbUrl = thumbUrl?.let {
                                 when {
@@ -387,12 +477,10 @@ class PobreFlix : MainAPI() {
                         return episodes
                     }
                 }
-            } catch (e: Exception) {
-                // Fallback para HTML
-            }
+            } catch (e: Exception) { }
         }
 
-        val episodeElements = document.select("#episodes-list article, .episode-card, .episode-item")
+        val episodeElements = document.select("#episodes-list article")
         
         episodeElements.forEachIndexed { index, element ->
             try {
@@ -507,6 +595,7 @@ class PobreFlix : MainAPI() {
     
     private fun fixImageUrl(url: String?): String? {
         if (url.isNullOrBlank()) return null
+        if (url.startsWith("data:image")) return null
         
         var fixedUrl = url.trim()
         
