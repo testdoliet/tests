@@ -158,20 +158,66 @@ class PobreFlix : MainAPI() {
         }
     }
 
+    
     override suspend fun search(query: String): List<SearchResponse> {
-        if (query.length < 2) return emptyList()
-        
-        val encodedQuery = URLEncoder.encode(query, "UTF-8")
-        val searchUrl = "$mainUrl$SEARCH_PATH?s=$encodedQuery"
-        
-        return try {
-            val document = app.get(searchUrl).document
-            document.select("article.group, .grid article, .group\\/card")
-                .mapNotNull { it.toSearchResult() }
-        } catch (e: Exception) {
-            emptyList()
-        }
+    if (query.length < 2) return emptyList()
+    
+    val encodedQuery = URLEncoder.encode(query, "UTF-8")
+    val searchUrl = "$mainUrl$SEARCH_PATH?s=$encodedQuery"
+    
+    return try {
+        val document = app.get(searchUrl).document
+        document.select("article.group, .grid article, .group\\/card")
+            .mapNotNull { element ->
+                try {
+                    element.toSearchResult()
+                } catch (e: Exception) {
+                    null
+                }
+            }
+    } catch (e: Exception) {
+        emptyList()
     }
+}
+
+override suspend fun search(query: String, page: Int): SearchResponseList? {
+    if (query.length < 2) return null
+    
+    val encodedQuery = URLEncoder.encode(query, "UTF-8")
+    val searchUrl = if (page > 1) {
+        "$mainUrl$SEARCH_PATH?s=$encodedQuery&page=$page"
+    } else {
+        "$mainUrl$SEARCH_PATH?s=$encodedQuery"
+    }
+    
+    return try {
+        val document = app.get(searchUrl).document
+        val results = document.select("article.group, .grid article, .group\\/card")
+            .mapNotNull { element ->
+                try {
+                    element.toSearchResult()
+                } catch (e: Exception) {
+                    null
+                }
+            }
+        
+        var hasNextPage = false
+        if (results.isNotEmpty()) {
+            val nextPageUrl = "$mainUrl$SEARCH_PATH?s=$encodedQuery&page=${page + 1}"
+            try {
+                val nextPageDoc = app.get(nextPageUrl).document
+                val nextPageResults = nextPageDoc.select("article.group, .grid article, .group\\/card")
+                hasNextPage = nextPageResults.isNotEmpty()
+            } catch (e: Exception) {
+                hasNextPage = false
+            }
+        }
+        
+        results.toNewSearchResponseList(hasNextPage)
+    } catch (e: Exception) {
+        null
+    }
+}
 
     override suspend fun load(url: String): LoadResponse? {
         try {
