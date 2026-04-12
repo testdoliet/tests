@@ -81,6 +81,11 @@ class PobreFlix : MainAPI() {
         
         println("Items: ${items.size}, HasNext: $hasNextPage")
         
+        // LOG para verificar scores nos cards
+        items.forEach { item ->
+            println("[PobreFlix] Card: ${item.name} - Score: ${item.score}")
+        }
+        
         return newHomePageResponse(request.name, items, hasNext = hasNextPage)
     }
     
@@ -131,21 +136,27 @@ class PobreFlix : MainAPI() {
         // ===== BADGE DE AVALIAÇÃO - EXTRAIR SCORE =====
         var scoreValue: Float? = null
         
-        // Tentar extrair do SVG de rating
-        val scoreText = selectFirst("text[x='18'][y='21']")?.text()
-        if (!scoreText.isNullOrBlank()) {
-            val percent = scoreText.replace("%", "").trim().toFloatOrNull()
-            // Converter porcentagem (0-100) para escala 0-10
-            scoreValue = percent?.let { it / 10 }
-            println("[PobreFlix] Score encontrado: ${percent}% -> ${scoreValue}/10")
+        // Tentar extrair do SVG de rating (formato: 7.6 ou 76%)
+        val svgText = selectFirst("text[x='18'][y='21']")?.text()
+        if (!svgText.isNullOrBlank()) {
+            // Se tiver % (ex: 76%), converte dividindo por 10
+            if (svgText.contains("%")) {
+                val percent = svgText.replace("%", "").trim().toFloatOrNull()
+                scoreValue = percent?.let { it / 10 }
+                println("[PobreFlix] Score via SVG (%): ${percent}% -> ${scoreValue}/10")
+            } else {
+                // Se for número direto (ex: 7.6)
+                scoreValue = svgText.trim().toFloatOrNull()
+                println("[PobreFlix] Score via SVG (direto): $scoreValue/10")
+            }
         }
         
-        // Tentar alternativa se não encontrou
+        // Se não encontrou, tentar rating no card
         if (scoreValue == null) {
-            val altScore = selectFirst(".rating, .score, .nota")?.text()?.trim()
-            if (!altScore.isNullOrBlank()) {
-                scoreValue = altScore.replace("/10", "").trim().toFloatOrNull()
-                println("[PobreFlix] Score alternativo: $scoreValue/10")
+            val ratingDiv = selectFirst(".rating, .score, [class*='rating'], [class*='score']")?.text()?.trim()
+            if (!ratingDiv.isNullOrBlank()) {
+                scoreValue = ratingDiv.replace("/10", "").trim().toFloatOrNull()
+                println("[PobreFlix] Score via rating div: $scoreValue/10")
             }
         }
         
@@ -156,17 +167,26 @@ class PobreFlix : MainAPI() {
             isAnime -> newAnimeSearchResponse(finalTitle, href, TvType.Anime) {
                 this.posterUrl = poster
                 this.year = year
-                if (scoreValue != null) this.score = Score.from10(scoreValue)
+                if (scoreValue != null) {
+                    this.score = Score.from10(scoreValue)
+                    println("[PobreFlix] Score ADICIONADO ao card Anime: $scoreValue/10")
+                }
             }
             isSerie -> newTvSeriesSearchResponse(finalTitle, href, TvType.TvSeries) {
                 this.posterUrl = poster
                 this.year = year
-                if (scoreValue != null) this.score = Score.from10(scoreValue)
+                if (scoreValue != null) {
+                    this.score = Score.from10(scoreValue)
+                    println("[PobreFlix] Score ADICIONADO ao card Série: $scoreValue/10")
+                }
             }
             else -> newMovieSearchResponse(finalTitle, href, TvType.Movie) {
                 this.posterUrl = poster
                 this.year = year
-                if (scoreValue != null) this.score = Score.from10(scoreValue)
+                if (scoreValue != null) {
+                    this.score = Score.from10(scoreValue)
+                    println("[PobreFlix] Score ADICIONADO ao card Filme: $scoreValue/10")
+                }
             }
         }
     }
@@ -249,7 +269,12 @@ class PobreFlix : MainAPI() {
             
             val ratingSvg = document.selectFirst(".inline-flex.items-center.gap-3.rounded-2xl .text-\\[12px\\].font-extrabold")
             if (ratingSvg != null) {
-                rating = ratingSvg.text().trim().toFloatOrNull()
+                val ratingText = ratingSvg.text().trim()
+                rating = if (ratingText.contains("%")) {
+                    ratingText.replace("%", "").trim().toFloatOrNull()?.let { it / 10 }
+                } else {
+                    ratingText.toFloatOrNull()
+                }
                 println("Rating do SVG: $rating")
             }
             
@@ -372,7 +397,7 @@ class PobreFlix : MainAPI() {
                     
                     if (rating != null) {
                         this.score = Score.from10(rating)
-                        println("Score definido: $rating")
+                        println("Score definido no filme: $rating")
                     }
                     
                     if (cast != null && cast.isNotEmpty()) addActors(cast)
@@ -392,7 +417,10 @@ class PobreFlix : MainAPI() {
                 this.tags = tags
                 this.recommendations = recommendations.takeIf { it.isNotEmpty() }
                 
-                if (rating != null) this.score = Score.from10(rating)
+                if (rating != null) {
+                    this.score = Score.from10(rating)
+                    println("Score definido na série: $rating")
+                }
                 if (cast != null && cast.isNotEmpty()) addActors(cast)
                 if (trailerKey != null) addTrailer("https://www.youtube.com/watch?v=$trailerKey")
             }
