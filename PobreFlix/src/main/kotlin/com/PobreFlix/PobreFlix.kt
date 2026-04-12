@@ -47,9 +47,6 @@ class PobreFlix : MainAPI() {
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        println("=== getMainPage INICIADO ===")
-        println("Page: $page, Request: ${request.name}")
-        
         var url = request.data
         
         if (request.name != "Em Alta" && page > 1) {
@@ -59,27 +56,14 @@ class PobreFlix : MainAPI() {
         if (request.name == "Em Alta") {
             val document = app.get(url).document
             val elements = document.select(".swiper_top10_home .swiper-slide, .top-10-items .item")
-            println("Elementos Top 10: ${elements.size}")
             val items = elements.mapNotNull { it.toSearchResult() }
             return newHomePageResponse(request.name, items, hasNext = false)
         }
         
         val document = app.get(url).document
         val elements = document.select("article.group, .group\\/card, .grid article")
-        println("Elementos encontrados: ${elements.size}")
-        
-        val items = elements.mapNotNull { element ->
-            try {
-                element.toSearchResult()
-            } catch (e: Exception) {
-                println("ERRO ao processar elemento: ${e.message}")
-                null
-            }
-        }
-        
+        val items = elements.mapNotNull { it.toSearchResult() }
         val hasNextPage = document.select("a[href*='?page=${page + 1}'], a[href*='&page=${page + 1}'], a:contains(Próxima)").isNotEmpty()
-        
-        println("Items: ${items.size}, HasNext: $hasNextPage")
         
         return newHomePageResponse(request.name, items, hasNext = hasNextPage)
     }
@@ -129,30 +113,10 @@ class PobreFlix : MainAPI() {
         val finalTitle = title.trim()
         
         var scoreValue: Float? = null
-        
-        val scoreTextElement = selectFirst(".absolute.top-2.right-2 .text-\\[10px\\].font-bold, .absolute.top-2.right-2 text")
-        if (scoreTextElement != null) {
-            val scoreText = scoreTextElement.text().trim()
-            val scoreMatch = Regex("(\\d+)").find(scoreText)
-            if (scoreMatch != null) {
-                val percent = scoreMatch.groupValues[1].toFloatOrNull()
-                scoreValue = percent?.let { it / 10 }
-                println("[PobreFlix] Score encontrado no card: ${percent}% -> ${scoreValue}/10")
-            }
-        }
-        
-        if (scoreValue == null) {
-            val dashArray = selectFirst("path[stroke-dasharray]")?.attr("stroke-dasharray") ?: ""
-            if (dashArray.isNotBlank()) {
-                val dashMatch = Regex("(\\d+(?:\\.\\d+)?)").find(dashArray)
-                if (dashMatch != null) {
-                    val percent = dashMatch.groupValues[1].toFloatOrNull()
-                    if (percent != null && percent <= 100) {
-                        scoreValue = percent / 10
-                        println("[PobreFlix] Score via stroke-dasharray: ${percent}% -> ${scoreValue}/10")
-                    }
-                }
-            }
+        val scoreText = selectFirst("text[x='18'][y='21']")?.text()
+        if (!scoreText.isNullOrBlank()) {
+            val percent = scoreText.replace("%", "").trim().toFloatOrNull()
+            scoreValue = percent?.let { it / 10 }
         }
         
         val isAnime = href.contains("/anime/")
@@ -178,113 +142,38 @@ class PobreFlix : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        println("=== search INICIADO: $query")
-        
         if (query.length < 2) return emptyList()
         
         val encodedQuery = URLEncoder.encode(query, "UTF-8")
         val searchUrl = "$mainUrl$SEARCH_PATH?s=$encodedQuery"
         
-        println("URL da busca: $searchUrl")
-        
         return try {
             val document = app.get(searchUrl).document
-            println("Título da página: ${document.title()}")
-            
             document.select("article.group, .grid article, .group\\/card")
-                .mapNotNull { element ->
-                    try {
-                        element.toSearchResult()
-                    } catch (e: Exception) {
-                        println("ERRO no resultado: ${e.message}")
-                        null
-                    }
-                }
-            
+                .mapNotNull { it.toSearchResult() }
         } catch (e: Exception) {
-            println("ERRO na busca: ${e.message}")
             emptyList()
         }
     }
 
-    override suspend fun search(query: String, page: Int): SearchResponseList? {
-        println("=== search INICIADO (com paginação): $query, página: $page")
-        
-        if (query.length < 2) return null
-        
-        val encodedQuery = URLEncoder.encode(query, "UTF-8")
-        val searchUrl = if (page > 1) {
-            "$mainUrl$SEARCH_PATH?s=$encodedQuery&page=$page"
-        } else {
-            "$mainUrl$SEARCH_PATH?s=$encodedQuery"
-        }
-        
-        println("URL da busca: $searchUrl")
-        
-        return try {
-            val document = app.get(searchUrl).document
-            println("Título da página: ${document.title()}")
-            
-            val results = document.select("article.group, .grid article, .group\\/card")
-                .mapNotNull { element ->
-                    try {
-                        element.toSearchResult()
-                    } catch (e: Exception) {
-                        println("ERRO no resultado: ${e.message}")
-                        null
-                    }
-                }
-            
-            var hasNextPage = false
-            if (results.isNotEmpty()) {
-                val nextPageUrl = "$mainUrl$SEARCH_PATH?s=$encodedQuery&page=${page + 1}"
-                try {
-                    val nextPageDoc = app.get(nextPageUrl).document
-                    val nextPageResults = nextPageDoc.select("article.group, .grid article, .group\\/card")
-                    hasNextPage = nextPageResults.isNotEmpty()
-                    println("Próxima página ${page + 1}: ${if (hasNextPage) "tem conteúdo" else "vazia"}")
-                } catch (e: Exception) {
-                    println("Erro ao verificar próxima página: ${e.message}")
-                    hasNextPage = false
-                }
-            }
-            
-            println("Resultados encontrados na página $page: ${results.size}, hasNextPage: $hasNextPage")
-            
-            results.toNewSearchResponseList(hasNextPage)
-            
-        } catch (e: Exception) {
-            println("ERRO na busca: ${e.message}")
-            null
-        }
-    }
-
     override suspend fun load(url: String): LoadResponse? {
-        println("=== load INICIADO ===")
-        println("URL: $url")
-        
         try {
             val document = app.get(url).document
-            println("Título da página: ${document.title()}")
 
             val titleElement = document.selectFirst("h1.text-3xl.text-lead.font-bold")
             val title = titleElement?.text()?.trim() ?: return null
-            println("Título: $title")
 
             var year = Regex("\\((\\d{4})\\)").find(title)?.groupValues?.get(1)?.toIntOrNull()
             val cleanTitle = title.replace(Regex("\\(\\d{4}\\)"), "").trim()
-            println("Título limpo: $cleanTitle, ano: $year")
 
             val isAnime = url.contains("/anime/")
             val isSerie = url.contains("/serie/") || url.contains("/dorama/")
-            println("isAnime: $isAnime, isSerie: $isSerie")
 
             var poster = document.selectFirst("meta[property='og:image']")?.attr("content")
             if (poster.isNullOrBlank()) {
                 poster = document.selectFirst("img.w-full.aspect-\\[2\\/3\\]")?.attr("src")
             }
             poster = fixImageUrl(poster)
-            println("Poster: $poster")
             
             var backdrop: String? = null
             
@@ -299,19 +188,12 @@ class PobreFlix : MainAPI() {
             }
             
             backdrop = fixImageUrl(backdrop)
-            println("Backdrop: $backdrop")
             
             var rating: Float? = null
             
             val ratingSvg = document.selectFirst(".inline-flex.items-center.gap-3.rounded-2xl .text-\\[12px\\].font-extrabold")
             if (ratingSvg != null) {
-                val ratingText = ratingSvg.text().trim()
-                rating = if (ratingText.contains("%")) {
-                    ratingText.replace("%", "").trim().toFloatOrNull()?.let { it / 10 }
-                } else {
-                    ratingText.toFloatOrNull()
-                }
-                println("Rating do SVG: $rating")
+                rating = ratingSvg.text().trim().toFloatOrNull()
             }
             
             if (rating == null) {
@@ -320,7 +202,6 @@ class PobreFlix : MainAPI() {
                     val ratingSpan = infoBar.selectFirst(".text-lead")
                     if (ratingSpan != null) {
                         rating = ratingSpan.text().trim().toFloatOrNull()
-                        println("Rating da barra: $rating")
                     }
                 }
             }
@@ -333,7 +214,6 @@ class PobreFlix : MainAPI() {
                     if (durationSpan != null) {
                         val durationText = durationSpan.text()
                         duration = parseDuration(durationText)
-                        println("Duração: $duration minutos")
                     }
                 }
             }
@@ -344,7 +224,6 @@ class PobreFlix : MainAPI() {
                     val yearSpan = infoBar.select("span").firstOrNull { it.text().matches(Regex("\\d{4}")) }
                     if (yearSpan != null) {
                         year = yearSpan.text().toIntOrNull()
-                        println("Ano da barra: $year")
                     }
                 }
             }
@@ -354,77 +233,24 @@ class PobreFlix : MainAPI() {
                 synopsis = document.selectFirst("meta[name='description']")?.attr("content")?.trim()
             }
             synopsis = synopsis?.replace(Regex("\\|.*$"), "")?.trim()
-            println("Sinopse: ${synopsis?.take(100)}...")
             
             val tags = document.select(".flex.flex-wrap.gap-2.pt-4 a")
                 .map { it.text().trim() }
                 .filter { it.isNotBlank() }
                 .takeIf { it.isNotEmpty() }
-            println("Tags: $tags")
             
             val cast = document.select("#cast-section .swiper-slide, .cast-swiper .swiper-slide")
                 .mapNotNull { element ->
                     try {
                         val name = element.selectFirst(".text-sm.font-bold")?.text()?.trim() ?: return@mapNotNull null
                         val imageUrl = element.selectFirst("img")?.attr("src")?.let { fixImageUrl(it) }
-                        
-                        Actor(
-                            name = name,
-                            image = imageUrl
-                        )
+                        Actor(name = name, image = imageUrl)
                     } catch (e: Exception) { null }
                 }
                 .takeIf { it.isNotEmpty() }
-            println("Elenco: ${cast?.size} atores")
             
-            // ===== TRAILER - CORREÇÃO COMPLETA =====
-            var trailerUrl: String? = null
-            try {
-                val scripts = document.select("script")
-                for (script in scripts) {
-                    val data = script.data()
-                    if (data.contains("__trailerKeys")) {
-                        println("[PobreFlix] Script com __trailerKeys encontrado")
-                        val pattern = Regex("""__trailerKeys\s*=\s*\[([^\]]+)\]""")
-                        val match = pattern.find(data)
-                        if (match != null) {
-                            val keysString = match.groupValues[1]
-                            val keyPattern = Regex("[\"']([^\"']+)[\"']")
-                            val keyMatch = keyPattern.find(keysString)
-                            if (keyMatch != null) {
-                                val trailerKey = keyMatch.groupValues[1]
-                                trailerUrl = "https://www.youtube.com/watch?v=$trailerKey"
-                                println("[PobreFlix] Trailer encontrado via __trailerKeys: $trailerUrl")
-                                break
-                            }
-                        }
-                    }
-                }
-                
-                if (trailerUrl == null) {
-                    val trailerSection = document.selectFirst("#trailers-section .trailer-thumb-btn")
-                    if (trailerSection != null) {
-                        val trailerKey = trailerSection.attr("data-yt")
-                        if (trailerKey.isNotBlank()) {
-                            trailerUrl = "https://www.youtube.com/watch?v=$trailerKey"
-                            println("[PobreFlix] Trailer encontrado via data-yt: $trailerUrl")
-                        }
-                    }
-                }
-                
-                if (trailerUrl == null) {
-                    val youtubeLink = document.selectFirst("a[href*='youtube.com/watch']")?.attr("href")
-                    if (youtubeLink != null && youtubeLink.isNotBlank()) {
-                        trailerUrl = youtubeLink
-                        println("[PobreFlix] Trailer encontrado via link: $trailerUrl")
-                    }
-                }
-                
-            } catch (e: Exception) {
-                println("[PobreFlix] Erro ao extrair trailer: ${e.message}")
-            }
-            
-            println("[PobreFlix] Trailer URL final: $trailerUrl")
+            val trailerKey = document.selectFirst("script:containsData(window.__trailerKeys)")?.data()
+                ?.let { Regex("window\\.__trailerKeys\\s*=\\s*\\[\"([^\"]+)\"\\]").find(it)?.groupValues?.get(1) }
             
             val recommendations = document.select("#relatedSection .swiper-slide a, .related-swiper .swiper-slide a")
                 .mapNotNull { element ->
@@ -432,16 +258,7 @@ class PobreFlix : MainAPI() {
                         val recUrl = element.attr("href")
                         if (recUrl.isBlank()) return@mapNotNull null
                         
-                        var recImg: String? = null
-                        val imgElement = element.selectFirst("img")
-                        if (imgElement != null) {
-                            recImg = imgElement.attr("src")
-                            if (recImg.isNullOrBlank()) recImg = imgElement.attr("data-src")
-                            if (!recImg.isNullOrBlank()) {
-                                recImg = fixImageUrl(recImg)
-                            }
-                        }
-                        
+                        val recImg = element.selectFirst("img")?.attr("src")?.let { fixImageUrl(it) }
                         val recTitle = element.selectFirst("h3, .text-white.font-bold")?.text()?.trim()
                             ?: return@mapNotNull null
                         
@@ -449,42 +266,25 @@ class PobreFlix : MainAPI() {
                         val recIsSerie = recUrl.contains("/serie/") || recUrl.contains("/dorama/")
                         val recYear = element.selectFirst(".text-white\\/70.text-xs")?.text()?.toIntOrNull()
                         
-                        var recScore: Float? = null
-                        val scoreText = element.selectFirst(".absolute.top-2.right-2 .text-\\[10px\\].font-bold, .absolute.top-2.right-2 text")?.text()
-                        if (!scoreText.isNullOrBlank()) {
-                            val percent = scoreText.replace("%", "").trim().toFloatOrNull()
-                            recScore = percent?.let { it / 10 }
-                        }
-                        
                         when {
                             recIsAnime -> newAnimeSearchResponse(recTitle, fixUrl(recUrl), TvType.Anime) {
                                 this.posterUrl = recImg
                                 this.year = recYear
-                                if (recScore != null) this.score = Score.from10(recScore)
                             }
                             recIsSerie -> newTvSeriesSearchResponse(recTitle, fixUrl(recUrl), TvType.TvSeries) {
                                 this.posterUrl = recImg
                                 this.year = recYear
-                                if (recScore != null) this.score = Score.from10(recScore)
                             }
                             else -> newMovieSearchResponse(recTitle, fixUrl(recUrl), TvType.Movie) {
                                 this.posterUrl = recImg
                                 this.year = recYear
-                                if (recScore != null) this.score = Score.from10(recScore)
                             }
                         }
-                    } catch (e: Exception) { 
-                        println("[PobreFlix] Erro na recomendação: ${e.message}")
-                        null 
-                    }
+                    } catch (e: Exception) { null }
                 }
-            println("Recomendações: ${recommendations.size}")
             
             val playerUrl = findPlayerUrl(document)
-            println("Player URL: $playerUrl")
-            
             val tmdbId = document.selectFirst("section[data-contentid]")?.attr("data-contentid")?.toIntOrNull()
-            println("TMDB ID encontrado: $tmdbId")
             
             if (!isAnime && !isSerie) {
                 return newMovieLoadResponse(cleanTitle, url, TvType.Movie, playerUrl ?: url) {
@@ -495,13 +295,9 @@ class PobreFlix : MainAPI() {
                     this.tags = tags
                     this.duration = duration
                     this.recommendations = recommendations.takeIf { it.isNotEmpty() }
-                    
                     if (rating != null) this.score = Score.from10(rating)
                     if (cast != null && cast.isNotEmpty()) addActors(cast)
-                    if (trailerUrl != null) {
-                        println("[PobreFlix] Adicionando trailer ao filme: $trailerUrl")
-                        addTrailer(trailerUrl)
-                    }
+                    if (trailerKey != null) addTrailer("https://www.youtube.com/watch?v=$trailerKey")
                 }
             }
             
@@ -515,18 +311,12 @@ class PobreFlix : MainAPI() {
                 this.plot = synopsis
                 this.tags = tags
                 this.recommendations = recommendations.takeIf { it.isNotEmpty() }
-                
                 if (rating != null) this.score = Score.from10(rating)
                 if (cast != null && cast.isNotEmpty()) addActors(cast)
-                if (trailerUrl != null) {
-                    println("[PobreFlix] Adicionando trailer à série: $trailerUrl")
-                    addTrailer(trailerUrl)
-                }
+                if (trailerKey != null) addTrailer("https://www.youtube.com/watch?v=$trailerKey")
             }
             
         } catch (e: Exception) {
-            println("ERRO em load: ${e.message}")
-            e.printStackTrace()
             return null
         }
     }
@@ -536,57 +326,33 @@ class PobreFlix : MainAPI() {
         seriesUrl: String,
         tmdbId: Int?
     ): List<Episode> {
-        println("  >>> extractEpisodesFromSite INICIADO")
-        println("  URL: $seriesUrl")
-        println("  TMDB ID: $tmdbId")
-        
         val episodes = mutableListOf<Episode>()
 
         val scriptData = document.selectFirst("script:containsData(window.allEpisodes)")?.data()
         if (scriptData != null) {
-            println("  Script com allEpisodes encontrado")
             try {
-                val jsonMatch = Regex("window\\.allEpisodes\\s*=\\s*(\\{[\\s\\S]+?\\});").find(scriptData)
+                val jsonMatch = Regex("window\\.allEpisodes\\s*=\\s*(\\{[^;]+\\})").find(scriptData)
                 val jsonString = jsonMatch?.groupValues?.get(1)
                 
                 if (jsonString != null) {
-                    println("  JSON encontrado, tamanho: ${jsonString.length}")
-                    
-                    val seasonPattern = Regex("\"(\\d+)\"\\s*:\\s*\\[")
-                    val seasonMatches = seasonPattern.findAll(jsonString).toList()
-                    
-                    println("  Temporadas encontradas: ${seasonMatches.size}")
+                    val seasonPattern = Regex("\"(\\d+)\":\\s*\\[([\\s\\S]*?)\\](?=\\s*,\\s*\"\\d+\"|\\s*\\})")
+                    val seasonMatches = seasonPattern.findAll(jsonString)
                     
                     for (seasonMatch in seasonMatches) {
                         val seasonNum = seasonMatch.groupValues[1].toIntOrNull() ?: continue
-                        val startIndex = seasonMatch.range.last + 1
+                        val episodesJson = seasonMatch.groupValues[2]
                         
-                        var bracketCount = 1
-                        var endIndex = startIndex
-                        while (endIndex < jsonString.length && bracketCount > 0) {
-                            when (jsonString[endIndex]) {
-                                '[' -> bracketCount++
-                                ']' -> bracketCount--
-                            }
-                            endIndex++
-                        }
+                        val episodePattern = Regex("""\{[^{}]*?"epi_num"\s*:\s*(\d+)[^{}]*?"title"\s*:\s*"([^"]*)"[^{}]*?"sinopse"\s*:\s*"([^"]*)"[^{}]*?"thumb_url"\s*:\s*"([^"]*)"[^{}]*?"duration"\s*:\s*(\d+)[^{}]*?"air_date"\s*:\s*"([^"]*)"[^{}]*?"has_dub"\s*:\s*(true|false)[^{}]*?"has_leg"\s*:\s*(true|false)[^{}]*?\}""")
                         
-                        val seasonJson = jsonString.substring(startIndex, endIndex - 1)
-                        println("  Processando Temporada $seasonNum")
-                        
-                        val episodePattern = Regex("""\{([^{}]*?)\}""")
-                        val episodeMatches = episodePattern.findAll(seasonJson)
-                        var seasonEpCount = 0
+                        val episodeMatches = episodePattern.findAll(episodesJson)
                         
                         for (epMatch in episodeMatches) {
-                            val episodeData = epMatch.groupValues[1]
-                            
-                            val epNum = Regex("\"epi_num\"\\s*:\\s*(\\d+)").find(episodeData)?.groupValues?.get(1)?.toIntOrNull() ?: continue
-                            val epTitle = Regex("\"title\"\\s*:\\s*\"([^\"]*)\"").find(episodeData)?.groupValues?.get(1)?.ifEmpty { "Episódio $epNum" } ?: "Episódio $epNum"
-                            val sinopse = Regex("\"sinopse\"\\s*:\\s*\"([^\"]*)\"").find(episodeData)?.groupValues?.get(1)?.takeIf { it.isNotEmpty() && it != "null" }
-                            var thumbUrl = Regex("\"thumb_url\"\\s*:\\s*\"([^\"]*)\"").find(episodeData)?.groupValues?.get(1)?.takeIf { it.isNotEmpty() && it != "null" }
-                            val durationMin = Regex("\"duration\"\\s*:\\s*(\\d+)").find(episodeData)?.groupValues?.get(1)?.toIntOrNull()
-                            val airDate = Regex("\"air_date\"\\s*:\\s*\"([^\"]*)\"").find(episodeData)?.groupValues?.get(1)?.takeIf { it.isNotEmpty() && it != "null" }
+                            val epNum = epMatch.groupValues[1].toIntOrNull() ?: continue
+                            val epTitle = epMatch.groupValues[2].ifEmpty { "Episódio $epNum" }
+                            val sinopse = epMatch.groupValues[3].ifEmpty { null }
+                            var thumbUrl = epMatch.groupValues[4].takeIf { it.isNotEmpty() }
+                            val durationMin = epMatch.groupValues[5].toIntOrNull()
+                            val airDate = epMatch.groupValues[6].takeIf { it.isNotEmpty() }
                             
                             thumbUrl = thumbUrl?.let {
                                 when {
@@ -614,28 +380,19 @@ class PobreFlix : MainAPI() {
                                 if (airDate != null) this.addDate(airDate)
                                 if (tmdbId != null) this.data = "$tmdbId|$seasonNum|$epNum"
                             })
-                            
-                            seasonEpCount++
                         }
-                        
-                        println("  Temporada $seasonNum: $seasonEpCount episódios")
                     }
                     
                     if (episodes.isNotEmpty()) {
-                        val uniqueSeasons = episodes.map { it.season }.distinct().size
-                        println("  ✅ Total de ${episodes.size} episódios extraídos do JSON em $uniqueSeasons temporadas")
                         return episodes
                     }
                 }
             } catch (e: Exception) {
-                println("  ERRO ao processar JSON: ${e.message}")
-                e.printStackTrace()
+                // Fallback para HTML
             }
         }
 
-        println("  Usando fallback HTML...")
-        val episodeElements = document.select("#episodes-list article")
-        println("  Elementos de episódio encontrados: ${episodeElements.size}")
+        val episodeElements = document.select("#episodes-list article, .episode-card, .episode-item")
         
         episodeElements.forEachIndexed { index, element ->
             try {
@@ -690,13 +447,9 @@ class PobreFlix : MainAPI() {
                     if (airDate != null) this.addDate(airDate)
                     if (tmdbId != null) this.data = "$tmdbId|1|$epNumber"
                 })
-                println("    Episódio $epNumber adicionado via HTML")
-            } catch (e: Exception) {
-                println("  ERRO ao processar elemento de episódio: ${e.message}")
-            }
+            } catch (e: Exception) { }
         }
         
-        println("  Total de episódios extraídos: ${episodes.size}")
         return episodes
     }
 
@@ -711,9 +464,6 @@ class PobreFlix : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        println("=== loadLinks INICIADO ===")
-        println("Data: $data")
-        
         return try {
             val parts = data.split("|")
             
@@ -722,58 +472,35 @@ class PobreFlix : MainAPI() {
                 val season = parts[1].toIntOrNull() ?: 1
                 val episode = parts[2].toIntOrNull() ?: 1
                 
-                if (tmdbId == null) {
-                    println("TMDB ID inválido na string: $data")
-                    return false
-                }
-                
-                println("Série - TMDB ID: $tmdbId, Season: $season, Episode: $episode")
+                if (tmdbId == null) return false
                 
                 val streams = PobreFlixExtractor.getStreams(tmdbId, "serie", season, episode)
                 
-                if (streams.isEmpty()) {
-                    println("Nenhum stream encontrado para S${season}E${episode}")
-                    return false
-                }
+                if (streams.isEmpty()) return false
                 
-                println("Extractor encontrou ${streams.size} streams")
-                streams.forEach { stream -> callback(stream) }
+                streams.forEach { callback(it) }
                 true
             } else {
                 val document = app.get(data).document
-                println("Documento carregado")
-                
                 val urlPath = data.substringAfter(mainUrl).substringBefore("?")
                 
                 if (urlPath.contains("/filme/")) {
                     val tmdbId = document.selectFirst("section[data-contentid]")?.attr("data-contentid")?.toIntOrNull()
                         ?: document.selectFirst("#movie-player-container")?.attr("data-apicontentid")?.toIntOrNull()
                     
-                    if (tmdbId == null) {
-                        println("TMDB ID não encontrado para filme")
-                        return false
-                    }
-                    
-                    println("Filme TMDB ID: $tmdbId")
+                    if (tmdbId == null) return false
                     
                     val streams = PobreFlixExtractor.getStreams(tmdbId, "filme", 1, 1)
                     
-                    if (streams.isEmpty()) {
-                        println("Nenhum stream encontrado")
-                        return false
-                    }
+                    if (streams.isEmpty()) return false
                     
-                    streams.forEach { stream -> callback(stream) }
+                    streams.forEach { callback(it) }
                     true
                 } else {
-                    println("Formato não reconhecido: $data")
                     false
                 }
             }
-            
         } catch (e: Exception) {
-            println("ERRO em loadLinks: ${e.message}")
-            e.printStackTrace()
             false
         }
     }
