@@ -61,22 +61,6 @@ object PobreFlixExtractor {
         return null
     }
 
-    private fun detectQuality(url: String): Int {
-        return when {
-            url.contains("2160") || url.contains("4k") -> 2160
-            url.contains("1440") || url.contains("2k") -> 1440
-            url.contains("1080") -> 1080
-            url.contains("720") -> 720
-            url.contains("480") -> 480
-            url.contains("360") -> 360
-            Regex("""[&?]quality=(\d+)""").find(url)?.groupValues?.get(1)?.toIntOrNull() != null -> 
-                Regex("""[&?]quality=(\d+)""").find(url)?.groupValues?.get(1)?.toIntOrNull() ?: 720
-            Regex("""[&?]v=(\d+)p""").find(url)?.groupValues?.get(1)?.toIntOrNull() != null ->
-                Regex("""[&?]v=(\d+)p""").find(url)?.groupValues?.get(1)?.toIntOrNull() ?: 720
-            else -> 720
-        }
-    }
-
     suspend fun getStreams(
         tmdbId: Int,
         mediaType: String,
@@ -212,8 +196,6 @@ object PobreFlixExtractor {
                 
                 if (videoUrl.isNullOrEmpty()) continue
                 
-                val quality = detectQuality(videoUrl)
-                
                 val title = if (mediaType == "filme") {
                     "Filme $tmdbId"
                 } else {
@@ -223,12 +205,12 @@ object PobreFlixExtractor {
                 results.add(
                     newExtractorLink(
                         source = "SuperFlixAPI",
-                        name = "SuperFlixAPI $serverType ${quality}p",
+                        name = "SuperFlixAPI $serverType",
                         url = videoUrl,
                         type = ExtractorLinkType.M3U8
                     ) {
                         this.referer = "$CDN_BASE/"
-                        this.quality = quality
+                        this.quality = 720
                         this.headers = mapOf(
                             "Referer" to "$CDN_BASE/",
                             "User-Agent" to HEADERS["User-Agent"]!!
