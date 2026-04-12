@@ -178,36 +178,6 @@ class PobreFlix : MainAPI() {
         }
     }
 
-override suspend fun search(query: String): List<SearchResponse> {
-    println("=== search INICIADO: $query")
-    
-    if (query.length < 2) return emptyList()
-    
-    val encodedQuery = URLEncoder.encode(query, "UTF-8")
-    val searchUrl = "$mainUrl$SEARCH_PATH?s=$encodedQuery"
-    
-    println("URL da busca: $searchUrl")
-    
-    return try {
-        val document = app.get(searchUrl).document
-        println("Título da página: ${document.title()}")
-        
-        document.select("article.group, .grid article, .group\\/card")
-            .mapNotNull { element ->
-                try {
-                    element.toSearchResult()
-                } catch (e: Exception) {
-                    println("ERRO no resultado: ${e.message}")
-                    null
-                }
-            }
-        
-    } catch (e: Exception) {
-        println("ERRO na busca: ${e.message}")
-        emptyList()
-    }
-}
-
 override suspend fun search(query: String, page: Int): SearchResponseList? {
     println("=== search INICIADO (com paginação): $query, página: $page")
     
@@ -236,7 +206,22 @@ override suspend fun search(query: String, page: Int): SearchResponseList? {
                 }
             }
         
-        val hasNextPage = document.select("a[href*='&page=${page + 1}'], a[href*='?page=${page + 1}'], a:contains(Próxima)").isNotEmpty()
+        // CORREÇÃO: Verificar se existe próxima página tentando acessar page+1
+        var hasNextPage = false
+        
+        if (results.isNotEmpty()) {
+            // Tentar acessar a próxima página para ver se existe conteúdo
+            val nextPageUrl = "$mainUrl$SEARCH_PATH?s=$encodedQuery&page=${page + 1}"
+            try {
+                val nextPageDoc = app.get(nextPageUrl).document
+                val nextPageResults = nextPageDoc.select("article.group, .grid article, .group\\/card")
+                hasNextPage = nextPageResults.isNotEmpty()
+                println("Próxima página ${page + 1}: ${if (hasNextPage) "tem conteúdo" else "vazia"}")
+            } catch (e: Exception) {
+                println("Erro ao verificar próxima página: ${e.message}")
+                hasNextPage = false
+            }
+        }
         
         println("Resultados encontrados na página $page: ${results.size}, hasNextPage: $hasNextPage")
         
