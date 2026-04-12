@@ -177,10 +177,12 @@ class PobreFlix : MainAPI() {
             }
         }
     }
-
-    
 override suspend fun search(query: String): List<SearchResponse> {
-    return searchWithPage(query, 1)
+    println("=== search INICIADO: $query")
+    
+    if (query.length < 2) return emptyList()
+    
+    return search(query, 1)
 }
 
 override suspend fun search(query: String, page: Int): SearchResponseList? {
@@ -197,7 +199,7 @@ override suspend fun search(query: String, page: Int): SearchResponseList? {
     
     println("URL da busca: $searchUrl")
     
-    try {
+    return try {
         val document = app.get(searchUrl).document
         println("Título da página: ${document.title()}")
         
@@ -216,19 +218,15 @@ override suspend fun search(query: String, page: Int): SearchResponseList? {
         
         println("Resultados encontrados na página $page: ${results.size}, hasNextPage: $hasNextPage")
         
-        return SearchResponseList(results, hasNextPage)
+        results.toNewSearchResponseList(hasNextPage)
         
     } catch (e: Exception) {
         println("ERRO na busca: ${e.message}")
-        return null
+        null
     }
 }
-
-// Método auxiliar para busca sem paginação
-suspend fun searchSimple(query: String): List<SearchResponse> {
-    return search(query, 1)?.results ?: emptyList()
-}
     
+
 
     override suspend fun load(url: String): LoadResponse? {
         println("=== load INICIADO ===")
