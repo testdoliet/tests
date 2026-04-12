@@ -128,7 +128,6 @@ class PobreFlix : MainAPI() {
         
         val finalTitle = title.trim()
         
-        // ===== BADGE DE AVALIAÇÃO - EXTRAIR DO CARD =====
         var scoreValue: Float? = null
         
         val scoreTextElement = selectFirst(".absolute.top-2.right-2 .text-\\[10px\\].font-bold, .absolute.top-2.right-2 text")
@@ -236,7 +235,6 @@ class PobreFlix : MainAPI() {
                     }
                 }
             
-            // Verificar se existe próxima página
             var hasNextPage = false
             if (results.isNotEmpty()) {
                 val nextPageUrl = "$mainUrl$SEARCH_PATH?s=$encodedQuery&page=${page + 1}"
@@ -303,7 +301,6 @@ class PobreFlix : MainAPI() {
             backdrop = fixImageUrl(backdrop)
             println("Backdrop: $backdrop")
             
-            // ===== BADGE DE AVALIAÇÃO NA PÁGINA DE DETALHES =====
             var rating: Float? = null
             
             val ratingSvg = document.selectFirst(".inline-flex.items-center.gap-3.rounded-2xl .text-\\[12px\\].font-extrabold")
@@ -383,18 +380,15 @@ class PobreFlix : MainAPI() {
             // ===== TRAILER - CORREÇÃO COMPLETA =====
             var trailerUrl: String? = null
             try {
-                // Método 1: Procurar por __trailerKeys nos scripts
                 val scripts = document.select("script")
                 for (script in scripts) {
                     val data = script.data()
                     if (data.contains("__trailerKeys")) {
                         println("[PobreFlix] Script com __trailerKeys encontrado")
-                        // Padrão para capturar array de keys
                         val pattern = Regex("""__trailerKeys\s*=\s*\[([^\]]+)\]""")
                         val match = pattern.find(data)
                         if (match != null) {
                             val keysString = match.groupValues[1]
-                            // Extrair a primeira key (entre aspas)
                             val keyPattern = Regex("[\"']([^\"']+)[\"']")
                             val keyMatch = keyPattern.find(keysString)
                             if (keyMatch != null) {
@@ -407,7 +401,6 @@ class PobreFlix : MainAPI() {
                     }
                 }
                 
-                // Método 2: Procurar no elemento trailers-section
                 if (trailerUrl == null) {
                     val trailerSection = document.selectFirst("#trailers-section .trailer-thumb-btn")
                     if (trailerSection != null) {
@@ -419,7 +412,6 @@ class PobreFlix : MainAPI() {
                     }
                 }
                 
-                // Método 3: Procurar qualquer link do YouTube na página
                 if (trailerUrl == null) {
                     val youtubeLink = document.selectFirst("a[href*='youtube.com/watch']")?.attr("href")
                     if (youtubeLink != null && youtubeLink.isNotBlank()) {
@@ -434,7 +426,6 @@ class PobreFlix : MainAPI() {
             
             println("[PobreFlix] Trailer URL final: $trailerUrl")
             
-            // ===== RECOMENDAÇÕES =====
             val recommendations = document.select("#relatedSection .swiper-slide a, .related-swiper .swiper-slide a")
                 .mapNotNull { element ->
                     try {
@@ -496,7 +487,6 @@ class PobreFlix : MainAPI() {
             println("TMDB ID encontrado: $tmdbId")
             
             if (!isAnime && !isSerie) {
-                // FILMES
                 return newMovieLoadResponse(cleanTitle, url, TvType.Movie, playerUrl ?: url) {
                     this.posterUrl = poster
                     this.backgroundPosterUrl = backdrop
@@ -515,7 +505,6 @@ class PobreFlix : MainAPI() {
                 }
             }
             
-            // SÉRIES/ANIMES
             val episodes = extractEpisodesFromSite(document, url, tmdbId)
             val type = if (isAnime) TvType.Anime else TvType.TvSeries
             
@@ -598,8 +587,6 @@ class PobreFlix : MainAPI() {
                             var thumbUrl = Regex("\"thumb_url\"\\s*:\\s*\"([^\"]*)\"").find(episodeData)?.groupValues?.get(1)?.takeIf { it.isNotEmpty() && it != "null" }
                             val durationMin = Regex("\"duration\"\\s*:\\s*(\\d+)").find(episodeData)?.groupValues?.get(1)?.toIntOrNull()
                             val airDate = Regex("\"air_date\"\\s*:\\s*\"([^\"]*)\"").find(episodeData)?.groupValues?.get(1)?.takeIf { it.isNotEmpty() && it != "null" }
-                            val hasDub = Regex("\"has_dub\"\\s*:\\s*(true|false)").find(episodeData)?.groupValues?.get(1)?.toBoolean() ?: false
-                            val hasLeg = Regex("\"has_leg\"\\s*:\\s*(true|false)").find(episodeData)?.groupValues?.get(1)?.toBoolean() ?: false
                             
                             thumbUrl = thumbUrl?.let {
                                 when {
@@ -820,4 +807,14 @@ class PobreFlix : MainAPI() {
         val hoursMatch = Regex("(\\d+)\\s*h").find(str)
         val minutesMatch = Regex("(\\d+)\\s*m(?:in)?").find(str)
         
-        val hours = hoursMatch?.groupValues?.get(1)?.to
+        val hours = hoursMatch?.groupValues?.get(1)?.toIntOrNull() ?: 0
+        val minutes = minutesMatch?.groupValues?.get(1)?.toIntOrNull() ?: 0
+        
+        if (hours > 0 || minutes > 0) {
+            return (hours * 60) + minutes
+        }
+        
+        val justMinutes = Regex("(\\d+)\\s*m(?:in)?").find(str)
+        return justMinutes?.groupValues?.get(1)?.toIntOrNull()
+    }
+}
