@@ -128,11 +128,25 @@ class PobreFlix : MainAPI() {
         
         val finalTitle = title.trim()
         
+        // ===== BADGE DE AVALIAÇÃO - EXTRAIR SCORE =====
         var scoreValue: Float? = null
+        
+        // Tentar extrair do SVG de rating
         val scoreText = selectFirst("text[x='18'][y='21']")?.text()
         if (!scoreText.isNullOrBlank()) {
             val percent = scoreText.replace("%", "").trim().toFloatOrNull()
+            // Converter porcentagem (0-100) para escala 0-10
             scoreValue = percent?.let { it / 10 }
+            println("[PobreFlix] Score encontrado: ${percent}% -> ${scoreValue}/10")
+        }
+        
+        // Tentar alternativa se não encontrou
+        if (scoreValue == null) {
+            val altScore = selectFirst(".rating, .score, .nota")?.text()?.trim()
+            if (!altScore.isNullOrBlank()) {
+                scoreValue = altScore.replace("/10", "").trim().toFloatOrNull()
+                println("[PobreFlix] Score alternativo: $scoreValue/10")
+            }
         }
         
         val isAnime = href.contains("/anime/")
@@ -230,6 +244,7 @@ class PobreFlix : MainAPI() {
             backdrop = fixImageUrl(backdrop)
             println("Backdrop: $backdrop")
             
+            // ===== BADGE DE AVALIAÇÃO NA PÁGINA DE DETALHES =====
             var rating: Float? = null
             
             val ratingSvg = document.selectFirst(".inline-flex.items-center.gap-3.rounded-2xl .text-\\[12px\\].font-extrabold")
@@ -365,7 +380,7 @@ class PobreFlix : MainAPI() {
                 }
             }
             
-            // SÉRIES/ANIMES - CORREÇÃO AQUI!
+            // SÉRIES/ANIMES
             val episodes = extractEpisodesFromSite(document, url, tmdbId)
             val type = if (isAnime) TvType.Anime else TvType.TvSeries
             
@@ -390,7 +405,7 @@ class PobreFlix : MainAPI() {
     }
 
     /**
-     * CORREÇÃO: Extrai TODOS os episódios do JSON, incluindo todas as temporadas
+     * Extrai TODOS os episódios do JSON injetado no HTML
      */
     private suspend fun extractEpisodesFromSite(
         document: org.jsoup.nodes.Document,
@@ -403,31 +418,25 @@ class PobreFlix : MainAPI() {
         
         val episodes = mutableListOf<Episode>()
 
-        // Procura o script que contém o window.allEpisodes
         val scriptData = document.selectFirst("script:containsData(window.allEpisodes)")?.data()
         if (scriptData != null) {
             println("  Script com allEpisodes encontrado")
             try {
-                // Extrai o objeto JSON completo
                 val jsonMatch = Regex("window\\.allEpisodes\\s*=\\s*(\\{[\\s\\S]+?\\});").find(scriptData)
                 val jsonString = jsonMatch?.groupValues?.get(1)
                 
                 if (jsonString != null) {
                     println("  JSON encontrado, tamanho: ${jsonString.length}")
                     
-                    // Regex para encontrar todas as temporadas
                     val seasonPattern = Regex("\"(\\d+)\"\\s*:\\s*\\[")
                     val seasonMatches = seasonPattern.findAll(jsonString).toList()
                     
                     println("  Temporadas encontradas: ${seasonMatches.size}")
                     
-                    for ((index, seasonMatch) in seasonMatches.withIndex()) {
+                    for (seasonMatch in seasonMatches) {
                         val seasonNum = seasonMatch.groupValues[1].toIntOrNull() ?: continue
-                        
-                        // Encontra o início e fim do array desta temporada
                         val startIndex = seasonMatch.range.last + 1
                         
-                        // Conta colchetes para encontrar o fim do array
                         var bracketCount = 1
                         var endIndex = startIndex
                         while (endIndex < jsonString.length && bracketCount > 0) {
@@ -441,7 +450,6 @@ class PobreFlix : MainAPI() {
                         val seasonJson = jsonString.substring(startIndex, endIndex - 1)
                         println("  Processando Temporada $seasonNum")
                         
-                        // Extrai cada episódio individualmente
                         val episodePattern = Regex("""\{([^{}]*?)\}""")
                         val episodeMatches = episodePattern.findAll(seasonJson)
                         var seasonEpCount = 0
@@ -449,7 +457,6 @@ class PobreFlix : MainAPI() {
                         for (epMatch in episodeMatches) {
                             val episodeData = epMatch.groupValues[1]
                             
-                            // Extrai cada campo individualmente
                             val epNum = Regex("\"epi_num\"\\s*:\\s*(\\d+)").find(episodeData)?.groupValues?.get(1)?.toIntOrNull() ?: continue
                             val epTitle = Regex("\"title\"\\s*:\\s*\"([^\"]*)\"").find(episodeData)?.groupValues?.get(1)?.ifEmpty { "Episódio $epNum" } ?: "Episódio $epNum"
                             val sinopse = Regex("\"sinopse\"\\s*:\\s*\"([^\"]*)\"").find(episodeData)?.groupValues?.get(1)?.takeIf { it.isNotEmpty() && it != "null" }
@@ -465,7 +472,6 @@ class PobreFlix : MainAPI() {
                                 println("    Episódio $epNum - DUB=$hasDub, LEG=$hasLeg")
                             }
                             
-                            // Corrigir URL da thumbnail
                             thumbUrl = thumbUrl?.let {
                                 when {
                                     it.startsWith("//") -> "https:$it"
@@ -609,7 +615,6 @@ class PobreFlix : MainAPI() {
             val parts = data.split("|")
             
             if (parts.size == 3) {
-                // É uma SÉRIE!
                 val tmdbId = parts[0].toIntOrNull()
                 val season = parts[1].toIntOrNull() ?: 1
                 val episode = parts[2].toIntOrNull() ?: 1
@@ -634,7 +639,6 @@ class PobreFlix : MainAPI() {
                 }
                 true
             } else {
-                // Tentar como FILME
                 val document = app.get(data).document
                 println("Documento carregado")
                 
