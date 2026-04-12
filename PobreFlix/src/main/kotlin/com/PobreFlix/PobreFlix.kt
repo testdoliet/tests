@@ -18,6 +18,8 @@ class PobreFlixProvider : Plugin() {
     }
 }
 
+class ContentNotAllowedException(message: String) : Exception(message)
+
 class PobreFlix : MainAPI() {
     override var mainUrl = "https://lospobreflix.site"
     override var name = "PobreFlix"
@@ -158,70 +160,77 @@ class PobreFlix : MainAPI() {
         }
     }
 
-    
     override suspend fun search(query: String): List<SearchResponse> {
-    if (query.length < 2) return emptyList()
-    
-    val encodedQuery = URLEncoder.encode(query, "UTF-8")
-    val searchUrl = "$mainUrl$SEARCH_PATH?s=$encodedQuery"
-    
-    return try {
-        val document = app.get(searchUrl).document
-        document.select("article.group, .grid article, .group\\/card")
-            .mapNotNull { element ->
-                try {
-                    element.toSearchResult()
-                } catch (e: Exception) {
-                    null
-                }
-            }
-    } catch (e: Exception) {
-        emptyList()
-    }
-}
-
-override suspend fun search(query: String, page: Int): SearchResponseList? {
-    if (query.length < 2) return null
-    
-    val encodedQuery = URLEncoder.encode(query, "UTF-8")
-    val searchUrl = if (page > 1) {
-        "$mainUrl$SEARCH_PATH?s=$encodedQuery&page=$page"
-    } else {
-        "$mainUrl$SEARCH_PATH?s=$encodedQuery"
-    }
-    
-    return try {
-        val document = app.get(searchUrl).document
-        val results = document.select("article.group, .grid article, .group\\/card")
-            .mapNotNull { element ->
-                try {
-                    element.toSearchResult()
-                } catch (e: Exception) {
-                    null
-                }
-            }
+        if (query.length < 2) return emptyList()
         
-        var hasNextPage = false
-        if (results.isNotEmpty()) {
-            val nextPageUrl = "$mainUrl$SEARCH_PATH?s=$encodedQuery&page=${page + 1}"
-            try {
-                val nextPageDoc = app.get(nextPageUrl).document
-                val nextPageResults = nextPageDoc.select("article.group, .grid article, .group\\/card")
-                hasNextPage = nextPageResults.isNotEmpty()
-            } catch (e: Exception) {
-                hasNextPage = false
-            }
+        val encodedQuery = URLEncoder.encode(query, "UTF-8")
+        val searchUrl = "$mainUrl$SEARCH_PATH?s=$encodedQuery"
+        
+        return try {
+            val document = app.get(searchUrl).document
+            document.select("article.group, .grid article, .group\\/card")
+                .mapNotNull { element ->
+                    try {
+                        element.toSearchResult()
+                    } catch (e: Exception) {
+                        null
+                    }
+                }
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    override suspend fun search(query: String, page: Int): SearchResponseList? {
+        if (query.length < 2) return null
+        
+        val encodedQuery = URLEncoder.encode(query, "UTF-8")
+        val searchUrl = if (page > 1) {
+            "$mainUrl$SEARCH_PATH?s=$encodedQuery&page=$page"
+        } else {
+            "$mainUrl$SEARCH_PATH?s=$encodedQuery"
         }
         
-        results.toNewSearchResponseList(hasNextPage)
-    } catch (e: Exception) {
-        null
+        return try {
+            val document = app.get(searchUrl).document
+            val results = document.select("article.group, .grid article, .group\\/card")
+                .mapNotNull { element ->
+                    try {
+                        element.toSearchResult()
+                    } catch (e: Exception) {
+                        null
+                    }
+                }
+            
+            var hasNextPage = false
+            if (results.isNotEmpty()) {
+                val nextPageUrl = "$mainUrl$SEARCH_PATH?s=$encodedQuery&page=${page + 1}"
+                try {
+                    val nextPageDoc = app.get(nextPageUrl).document
+                    val nextPageResults = nextPageDoc.select("article.group, .grid article, .group\\/card")
+                    hasNextPage = nextPageResults.isNotEmpty()
+                } catch (e: Exception) {
+                    hasNextPage = false
+                }
+            }
+            
+            results.toNewSearchResponseList(hasNextPage)
+        } catch (e: Exception) {
+            null
+        }
     }
-}
 
     override suspend fun load(url: String): LoadResponse? {
         try {
             val document = app.get(url).document
+
+            val tags = document.select(".flex.flex-wrap.gap-2.pt-4 a, .tags a, [class*=tag]")
+                .map { it.text().trim() }
+                .filter { it.isNotBlank() }
+            
+            if (tags.any { it.equals("Hentai", ignoreCase = true) }) {
+                throw ContentNotAllowedException("Esse conteúdo não é permitido.")
+            }
 
             val titleElement = document.selectFirst("h1.text-3xl.text-lead.font-bold")
             val title = titleElement?.text()?.trim() ?: return null
@@ -301,11 +310,6 @@ override suspend fun search(query: String, page: Int): SearchResponseList? {
                 synopsis = document.selectFirst("meta[name='description']")?.attr("content")?.trim()
             }
             synopsis = synopsis?.replace(Regex("\\|.*$"), "")?.trim()
-            
-            val tags = document.select(".flex.flex-wrap.gap-2.pt-4 a")
-                .map { it.text().trim() }
-                .filter { it.isNotBlank() }
-                .takeIf { it.isNotEmpty() }
             
             val cast = document.select("#cast-section .swiper-slide, .cast-swiper .swiper-slide")
                 .mapNotNull { element ->
@@ -415,7 +419,7 @@ override suspend fun search(query: String, page: Int): SearchResponseList? {
                     this.backgroundPosterUrl = backdrop
                     this.year = year
                     this.plot = synopsis
-                    this.tags = tags
+                    this.tags = tags.takeIf { it.isNotEmpty() }
                     this.duration = duration
                     this.recommendations = recommendations.takeIf { it.isNotEmpty() }
                     if (rating != null) this.score = Score.from10(rating)
@@ -432,13 +436,15 @@ override suspend fun search(query: String, page: Int): SearchResponseList? {
                 this.backgroundPosterUrl = backdrop
                 this.year = year
                 this.plot = synopsis
-                this.tags = tags
+                this.tags = tags.takeIf { it.isNotEmpty() }
                 this.recommendations = recommendations.takeIf { it.isNotEmpty() }
                 if (rating != null) this.score = Score.from10(rating)
                 if (cast != null && cast.isNotEmpty()) addActors(cast)
                 if (trailerUrl != null) addTrailer(trailerUrl)
             }
             
+        } catch (e: ContentNotAllowedException) {
+            throw e
         } catch (e: Exception) {
             return null
         }
