@@ -46,65 +46,30 @@ object PobreFlixExtractor {
     private fun extractContentIdFromTruncatedJson(html: String, targetSeason: Int, targetEpisode: Int): String? {
         println("[PobreFlix] 🔍 Buscando episódio S${targetSeason}E${targetEpisode}")
         
-        // ===== DEBUG: Mostrar onde está o ALL_EPISODES =====
-        val allEpisodesIndex = html.indexOf("ALL_EPISODES")
-        if (allEpisodesIndex != -1) {
-            val start = maxOf(0, allEpisodesIndex - 50)
-            val end = minOf(html.length, allEpisodesIndex + 500)
-            val context = html.substring(start, end)
-            println("[PobreFlix] 📄 Contexto do ALL_EPISODES:")
-            println("[PobreFlix] $context")
-        } else {
-            println("[PobreFlix] ❌ ALL_EPISODES não encontrado no HTML!")
-        }
+        // CORREÇÃO: Buscar pelo padrão com ID antes de epi_num
+        // Formato real: {"ID":107081,"epi_num":1,"season":1,...}
+        val pattern1 = Regex("\"season\":$targetSeason,\"epi_num\":$targetEpisode[^}]*?\"ID\":(\\d+)")
+        val match1 = pattern1.find(html)
         
-        // ===== DEBUG: Procurar por padrão do episódio específico =====
-        val searchPattern = "\"epi_num\":$targetEpisode"
-        val index = html.indexOf(searchPattern)
-        if (index != -1) {
-            val start = maxOf(0, index - 200)
-            val end = minOf(html.length, index + 300)
-            val context = html.substring(start, end)
-            println("[PobreFlix] 📄 Contexto do episódio $targetEpisode:")
-            println("[PobreFlix] $context")
-        } else {
-            println("[PobreFlix] ❌ Padrão '$searchPattern' não encontrado!")
-        }
-        
-        // ===== DEBUG: Procurar por season e epi_num juntos =====
-        val seasonPattern = "\"season\":$targetSeason,\"epi_num\":$targetEpisode"
-        val seasonIndex = html.indexOf(seasonPattern)
-        if (seasonIndex != -1) {
-            println("[PobreFlix] ✅ Padrão '$seasonPattern' encontrado!")
-            val start = maxOf(0, seasonIndex - 100)
-            val end = minOf(html.length, seasonIndex + 200)
-            val context = html.substring(start, end)
-            println("[PobreFlix] 📄 Contexto:")
-            println("[PobreFlix] $context")
-        } else {
-            println("[PobreFlix] ❌ Padrão '$seasonPattern' NÃO encontrado!")
-        }
-        
-        // ===== DEBUG: Verificar se o HTML está truncado =====
-        val lastChars = html.takeLast(500)
-        println("[PobreFlix] 📄 Últimos 500 caracteres do HTML:")
-        println("[PobreFlix] $lastChars")
-        
-        // ===== FIM DOS DEBUGS =====
-        
-        // CORREÇÃO: Buscar pelo padrão exato com season e epi_num juntos
-        val exactPattern = Regex("\"season\":$targetSeason,\"epi_num\":$targetEpisode[^}]*?\"ID\":(\\d+)")
-        val exactMatch = exactPattern.find(html)
-        
-        if (exactMatch != null) {
-            val contentId = exactMatch.groupValues[1]
-            println("[PobreFlix] ✅ Content ID encontrado via season+epi_num: $contentId")
+        if (match1 != null) {
+            val contentId = match1.groupValues[1]
+            println("[PobreFlix] ✅ Content ID encontrado (season+epi_num): $contentId")
             return contentId
         }
         
-        // Método 2: Buscar dentro da temporada específica
-        val seasonPatternRegex = Regex("\"$targetSeason\":\\s*\\[([\\s\\S]*?)(?=\\s*,\\s*\"\\d+\"\\s*:|\\s*\\})")
-        val seasonMatch = seasonPatternRegex.find(html)
+        // Padrão alternativo: ID vem antes
+        val pattern2 = Regex("\"ID\":(\\d+)[^}]*?\"epi_num\":$targetEpisode[^}]*?\"season\":$targetSeason")
+        val match2 = pattern2.find(html)
+        
+        if (match2 != null) {
+            val contentId = match2.groupValues[1]
+            println("[PobreFlix] ✅ Content ID encontrado (ID antes): $contentId")
+            return contentId
+        }
+        
+        // Padrão: buscar dentro da temporada específica
+        val seasonPattern = Regex("\"$targetSeason\":\\s*\\[([\\s\\S]*?)(?=\\s*,\\s*\"\\d+\"\\s*:|\\s*\\})")
+        val seasonMatch = seasonPattern.find(html)
         
         if (seasonMatch != null) {
             val seasonContent = seasonMatch.groupValues[1]
@@ -116,16 +81,6 @@ object PobreFlixExtractor {
                 println("[PobreFlix] ✅ Content ID encontrado via temporada: $contentId")
                 return contentId
             }
-        }
-        
-        // Método 3: Padrão alternativo (season depois de epi_num)
-        val altPattern = Regex("\"epi_num\":$targetEpisode[^}]*?\"season\":$targetSeason[^}]*?\"ID\":(\\d+)")
-        val altMatch = altPattern.find(html)
-        
-        if (altMatch != null) {
-            val contentId = altMatch.groupValues[1]
-            println("[PobreFlix] ✅ Content ID encontrado via padrão alternativo: $contentId")
-            return contentId
         }
         
         println("[PobreFlix] ❌ Content ID NÃO encontrado para S${targetSeason}E${targetEpisode}")
