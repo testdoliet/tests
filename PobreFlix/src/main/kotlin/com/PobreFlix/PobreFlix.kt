@@ -380,26 +380,59 @@ class PobreFlix : MainAPI() {
                 .takeIf { it.isNotEmpty() }
             println("Elenco: ${cast?.size} atores")
             
-            // ===== TRAILER - CORREÇÃO =====
+            // ===== TRAILER - CORREÇÃO COMPLETA =====
             var trailerUrl: String? = null
             try {
+                // Método 1: Procurar por __trailerKeys nos scripts
                 val scripts = document.select("script")
                 for (script in scripts) {
                     val data = script.data()
                     if (data.contains("__trailerKeys")) {
-                        val keyPattern = Regex("""__trailerKeys\s*=\s*\[["']([^"']+)["']\]""")
-                        val match = keyPattern.find(data)
+                        println("[PobreFlix] Script com __trailerKeys encontrado")
+                        // Padrão para capturar array de keys
+                        val pattern = Regex("""__trailerKeys\s*=\s*\[([^\]]+)\]""")
+                        val match = pattern.find(data)
                         if (match != null) {
-                            val trailerKey = match.groupValues[1]
-                            trailerUrl = "https://www.youtube.com/watch?v=$trailerKey"
-                            println("[PobreFlix] Trailer encontrado: $trailerUrl")
-                            break
+                            val keysString = match.groupValues[1]
+                            // Extrair a primeira key (entre aspas)
+                            val keyPattern = Regex("[\"']([^\"']+)[\"']")
+                            val keyMatch = keyPattern.find(keysString)
+                            if (keyMatch != null) {
+                                val trailerKey = keyMatch.groupValues[1]
+                                trailerUrl = "https://www.youtube.com/watch?v=$trailerKey"
+                                println("[PobreFlix] Trailer encontrado via __trailerKeys: $trailerUrl")
+                                break
+                            }
                         }
                     }
                 }
+                
+                // Método 2: Procurar no elemento trailers-section
+                if (trailerUrl == null) {
+                    val trailerSection = document.selectFirst("#trailers-section .trailer-thumb-btn")
+                    if (trailerSection != null) {
+                        val trailerKey = trailerSection.attr("data-yt")
+                        if (trailerKey.isNotBlank()) {
+                            trailerUrl = "https://www.youtube.com/watch?v=$trailerKey"
+                            println("[PobreFlix] Trailer encontrado via data-yt: $trailerUrl")
+                        }
+                    }
+                }
+                
+                // Método 3: Procurar qualquer link do YouTube na página
+                if (trailerUrl == null) {
+                    val youtubeLink = document.selectFirst("a[href*='youtube.com/watch']")?.attr("href")
+                    if (youtubeLink != null && youtubeLink.isNotBlank()) {
+                        trailerUrl = youtubeLink
+                        println("[PobreFlix] Trailer encontrado via link: $trailerUrl")
+                    }
+                }
+                
             } catch (e: Exception) {
                 println("[PobreFlix] Erro ao extrair trailer: ${e.message}")
             }
+            
+            println("[PobreFlix] Trailer URL final: $trailerUrl")
             
             // ===== RECOMENDAÇÕES =====
             val recommendations = document.select("#relatedSection .swiper-slide a, .related-swiper .swiper-slide a")
@@ -787,14 +820,4 @@ class PobreFlix : MainAPI() {
         val hoursMatch = Regex("(\\d+)\\s*h").find(str)
         val minutesMatch = Regex("(\\d+)\\s*m(?:in)?").find(str)
         
-        val hours = hoursMatch?.groupValues?.get(1)?.toIntOrNull() ?: 0
-        val minutes = minutesMatch?.groupValues?.get(1)?.toIntOrNull() ?: 0
-        
-        if (hours > 0 || minutes > 0) {
-            return (hours * 60) + minutes
-        }
-        
-        val justMinutes = Regex("(\\d+)\\s*m(?:in)?").find(str)
-        return justMinutes?.groupValues?.get(1)?.toIntOrNull()
-    }
-}
+        val hours = hoursMatch?.groupValues?.get(1)?.to
