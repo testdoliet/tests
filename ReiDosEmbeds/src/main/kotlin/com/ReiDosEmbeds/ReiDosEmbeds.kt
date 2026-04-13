@@ -39,12 +39,18 @@ class ReiDosEmbeds : MainAPI() {
             if (tabName.isBlank()) continue
             
             val href = tab.attr("href")
-            val genre = href.substringAfter("?genre=").substringBefore("&")
             
-            println("🔄 [$index] Processando aba: '$tabName' (genre: '$genre')")
+            // CORREÇÃO: Extrai apenas o parâmetro genre se existir
+            val genre = if (href.contains("?genre=")) {
+                href.substringAfter("?genre=").substringBefore("&")
+            } else {
+                null
+            }
             
-            // Faz requisição AJAX para cada categoria
-            val categoryUrl = if (genre.isNotEmpty()) {
+            println("🔄 [$index] Processando aba: '$tabName' (genre: $genre)")
+            
+            // CORREÇÃO: Se não tem genre, usa a página principal
+            val categoryUrl = if (genre != null) {
                 "$siteUrl?genre=$genre"
             } else {
                 siteUrl
