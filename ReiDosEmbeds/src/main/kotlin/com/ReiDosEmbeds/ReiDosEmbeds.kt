@@ -1,4 +1,4 @@
-package com.reidosembeds
+package com.ReiDosEmbeds
 
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
@@ -26,7 +26,6 @@ class ReiDosEmbeds : MainAPI() {
         val doc = app.get(mainUrl).document
         val categories = mutableListOf<HomePageList>()
 
-        // Pega as categorias dos tabs
         val tabs = doc.select("[data-channels-tabs] a")
         
         for (tab in tabs) {
@@ -44,7 +43,6 @@ class ReiDosEmbeds : MainAPI() {
             }
         }
 
-        // Categoria "Todos"
         val allChannels = extractChannels(doc)
         categories.add(0, HomePageList("Todos", allChannels, isHorizontalImages = true))
 
@@ -61,7 +59,8 @@ class ReiDosEmbeds : MainAPI() {
             val name = card.selectFirst("h4, h3")?.text()?.trim() ?: continue
             
             val img = card.selectFirst("img")
-            val posterUrl = fixImageUrl(img?.attr("src") ?: img?.attr("data-src") ?: "")
+            var posterUrl = img?.attr("src") ?: img?.attr("data-src") ?: ""
+            if (posterUrl.startsWith("//")) posterUrl = "https:$posterUrl"
             
             channels.add(
                 newLiveSearchResponse(name, channelUrl, TvType.Live) {
@@ -114,10 +113,5 @@ class ReiDosEmbeds : MainAPI() {
         ).forEach(callback)
         
         return true
-    }
-
-    private fun fixImageUrl(url: String): String {
-        if (url.isBlank()) return ""
-        return if (url.startsWith("//")) "https:$url" else url
     }
 }
