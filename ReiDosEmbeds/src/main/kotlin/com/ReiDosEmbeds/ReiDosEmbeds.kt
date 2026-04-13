@@ -20,10 +20,10 @@ class ReiDosEmbeds : MainAPI() {
     override val hasQuickSearch = true
     override val supportedTypes = setOf(TvType.Live)
 
-    private val mainUrl = "https://reidosembeds.com"
+    private val siteUrl = "https://reidosembeds.com"
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val doc = app.get(mainUrl).document
+        val doc = app.get(siteUrl).document
         val categories = mutableListOf<HomePageList>()
 
         val tabs = doc.select("[data-channels-tabs] a")
@@ -33,8 +33,7 @@ class ReiDosEmbeds : MainAPI() {
             if (categoryName.isBlank() || categoryName == "Todos") continue
             
             val genre = tab.attr("href").substringAfter("?genre=").substringBefore("&")
-            val categoryUrl = "$mainUrl?genre=$genre"
-            
+            val categoryUrl = "$siteUrl?genre=$genre"
             val categoryDoc = app.get(categoryUrl).document
             val channels = extractChannels(categoryDoc)
             
@@ -79,7 +78,7 @@ class ReiDosEmbeds : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse>? {
-        val doc = app.get(mainUrl).document
+        val doc = app.get(siteUrl).document
         val results = mutableListOf<SearchResponse>()
         
         for (card in doc.select(".card")) {
@@ -105,11 +104,17 @@ class ReiDosEmbeds : MainAPI() {
         
         val streamUrl = match.groupValues[1].replace("\\/", "/")
         
+        val headers = mapOf(
+            "Referer" to data,
+            "Origin" to "https://rde.buzz",
+            "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36"
+        )
+
         M3u8Helper.generateM3u8(
-            name = "Rei dos Embeds",
-            url = streamUrl,
-            referer = data,
-            headers = mapOf("Referer" to data)
+            name,
+            streamUrl,
+            data,
+            headers = headers
         ).forEach(callback)
         
         return true
