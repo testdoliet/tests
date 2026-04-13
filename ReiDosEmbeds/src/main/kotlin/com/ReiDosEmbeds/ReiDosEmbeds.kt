@@ -1,4 +1,4 @@
-package com.ReiDosEmbeds
+package com.reidosembeds
 
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
@@ -26,24 +26,38 @@ class ReiDosEmbeds : MainAPI() {
         val doc = app.get(siteUrl).document
         val categories = mutableListOf<HomePageList>()
 
+        // Extrai todas as abas do data-channels-tabs
         val tabs = doc.select("[data-channels-tabs] a")
         
         for (tab in tabs) {
-            val categoryName = tab.text().trim()
-            if (categoryName.isBlank() || categoryName == "Todos") continue
+            val tabName = tab.text().trim()
+            if (tabName.isBlank()) continue
             
-            val genre = tab.attr("href").substringAfter("?genre=").substringBefore("&")
-            val categoryUrl = "$siteUrl?genre=$genre"
-            val categoryDoc = app.get(categoryUrl).document
+            val href = tab.attr("href")
+            val genre = href.substringAfter("?genre=").substringBefore("&")
+            
+            // Faz requisição AJAX para cada categoria
+            val categoryUrl = if (genre.isNotEmpty()) {
+                "$siteUrl?genre=$genre"
+            } else {
+                siteUrl
+            }
+            
+            val categoryDoc = app.get(categoryUrl, headers = mapOf(
+                "X-Requested-With" to "XMLHttpRequest"
+            )).document
+            
             val channels = extractChannels(categoryDoc)
             
             if (channels.isNotEmpty()) {
-                categories.add(HomePageList(categoryName, channels, isHorizontalImages = true))
+                val displayName = if (tabName == "Todos") "📺 $tabName" else tabName
+                categories.add(HomePageList(displayName, channels, isHorizontalImages = true))
             }
         }
 
-        val allChannels = extractChannels(doc)
-        categories.add(0, HomePageList("Todos", allChannels, isHorizontalImages = true))
+        if (categories.isEmpty()) {
+            throw ErrorLoadingException("Nenhum canal encontrado")
+        }
 
         return newHomePageResponse(categories, hasNext = false)
     }
@@ -55,7 +69,9 @@ class ReiDosEmbeds : MainAPI() {
         for (card in cards) {
             val link = card.selectFirst("a[href*='rde.buzz']") ?: continue
             val channelUrl = link.attr("href")
-            val name = card.selectFirst("h4, h3")?.text()?.trim() ?: continue
+            val name = card.selectFirst("h4")?.text()?.trim() 
+                ?: card.selectFirst("h3")?.text()?.trim() 
+                ?: continue
             
             val img = card.selectFirst("img")
             var posterUrl = img?.attr("src") ?: img?.attr("data-src") ?: ""
@@ -104,17 +120,11 @@ class ReiDosEmbeds : MainAPI() {
         
         val streamUrl = match.groupValues[1].replace("\\/", "/")
         
-        val headers = mapOf(
-            "Referer" to data,
-            "Origin" to "https://rde.buzz",
-            "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36"
-        )
-
         M3u8Helper.generateM3u8(
             name,
             streamUrl,
             data,
-            headers = headers
+            headers = mapOf("Referer" to data)
         ).forEach(callback)
         
         return true
