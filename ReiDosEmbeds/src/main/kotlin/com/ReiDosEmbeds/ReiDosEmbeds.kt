@@ -4,7 +4,7 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.plugins.BasePlugin
 import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
-import kotlinx.serialization.json.*
+import org.json.JSONObject
 
 @CloudstreamPlugin
 class ReiDosEmbedsProvider : BasePlugin() {
@@ -59,7 +59,6 @@ class ReiDosEmbeds : MainAPI() {
                 for (j in 0 until channelsArray.length()) {
                     val channel = channelsArray.getJSONObject(j)
                     val name = channel.getString("name")
-                    val slug = channel.getString("id")
                     val embedUrl = channel.getString("embed_url")
                     val logoUrl = channel.getString("logo_url")
                     
