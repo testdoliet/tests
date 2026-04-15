@@ -4,6 +4,7 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.plugins.BasePlugin
 import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
+import kotlinx.serialization.json.*
 
 @CloudstreamPlugin
 class ReiDosEmbedsProvider : BasePlugin() {
@@ -20,58 +21,97 @@ class ReiDosEmbeds : MainAPI() {
     override val hasQuickSearch = true
     override val supportedTypes = setOf(TvType.Live)
 
-    private val siteUrl = "https://reidosembeds.com"
+    private val apiUrl = "https://reidosembeds.com/api"
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         println("🚀 Iniciando getMainPage...")
         
-        val doc = app.get(siteUrl).document
-        println("✅ Página carregada: $siteUrl")
+        val categories = mutableListOf<HomePageList>()
         
-        val channels = mutableListOf<SearchResponse>()
-        val cards = doc.select(".card")
+        // 1. Primeiro, pega todas as categorias
+        val categoriesResponse = app.get("$apiUrl/channels/categories").text
+        val categoriesJson = JSONObject(categoriesResponse)
+        val categoriesArray = categoriesJson.getJSONArray("data")
         
-        println("🎴 Encontrados ${cards.size} cards")
+        println("📑 Encontradas ${categoriesArray.length()} categorias")
         
-        for (card in cards) {
-            val link = card.selectFirst("a[href*='rde.buzz']")
-            if (link == null) {
-                println("⚠️ Card sem link encontrado")
-                continue
+        // 2. Para cada categoria, pega os canais
+        for (i in 0 until categoriesArray.length()) {
+            val category = categoriesArray.getJSONObject(i)
+            val categoryName = category.getString("name")
+            val categoryId = category.getString("id")
+            
+            println("🔄 Processando categoria: '$categoryName'")
+            
+            // Pega canais da categoria
+            val channelsResponse = app.get("$apiUrl/channels?category=${categoryId.replace(" ", "%20")}").text
+            val channelsJson = JSONObject(channelsResponse)
+            val success = channelsJson.getBoolean("success")
+            
+            if (success) {
+                val data = channelsJson.getJSONObject("data")
+                val channelsArray = data.getJSONArray("channels")
+                
+                println("📺 Encontrados ${channelsArray.length()} canais em '$categoryName'")
+                
+                val channels = mutableListOf<SearchResponse>()
+                
+                for (j in 0 until channelsArray.length()) {
+                    val channel = channelsArray.getJSONObject(j)
+                    val name = channel.getString("name")
+                    val slug = channel.getString("id")
+                    val embedUrl = channel.getString("embed_url")
+                    val logoUrl = channel.getString("logo_url")
+                    
+                    var posterUrl = logoUrl
+                    if (posterUrl.startsWith("//")) posterUrl = "https:$posterUrl"
+                    
+                    println("  📺 Canal: '$name' -> $embedUrl")
+                    
+                    channels.add(
+                        newLiveSearchResponse(name, embedUrl, TvType.Live) {
+                            this.posterUrl = posterUrl
+                        }
+                    )
+                }
+                
+                if (channels.isNotEmpty()) {
+                    categories.add(HomePageList(categoryName, channels, isHorizontalImages = true))
+                }
             }
+        }
+        
+        // 3. Também adiciona a categoria "Todos" com todos os canais
+        val allChannelsResponse = app.get("$apiUrl/channels").text
+        val allChannelsJson = JSONObject(allChannelsResponse)
+        val allData = allChannelsJson.getJSONObject("data")
+        val allChannelsArray = allData.getJSONArray("channels")
+        
+        val allChannels = mutableListOf<SearchResponse>()
+        for (i in 0 until allChannelsArray.length()) {
+            val channel = allChannelsArray.getJSONObject(i)
+            val name = channel.getString("name")
+            val embedUrl = channel.getString("embed_url")
+            val logoUrl = channel.getString("logo_url")
             
-            val channelUrl = link.attr("href")
-            val name = card.selectFirst("h4")?.text()?.trim() 
-                ?: card.selectFirst("h3")?.text()?.trim()
-            
-            if (name == null) {
-                println("⚠️ Card sem nome encontrado")
-                continue
-            }
-            
-            val img = card.selectFirst("img")
-            var posterUrl = img?.attr("src") ?: img?.attr("data-src") ?: ""
+            var posterUrl = logoUrl
             if (posterUrl.startsWith("//")) posterUrl = "https:$posterUrl"
             
-            println("  📺 Canal: '$name' -> $channelUrl")
-            
-            channels.add(
-                newLiveSearchResponse(name, channelUrl, TvType.Live) {
+            allChannels.add(
+                newLiveSearchResponse(name, embedUrl, TvType.Live) {
                     this.posterUrl = posterUrl
                 }
             )
         }
+        categories.add(0, HomePageList("📺 Todos", allChannels, isHorizontalImages = true))
         
-        if (channels.isEmpty()) {
-            println("❌ Nenhum canal encontrado!")
+        if (categories.isEmpty()) {
+            println("❌ Nenhuma categoria encontrada!")
             throw ErrorLoadingException("Nenhum canal encontrado")
         }
-
-        println("🎉 Total de ${channels.size} canais carregados!")
-        return newHomePageResponse(
-            listOf(HomePageList("📺 Todos os Canais", channels, isHorizontalImages = true)),
-            hasNext = false
-        )
+        
+        println("🎉 Total de ${categories.size} categorias carregadas!")
+        return newHomePageResponse(categories, hasNext = false)
     }
 
     override suspend fun load(url: String): LoadResponse {
@@ -88,16 +128,34 @@ class ReiDosEmbeds : MainAPI() {
     override suspend fun search(query: String): List<SearchResponse>? {
         println("🔎 Buscando por: '$query'")
         
-        val doc = app.get(siteUrl).document
+        val response = app.get("$apiUrl/pesquisa?q=${query.replace(" ", "%20")}").text
+        val json = JSONObject(response)
+        val data = json.getJSONObject("data")
+        
         val results = mutableListOf<SearchResponse>()
         
-        for (card in doc.select(".card")) {
-            val link = card.selectFirst("a[href*='rde.buzz']") ?: continue
-            val name = card.selectFirst("h4, h3")?.text()?.trim() ?: continue
+        // Busca em canais
+        val channelsArray = data.getJSONArray("channels")
+        for (i in 0 until channelsArray.length()) {
+            val channel = channelsArray.getJSONObject(i)
+            val name = channel.getString("name")
+            val embedUrl = channel.getString("embed_url")
             
-            if (name.contains(query, ignoreCase = true)) {
-                println("✅ Encontrado: '$name' -> ${link.attr("href")}")
-                results.add(newLiveSearchResponse(name, link.attr("href"), TvType.Live))
+            println("✅ Canal encontrado: '$name'")
+            results.add(newLiveSearchResponse(name, embedUrl, TvType.Live))
+        }
+        
+        // Busca em eventos
+        val eventsArray = data.getJSONArray("events")
+        for (i in 0 until eventsArray.length()) {
+            val event = eventsArray.getJSONObject(i)
+            val title = event.getString("title")
+            val embeds = event.getJSONArray("embeds")
+            
+            if (embeds.length() > 0) {
+                val embedUrl = embeds.getJSONObject(0).getString("embed_url")
+                println("✅ Evento encontrado: '$title'")
+                results.add(newLiveSearchResponse(title, embedUrl, TvType.Live))
             }
         }
         
