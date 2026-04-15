@@ -4,7 +4,6 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.plugins.BasePlugin
 import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
-import org.json.JSONArray
 import org.json.JSONObject
 
 @CloudstreamPlugin
@@ -44,42 +43,46 @@ class ReiDosEmbeds : MainAPI() {
             
             println("🔄 Processando categoria: '$categoryName'")
             
-            // Pega canais da categoria - a resposta é um array direto!
+            // Pega canais da categoria - retorna {success: true, data: [...], total: X}
             val channelsResponse = app.get("$apiUrl/channels?category=${categoryId.replace(" ", "%20")}").text
+            val channelsJson = JSONObject(channelsResponse)
+            val success = channelsJson.getBoolean("success")
             
-            // CORREÇÃO: A resposta é um JSONArray, não um objeto com campo "data"
-            val channelsArray = JSONArray(channelsResponse)
-            
-            println("📺 Encontrados ${channelsArray.length()} canais em '$categoryName'")
-            
-            val channels = mutableListOf<SearchResponse>()
-            
-            for (j in 0 until channelsArray.length()) {
-                val channel = channelsArray.getJSONObject(j)
-                val name = channel.getString("name")
-                val embedUrl = channel.getString("embed_url")
-                val logoUrl = channel.getString("logo_url")
+            if (success) {
+                val channelsArray = channelsJson.getJSONArray("data")
                 
-                var posterUrl = logoUrl
-                if (posterUrl.startsWith("//")) posterUrl = "https:$posterUrl"
+                println("📺 Encontrados ${channelsArray.length()} canais em '$categoryName'")
                 
-                println("  📺 Canal: '$name' -> $embedUrl")
+                val channels = mutableListOf<SearchResponse>()
                 
-                channels.add(
-                    newLiveSearchResponse(name, embedUrl, TvType.Live) {
-                        this.posterUrl = posterUrl
-                    }
-                )
-            }
-            
-            if (channels.isNotEmpty()) {
-                categories.add(HomePageList(categoryName, channels, isHorizontalImages = true))
+                for (j in 0 until channelsArray.length()) {
+                    val channel = channelsArray.getJSONObject(j)
+                    val name = channel.getString("name")
+                    val embedUrl = channel.getString("embed_url")
+                    val logoUrl = channel.getString("logo_url")
+                    
+                    var posterUrl = logoUrl
+                    if (posterUrl.startsWith("//")) posterUrl = "https:$posterUrl"
+                    
+                    println("  📺 Canal: '$name' -> $embedUrl")
+                    
+                    channels.add(
+                        newLiveSearchResponse(name, embedUrl, TvType.Live) {
+                            this.posterUrl = posterUrl
+                        }
+                    )
+                }
+                
+                if (channels.isNotEmpty()) {
+                    categories.add(HomePageList(categoryName, channels, isHorizontalImages = true))
+                }
             }
         }
         
         // 3. Também adiciona a categoria "Todos" com todos os canais
         val allChannelsResponse = app.get("$apiUrl/channels").text
-        val allChannelsArray = JSONArray(allChannelsResponse)
+        val allChannelsJson = JSONObject(allChannelsResponse)
+        val allChannelsArray = allChannelsJson.getJSONArray("data")
         
         val allChannels = mutableListOf<SearchResponse>()
         for (i in 0 until allChannelsArray.length()) {
