@@ -40,7 +40,6 @@ class ReiDosEmbeds : MainAPI() {
             
             val href = tab.attr("href")
             
-            // CORREÇÃO: Extrai apenas o parâmetro genre se existir
             val genre = if (href.contains("?genre=")) {
                 href.substringAfter("?genre=").substringBefore("&")
             } else {
@@ -49,7 +48,6 @@ class ReiDosEmbeds : MainAPI() {
             
             println("🔄 [$index] Processando aba: '$tabName' (genre: $genre)")
             
-            // CORREÇÃO: Se não tem genre, usa a página principal
             val categoryUrl = if (genre != null) {
                 "$siteUrl?genre=$genre"
             } else {
@@ -58,11 +56,14 @@ class ReiDosEmbeds : MainAPI() {
             
             println("📡 Fazendo requisição AJAX para: $categoryUrl")
             
-            val categoryDoc = app.get(categoryUrl, headers = mapOf(
+            // Pega o HTML bruto como string
+            val response = app.get(categoryUrl, headers = mapOf(
                 "X-Requested-With" to "XMLHttpRequest"
-            )).document
+            ))
+            val html = response.text
             
-            val channels = extractChannels(categoryDoc)
+            // Extrai os canais usando regex diretamente no HTML
+            val channels = extractChannelsFromHtml(html)
             println("📺 Encontrados ${channels.size} canais em '$tabName'")
             
             if (channels.isNotEmpty()) {
@@ -71,6 +72,8 @@ class ReiDosEmbeds : MainAPI() {
                 println("✅ Categoria adicionada: '$displayName'")
             } else {
                 println("⚠️ Nenhum canal encontrado em '$tabName'")
+                // Debug: print primeiros 500 chars do HTML
+                println("📄 HTML preview: ${html.take(500)}")
             }
         }
 
@@ -83,34 +86,23 @@ class ReiDosEmbeds : MainAPI() {
         return newHomePageResponse(categories, hasNext = false)
     }
 
-    private suspend fun extractChannels(doc: org.jsoup.nodes.Document): List<SearchResponse> {
-        println("🔍 Extraindo canais do documento...")
+    private fun extractChannelsFromHtml(html: String): List<SearchResponse> {
         val channels = mutableListOf<SearchResponse>()
-        val cards = doc.select(".card")
         
-        println("🎴 Encontrados ${cards.size} cards")
+        // Regex para encontrar cada card e extrair link, nome e imagem
+        // Padrão: href="https://rde.buzz/..." e dentro do card tem h4 com nome
+        val cardPattern = Regex("""<div[^>]*class="[^"]*card[^"]*"[^>]*>.*?<a[^>]*href="(https://rde\.buzz/[^"]+)"[^>]*>.*?<h4[^>]*>([^<]+)</h4>.*?<img[^>]*src="([^"]+)"""", RegexOption.DOT_MATCHES_ALL)
         
-        for ((index, card) in cards.withIndex()) {
-            val link = card.selectFirst("a[href*='rde.buzz']")
-            if (link == null) {
-                println("⚠️ Card $index: link não encontrado")
-                continue
-            }
+        val matches = cardPattern.findAll(html)
+        
+        for (match in matches) {
+            val channelUrl = match.groupValues[1]
+            val name = match.groupValues[2].trim()
+            var posterUrl = match.groupValues[3]
             
-            val channelUrl = link.attr("href")
-            val name = card.selectFirst("h4")?.text()?.trim() 
-                ?: card.selectFirst("h3")?.text()?.trim()
-            
-            if (name == null) {
-                println("⚠️ Card $index: nome não encontrado")
-                continue
-            }
-            
-            val img = card.selectFirst("img")
-            var posterUrl = img?.attr("src") ?: img?.attr("data-src") ?: ""
             if (posterUrl.startsWith("//")) posterUrl = "https:$posterUrl"
             
-            println("  📺 [$index] Canal: '$name' -> $channelUrl")
+            println("  📺 Canal encontrado: '$name' -> $channelUrl")
             
             channels.add(
                 newLiveSearchResponse(name, channelUrl, TvType.Live) {
@@ -119,7 +111,6 @@ class ReiDosEmbeds : MainAPI() {
             )
         }
         
-        println("✅ Extração finalizada: ${channels.size} canais")
         return channels
     }
 
@@ -137,16 +128,18 @@ class ReiDosEmbeds : MainAPI() {
     override suspend fun search(query: String): List<SearchResponse>? {
         println("🔎 Buscando por: '$query'")
         
-        val doc = app.get(siteUrl).document
+        val html = app.get(siteUrl).text
         val results = mutableListOf<SearchResponse>()
         
-        for (card in doc.select(".card")) {
-            val link = card.selectFirst("a[href*='rde.buzz']") ?: continue
-            val name = card.selectFirst("h4, h3")?.text()?.trim() ?: continue
+        val cardPattern = Regex("""<div[^>]*class="[^"]*card[^"]*"[^>]*>.*?<a[^>]*href="(https://rde\.buzz/[^"]+)"[^>]*>.*?<h4[^>]*>([^<]+)</h4>""", RegexOption.DOT_MATCHES_ALL)
+        
+        for (match in cardPattern.findAll(html)) {
+            val channelUrl = match.groupValues[1]
+            val name = match.groupValues[2].trim()
             
             if (name.contains(query, ignoreCase = true)) {
-                println("✅ Encontrado: '$name' -> ${link.attr("href")}")
-                results.add(newLiveSearchResponse(name, link.attr("href"), TvType.Live))
+                println("✅ Encontrado: '$name' -> $channelUrl")
+                results.add(newLiveSearchResponse(name, channelUrl, TvType.Live))
             }
         }
         
