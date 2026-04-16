@@ -24,13 +24,12 @@ class ReiDosEmbeds : MainAPI() {
     private val apiUrl = "https://reidosembeds.com/api"
     
     // Cache para guardar os dados dos canais
-    private var channelsCache: Map<String, Pair<String, String>>? = null
+    private var channelsCache: MutableMap<String, Pair<String, String>> = mutableMapOf()
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         println("🚀 Iniciando getMainPage...")
         
         val categories = mutableListOf<HomePageList>()
-        val allChannelsData = mutableMapOf<String, Pair<String, String>>() // slug -> (name, poster)
         
         // 1. Primeiro, pega todas as categorias
         val categoriesResponse = app.get("$apiUrl/channels/categories").text
@@ -69,7 +68,7 @@ class ReiDosEmbeds : MainAPI() {
                     if (posterUrl.startsWith("//")) posterUrl = "https:$posterUrl"
                     
                     // Guarda no cache
-                    allChannelsData[slug] = Pair(name, posterUrl)
+                    channelsCache[slug] = Pair(name, posterUrl)
                     
                     println("  📺 Canal: '$name' -> $embedUrl")
                     
@@ -85,9 +84,6 @@ class ReiDosEmbeds : MainAPI() {
                 }
             }
         }
-        
-        // Salva o cache
-        channelsCache = allChannelsData
         
         // 3. Também adiciona a categoria "Todos" com todos os canais
         val allChannelsResponse = app.get("$apiUrl/channels").text
@@ -128,31 +124,14 @@ class ReiDosEmbeds : MainAPI() {
         val slug = url.substringAfterLast("/")
         
         // Tenta pegar do cache
-        val channelData = channelsCache?.get(slug)
+        val channelData = channelsCache[slug]
         val title = channelData?.first ?: slug.replace("-", " ").split(" ").joinToString(" ") { 
-            it.replaceFirstChar { it.uppercase() } 
+            it.replaceFirstChar { if (it.isNotEmpty()) it.uppercase() else it.toString() }
         }
         val posterUrl = channelData?.second ?: ""
         
-        // Busca informações adicionais da API se disponível
-        var plot = "Assista $title ao vivo!"
-        var description = ""
-        
-        try {
-            val channelInfoResponse = app.get("$apiUrl/channels/$slug").text
-            val channelInfoJson = JSONObject(channelInfoResponse)
-            val success = channelInfoJson.getBoolean("success")
-            
-            if (success) {
-                val data = channelInfoJson.getJSONObject("data")
-                description = data.optString("description", "")
-                if (description.isNotEmpty()) {
-                    plot = description
-                }
-            }
-        } catch (e: Exception) {
-            println("⚠️ Não foi possível buscar detalhes do canal: ${e.message}")
-        }
+        // Sinopse personalizada
+        val plot = "Assista $title ao vivo!"
         
         println("📺 Título do canal: $title")
         println("📝 Sinopse: $plot")
@@ -208,7 +187,6 @@ class ReiDosEmbeds : MainAPI() {
                 results.add(
                     newLiveSearchResponse(title, embedUrl, TvType.Live) {
                         this.posterUrl = posterUrl
-                        this.plot = "Evento esportivo ao vivo"
                     }
                 )
             }
