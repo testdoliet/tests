@@ -22,6 +22,7 @@ class ReiDosEmbeds : MainAPI() {
     override val supportedTypes = setOf(TvType.Live)
 
     private val apiUrl = "https://reidosembeds.com/api"
+    private val baseUrl = "https://reidosembeds.com"
     
     // Cache para guardar os dados dos canais
     private var channelsCache: MutableMap<String, Pair<String, String>> = mutableMapOf()
@@ -204,28 +205,61 @@ class ReiDosEmbeds : MainAPI() {
     ): Boolean {
         println("🎬 Carregando links para: $data")
         
-        val html = app.get(data).text
-        println("📄 HTML obtido, tamanho: ${html.length} caracteres")
+        // Primeiro, pega o HTML da página do canal (ex: https://rde.buzz/bbb1)
+        val channelHtml = app.get(data).text
+        println("📄 HTML do canal obtido, tamanho: ${channelHtml.length} caracteres")
         
-        val pattern = Regex(""""sources":\s*\[\s*\{\s*"src":\s*"([^"]+\.txt[^"]*?)"""")
-        val match = pattern.find(html)
+        // Extrai o src do iframe que aponta para o player
+        val iframePattern = Regex("""<iframe[^>]*src="([^"]*__play[^"]*)"[^>]*>""")
+        val iframeMatch = iframePattern.find(channelHtml)
         
-        if (match == null) {
-            println("❌ Padrão 'sources' não encontrado no HTML")
+        if (iframeMatch == null) {
+            println("❌ Iframe do player não encontrado")
             return false
         }
         
-        var streamUrl = match.groupValues[1].replace("\\/", "/")
-        println("✅ Stream URL encontrada: $streamUrl")
+        val playerUrl = iframeMatch.groupValues[1].replace("&amp;", "&")
+        println("✅ Player URL encontrada: $playerUrl")
         
-        M3u8Helper.generateM3u8(
-            name,
-            streamUrl,
-            data,
-            headers = mapOf("Referer" to data)
-        ).forEach { link ->
-            println("  🔗 Link gerado: ${link.url}")
-            callback(link)
+        // Agora pega o HTML do player (__play)
+        val playerHtml = app.get(playerUrl, headers = mapOf("Referer" to data)).text
+        println("📄 HTML do player obtido, tamanho: ${playerHtml.length} caracteres")
+        
+        // Extrai o sources do JavaScript
+        val sourcesPattern = Regex("""var sources\s*=\s*(\[.*?\]);""", RegexOption.DOT_MATCHES_ALL)
+        val sourcesMatch = sourcesPattern.find(playerHtml)
+        
+        if (sourcesMatch == null) {
+            println("❌ Array 'sources' não encontrado no player")
+            return false
+        }
+        
+        val sourcesJson = sourcesMatch.groupValues[1]
+        println("✅ Sources encontrado: ${sourcesJson.take(200)}...")
+        
+        // Parse do JSON para extrair as URLs
+        val sourcesArray = org.json.JSONArray(sourcesJson)
+        
+        for (i in 0 until sourcesArray.length()) {
+            val source = sourcesArray.getJSONObject(i)
+            var streamUrl = source.getString("src")
+            val label = source.optString("label", "Source ${i + 1}")
+            
+            streamUrl = streamUrl.replace("\\/", "/")
+            println("  🔗 Stream $label: $streamUrl")
+            
+            M3u8Helper.generateM3u8(
+                "$name - $label",
+                streamUrl,
+                playerUrl,
+                headers = mapOf(
+                    "Referer" to playerUrl,
+                    "Origin" to "https://rde.buzz"
+                )
+            ).forEach { link ->
+                println("    🔗 Link gerado: ${link.url}")
+                callback(link)
+            }
         }
         
         println("🎉 Links carregados com sucesso!")
