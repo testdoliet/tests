@@ -125,8 +125,8 @@ class ReiDosEmbeds : MainAPI() {
         
         // Tenta pegar do cache
         val channelData = channelsCache[slug]
-        val title = channelData?.first ?: slug.replace("-", " ").split(" ").joinToString(" ") { 
-            it.replaceFirstChar { if (it.isNotEmpty()) it.uppercase() else it.toString() }
+        val title = channelData?.first ?: slug.replace("-", " ").split(" ").joinToString(" ") { word ->
+            if (word.isNotEmpty()) word.replaceFirstChar { it.uppercase() } else word
         }
         val posterUrl = channelData?.second ?: ""
         
