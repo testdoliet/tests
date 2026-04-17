@@ -308,26 +308,24 @@ class StreamFlix : MainAPI() {
     }
 
     override suspend fun loadLinks(
-        data: String,
-        isCasting: Boolean,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        println("🔗 [StreamFlix] loadLinks: ${data.take(80)}...")
-        
-        callback(
-            newExtractorLink(
-                source = name,
-                name = "StreamFlix",
-                url = data,
-                type = ExtractorLinkType.M3U8
-            ) {
-                this.referer = mainUrl
-            }
-        )
-        return true
-    }
-
+    data: String,
+    isCasting: Boolean,
+    subtitleCallback: (SubtitleFile) -> Unit,
+    callback: (ExtractorLink) -> Unit
+): Boolean {
+    callback(
+        newExtractorLink(
+            source = name,
+            name = "StreamFlix",
+            url = data,
+            type = ExtractorLinkType.VIDEO  // ← Correto para MP4
+        ) {
+            this.referer = mainUrl
+        }
+    )
+    return true
+}
+   
     private fun fixImageUrl(url: String?): String? {
         if (url.isNullOrBlank()) return null
         if (url.startsWith("data:")) return null
