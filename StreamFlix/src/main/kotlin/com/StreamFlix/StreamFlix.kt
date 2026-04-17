@@ -61,6 +61,7 @@ class StreamFlix : MainAPI() {
             val poster = fixImageUrl(movie.optString("stream_icon"))
             val rating = movie.optDouble("rating_5based", 0.0)
             
+            // CORRIGIDO: segundo parâmetro deve ser String (URL)
             newMovieSearchResponse(name, "movie?id=$id", TvType.Movie) {
                 this.posterUrl = poster
                 if (rating > 0) this.score = Score.from10(rating.toFloat() * 2)
@@ -82,6 +83,7 @@ class StreamFlix : MainAPI() {
             val poster = fixImageUrl(series.optString("cover"))
             val rating = series.optDouble("rating_5based", 0.0)
             
+            // CORRIGIDO: segundo parâmetro deve ser String (URL)
             newTvSeriesSearchResponse(name, "series?id=$id", TvType.TvSeries) {
                 this.posterUrl = poster
                 if (rating > 0) this.score = Score.from10(rating.toFloat() * 2)
@@ -185,7 +187,8 @@ class StreamFlix : MainAPI() {
                 val year = info.optString("releaseDate").takeIf { it.isNotEmpty() }?.toIntOrNull()
                 val rating = info.optDouble("rating_5based", 0.0)
                 
-                newMovieLoadResponse(title, url, TvType.Movie, videoUrl) {
+                // CORRIGIDO: o terceiro parâmetro é o tipo, o quarto é a URL do vídeo
+                newMovieLoadResponse(title, "movie?id=$id", TvType.Movie, videoUrl) {
                     this.posterUrl = poster
                     this.plot = plot
                     this.year = year
@@ -225,9 +228,10 @@ class StreamFlix : MainAPI() {
                             val ep = seasonArray.getJSONObject(i)
                             val epNum = ep.getInt("episode_num")
                             val epTitle = ep.getString("title")
+                            val epId = ep.getString("id")
                             
                             // Busca URL do episódio
-                            val streamResponse = app.get("$mainUrl/api_proxy.php?action=get_stream_url&type=series&id=${ep.getString("id")}")
+                            val streamResponse = app.get("$mainUrl/api_proxy.php?action=get_stream_url&type=series&id=$epId")
                             val streamJson = JSONObject(streamResponse.text)
                             val videoUrl = streamJson.getString("stream_url")
                             val epPoster = fixImageUrl(ep.optString("movie_image"))
@@ -246,7 +250,8 @@ class StreamFlix : MainAPI() {
                     }
                 }
                 
-                newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes) {
+                // CORRIGIDO: o terceiro parâmetro é o tipo, o quarto é a lista de episódios
+                newTvSeriesLoadResponse(title, "series?id=$id", TvType.TvSeries, episodes) {
                     this.posterUrl = poster
                     this.plot = plot
                     this.year = year
@@ -264,13 +269,13 @@ class StreamFlix : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // A URL já vem direta do MP4 do loadMovie/loadSeries
+        // CORRIGIDO: newExtractorLink com os parâmetros corretos
         callback(
             newExtractorLink(
                 source = name,
-                name = name,
+                name = "MP4",
                 url = data,
-                type = ExtractorLinkType.DIRECT,
+                type = ExtractorLinkType.M3U8,
                 quality = Qualities.Unknown.value,
                 referer = mainUrl
             )
