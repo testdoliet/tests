@@ -1,16 +1,13 @@
-package com.streamflix
+package com.StreamFlix
 
 import android.content.Context
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
-import com.lagradost.cloudstream3.LoadResponse.Companion.addActors
 import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
 import com.lagradost.cloudstream3.plugins.Plugin
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import org.json.JSONArray
 import org.json.JSONObject
-import java.net.URLEncoder
 
 @CloudstreamPlugin
 class StreamFlixProvider : Plugin() {
@@ -27,29 +24,10 @@ class StreamFlix : MainAPI() {
     override val hasDownloadSupport = false
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries)
     
-    // Cache em memória
-    private var cachedMovies: List<MovieItem>? = null
-    private var cachedSeries: List<SeriesItem>? = null
-    private var moviesOffset = 0
-    private var seriesOffset = 0
+    // Cache
+    private var cachedMovies: JSONObject? = null
+    private var cachedSeries: JSONObject? = null
     private val PAGE_SIZE = 30
-    
-    data class MovieItem(
-        val id: Int,
-        val name: String,
-        val poster: String?,
-        val year: Int?,
-        val rating: Float?
-    )
-    
-    data class SeriesItem(
-        val id: Int,
-        val name: String,
-        val poster: String?,
-        val year: Int?,
-        val rating: Float?,
-        val plot: String?
-    )
     
     // Páginas principais
     override val mainPage = mainPageOf(
@@ -60,154 +38,118 @@ class StreamFlix : MainAPI() {
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val isMovies = request.name == "Filmes"
         
-        return when {
-            isMovies -> {
-                val movies = getMoviesPaginated(page)
-                newHomePageResponse(request.name, movies, hasNext = movies.size == PAGE_SIZE)
-            }
-            else -> {
-                val series = getSeriesPaginated(page)
-                newHomePageResponse(request.name, series, hasNext = series.size == PAGE_SIZE)
-            }
+        val items = if (isMovies) {
+            getMoviesPaginated(page)
+        } else {
+            getSeriesPaginated(page)
         }
+        
+        return newHomePageResponse(request.name, items, hasNext = items.size == PAGE_SIZE)
     }
     
-    // Busca filmes com paginação
     private suspend fun getMoviesPaginated(page: Int): List<SearchResponse> {
         val allMovies = getAllMovies()
         val start = page * PAGE_SIZE
-        val end = minOf(start + PAGE_SIZE, allMovies.size)
+        val end = minOf(start + PAGE_SIZE, allMovies.length())
         
-        if (start >= allMovies.size) return emptyList()
+        if (start >= allMovies.length()) return emptyList()
         
-        return allMovies.subList(start, end).map { movie ->
+        return (start until end).map { i ->
+            val movie = allMovies.getJSONObject(i)
             newMovieSearchResponse(
-                name = movie.name,
-                url = "movie?id=${movie.id}",
-                posterUrl = movie.poster
+                name = movie.getString("name"),
+                url = "movie?id=${movie.getInt("stream_id")}",
+                posterUrl = fixImageUrl(movie.optString("stream_icon"))
             ) {
-                year = movie.year
-                if (movie.rating != null) this.score = Score.from10(movie.rating)
+                val rating = movie.optDouble("rating_5based", 0.0)
+                if (rating > 0) this.score = Score.from10(rating.toFloat() * 2)
             }
         }
     }
     
-    // Busca séries com paginação
     private suspend fun getSeriesPaginated(page: Int): List<SearchResponse> {
         val allSeries = getAllSeries()
         val start = page * PAGE_SIZE
-        val end = minOf(start + PAGE_SIZE, allSeries.size)
+        val end = minOf(start + PAGE_SIZE, allSeries.length())
         
-        if (start >= allSeries.size) return emptyList()
+        if (start >= allSeries.length()) return emptyList()
         
-        return allSeries.subList(start, end).map { series ->
+        return (start until end).map { i ->
+            val series = allSeries.getJSONObject(i)
             newTvSeriesSearchResponse(
-                name = series.name,
-                url = "series?id=${series.id}",
-                posterUrl = series.poster
+                name = series.getString("name"),
+                url = "series?id=${series.getInt("series_id")}",
+                posterUrl = fixImageUrl(series.optString("cover"))
             ) {
-                year = series.year
-                if (series.rating != null) this.score = Score.from10(series.rating)
+                val rating = series.optDouble("rating_5based", 0.0)
+                if (rating > 0) this.score = Score.from10(rating.toFloat() * 2)
             }
         }
     }
     
-    // Carrega todos os filmes do cache ou API
-    private suspend fun getAllMovies(): List<MovieItem> {
+    private suspend fun getAllMovies(): JSONObject {
         if (cachedMovies != null) return cachedMovies!!
         
         return withContext(Dispatchers.IO) {
-            try {
-                val response = app.get("$mainUrl/api_proxy.php?action=get_vod_streams")
-                val json = JSONObject(response.text)
-                val result = json.getJSONArray("result")
-                
-                val movies = mutableListOf<MovieItem>()
-                for (i in 0 until result.length()) {
-                    val item = result.getJSONObject(i)
-                    movies.add(
-                        MovieItem(
-                            id = item.getInt("stream_id"),
-                            name = item.getString("name"),
-                            poster = fixImageUrl(item.optString("stream_icon")),
-                            year = null, // Será extraído do nome se possível
-                            rating = if (item.has("rating_5based")) item.optDouble("rating_5based").toFloat() / 2 else null
-                        )
-                    )
-                }
-                cachedMovies = movies
-                movies
-            } catch (e: Exception) {
-                emptyList()
-            }
+            val response = app.get("$mainUrl/api_proxy.php?action=get_vod_streams")
+            val json = JSONObject(response.text)
+            cachedMovies = json
+            json
         }
     }
     
-    // Carrega todas as séries do cache ou API
-    private suspend fun getAllSeries(): List<SeriesItem> {
+    private suspend fun getAllSeries(): JSONObject {
         if (cachedSeries != null) return cachedSeries!!
         
         return withContext(Dispatchers.IO) {
-            try {
-                val response = app.get("$mainUrl/api_proxy.php?action=get_series")
-                val json = JSONObject(response.text)
-                val result = json.getJSONArray("result")
-                
-                val series = mutableListOf<SeriesItem>()
-                for (i in 0 until result.length()) {
-                    val item = result.getJSONObject(i)
-                    series.add(
-                        SeriesItem(
-                            id = item.getInt("series_id"),
-                            name = item.getString("name"),
-                            poster = fixImageUrl(item.optString("cover")),
-                            year = null,
-                            rating = if (item.has("rating_5based")) item.optDouble("rating_5based").toFloat() / 2 else null,
-                            plot = item.optString("plot")
-                        )
-                    )
-                }
-                cachedSeries = series
-                series
-            } catch (e: Exception) {
-                emptyList()
-            }
+            val response = app.get("$mainUrl/api_proxy.php?action=get_series")
+            val json = JSONObject(response.text)
+            cachedSeries = json
+            json
         }
     }
     
-    // Busca
     override suspend fun search(query: String): List<SearchResponse> {
         if (query.length < 2) return emptyList()
         
-        val allMovies = getAllMovies()
-        val allSeries = getAllSeries()
-        
         val results = mutableListOf<SearchResponse>()
+        val queryLower = query.lowercase()
         
         // Busca em filmes
-        allMovies.filter { it.name.contains(query, ignoreCase = true) }.forEach { movie ->
-            results.add(
-                newMovieSearchResponse(movie.name, "movie?id=${movie.id}", movie.poster) {
-                    year = movie.year
-                    if (movie.rating != null) score = Score.from10(movie.rating)
-                }
-            )
+        val allMovies = getAllMovies()
+        for (i in 0 until allMovies.length()) {
+            val movie = allMovies.getJSONObject(i)
+            val name = movie.getString("name")
+            if (name.lowercase().contains(queryLower)) {
+                results.add(
+                    newMovieSearchResponse(
+                        name = name,
+                        url = "movie?id=${movie.getInt("stream_id")}",
+                        posterUrl = fixImageUrl(movie.optString("stream_icon"))
+                    )
+                )
+            }
         }
         
         // Busca em séries
-        allSeries.filter { it.name.contains(query, ignoreCase = true) }.forEach { series ->
-            results.add(
-                newTvSeriesSearchResponse(series.name, "series?id=${series.id}", series.poster) {
-                    year = series.year
-                    if (series.rating != null) score = Score.from10(series.rating)
-                }
-            )
+        val allSeries = getAllSeries()
+        for (i in 0 until allSeries.length()) {
+            val series = allSeries.getJSONObject(i)
+            val name = series.getString("name")
+            if (name.lowercase().contains(queryLower)) {
+                results.add(
+                    newTvSeriesSearchResponse(
+                        name = name,
+                        url = "series?id=${series.getInt("series_id")}",
+                        posterUrl = fixImageUrl(series.optString("cover"))
+                    )
+                )
+            }
         }
         
         return results
     }
     
-    // Carregar detalhes
     override suspend fun load(url: String): LoadResponse? {
         return when {
             url.startsWith("movie?id=") -> loadMovie(url.substringAfter("movie?id="))
@@ -219,7 +161,7 @@ class StreamFlix : MainAPI() {
     private suspend fun loadMovie(id: String): LoadResponse? {
         return withContext(Dispatchers.IO) {
             try {
-                // Busca informações do filme
+                // Busca informações
                 val infoResponse = app.get("$mainUrl/api_proxy.php?action=get_vod_info&vod_id=$id")
                 val infoJson = JSONObject(infoResponse.text)
                 val info = infoJson.optJSONObject("info") ?: JSONObject()
@@ -249,7 +191,7 @@ class StreamFlix : MainAPI() {
     private suspend fun loadSeries(id: String): LoadResponse? {
         return withContext(Dispatchers.IO) {
             try {
-                // Busca informações da série
+                // Busca informações
                 val infoResponse = app.get("$mainUrl/api_proxy.php?action=get_series_info&series_id=$id")
                 val json = JSONObject(infoResponse.text)
                 val info = json.optJSONObject("info") ?: JSONObject()
@@ -279,13 +221,14 @@ class StreamFlix : MainAPI() {
                             val videoUrl = streamJson.getString("stream_url")
                             
                             episodes.add(
-                                newEpisode(videoUrl) {
-                                    name = epTitle
-                                    season = seasonNum
-                                    episode = epNum
-                                    posterUrl = fixImageUrl(ep.optString("movie_image"))
+                                Episode(
+                                    name = epTitle,
+                                    season = seasonNum,
+                                    episode = epNum,
+                                    link = videoUrl,
+                                    posterUrl = fixImageUrl(ep.optString("movie_image")),
                                     description = ep.optString("plot")
-                                }
+                                )
                             )
                         }
                     }
@@ -304,21 +247,21 @@ class StreamFlix : MainAPI() {
         }
     }
     
-    // Links (já temos a URL direta, então só repassa)
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // A URL já é direta do MP4
-        callback.invoke(
+        // A URL já vem direta do MP4 do loadMovie/loadSeries
+        callback(
             ExtractorLink(
                 source = name,
                 name = name,
                 url = data,
+                referer = mainUrl,
                 quality = Qualities.Unknown.value,
-                isM3u8 = false
+                type = ExtractorLinkType.DIRECT
             )
         )
         return true
