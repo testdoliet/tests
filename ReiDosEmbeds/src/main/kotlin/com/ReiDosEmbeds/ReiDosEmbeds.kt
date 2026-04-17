@@ -198,71 +198,61 @@ class ReiDosEmbeds : MainAPI() {
     }
 
     override suspend fun loadLinks(
-        data: String,
-        isCasting: Boolean,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        println("🎬 Carregando links para: $data")
+    data: String,
+    isCasting: Boolean,
+    subtitleCallback: (SubtitleFile) -> Unit,
+    callback: (ExtractorLink) -> Unit
+): Boolean {
+    println("🎬 Carregando links para: $data")
+    
+    val channelHtml = app.get(data).text
+    val iframePattern = Regex("""<iframe[^>]*src="([^"]*__play[^"]*)"[^>]*>""")
+    val iframeMatch = iframePattern.find(channelHtml) ?: return false
+    
+    val playerUrl = iframeMatch.groupValues[1].replace("&amp;", "&")
+    println("✅ Player URL encontrada: $playerUrl")
+    
+    val playerHtml = app.get(playerUrl, headers = mapOf("Referer" to data)).text
+    println("📄 HTML do player obtido, tamanho: ${playerHtml.length} caracteres")
+    
+    val sourcesPattern = Regex("""var sources\s*=\s*(\[.*?\]);""", RegexOption.DOT_MATCHES_ALL)
+    val sourcesMatch = sourcesPattern.find(playerHtml) ?: return false
+    
+    val sourcesArray = JSONArray(sourcesMatch.groupValues[1])
+    
+    for (i in 0 until sourcesArray.length()) {
+        val source = sourcesArray.getJSONObject(i)
+        var streamUrl = source.getString("src").replace("\\/", "/")
+        val label = source.optString("label", "Source ${i + 1}")
         
-        // Primeiro, pega o HTML da página do canal (ex: https://rde.buzz/bbb1)
-        val channelHtml = app.get(data).text
-        println("📄 HTML do canal obtido, tamanho: ${channelHtml.length} caracteres")
-        
-        // Extrai o src do iframe que aponta para o player
-        val iframePattern = Regex("""<iframe[^>]*src="([^"]*__play[^"]*)"[^>]*>""")
-        val iframeMatch = iframePattern.find(channelHtml)
-        
-        if (iframeMatch == null) {
-            println("❌ Iframe do player não encontrado")
-            return false
+        // CONVERSÃO: /index.txt?token=... -> /tracks-v1a1/mono.m3u8?token=...
+        if (streamUrl.contains("/index.txt")) {
+            val baseUrl = streamUrl.substringBefore("/index.txt")
+            val token = streamUrl.substringAfter("?token=")
+            streamUrl = "$baseUrl/tracks-v1a1/mono.m3u8?token=$token"
+            println("  🔄 Convertido para: $streamUrl")
         }
         
-        val playerUrl = iframeMatch.groupValues[1].replace("&amp;", "&")
-        println("✅ Player URL encontrada: $playerUrl")
+        val headers = mapOf(
+            "Referer" to playerUrl,
+            "Origin" to "https://rde.buzz",
+            "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36"
+        )
         
-        // Agora pega o HTML do player (__play)
-        val playerHtml = app.get(playerUrl, headers = mapOf("Referer" to data)).text
-        println("📄 HTML do player obtido, tamanho: ${playerHtml.length} caracteres")
+        println("  📡 Gerando M3U8 para: $label")
         
-        // Extrai o sources do JavaScript
-        val sourcesPattern = Regex("""var sources\s*=\s*(\[.*?\]);""", RegexOption.DOT_MATCHES_ALL)
-        val sourcesMatch = sourcesPattern.find(playerHtml)
-        
-        if (sourcesMatch == null) {
-            println("❌ Array 'sources' não encontrado no player")
-            return false
+        M3u8Helper.generateM3u8(
+            "$name - $label",
+            streamUrl,
+            playerUrl,
+            headers = headers
+        ).forEach { link ->
+            println("    🔗 ${link.url}")
+            callback(link)
         }
-        
-        val sourcesJson = sourcesMatch.groupValues[1]
-        println("✅ Sources encontrado: ${sourcesJson.take(200)}...")
-        
-        // Parse do JSON para extrair as URLs
-        val sourcesArray = org.json.JSONArray(sourcesJson)
-        
-        for (i in 0 until sourcesArray.length()) {
-            val source = sourcesArray.getJSONObject(i)
-            var streamUrl = source.getString("src")
-            val label = source.optString("label", "Source ${i + 1}")
-            
-            streamUrl = streamUrl.replace("\\/", "/")
-            println("  🔗 Stream $label: $streamUrl")
-            
-            M3u8Helper.generateM3u8(
-                "$name - $label",
-                streamUrl,
-                playerUrl,
-                headers = mapOf(
-                    "Referer" to playerUrl,
-                    "Origin" to "https://rde.buzz"
-                )
-            ).forEach { link ->
-                println("    🔗 Link gerado: ${link.url}")
-                callback(link)
-            }
-        }
-        
-        println("🎉 Links carregados com sucesso!")
-        return true
     }
+    
+    println("🎉 Links carregados com sucesso!")
+    return true
+}
 }
