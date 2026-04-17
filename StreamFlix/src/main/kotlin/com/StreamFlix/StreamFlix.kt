@@ -9,6 +9,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
 
 @CloudstreamPlugin
 class StreamFlixProvider : Plugin() {
@@ -100,9 +101,26 @@ class StreamFlix : MainAPI() {
         if (cachedMovies != null) return cachedMovies!!
         
         return withContext(Dispatchers.IO) {
+            // Tenta cache
+            val cacheFile = File("${context.cacheDir}/streamflix_movies.json")
+            if (cacheFile.exists() && cacheFile.length() > 0) {
+                try {
+                    val json = JSONArray(cacheFile.readText())
+                    cachedMovies = json
+                    return@withContext json
+                } catch (e: Exception) { }
+            }
+            
+            // Baixa da API
             val response = app.get("$mainUrl/api_proxy.php?action=get_vod_streams")
-            // CORRIGIDO: usando document.text() para evitar OOM
-            val json = JSONArray(response.document.text())
+            val jsonString = response.body.string()
+            val json = JSONArray(jsonString)
+            
+            // Salva cache
+            try {
+                cacheFile.writeText(jsonString)
+            } catch (e: Exception) { }
+            
             cachedMovies = json
             json
         }
@@ -112,9 +130,26 @@ class StreamFlix : MainAPI() {
         if (cachedSeries != null) return cachedSeries!!
         
         return withContext(Dispatchers.IO) {
+            // Tenta cache
+            val cacheFile = File("${context.cacheDir}/streamflix_series.json")
+            if (cacheFile.exists() && cacheFile.length() > 0) {
+                try {
+                    val json = JSONArray(cacheFile.readText())
+                    cachedSeries = json
+                    return@withContext json
+                } catch (e: Exception) { }
+            }
+            
+            // Baixa da API
             val response = app.get("$mainUrl/api_proxy.php?action=get_series")
-            // CORRIGIDO: usando document.text() para evitar OOM
-            val json = JSONArray(response.document.text())
+            val jsonString = response.body.string()
+            val json = JSONArray(jsonString)
+            
+            // Salva cache
+            try {
+                cacheFile.writeText(jsonString)
+            } catch (e: Exception) { }
+            
             cachedSeries = json
             json
         }
@@ -177,11 +212,11 @@ class StreamFlix : MainAPI() {
         return withContext(Dispatchers.IO) {
             try {
                 val infoResponse = app.get("$mainUrl/api_proxy.php?action=get_vod_info&vod_id=$id")
-                val infoJson = JSONObject(infoResponse.document.text())
+                val infoJson = JSONObject(infoResponse.body.string())
                 val info = infoJson.optJSONObject("info") ?: JSONObject()
                 
                 val streamResponse = app.get("$mainUrl/api_proxy.php?action=get_stream_url&type=movie&id=$id")
-                val streamJson = JSONObject(streamResponse.document.text())
+                val streamJson = JSONObject(streamResponse.body.string())
                 val videoUrl = streamJson.getString("stream_url")
                 
                 val title = info.optString("name", "Título indisponível")
@@ -206,7 +241,7 @@ class StreamFlix : MainAPI() {
         return withContext(Dispatchers.IO) {
             try {
                 val infoResponse = app.get("$mainUrl/api_proxy.php?action=get_series_info&series_id=$id")
-                val json = JSONObject(infoResponse.document.text())
+                val json = JSONObject(infoResponse.body.string())
                 val info = json.optJSONObject("info") ?: JSONObject()
                 
                 val title = info.getString("name")
@@ -231,7 +266,7 @@ class StreamFlix : MainAPI() {
                             val epId = ep.getString("id")
                             
                             val streamResponse = app.get("$mainUrl/api_proxy.php?action=get_stream_url&type=series&id=$epId")
-                            val streamJson = JSONObject(streamResponse.document.text())
+                            val streamJson = JSONObject(streamResponse.body.string())
                             val videoUrl = streamJson.getString("stream_url")
                             val epPoster = fixImageUrl(ep.optString("movie_image"))
                             val epPlot = ep.optString("plot")
