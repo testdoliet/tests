@@ -207,20 +207,48 @@ class StreamFlix : MainAPI() {
         }
     }
 
+    // ==================== FUNÇÃO CORRIGIDA DE LIMPEZA ====================
+    
     private fun cleanTitleForTMDB(title: String): String {
         var cleaned = title
-        println("🧹 [StreamFlix] Limpando título: '$title'")
+        println("🧹 [StreamFlix] Limpando título original: '$title'")
         
-        cleaned = cleaned.replace(Regex("\\s*\\[[^\\]]+\\]\\s*$"), "")
-        cleaned = cleaned.replace(Regex("\\s*4K\\s*", RegexOption.IGNORE_CASE), " ")
-        cleaned = cleaned.replace(Regex("\\s*HD\\s*", RegexOption.IGNORE_CASE), " ")
-        cleaned = cleaned.replace(Regex("\\s*FULLHD\\s*", RegexOption.IGNORE_CASE), " ")
-        cleaned = cleaned.replace(Regex("\\s*\\[?L\\]?\\s*", RegexOption.IGNORE_CASE), " ")
-        cleaned = cleaned.replace(Regex("\\s*\\[?DV\\]?\\s*", RegexOption.IGNORE_CASE), " ")
-        cleaned = cleaned.replace(Regex("\\s*\\[?HDR\\]?\\s*", RegexOption.IGNORE_CASE), " ")
+        // Remove tags entre colchetes: [L], [DV], [HDR], [Hybrid], etc.
+        cleaned = cleaned.replace(Regex("\\s*\\[[^\\]]+\\]\\s*"), " ")
+        
+        // Remove palavras de qualidade/resolução (case insensitive)
+        val qualityWords = listOf(
+            "4K", "HD", "FULLHD", "1080P", "720P", "480P", "360P",
+            "HDR", "DOLBY", "ATMOS", "BLURAY", "REMUX", "WEBRIP",
+            "WEBDL", "BRRIP", "BDRIP", "DVD", "TVRIP", "CAM", "TS", "TC",
+            "WEB", "DL", "RIP", "PROPER", "REPACK", "INTERNAL", "LIMITED"
+        )
+        
+        for (word in qualityWords) {
+            cleaned = cleaned.replace(Regex("\\s*$word\\s*", RegexOption.IGNORE_CASE), " ")
+        }
+        
+        // Remove indicações de áudio/legenda (apenas palavras completas)
+        val audioWords = listOf(
+            "DUBLADO", "LEGENDADO", "LEG", "DUB", "PT-BR", "BR", "EN", "ENG",
+            "MULTI", "AUDIO", "SUBTITLE", "SUBS"
+        )
+        
+        for (word in audioWords) {
+            cleaned = cleaned.replace(Regex("\\s*$word\\s*", RegexOption.IGNORE_CASE), " ")
+        }
+        
+        // Remove anos isolados no final
+        cleaned = cleaned.replace(Regex("\\s*(19\\d{2}|20\\d{2})\\s*$"), " ")
+        
+        // Remove caracteres especiais extras
+        cleaned = cleaned.replace(Regex("\\s+"), " ")
         cleaned = cleaned.trim()
         
-        println("🧹 [StreamFlix] Título limpo: '$cleaned'")
+        // Remove pontos finais no final
+        cleaned = cleaned.replace(Regex("\\.+$"), "")
+        
+        println("🧹 [StreamFlix] Título limpo final: '$cleaned'")
         return cleaned
     }
 
