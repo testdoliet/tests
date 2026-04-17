@@ -24,12 +24,10 @@ class StreamFlix : MainAPI() {
     override val hasDownloadSupport = false
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries)
     
-    // Cache
     private var cachedMovies: JSONObject? = null
     private var cachedSeries: JSONObject? = null
     private val PAGE_SIZE = 30
     
-    // Páginas principais
     override val mainPage = mainPageOf(
         "$mainUrl/api_proxy.php?action=get_vod_streams" to "Filmes",
         "$mainUrl/api_proxy.php?action=get_series" to "Séries"
@@ -61,8 +59,10 @@ class StreamFlix : MainAPI() {
             val poster = fixImageUrl(movie.optString("stream_icon"))
             val rating = movie.optDouble("rating_5based", 0.0)
             
-            // CORRETO: passando a URL como String no segundo parâmetro
-            newMovieSearchResponse(name, "movie?id=$id", TvType.Movie) {
+            // CORREÇÃO: converte id para String com toString()
+            val movieUrl = "movie?id=${id.toString()}"
+            
+            newMovieSearchResponse(name, movieUrl, TvType.Movie) {
                 this.posterUrl = poster
                 if (rating > 0) this.score = Score.from10(rating.toFloat() * 2)
             }
@@ -83,8 +83,10 @@ class StreamFlix : MainAPI() {
             val poster = fixImageUrl(series.optString("cover"))
             val rating = series.optDouble("rating_5based", 0.0)
             
-            // CORRETO: passando a URL como String no segundo parâmetro
-            newTvSeriesSearchResponse(name, "series?id=$id", TvType.TvSeries) {
+            // CORREÇÃO: converte id para String com toString()
+            val seriesUrl = "series?id=${id.toString()}"
+            
+            newTvSeriesSearchResponse(name, seriesUrl, TvType.TvSeries) {
                 this.posterUrl = poster
                 if (rating > 0) this.score = Score.from10(rating.toFloat() * 2)
             }
@@ -119,7 +121,6 @@ class StreamFlix : MainAPI() {
         val results = mutableListOf<SearchResponse>()
         val queryLower = query.lowercase()
         
-        // Busca em filmes
         val allMovies = getAllMovies()
         for (i in 0 until allMovies.length()) {
             val movie = allMovies.getJSONObject(i)
@@ -130,7 +131,7 @@ class StreamFlix : MainAPI() {
                 val rating = movie.optDouble("rating_5based", 0.0)
                 
                 results.add(
-                    newMovieSearchResponse(name, "movie?id=$id", TvType.Movie) {
+                    newMovieSearchResponse(name, "movie?id=${id.toString()}", TvType.Movie) {
                         this.posterUrl = poster
                         if (rating > 0) this.score = Score.from10(rating.toFloat() * 2)
                     }
@@ -138,7 +139,6 @@ class StreamFlix : MainAPI() {
             }
         }
         
-        // Busca em séries
         val allSeries = getAllSeries()
         for (i in 0 until allSeries.length()) {
             val series = allSeries.getJSONObject(i)
@@ -149,7 +149,7 @@ class StreamFlix : MainAPI() {
                 val rating = series.optDouble("rating_5based", 0.0)
                 
                 results.add(
-                    newTvSeriesSearchResponse(name, "series?id=$id", TvType.TvSeries) {
+                    newTvSeriesSearchResponse(name, "series?id=${id.toString()}", TvType.TvSeries) {
                         this.posterUrl = poster
                         if (rating > 0) this.score = Score.from10(rating.toFloat() * 2)
                     }
@@ -185,7 +185,6 @@ class StreamFlix : MainAPI() {
                 val year = info.optString("releaseDate").takeIf { it.isNotEmpty() }?.toIntOrNull()
                 val rating = info.optDouble("rating_5based", 0.0)
                 
-                // CORRETO: igual ao PobreFlix
                 newMovieLoadResponse(title, "movie?id=$id", TvType.Movie, videoUrl) {
                     this.posterUrl = poster
                     this.plot = plot
@@ -245,7 +244,6 @@ class StreamFlix : MainAPI() {
                     }
                 }
                 
-                // CORRETO: igual ao PobreFlix
                 newTvSeriesLoadResponse(title, "series?id=$id", TvType.TvSeries, episodes) {
                     this.posterUrl = poster
                     this.plot = plot
@@ -264,7 +262,6 @@ class StreamFlix : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // CORRETO: igual ao PobreFlix - a URL já vem direta do load
         callback(
             newExtractorLink(
                 source = name,
