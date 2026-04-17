@@ -411,11 +411,11 @@
     },
     {
         "iconUrl": "https://reidosembeds.com/favicon.ico",
-        "jarFileSize": 39616,
-        "fileHash": "sha256-99e6323535a59b3ff2be1274efffc26d70c82dbcd4ad00d7635c1c5561e678b4",
+        "jarFileSize": 44873,
+        "fileHash": "sha256-bf0fd7af68ff653dee0cd5f59bb10b46ed52de2908d07d2a2f37973c8f901f01",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/lawlietbt/lietrepo",
-        "fileSize": 16059,
+        "fileSize": 20216,
         "status": 1,
         "language": "pt-br",
         "authors": [
@@ -430,7 +430,7 @@
         "description": "Rei dos Embeds - O melhor diret\u00f3rio de canais ao vivo. Mais de 150 canais dispon\u00edveis.",
         "url": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/ReiDosEmbeds.cs3",
         "name": "ReiDosEmbeds",
-        "jarHash": "sha256-3921b1b28ba0febb9c3730bc474757e985ced918d6a8b5fe41237034bb3c24e0"
+        "jarHash": "sha256-ed8e86b766f72dbfc4b4d6b8846dcd75d38676a97c2a4c613bbae0e2e911fc5a"
     },
     {
         "iconUrl": "https://openclipart.org/image/2400px/svg_to_png/193323/-S.png",
