@@ -56,12 +56,13 @@ class StreamFlix : MainAPI() {
         
         return (start until end).map { i ->
             val movie = allMovies.getJSONObject(i)
-            newMovieSearchResponse(
-                name = movie.getString("name"),
-                url = "movie?id=${movie.getInt("stream_id")}",
-                posterUrl = fixImageUrl(movie.optString("stream_icon"))
-            ) {
-                val rating = movie.optDouble("rating_5based", 0.0)
+            val name = movie.getString("name")
+            val id = movie.getInt("stream_id")
+            val poster = fixImageUrl(movie.optString("stream_icon"))
+            val rating = movie.optDouble("rating_5based", 0.0)
+            
+            newMovieSearchResponse(name, "movie?id=$id", TvType.Movie) {
+                this.posterUrl = poster
                 if (rating > 0) this.score = Score.from10(rating.toFloat() * 2)
             }
         }
@@ -76,12 +77,13 @@ class StreamFlix : MainAPI() {
         
         return (start until end).map { i ->
             val series = allSeries.getJSONObject(i)
-            newTvSeriesSearchResponse(
-                name = series.getString("name"),
-                url = "series?id=${series.getInt("series_id")}",
-                posterUrl = fixImageUrl(series.optString("cover"))
-            ) {
-                val rating = series.optDouble("rating_5based", 0.0)
+            val name = series.getString("name")
+            val id = series.getInt("series_id")
+            val poster = fixImageUrl(series.optString("cover"))
+            val rating = series.optDouble("rating_5based", 0.0)
+            
+            newTvSeriesSearchResponse(name, "series?id=$id", TvType.TvSeries) {
+                this.posterUrl = poster
                 if (rating > 0) this.score = Score.from10(rating.toFloat() * 2)
             }
         }
@@ -121,12 +123,15 @@ class StreamFlix : MainAPI() {
             val movie = allMovies.getJSONObject(i)
             val name = movie.getString("name")
             if (name.lowercase().contains(queryLower)) {
+                val id = movie.getInt("stream_id")
+                val poster = fixImageUrl(movie.optString("stream_icon"))
+                val rating = movie.optDouble("rating_5based", 0.0)
+                
                 results.add(
-                    newMovieSearchResponse(
-                        name = name,
-                        url = "movie?id=${movie.getInt("stream_id")}",
-                        posterUrl = fixImageUrl(movie.optString("stream_icon"))
-                    )
+                    newMovieSearchResponse(name, "movie?id=$id", TvType.Movie) {
+                        this.posterUrl = poster
+                        if (rating > 0) this.score = Score.from10(rating.toFloat() * 2)
+                    }
                 )
             }
         }
@@ -137,12 +142,15 @@ class StreamFlix : MainAPI() {
             val series = allSeries.getJSONObject(i)
             val name = series.getString("name")
             if (name.lowercase().contains(queryLower)) {
+                val id = series.getInt("series_id")
+                val poster = fixImageUrl(series.optString("cover"))
+                val rating = series.optDouble("rating_5based", 0.0)
+                
                 results.add(
-                    newTvSeriesSearchResponse(
-                        name = name,
-                        url = "series?id=${series.getInt("series_id")}",
-                        posterUrl = fixImageUrl(series.optString("cover"))
-                    )
+                    newTvSeriesSearchResponse(name, "series?id=$id", TvType.TvSeries) {
+                        this.posterUrl = poster
+                        if (rating > 0) this.score = Score.from10(rating.toFloat() * 2)
+                    }
                 )
             }
         }
@@ -174,12 +182,13 @@ class StreamFlix : MainAPI() {
                 val title = info.optString("name", "Título indisponível")
                 val poster = fixImageUrl(info.optString("stream_icon"))
                 val plot = info.optString("plot", "Sinopse não disponível.")
+                val year = info.optString("releaseDate").takeIf { it.isNotEmpty() }?.toIntOrNull()
+                val rating = info.optDouble("rating_5based", 0.0)
                 
                 newMovieLoadResponse(title, url, TvType.Movie, videoUrl) {
                     this.posterUrl = poster
                     this.plot = plot
-                    this.year = info.optString("releaseDate").takeIf { it.isNotEmpty() }?.toIntOrNull()
-                    val rating = info.optDouble("rating_5based", 0.0)
+                    this.year = year
                     if (rating > 0) this.score = Score.from10(rating.toFloat() * 2)
                 }
             } catch (e: Exception) {
@@ -199,6 +208,8 @@ class StreamFlix : MainAPI() {
                 val title = info.getString("name")
                 val poster = fixImageUrl(info.optString("cover"))
                 val plot = info.optString("plot", "Sinopse não disponível.")
+                val year = info.optString("releaseDate").takeIf { it.isNotEmpty() }?.toIntOrNull()
+                val rating = info.optDouble("rating_5based", 0.0)
                 
                 // Extrai episódios
                 val episodes = mutableListOf<Episode>()
@@ -219,16 +230,17 @@ class StreamFlix : MainAPI() {
                             val streamResponse = app.get("$mainUrl/api_proxy.php?action=get_stream_url&type=series&id=${ep.getString("id")}")
                             val streamJson = JSONObject(streamResponse.text)
                             val videoUrl = streamJson.getString("stream_url")
+                            val epPoster = fixImageUrl(ep.optString("movie_image"))
+                            val epPlot = ep.optString("plot")
                             
                             episodes.add(
-                                Episode(
-                                    name = epTitle,
-                                    season = seasonNum,
-                                    episode = epNum,
-                                    link = videoUrl,
-                                    posterUrl = fixImageUrl(ep.optString("movie_image")),
-                                    description = ep.optString("plot")
-                                )
+                                newEpisode(videoUrl) {
+                                    this.name = epTitle
+                                    this.season = seasonNum
+                                    this.episode = epNum
+                                    this.posterUrl = epPoster
+                                    this.description = epPlot
+                                }
                             )
                         }
                     }
@@ -237,8 +249,7 @@ class StreamFlix : MainAPI() {
                 newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes) {
                     this.posterUrl = poster
                     this.plot = plot
-                    this.year = info.optString("releaseDate").takeIf { it.isNotEmpty() }?.toIntOrNull()
-                    val rating = info.optDouble("rating_5based", 0.0)
+                    this.year = year
                     if (rating > 0) this.score = Score.from10(rating.toFloat() * 2)
                 }
             } catch (e: Exception) {
@@ -255,13 +266,13 @@ class StreamFlix : MainAPI() {
     ): Boolean {
         // A URL já vem direta do MP4 do loadMovie/loadSeries
         callback(
-            ExtractorLink(
+            newExtractorLink(
                 source = name,
                 name = name,
                 url = data,
-                referer = mainUrl,
+                type = ExtractorLinkType.DIRECT,
                 quality = Qualities.Unknown.value,
-                type = ExtractorLinkType.DIRECT
+                referer = mainUrl
             )
         )
         return true
