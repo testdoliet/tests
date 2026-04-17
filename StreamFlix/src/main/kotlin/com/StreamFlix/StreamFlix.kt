@@ -28,26 +28,18 @@ class StreamFlix : MainAPI() {
     private var cachedSeries: JSONObject? = null
     private val PAGE_SIZE = 30
 
-    companion object {
-        private val MAIN_SECTIONS = listOf(
-            "filmes" to "Filmes",
-            "series" to "Séries"
-        )
-    }
-
     override val mainPage = mainPageOf(
-        *MAIN_SECTIONS.map { (section, name) ->
-            "section_$section" to name
-        }.toTypedArray()
+        "$mainUrl/api_proxy.php?action=get_vod_streams" to "Filmes",
+        "$mainUrl/api_proxy.php?action=get_series" to "Séries"
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val sectionId = request.data.removePrefix("section_")
+        val isMovies = request.name == "Filmes"
         
-        val items = when (sectionId) {
-            "filmes" -> getMoviesPaginated(page)
-            "series" -> getSeriesPaginated(page)
-            else -> emptyList()
+        val items = if (isMovies) {
+            getMoviesPaginated(page)
+        } else {
+            getSeriesPaginated(page)
         }
         
         return newHomePageResponse(request.name, items, hasNext = items.size == PAGE_SIZE)
@@ -68,8 +60,9 @@ class StreamFlix : MainAPI() {
             val poster = fixImageUrl(movie.optString("stream_icon"))
             val rating = movie.optDouble("rating_5based", 0.0)
             
+            // CORRETO: sem TvType.Movie como terceiro parâmetro
             results.add(
-                newMovieSearchResponse(name, "movie?id=$id", TvType.Movie) {
+                newMovieSearchResponse(name, "movie?id=$id") {
                     this.posterUrl = poster
                     if (rating > 0) this.score = Score.from10(rating.toFloat() * 2)
                 }
@@ -93,8 +86,9 @@ class StreamFlix : MainAPI() {
             val poster = fixImageUrl(series.optString("cover"))
             val rating = series.optDouble("rating_5based", 0.0)
             
+            // CORRETO: sem TvType.TvSeries como terceiro parâmetro
             results.add(
-                newTvSeriesSearchResponse(name, "series?id=$id", TvType.TvSeries) {
+                newTvSeriesSearchResponse(name, "series?id=$id") {
                     this.posterUrl = poster
                     if (rating > 0) this.score = Score.from10(rating.toFloat() * 2)
                 }
@@ -141,7 +135,7 @@ class StreamFlix : MainAPI() {
                 val rating = movie.optDouble("rating_5based", 0.0)
                 
                 results.add(
-                    newMovieSearchResponse(name, "movie?id=$id", TvType.Movie) {
+                    newMovieSearchResponse(name, "movie?id=$id") {
                         this.posterUrl = poster
                         if (rating > 0) this.score = Score.from10(rating.toFloat() * 2)
                     }
@@ -159,7 +153,7 @@ class StreamFlix : MainAPI() {
                 val rating = series.optDouble("rating_5based", 0.0)
                 
                 results.add(
-                    newTvSeriesSearchResponse(name, "series?id=$id", TvType.TvSeries) {
+                    newTvSeriesSearchResponse(name, "series?id=$id") {
                         this.posterUrl = poster
                         if (rating > 0) this.score = Score.from10(rating.toFloat() * 2)
                     }
@@ -272,6 +266,7 @@ class StreamFlix : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
+        // CORRETO: ExtractorLinkType.M3U8 (não DIRECT)
         callback(
             ExtractorLink(
                 source = name,
@@ -279,7 +274,7 @@ class StreamFlix : MainAPI() {
                 url = data,
                 referer = mainUrl,
                 quality = Qualities.Unknown.value,
-                type = ExtractorLinkType.DIRECT
+                type = ExtractorLinkType.M3U8
             )
         )
         return true
