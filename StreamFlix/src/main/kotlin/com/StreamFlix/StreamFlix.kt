@@ -9,7 +9,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.File
 
 @CloudstreamPlugin
 class StreamFlixProvider : Plugin() {
@@ -101,26 +100,10 @@ class StreamFlix : MainAPI() {
         if (cachedMovies != null) return cachedMovies!!
         
         return withContext(Dispatchers.IO) {
-            // Tenta cache
-            val cacheFile = File("${context.cacheDir}/streamflix_movies.json")
-            if (cacheFile.exists() && cacheFile.length() > 0) {
-                try {
-                    val json = JSONArray(cacheFile.readText())
-                    cachedMovies = json
-                    return@withContext json
-                } catch (e: Exception) { }
-            }
-            
-            // Baixa da API
             val response = app.get("$mainUrl/api_proxy.php?action=get_vod_streams")
+            // Usando body.string() para evitar OOM
             val jsonString = response.body.string()
             val json = JSONArray(jsonString)
-            
-            // Salva cache
-            try {
-                cacheFile.writeText(jsonString)
-            } catch (e: Exception) { }
-            
             cachedMovies = json
             json
         }
@@ -130,26 +113,10 @@ class StreamFlix : MainAPI() {
         if (cachedSeries != null) return cachedSeries!!
         
         return withContext(Dispatchers.IO) {
-            // Tenta cache
-            val cacheFile = File("${context.cacheDir}/streamflix_series.json")
-            if (cacheFile.exists() && cacheFile.length() > 0) {
-                try {
-                    val json = JSONArray(cacheFile.readText())
-                    cachedSeries = json
-                    return@withContext json
-                } catch (e: Exception) { }
-            }
-            
-            // Baixa da API
             val response = app.get("$mainUrl/api_proxy.php?action=get_series")
+            // Usando body.string() para evitar OOM
             val jsonString = response.body.string()
             val json = JSONArray(jsonString)
-            
-            // Salva cache
-            try {
-                cacheFile.writeText(jsonString)
-            } catch (e: Exception) { }
-            
             cachedSeries = json
             json
         }
