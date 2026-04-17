@@ -6,6 +6,6 @@ cloudstream {
     authors = listOf("lawlietbr")
     status = 1
     tvTypes = listOf("Live")
-    iconUrl = "https://reidosembeds.com/favicon.ico"
+    iconUrl = "https://www.image2url.com/r2/default/images/1776422866704-1574540b-0413-405e-b610-ff2e417cdc8e.svg"
     isCrossPlatform = true
 }
