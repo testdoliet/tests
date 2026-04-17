@@ -24,10 +24,9 @@ class ReiDosEmbeds : MainAPI() {
 
     private val apiUrl = "https://reidosembeds.com/api"
     
-    // Cache para guardar os dados dos canais (slug -> (nome, poster))
     private var channelsCache: MutableMap<String, Pair<String, String>> = mutableMapOf()
     
-    // Categorias bloqueadas (não aparecem na página inicial nem na busca)
+    // Categorias bloqueadas
     private val blockedCategories = listOf("Adulto", "adulto", "ADULTO")
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
@@ -42,7 +41,7 @@ class ReiDosEmbeds : MainAPI() {
         
         println("📑 Encontradas ${categoriesArray.length()} categorias")
         
-        // 2. Para cada categoria, pega os canais (exceto bloqueadas)
+        // 2. Para cada categoria, pega os canais
         for (i in 0 until categoriesArray.length()) {
             val category = categoriesArray.getJSONObject(i)
             val categoryName = category.getString("name")
@@ -58,48 +57,51 @@ class ReiDosEmbeds : MainAPI() {
             
             val channelsResponse = app.get("$apiUrl/channels?category=${categoryId.replace(" ", "%20")}").text
             val channelsJson = JSONObject(channelsResponse)
-            val channelsArray = channelsJson.getJSONArray("data")
+            val success = channelsJson.getBoolean("success")
             
-            println("📺 Encontrados ${channelsArray.length()} canais em '$categoryName'")
-            
-            val channels = mutableListOf<SearchResponse>()
-            
-            for (j in 0 until channelsArray.length()) {
-                val channel = channelsArray.getJSONObject(j)
-                val name = channel.getString("name")
-                val slug = channel.getString("id")
-                val embedUrl = channel.getString("embed_url")
-                val logoUrl = channel.getString("logo_url")
+            if (success) {
+                val channelsArray = channelsJson.getJSONArray("data")
                 
-                var posterUrl = logoUrl
-                if (posterUrl.startsWith("//")) posterUrl = "https:$posterUrl"
+                println("📺 Encontrados ${channelsArray.length()} canais em '$categoryName'")
                 
-                // Guarda no cache
-                channelsCache[slug] = Pair(name, posterUrl)
+                val channels = mutableListOf<SearchResponse>()
                 
-                println("  📺 Canal: '$name' -> $embedUrl")
+                for (j in 0 until channelsArray.length()) {
+                    val channel = channelsArray.getJSONObject(j)
+                    val name = channel.getString("name")
+                    val slug = channel.getString("id")
+                    val embedUrl = channel.getString("embed_url")
+                    val logoUrl = channel.getString("logo_url")
+                    
+                    var posterUrl = logoUrl
+                    if (posterUrl.startsWith("//")) posterUrl = "https:$posterUrl"
+                    
+                    channelsCache[slug] = Pair(name, posterUrl)
+                    
+                    println("  📺 Canal: '$name' -> $embedUrl")
+                    
+                    channels.add(
+                        newLiveSearchResponse(name, embedUrl, TvType.Live) {
+                            this.posterUrl = posterUrl
+                        }
+                    )
+                }
                 
-                channels.add(
-                    newLiveSearchResponse(name, embedUrl, TvType.Live) {
-                        this.posterUrl = posterUrl
-                    }
-                )
-            }
-            
-            if (channels.isNotEmpty()) {
-                categories.add(HomePageList(categoryName, channels, isHorizontalImages = true))
+                if (channels.isNotEmpty()) {
+                    categories.add(HomePageList(categoryName, channels, isHorizontalImages = true))
+                }
             }
         }
         
-        // 3. Categoria "Todos" (filtra canais de categorias bloqueadas)
+        // 3. Categoria "Todos" (CORREÇÃO: usa JSONObject e pega array "data")
         val allChannelsResponse = app.get("$apiUrl/channels").text
-        val allChannelsArray = JSONArray(allChannelsResponse)
+        val allChannelsJson = JSONObject(allChannelsResponse)  // <-- CORREÇÃO: é JSONObject, não JSONArray
+        val allChannelsArray = allChannelsJson.getJSONArray("data")  // <-- Pega o array dentro de "data"
         
         val allChannels = mutableListOf<SearchResponse>()
         for (i in 0 until allChannelsArray.length()) {
             val channel = allChannelsArray.getJSONObject(i)
             val name = channel.getString("name")
-            val slug = channel.getString("id")
             val embedUrl = channel.getString("embed_url")
             val logoUrl = channel.getString("logo_url")
             val category = channel.optString("category", "")
@@ -112,11 +114,6 @@ class ReiDosEmbeds : MainAPI() {
             
             var posterUrl = logoUrl
             if (posterUrl.startsWith("//")) posterUrl = "https:$posterUrl"
-            
-            // Guarda no cache se não existir
-            if (!channelsCache.containsKey(slug)) {
-                channelsCache[slug] = Pair(name, posterUrl)
-            }
             
             allChannels.add(
                 newLiveSearchResponse(name, embedUrl, TvType.Live) {
@@ -138,22 +135,16 @@ class ReiDosEmbeds : MainAPI() {
     override suspend fun load(url: String): LoadResponse {
         println("📖 Carregando canal: $url")
         
-        // Extrai o slug da URL
         val slug = url.substringAfterLast("/")
-        
-        // Tenta pegar do cache
         val channelData = channelsCache[slug]
         val title = channelData?.first ?: slug.replace("-", " ").split(" ").joinToString(" ") { word ->
             if (word.isNotEmpty()) word.replaceFirstChar { it.uppercase() } else word
         }
         val posterUrl = channelData?.second ?: ""
-        
-        // Sinopse personalizada
         val plot = "Assista $title ao vivo!"
         
         println("📺 Título do canal: $title")
         println("📝 Sinopse: $plot")
-        println("🖼️ Poster: $posterUrl")
         
         return newMovieLoadResponse(title, url, TvType.Live, url) {
             this.posterUrl = posterUrl
@@ -170,7 +161,6 @@ class ReiDosEmbeds : MainAPI() {
         
         val results = mutableListOf<SearchResponse>()
         
-        // Busca em canais (filtra categorias bloqueadas)
         val channelsArray = data.getJSONArray("channels")
         for (i in 0 until channelsArray.length()) {
             val channel = channelsArray.getJSONObject(i)
@@ -196,7 +186,6 @@ class ReiDosEmbeds : MainAPI() {
             )
         }
         
-        // Busca em eventos
         val eventsArray = data.getJSONArray("events")
         for (i in 0 until eventsArray.length()) {
             val event = eventsArray.getJSONObject(i)
@@ -250,101 +239,24 @@ class ReiDosEmbeds : MainAPI() {
             val streamUrl = source.getString("src").replace("\\/", "/")
             val label = source.optString("label", "Source ${i + 1}")
             
-            println("  📡 Baixando M3U8 para detectar qualidades: $streamUrl")
+            println("  📡 Stream URL: $streamUrl")
             
-            // Headers para as requisições
-            val headers = mapOf(
-                "Referer" to playerUrl,
-                "Origin" to "https://rde.buzz",
-                "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36"
-            )
-            
-            // Baixa o M3U8 para analisar as qualidades
-            try {
-                val m3u8Content = app.get(streamUrl, headers = headers).text
-                
-                // Extrai as qualidades do M3U8
-                val qualities = extractQualitiesFromM3u8(m3u8Content, streamUrl, playerUrl)
-                
-                if (qualities.isNotEmpty()) {
-                    println("  📊 Qualidades detectadas: ${qualities.map { it.second }}")
-                    for ((qualityUrl, height) in qualities) {
-                        val qualityName = "${height}p"
-                        val linkName = "$name - $qualityName"
-                        println("    🔗 Gerando link: $linkName")
-                        
-                        M3u8Helper.generateM3u8(
-                            linkName,
-                            qualityUrl,
-                            playerUrl,
-                            headers = headers
-                        ).forEach { link ->
-                            callback(link)
-                        }
-                    }
-                } else {
-                    // Fallback: usa o link original sem qualidade detectada
-                    println("  ⚠️ Nenhuma qualidade detectada, usando link original")
-                    M3u8Helper.generateM3u8(
-                        "$name - $label",
-                        streamUrl,
-                        playerUrl,
-                        headers = headers
-                    ).forEach { link ->
-                        callback(link)
-                    }
-                }
-            } catch (e: Exception) {
-                println("  ❌ Erro ao processar M3U8: ${e.message}")
-                // Fallback em caso de erro
-                M3u8Helper.generateM3u8(
-                    "$name - $label",
-                    streamUrl,
-                    playerUrl,
-                    headers = headers
-                ).forEach { link ->
-                    callback(link)
-                }
+            M3u8Helper.generateM3u8(
+                "$name - $label",
+                streamUrl,
+                playerUrl,
+                headers = mapOf(
+                    "Referer" to playerUrl,
+                    "Origin" to "https://rde.buzz",
+                    "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36"
+                )
+            ).forEach { link ->
+                println("    ✅ Link gerado: ${link.url}")
+                callback(link)
             }
         }
         
         println("🎉 Links carregados com sucesso!")
         return true
-    }
-    
-    // Função para extrair qualidades do M3U8
-    private fun extractQualitiesFromM3u8(content: String, baseUrl: String, referer: String): List<Pair<String, Int>> {
-        val qualities = mutableListOf<Pair<String, Int>>()
-        val lines = content.lines()
-        
-        // Procura por RESOLUTION no M3U8
-        val resolutionPattern = Regex("""RESOLUTION=(\d+)x(\d+)""")
-        
-        for (i in lines.indices) {
-            val line = lines[i]
-            val match = resolutionPattern.find(line)
-            
-            if (match != null) {
-                val height = match.groupValues[2].toIntOrNull() ?: continue
-                
-                // Pega a URL do stream (próxima linha)
-                var streamUrl = lines.getOrNull(i + 1)?.trim() ?: continue
-                
-                // Se a URL for relativa, completa com o baseUrl
-                if (!streamUrl.startsWith("http")) {
-                    val base = baseUrl.substringBeforeLast("/")
-                    streamUrl = if (streamUrl.startsWith("/")) {
-                        val baseDomain = baseUrl.substringBefore("//").plus("//").plus(baseUrl.substringAfter("//").substringBefore("/"))
-                        baseDomain + streamUrl
-                    } else {
-                        "$base/$streamUrl"
-                    }
-                }
-                
-                qualities.add(Pair(streamUrl, height))
-            }
-        }
-        
-        return qualities
     }
 }
