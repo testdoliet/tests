@@ -52,21 +52,24 @@ class StreamFlix : MainAPI() {
         
         if (start >= allMovies.length()) return emptyList()
         
-        return (start until end).map { i ->
+        val results = mutableListOf<SearchResponse>()
+        for (i in start until end) {
             val movie = allMovies.getJSONObject(i)
             val name = movie.getString("name")
             val id = movie.getInt("stream_id")
             val poster = fixImageUrl(movie.optString("stream_icon"))
             val rating = movie.optDouble("rating_5based", 0.0)
             
-            // CORREÇÃO: converte id para String com toString()
-            val movieUrl = "movie?id=${id.toString()}"
+            val url = "movie?id=$id"
             
-            newMovieSearchResponse(name, movieUrl, TvType.Movie) {
-                this.posterUrl = poster
-                if (rating > 0) this.score = Score.from10(rating.toFloat() * 2)
-            }
+            results.add(
+                newMovieSearchResponse(name, url, TvType.Movie) {
+                    this.posterUrl = poster
+                    if (rating > 0) this.score = Score.from10(rating.toFloat() * 2)
+                }
+            )
         }
+        return results
     }
     
     private suspend fun getSeriesPaginated(page: Int): List<SearchResponse> {
@@ -76,21 +79,24 @@ class StreamFlix : MainAPI() {
         
         if (start >= allSeries.length()) return emptyList()
         
-        return (start until end).map { i ->
+        val results = mutableListOf<SearchResponse>()
+        for (i in start until end) {
             val series = allSeries.getJSONObject(i)
             val name = series.getString("name")
             val id = series.getInt("series_id")
             val poster = fixImageUrl(series.optString("cover"))
             val rating = series.optDouble("rating_5based", 0.0)
             
-            // CORREÇÃO: converte id para String com toString()
-            val seriesUrl = "series?id=${id.toString()}"
+            val url = "series?id=$id"
             
-            newTvSeriesSearchResponse(name, seriesUrl, TvType.TvSeries) {
-                this.posterUrl = poster
-                if (rating > 0) this.score = Score.from10(rating.toFloat() * 2)
-            }
+            results.add(
+                newTvSeriesSearchResponse(name, url, TvType.TvSeries) {
+                    this.posterUrl = poster
+                    if (rating > 0) this.score = Score.from10(rating.toFloat() * 2)
+                }
+            )
         }
+        return results
     }
     
     private suspend fun getAllMovies(): JSONObject {
@@ -131,7 +137,7 @@ class StreamFlix : MainAPI() {
                 val rating = movie.optDouble("rating_5based", 0.0)
                 
                 results.add(
-                    newMovieSearchResponse(name, "movie?id=${id.toString()}", TvType.Movie) {
+                    newMovieSearchResponse(name, "movie?id=$id", TvType.Movie) {
                         this.posterUrl = poster
                         if (rating > 0) this.score = Score.from10(rating.toFloat() * 2)
                     }
@@ -149,7 +155,7 @@ class StreamFlix : MainAPI() {
                 val rating = series.optDouble("rating_5based", 0.0)
                 
                 results.add(
-                    newTvSeriesSearchResponse(name, "series?id=${id.toString()}", TvType.TvSeries) {
+                    newTvSeriesSearchResponse(name, "series?id=$id", TvType.TvSeries) {
                         this.posterUrl = poster
                         if (rating > 0) this.score = Score.from10(rating.toFloat() * 2)
                     }
