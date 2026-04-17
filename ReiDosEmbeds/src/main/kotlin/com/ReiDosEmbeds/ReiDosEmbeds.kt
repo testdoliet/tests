@@ -235,3 +235,4 @@ class ReiDosEmbeds : MainAPI() {
     println("🎉 Links carregados com sucesso!")
     return true
 }
+}
