@@ -5,7 +5,7 @@ import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.plugins.BasePlugin
 import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
 import org.json.JSONObject
-import org.json.JSONArray  // <-- ADICIONE ESTA LINHA
+import org.json.JSONArray
 
 @CloudstreamPlugin
 class ReiDosEmbedsProvider : BasePlugin() {
@@ -25,77 +25,98 @@ class ReiDosEmbeds : MainAPI() {
     private val apiUrl = "https://reidosembeds.com/api"
     private val baseUrl = "https://reidosembeds.com"
     
+    // Cache para guardar os dados dos canais
     private var channelsCache: MutableMap<String, Pair<String, String>> = mutableMapOf()
+    
+    // Categorias bloqueadas (não aparecem)
+    private val blockedCategories = listOf("Adulto", "adulto", "ADULTO")
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         println("🚀 Iniciando getMainPage...")
         
         val categories = mutableListOf<HomePageList>()
         
+        // 1. Primeiro, pega todas as categorias
         val categoriesResponse = app.get("$apiUrl/channels/categories").text
         val categoriesJson = JSONObject(categoriesResponse)
         val categoriesArray = categoriesJson.getJSONArray("data")
         
         println("📑 Encontradas ${categoriesArray.length()} categorias")
         
+        // 2. Para cada categoria, pega os canais (exceto as bloqueadas)
         for (i in 0 until categoriesArray.length()) {
             val category = categoriesArray.getJSONObject(i)
             val categoryName = category.getString("name")
             val categoryId = category.getString("id")
             
+            // Pula categorias bloqueadas
+            if (blockedCategories.contains(categoryName) || blockedCategories.contains(categoryId)) {
+                println("🚫 Pulando categoria bloqueada: '$categoryName'")
+                continue
+            }
+            
             println("🔄 Processando categoria: '$categoryName'")
             
             val channelsResponse = app.get("$apiUrl/channels?category=${categoryId.replace(" ", "%20")}").text
-            val channelsJson = JSONObject(channelsResponse)
-            val success = channelsJson.getBoolean("success")
+            val channelsArray = JSONArray(channelsResponse)
             
-            if (success) {
-                val channelsArray = channelsJson.getJSONArray("data")
+            println("📺 Encontrados ${channelsArray.length()} canais em '$categoryName'")
+            
+            val channels = mutableListOf<SearchResponse>()
+            
+            for (j in 0 until channelsArray.length()) {
+                val channel = channelsArray.getJSONObject(j)
+                val name = channel.getString("name")
+                val slug = channel.getString("id")
+                val embedUrl = channel.getString("embed_url")
+                val logoUrl = channel.getString("logo_url")
                 
-                println("📺 Encontrados ${channelsArray.length()} canais em '$categoryName'")
+                var posterUrl = logoUrl
+                if (posterUrl.startsWith("//")) posterUrl = "https:$posterUrl"
                 
-                val channels = mutableListOf<SearchResponse>()
+                // Guarda no cache (slug -> (name, poster))
+                channelsCache[slug] = Pair(name, posterUrl)
                 
-                for (j in 0 until channelsArray.length()) {
-                    val channel = channelsArray.getJSONObject(j)
-                    val name = channel.getString("name")
-                    val slug = channel.getString("id")
-                    val embedUrl = channel.getString("embed_url")
-                    val logoUrl = channel.getString("logo_url")
-                    
-                    var posterUrl = logoUrl
-                    if (posterUrl.startsWith("//")) posterUrl = "https:$posterUrl"
-                    
-                    channelsCache[slug] = Pair(name, posterUrl)
-                    
-                    println("  📺 Canal: '$name' -> $embedUrl")
-                    
-                    channels.add(
-                        newLiveSearchResponse(name, embedUrl, TvType.Live) {
-                            this.posterUrl = posterUrl
-                        }
-                    )
-                }
+                println("  📺 Canal: '$name' -> $embedUrl")
                 
-                if (channels.isNotEmpty()) {
-                    categories.add(HomePageList(categoryName, channels, isHorizontalImages = true))
-                }
+                channels.add(
+                    newLiveSearchResponse(name, embedUrl, TvType.Live) {
+                        this.posterUrl = posterUrl
+                    }
+                )
+            }
+            
+            if (channels.isNotEmpty()) {
+                categories.add(HomePageList(categoryName, channels, isHorizontalImages = true))
             }
         }
         
+        // 3. Também adiciona a categoria "Todos" (filtrando canais de categorias bloqueadas)
         val allChannelsResponse = app.get("$apiUrl/channels").text
-        val allChannelsJson = JSONObject(allChannelsResponse)
-        val allChannelsArray = allChannelsJson.getJSONArray("data")
+        val allChannelsArray = JSONArray(allChannelsResponse)
         
         val allChannels = mutableListOf<SearchResponse>()
         for (i in 0 until allChannelsArray.length()) {
             val channel = allChannelsArray.getJSONObject(i)
             val name = channel.getString("name")
+            val slug = channel.getString("id")
             val embedUrl = channel.getString("embed_url")
             val logoUrl = channel.getString("logo_url")
+            val category = channel.optString("category", "")
+            
+            // Pula canais de categorias bloqueadas
+            if (blockedCategories.contains(category)) {
+                println("🚫 Pulando canal de categoria bloqueada: '$name' ($category)")
+                continue
+            }
             
             var posterUrl = logoUrl
             if (posterUrl.startsWith("//")) posterUrl = "https:$posterUrl"
+            
+            // Guarda no cache se ainda não estiver
+            if (!channelsCache.containsKey(slug)) {
+                channelsCache[slug] = Pair(name, posterUrl)
+            }
             
             allChannels.add(
                 newLiveSearchResponse(name, embedUrl, TvType.Live) {
@@ -117,16 +138,22 @@ class ReiDosEmbeds : MainAPI() {
     override suspend fun load(url: String): LoadResponse {
         println("📖 Carregando canal: $url")
         
+        // Extrai o slug da URL
         val slug = url.substringAfterLast("/")
+        
+        // Tenta pegar do cache
         val channelData = channelsCache[slug]
         val title = channelData?.first ?: slug.replace("-", " ").split(" ").joinToString(" ") { word ->
             if (word.isNotEmpty()) word.replaceFirstChar { it.uppercase() } else word
         }
         val posterUrl = channelData?.second ?: ""
+        
+        // Sinopse personalizada
         val plot = "Assista $title ao vivo!"
         
         println("📺 Título do canal: $title")
         println("📝 Sinopse: $plot")
+        println("🖼️ Poster: $posterUrl")
         
         return newMovieLoadResponse(title, url, TvType.Live, url) {
             this.posterUrl = posterUrl
@@ -143,12 +170,20 @@ class ReiDosEmbeds : MainAPI() {
         
         val results = mutableListOf<SearchResponse>()
         
+        // Busca em canais (filtrando os de categoria bloqueada)
         val channelsArray = data.getJSONArray("channels")
         for (i in 0 until channelsArray.length()) {
             val channel = channelsArray.getJSONObject(i)
             val name = channel.getString("name")
             val embedUrl = channel.getString("embed_url")
             val logoUrl = channel.optString("logo_url", "")
+            val category = channel.optString("category", "")
+            
+            // Pula canais de categorias bloqueadas
+            if (blockedCategories.contains(category)) {
+                println("🚫 Pulando canal bloqueado na busca: '$name' ($category)")
+                continue
+            }
             
             var posterUrl = logoUrl
             if (posterUrl.startsWith("//")) posterUrl = "https:$posterUrl"
@@ -161,6 +196,7 @@ class ReiDosEmbeds : MainAPI() {
             )
         }
         
+        // Busca em eventos
         val eventsArray = data.getJSONArray("events")
         for (i in 0 until eventsArray.length()) {
             val event = eventsArray.getJSONObject(i)
@@ -187,52 +223,97 @@ class ReiDosEmbeds : MainAPI() {
     }
 
     override suspend fun loadLinks(
-    data: String,
-    isCasting: Boolean,
-    subtitleCallback: (SubtitleFile) -> Unit,
-    callback: (ExtractorLink) -> Unit
-): Boolean {
-    println("🎬 Carregando links para: $data")
-    
-    val channelHtml = app.get(data).text
-    val iframePattern = Regex("""<iframe[^>]*src="([^"]*__play[^"]*)"[^>]*>""")
-    val iframeMatch = iframePattern.find(channelHtml) ?: return false
-    
-    val playerUrl = iframeMatch.groupValues[1].replace("&amp;", "&")
-    println("✅ Player URL encontrada: $playerUrl")
-    
-    val playerHtml = app.get(playerUrl, headers = mapOf("Referer" to data)).text
-    println("📄 HTML do player obtido, tamanho: ${playerHtml.length} caracteres")
-    
-    val sourcesPattern = Regex("""var sources\s*=\s*(\[.*?\]);""", RegexOption.DOT_MATCHES_ALL)
-    val sourcesMatch = sourcesPattern.find(playerHtml) ?: return false
-    
-    val sourcesArray = JSONArray(sourcesMatch.groupValues[1])
-    
-    for (i in 0 until sourcesArray.length()) {
-        val source = sourcesArray.getJSONObject(i)
-        val streamUrl = source.getString("src").replace("\\/", "/")
-        val label = source.optString("label", "Source ${i + 1}")
+        data: String,
+        isCasting: Boolean,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        println("🎬 Carregando links para: $data")
         
-        println("  📡 Stream URL: $streamUrl")
+        val channelHtml = app.get(data).text
+        val iframePattern = Regex("""<iframe[^>]*src="([^"]*__play[^"]*)"[^>]*>""")
+        val iframeMatch = iframePattern.find(channelHtml) ?: return false
         
-        // Usa o M3u8Helper com a URL original (.txt)
-        M3u8Helper.generateM3u8(
-            "$name - $label",
-            streamUrl,
-            playerUrl,
-            headers = mapOf(
+        val playerUrl = iframeMatch.groupValues[1].replace("&amp;", "&")
+        println("✅ Player URL encontrada: $playerUrl")
+        
+        val playerHtml = app.get(playerUrl, headers = mapOf("Referer" to data)).text
+        println("📄 HTML do player obtido, tamanho: ${playerHtml.length} caracteres")
+        
+        val sourcesPattern = Regex("""var sources\s*=\s*(\[.*?\]);""", RegexOption.DOT_MATCHES_ALL)
+        val sourcesMatch = sourcesPattern.find(playerHtml) ?: return false
+        
+        val sourcesArray = JSONArray(sourcesMatch.groupValues[1])
+        
+        for (i in 0 until sourcesArray.length()) {
+            val source = sourcesArray.getJSONObject(i)
+            var streamUrl = source.getString("src").replace("\\/", "/")
+            val label = source.optString("label", "Source ${i + 1}")
+            
+            println("  📡 Stream URL: $streamUrl")
+            
+            // Extrai a qualidade do stream (altura)
+            val quality = extractQualityFromUrl(streamUrl, label)
+            
+            // Adiciona headers
+            val headers = mapOf(
                 "Referer" to playerUrl,
                 "Origin" to "https://rde.buzz",
                 "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36"
             )
-        ).forEach { link ->
-            println("    ✅ Link gerado: ${link.url}")
-            callback(link)
+            
+            // Usa o M3u8Helper para gerar os links
+            M3u8Helper.generateM3u8(
+                "$name - $label",
+                streamUrl,
+                playerUrl,
+                headers = headers
+            ).forEach { link ->
+                // Atualiza a qualidade do link se conseguimos extrair
+                val finalQuality = if (quality != Qualities.Unknown.value) quality else link.quality
+                val finalLink = ExtractorLink(
+                    source = link.source,
+                    name = link.name,
+                    url = link.url,
+                    referer = link.referer,
+                    type = link.type,
+                    quality = finalQuality,
+                    headers = link.headers
+                )
+                println("    ✅ Link gerado: ${finalLink.url} (Qualidade: $finalQuality)")
+                callback(finalLink)
+            }
         }
+        
+        println("🎉 Links carregados com sucesso!")
+        return true
     }
     
-    println("🎉 Links carregados com sucesso!")
-    return true
-}
+    // Função para extrair qualidade do stream a partir da URL ou label
+    private fun extractQualityFromUrl(url: String, label: String): Int {
+        // Tenta extrair da label primeiro
+        val labelPattern = Regex("""(\d{3,4})p""", RegexOption.IGNORE_CASE)
+        val labelMatch = labelPattern.find(label)
+        if (labelMatch != null) {
+            return labelMatch.groupValues[1].toIntOrNull() ?: Qualities.Unknown.value
+        }
+        
+        // Tenta extrair da URL
+        val urlPattern = Regex("""(\d{3,4})p""", RegexOption.IGNORE_CASE)
+        val urlMatch = urlPattern.find(url)
+        if (urlMatch != null) {
+            return urlMatch.groupValues[1].toIntOrNull() ?: Qualities.Unknown.value
+        }
+        
+        // Verifica palavras-chave na URL
+        return when {
+            url.contains("1080", ignoreCase = true) -> Qualities.P1080.value
+            url.contains("720", ignoreCase = true) -> Qualities.P720.value
+            url.contains("480", ignoreCase = true) -> Qualities.P480.value
+            url.contains("360", ignoreCase = true) -> Qualities.P360.value
+            url.contains("hd", ignoreCase = true) -> Qualities.P720.value
+            url.contains("fullhd", ignoreCase = true) -> Qualities.P1080.value
+            else -> Qualities.Unknown.value
+        }
+    }
 }
