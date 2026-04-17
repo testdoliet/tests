@@ -35,8 +35,8 @@ class StreamFlix : MainAPI() {
     private val PAGE_SIZE = 30
 
     private val tmdbImageUrl = "https://image.tmdb.org/t/p"
-    private val TMDB_API_KEY = "sua_api_key_aqui"  // Coloque sua API key do TMDB
-    private val TMDB_ACCESS_TOKEN = "seu_token_aqui"  // Coloque seu token do TMDB
+    private val TMDB_API_KEY = BuildConfig.TMDB_API_KEY// Coloque sua API key do TMDB
+    private val TMDB_ACCESS_TOKEN = BuildConfig.TMDB_ACCESS_TOKEN  // Coloque seu token do TMDB
 
     private val genreMap = mapOf(
         28 to "Ação", 12 to "Aventura", 16 to "Animação", 35 to "Comédia",
