@@ -23,28 +23,36 @@ class StreamFlix : MainAPI() {
     override var lang = "pt-br"
     override val hasDownloadSupport = false
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries)
-    
+
     private var cachedMovies: JSONObject? = null
     private var cachedSeries: JSONObject? = null
     private val PAGE_SIZE = 30
-    
+
+    companion object {
+        private val MAIN_SECTIONS = listOf(
+            "filmes" to "Filmes",
+            "series" to "Séries"
+        )
+    }
+
     override val mainPage = mainPageOf(
-        "$mainUrl/api_proxy.php?action=get_vod_streams" to "Filmes",
-        "$mainUrl/api_proxy.php?action=get_series" to "Séries"
+        *MAIN_SECTIONS.map { (section, name) ->
+            "section_$section" to name
+        }.toTypedArray()
     )
-    
+
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val isMovies = request.name == "Filmes"
+        val sectionId = request.data.removePrefix("section_")
         
-        val items = if (isMovies) {
-            getMoviesPaginated(page)
-        } else {
-            getSeriesPaginated(page)
+        val items = when (sectionId) {
+            "filmes" -> getMoviesPaginated(page)
+            "series" -> getSeriesPaginated(page)
+            else -> emptyList()
         }
         
         return newHomePageResponse(request.name, items, hasNext = items.size == PAGE_SIZE)
     }
-    
+
     private suspend fun getMoviesPaginated(page: Int): List<SearchResponse> {
         val allMovies = getAllMovies()
         val start = page * PAGE_SIZE
@@ -60,10 +68,8 @@ class StreamFlix : MainAPI() {
             val poster = fixImageUrl(movie.optString("stream_icon"))
             val rating = movie.optDouble("rating_5based", 0.0)
             
-            val url = "movie?id=$id"
-            
             results.add(
-                newMovieSearchResponse(name, url, TvType.Movie) {
+                newMovieSearchResponse(name, "movie?id=$id", TvType.Movie) {
                     this.posterUrl = poster
                     if (rating > 0) this.score = Score.from10(rating.toFloat() * 2)
                 }
@@ -71,7 +77,7 @@ class StreamFlix : MainAPI() {
         }
         return results
     }
-    
+
     private suspend fun getSeriesPaginated(page: Int): List<SearchResponse> {
         val allSeries = getAllSeries()
         val start = page * PAGE_SIZE
@@ -87,10 +93,8 @@ class StreamFlix : MainAPI() {
             val poster = fixImageUrl(series.optString("cover"))
             val rating = series.optDouble("rating_5based", 0.0)
             
-            val url = "series?id=$id"
-            
             results.add(
-                newTvSeriesSearchResponse(name, url, TvType.TvSeries) {
+                newTvSeriesSearchResponse(name, "series?id=$id", TvType.TvSeries) {
                     this.posterUrl = poster
                     if (rating > 0) this.score = Score.from10(rating.toFloat() * 2)
                 }
@@ -98,7 +102,7 @@ class StreamFlix : MainAPI() {
         }
         return results
     }
-    
+
     private suspend fun getAllMovies(): JSONObject {
         if (cachedMovies != null) return cachedMovies!!
         
@@ -109,7 +113,7 @@ class StreamFlix : MainAPI() {
             json
         }
     }
-    
+
     private suspend fun getAllSeries(): JSONObject {
         if (cachedSeries != null) return cachedSeries!!
         
@@ -120,7 +124,7 @@ class StreamFlix : MainAPI() {
             json
         }
     }
-    
+
     override suspend fun search(query: String): List<SearchResponse> {
         if (query.length < 2) return emptyList()
         
@@ -165,7 +169,7 @@ class StreamFlix : MainAPI() {
         
         return results
     }
-    
+
     override suspend fun load(url: String): LoadResponse? {
         return when {
             url.startsWith("movie?id=") -> loadMovie(url.substringAfter("movie?id="))
@@ -173,7 +177,7 @@ class StreamFlix : MainAPI() {
             else -> null
         }
     }
-    
+
     private suspend fun loadMovie(id: String): LoadResponse? {
         return withContext(Dispatchers.IO) {
             try {
@@ -202,7 +206,7 @@ class StreamFlix : MainAPI() {
             }
         }
     }
-    
+
     private suspend fun loadSeries(id: String): LoadResponse? {
         return withContext(Dispatchers.IO) {
             try {
@@ -261,7 +265,7 @@ class StreamFlix : MainAPI() {
             }
         }
     }
-    
+
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -269,18 +273,18 @@ class StreamFlix : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         callback(
-            newExtractorLink(
+            ExtractorLink(
                 source = name,
-                name = "StreamFlix",
+                name = name,
                 url = data,
-                type = ExtractorLinkType.M3U8
-            ) {
-                this.referer = mainUrl
-            }
+                referer = mainUrl,
+                quality = Qualities.Unknown.value,
+                type = ExtractorLinkType.DIRECT
+            )
         )
         return true
     }
-    
+
     private fun fixImageUrl(url: String?): String? {
         if (url.isNullOrBlank()) return null
         if (url.startsWith("data:")) return null
