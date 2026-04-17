@@ -23,12 +23,11 @@ class ReiDosEmbeds : MainAPI() {
     override val supportedTypes = setOf(TvType.Live)
 
     private val apiUrl = "https://reidosembeds.com/api"
-    private val baseUrl = "https://reidosembeds.com"
     
-    // Cache para guardar os dados dos canais
+    // Cache para guardar os dados dos canais (slug -> (nome, poster))
     private var channelsCache: MutableMap<String, Pair<String, String>> = mutableMapOf()
     
-    // Categorias bloqueadas (não aparecem)
+    // Categorias bloqueadas (não aparecem na página inicial nem na busca)
     private val blockedCategories = listOf("Adulto", "adulto", "ADULTO")
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
@@ -36,21 +35,21 @@ class ReiDosEmbeds : MainAPI() {
         
         val categories = mutableListOf<HomePageList>()
         
-        // 1. Primeiro, pega todas as categorias
+        // 1. Pega todas as categorias
         val categoriesResponse = app.get("$apiUrl/channels/categories").text
         val categoriesJson = JSONObject(categoriesResponse)
         val categoriesArray = categoriesJson.getJSONArray("data")
         
         println("📑 Encontradas ${categoriesArray.length()} categorias")
         
-        // 2. Para cada categoria, pega os canais (exceto as bloqueadas)
+        // 2. Para cada categoria, pega os canais (exceto bloqueadas)
         for (i in 0 until categoriesArray.length()) {
             val category = categoriesArray.getJSONObject(i)
             val categoryName = category.getString("name")
             val categoryId = category.getString("id")
             
             // Pula categorias bloqueadas
-            if (blockedCategories.contains(categoryName) || blockedCategories.contains(categoryId)) {
+            if (blockedCategories.contains(categoryName)) {
                 println("🚫 Pulando categoria bloqueada: '$categoryName'")
                 continue
             }
@@ -58,7 +57,8 @@ class ReiDosEmbeds : MainAPI() {
             println("🔄 Processando categoria: '$categoryName'")
             
             val channelsResponse = app.get("$apiUrl/channels?category=${categoryId.replace(" ", "%20")}").text
-            val channelsArray = JSONArray(channelsResponse)
+            val channelsJson = JSONObject(channelsResponse)
+            val channelsArray = channelsJson.getJSONArray("data")
             
             println("📺 Encontrados ${channelsArray.length()} canais em '$categoryName'")
             
@@ -74,7 +74,7 @@ class ReiDosEmbeds : MainAPI() {
                 var posterUrl = logoUrl
                 if (posterUrl.startsWith("//")) posterUrl = "https:$posterUrl"
                 
-                // Guarda no cache (slug -> (name, poster))
+                // Guarda no cache
                 channelsCache[slug] = Pair(name, posterUrl)
                 
                 println("  📺 Canal: '$name' -> $embedUrl")
@@ -91,7 +91,7 @@ class ReiDosEmbeds : MainAPI() {
             }
         }
         
-        // 3. Também adiciona a categoria "Todos" (filtrando canais de categorias bloqueadas)
+        // 3. Categoria "Todos" (filtra canais de categorias bloqueadas)
         val allChannelsResponse = app.get("$apiUrl/channels").text
         val allChannelsArray = JSONArray(allChannelsResponse)
         
@@ -113,7 +113,7 @@ class ReiDosEmbeds : MainAPI() {
             var posterUrl = logoUrl
             if (posterUrl.startsWith("//")) posterUrl = "https:$posterUrl"
             
-            // Guarda no cache se ainda não estiver
+            // Guarda no cache se não existir
             if (!channelsCache.containsKey(slug)) {
                 channelsCache[slug] = Pair(name, posterUrl)
             }
@@ -170,7 +170,7 @@ class ReiDosEmbeds : MainAPI() {
         
         val results = mutableListOf<SearchResponse>()
         
-        // Busca em canais (filtrando os de categoria bloqueada)
+        // Busca em canais (filtra categorias bloqueadas)
         val channelsArray = data.getJSONArray("channels")
         for (i in 0 until channelsArray.length()) {
             val channel = channelsArray.getJSONObject(i)
@@ -247,41 +247,64 @@ class ReiDosEmbeds : MainAPI() {
         
         for (i in 0 until sourcesArray.length()) {
             val source = sourcesArray.getJSONObject(i)
-            var streamUrl = source.getString("src").replace("\\/", "/")
+            val streamUrl = source.getString("src").replace("\\/", "/")
             val label = source.optString("label", "Source ${i + 1}")
             
-            println("  📡 Stream URL: $streamUrl")
+            println("  📡 Baixando M3U8 para detectar qualidades: $streamUrl")
             
-            // Extrai a qualidade do stream (altura)
-            val quality = extractQualityFromUrl(streamUrl, label)
-            
-            // Adiciona headers
+            // Headers para as requisições
             val headers = mapOf(
                 "Referer" to playerUrl,
                 "Origin" to "https://rde.buzz",
                 "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36"
             )
             
-            // Usa o M3u8Helper para gerar os links
-            M3u8Helper.generateM3u8(
-                "$name - $label",
-                streamUrl,
-                playerUrl,
-                headers = headers
-            ).forEach { link ->
-                // Atualiza a qualidade do link se conseguimos extrair
-                val finalQuality = if (quality != Qualities.Unknown.value) quality else link.quality
-                val finalLink = ExtractorLink(
-                    source = link.source,
-                    name = link.name,
-                    url = link.url,
-                    referer = link.referer,
-                    type = link.type,
-                    quality = finalQuality,
-                    headers = link.headers
-                )
-                println("    ✅ Link gerado: ${finalLink.url} (Qualidade: $finalQuality)")
-                callback(finalLink)
+            // Baixa o M3U8 para analisar as qualidades
+            try {
+                val m3u8Content = app.get(streamUrl, headers = headers).text
+                
+                // Extrai as qualidades do M3U8
+                val qualities = extractQualitiesFromM3u8(m3u8Content, streamUrl, playerUrl)
+                
+                if (qualities.isNotEmpty()) {
+                    println("  📊 Qualidades detectadas: ${qualities.map { it.second }}")
+                    for ((qualityUrl, height) in qualities) {
+                        val qualityName = "${height}p"
+                        val linkName = "$name - $qualityName"
+                        println("    🔗 Gerando link: $linkName")
+                        
+                        M3u8Helper.generateM3u8(
+                            linkName,
+                            qualityUrl,
+                            playerUrl,
+                            headers = headers
+                        ).forEach { link ->
+                            callback(link)
+                        }
+                    }
+                } else {
+                    // Fallback: usa o link original sem qualidade detectada
+                    println("  ⚠️ Nenhuma qualidade detectada, usando link original")
+                    M3u8Helper.generateM3u8(
+                        "$name - $label",
+                        streamUrl,
+                        playerUrl,
+                        headers = headers
+                    ).forEach { link ->
+                        callback(link)
+                    }
+                }
+            } catch (e: Exception) {
+                println("  ❌ Erro ao processar M3U8: ${e.message}")
+                // Fallback em caso de erro
+                M3u8Helper.generateM3u8(
+                    "$name - $label",
+                    streamUrl,
+                    playerUrl,
+                    headers = headers
+                ).forEach { link ->
+                    callback(link)
+                }
             }
         }
         
@@ -289,31 +312,39 @@ class ReiDosEmbeds : MainAPI() {
         return true
     }
     
-    // Função para extrair qualidade do stream a partir da URL ou label
-    private fun extractQualityFromUrl(url: String, label: String): Int {
-        // Tenta extrair da label primeiro
-        val labelPattern = Regex("""(\d{3,4})p""", RegexOption.IGNORE_CASE)
-        val labelMatch = labelPattern.find(label)
-        if (labelMatch != null) {
-            return labelMatch.groupValues[1].toIntOrNull() ?: Qualities.Unknown.value
+    // Função para extrair qualidades do M3U8
+    private fun extractQualitiesFromM3u8(content: String, baseUrl: String, referer: String): List<Pair<String, Int>> {
+        val qualities = mutableListOf<Pair<String, Int>>()
+        val lines = content.lines()
+        
+        // Procura por RESOLUTION no M3U8
+        val resolutionPattern = Regex("""RESOLUTION=(\d+)x(\d+)""")
+        
+        for (i in lines.indices) {
+            val line = lines[i]
+            val match = resolutionPattern.find(line)
+            
+            if (match != null) {
+                val height = match.groupValues[2].toIntOrNull() ?: continue
+                
+                // Pega a URL do stream (próxima linha)
+                var streamUrl = lines.getOrNull(i + 1)?.trim() ?: continue
+                
+                // Se a URL for relativa, completa com o baseUrl
+                if (!streamUrl.startsWith("http")) {
+                    val base = baseUrl.substringBeforeLast("/")
+                    streamUrl = if (streamUrl.startsWith("/")) {
+                        val baseDomain = baseUrl.substringBefore("//").plus("//").plus(baseUrl.substringAfter("//").substringBefore("/"))
+                        baseDomain + streamUrl
+                    } else {
+                        "$base/$streamUrl"
+                    }
+                }
+                
+                qualities.add(Pair(streamUrl, height))
+            }
         }
         
-        // Tenta extrair da URL
-        val urlPattern = Regex("""(\d{3,4})p""", RegexOption.IGNORE_CASE)
-        val urlMatch = urlPattern.find(url)
-        if (urlMatch != null) {
-            return urlMatch.groupValues[1].toIntOrNull() ?: Qualities.Unknown.value
-        }
-        
-        // Verifica palavras-chave na URL
-        return when {
-            url.contains("1080", ignoreCase = true) -> Qualities.P1080.value
-            url.contains("720", ignoreCase = true) -> Qualities.P720.value
-            url.contains("480", ignoreCase = true) -> Qualities.P480.value
-            url.contains("360", ignoreCase = true) -> Qualities.P360.value
-            url.contains("hd", ignoreCase = true) -> Qualities.P720.value
-            url.contains("fullhd", ignoreCase = true) -> Qualities.P1080.value
-            else -> Qualities.Unknown.value
-        }
+        return qualities
     }
 }
