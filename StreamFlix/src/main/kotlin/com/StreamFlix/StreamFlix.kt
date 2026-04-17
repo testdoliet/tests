@@ -101,7 +101,8 @@ class StreamFlix : MainAPI() {
         
         return withContext(Dispatchers.IO) {
             val response = app.get("$mainUrl/api_proxy.php?action=get_vod_streams")
-            val json = JSONArray(response.text)
+            // CORRIGIDO: usando document.text() para evitar OOM
+            val json = JSONArray(response.document.text())
             cachedMovies = json
             json
         }
@@ -112,7 +113,8 @@ class StreamFlix : MainAPI() {
         
         return withContext(Dispatchers.IO) {
             val response = app.get("$mainUrl/api_proxy.php?action=get_series")
-            val json = JSONArray(response.text)
+            // CORRIGIDO: usando document.text() para evitar OOM
+            val json = JSONArray(response.document.text())
             cachedSeries = json
             json
         }
@@ -175,11 +177,11 @@ class StreamFlix : MainAPI() {
         return withContext(Dispatchers.IO) {
             try {
                 val infoResponse = app.get("$mainUrl/api_proxy.php?action=get_vod_info&vod_id=$id")
-                val infoJson = JSONObject(infoResponse.text)
+                val infoJson = JSONObject(infoResponse.document.text())
                 val info = infoJson.optJSONObject("info") ?: JSONObject()
                 
                 val streamResponse = app.get("$mainUrl/api_proxy.php?action=get_stream_url&type=movie&id=$id")
-                val streamJson = JSONObject(streamResponse.text)
+                val streamJson = JSONObject(streamResponse.document.text())
                 val videoUrl = streamJson.getString("stream_url")
                 
                 val title = info.optString("name", "Título indisponível")
@@ -204,7 +206,7 @@ class StreamFlix : MainAPI() {
         return withContext(Dispatchers.IO) {
             try {
                 val infoResponse = app.get("$mainUrl/api_proxy.php?action=get_series_info&series_id=$id")
-                val json = JSONObject(infoResponse.text)
+                val json = JSONObject(infoResponse.document.text())
                 val info = json.optJSONObject("info") ?: JSONObject()
                 
                 val title = info.getString("name")
@@ -229,7 +231,7 @@ class StreamFlix : MainAPI() {
                             val epId = ep.getString("id")
                             
                             val streamResponse = app.get("$mainUrl/api_proxy.php?action=get_stream_url&type=series&id=$epId")
-                            val streamJson = JSONObject(streamResponse.text)
+                            val streamJson = JSONObject(streamResponse.document.text())
                             val videoUrl = streamJson.getString("stream_url")
                             val epPoster = fixImageUrl(ep.optString("movie_image"))
                             val epPlot = ep.optString("plot")
@@ -265,7 +267,6 @@ class StreamFlix : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // CORRETO: seguindo o padrão do PobreFlix
         callback(
             newExtractorLink(
                 source = name,
