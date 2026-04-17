@@ -187,61 +187,51 @@ class ReiDosEmbeds : MainAPI() {
     }
 
     override suspend fun loadLinks(
-        data: String,
-        isCasting: Boolean,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        println("🎬 Carregando links para: $data")
+    data: String,
+    isCasting: Boolean,
+    subtitleCallback: (SubtitleFile) -> Unit,
+    callback: (ExtractorLink) -> Unit
+): Boolean {
+    println("🎬 Carregando links para: $data")
+    
+    val channelHtml = app.get(data).text
+    val iframePattern = Regex("""<iframe[^>]*src="([^"]*__play[^"]*)"[^>]*>""")
+    val iframeMatch = iframePattern.find(channelHtml) ?: return false
+    
+    val playerUrl = iframeMatch.groupValues[1].replace("&amp;", "&")
+    println("✅ Player URL encontrada: $playerUrl")
+    
+    val playerHtml = app.get(playerUrl, headers = mapOf("Referer" to data)).text
+    println("📄 HTML do player obtido, tamanho: ${playerHtml.length} caracteres")
+    
+    val sourcesPattern = Regex("""var sources\s*=\s*(\[.*?\]);""", RegexOption.DOT_MATCHES_ALL)
+    val sourcesMatch = sourcesPattern.find(playerHtml) ?: return false
+    
+    val sourcesArray = JSONArray(sourcesMatch.groupValues[1])
+    
+    for (i in 0 until sourcesArray.length()) {
+        val source = sourcesArray.getJSONObject(i)
+        val streamUrl = source.getString("src").replace("\\/", "/")
+        val label = source.optString("label", "Source ${i + 1}")
         
-        val channelHtml = app.get(data).text
-        val iframePattern = Regex("""<iframe[^>]*src="([^"]*__play[^"]*)"[^>]*>""")
-        val iframeMatch = iframePattern.find(channelHtml) ?: return false
+        println("  📡 Stream URL: $streamUrl")
         
-        val playerUrl = iframeMatch.groupValues[1].replace("&amp;", "&")
-        println("✅ Player URL encontrada: $playerUrl")
-        
-        val playerHtml = app.get(playerUrl, headers = mapOf("Referer" to data)).text
-        println("📄 HTML do player obtido, tamanho: ${playerHtml.length} caracteres")
-        
-        val sourcesPattern = Regex("""var sources\s*=\s*(\[.*?\]);""", RegexOption.DOT_MATCHES_ALL)
-        val sourcesMatch = sourcesPattern.find(playerHtml) ?: return false
-        
-        val sourcesArray = JSONArray(sourcesMatch.groupValues[1])
-        
-        for (i in 0 until sourcesArray.length()) {
-            val source = sourcesArray.getJSONObject(i)
-            var streamUrl = source.getString("src").replace("\\/", "/")
-            val label = source.optString("label", "Source ${i + 1}")
-            
-            // Converte /index.txt para /tracks-v1a1/mono.m3u8
-            if (streamUrl.contains("/index.txt")) {
-                val baseUrl = streamUrl.substringBefore("/index.txt")
-                val token = streamUrl.substringAfter("?token=")
-                streamUrl = "$baseUrl/tracks-v1a1/mono.m3u8?token=$token"
-                println("  🔄 Convertido para: $streamUrl")
-            }
-            
-            val headers = mapOf(
+        // Usa o M3u8Helper com a URL original (.txt)
+        M3u8Helper.generateM3u8(
+            "$name - $label",
+            streamUrl,
+            playerUrl,
+            headers = mapOf(
                 "Referer" to playerUrl,
                 "Origin" to "https://rde.buzz",
                 "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36"
             )
-            
-            println("  📡 Gerando M3U8 para: $label")
-            
-            M3u8Helper.generateM3u8(
-                "$name - $label",
-                streamUrl,
-                playerUrl,
-                headers = headers
-            ).forEach { link ->
-                println("    🔗 ${link.url}")
-                callback(link)
-            }
+        ).forEach { link ->
+            println("    ✅ Link gerado: ${link.url}")
+            callback(link)
         }
-        
-        println("🎉 Links carregados com sucesso!")
-        return true
     }
+    
+    println("🎉 Links carregados com sucesso!")
+    return true
 }
