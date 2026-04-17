@@ -61,7 +61,7 @@ class StreamFlix : MainAPI() {
             val poster = fixImageUrl(movie.optString("stream_icon"))
             val rating = movie.optDouble("rating_5based", 0.0)
             
-            // CORRIGIDO: "movie?id=$id" é String
+            // CORRETO: passando a URL como String no segundo parâmetro
             newMovieSearchResponse(name, "movie?id=$id", TvType.Movie) {
                 this.posterUrl = poster
                 if (rating > 0) this.score = Score.from10(rating.toFloat() * 2)
@@ -83,7 +83,7 @@ class StreamFlix : MainAPI() {
             val poster = fixImageUrl(series.optString("cover"))
             val rating = series.optDouble("rating_5based", 0.0)
             
-            // CORRIGIDO: "series?id=$id" é String
+            // CORRETO: passando a URL como String no segundo parâmetro
             newTvSeriesSearchResponse(name, "series?id=$id", TvType.TvSeries) {
                 this.posterUrl = poster
                 if (rating > 0) this.score = Score.from10(rating.toFloat() * 2)
@@ -185,6 +185,7 @@ class StreamFlix : MainAPI() {
                 val year = info.optString("releaseDate").takeIf { it.isNotEmpty() }?.toIntOrNull()
                 val rating = info.optDouble("rating_5based", 0.0)
                 
+                // CORRETO: igual ao PobreFlix
                 newMovieLoadResponse(title, "movie?id=$id", TvType.Movie, videoUrl) {
                     this.posterUrl = poster
                     this.plot = plot
@@ -244,6 +245,7 @@ class StreamFlix : MainAPI() {
                     }
                 }
                 
+                // CORRETO: igual ao PobreFlix
                 newTvSeriesLoadResponse(title, "series?id=$id", TvType.TvSeries, episodes) {
                     this.posterUrl = poster
                     this.plot = plot
@@ -262,7 +264,7 @@ class StreamFlix : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // CORRIGIDO: seguindo a estrutura do PobreFlix
+        // CORRETO: igual ao PobreFlix - a URL já vem direta do load
         callback(
             newExtractorLink(
                 source = name,
@@ -271,7 +273,6 @@ class StreamFlix : MainAPI() {
                 type = ExtractorLinkType.M3U8
             ) {
                 this.referer = mainUrl
-                this.quality = Qualities.Unknown.value
             }
         )
         return true
