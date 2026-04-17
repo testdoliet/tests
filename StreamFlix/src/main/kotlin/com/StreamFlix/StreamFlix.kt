@@ -7,6 +7,7 @@ import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
 import com.lagradost.cloudstream3.plugins.Plugin
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
 import org.json.JSONObject
 
 @CloudstreamPlugin
@@ -24,8 +25,8 @@ class StreamFlix : MainAPI() {
     override val hasDownloadSupport = false
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries)
 
-    private var cachedMovies: JSONObject? = null
-    private var cachedSeries: JSONObject? = null
+    private var cachedMovies: JSONArray? = null
+    private var cachedSeries: JSONArray? = null
     private val PAGE_SIZE = 30
 
     override val mainPage = mainPageOf(
@@ -60,7 +61,6 @@ class StreamFlix : MainAPI() {
             val poster = fixImageUrl(movie.optString("stream_icon"))
             val rating = movie.optDouble("rating_5based", 0.0)
             
-            // CORRETO: sem TvType.Movie como terceiro parâmetro
             results.add(
                 newMovieSearchResponse(name, "movie?id=$id") {
                     this.posterUrl = poster
@@ -86,7 +86,6 @@ class StreamFlix : MainAPI() {
             val poster = fixImageUrl(series.optString("cover"))
             val rating = series.optDouble("rating_5based", 0.0)
             
-            // CORRETO: sem TvType.TvSeries como terceiro parâmetro
             results.add(
                 newTvSeriesSearchResponse(name, "series?id=$id") {
                     this.posterUrl = poster
@@ -97,23 +96,23 @@ class StreamFlix : MainAPI() {
         return results
     }
 
-    private suspend fun getAllMovies(): JSONObject {
+    private suspend fun getAllMovies(): JSONArray {
         if (cachedMovies != null) return cachedMovies!!
         
         return withContext(Dispatchers.IO) {
             val response = app.get("$mainUrl/api_proxy.php?action=get_vod_streams")
-            val json = JSONObject(response.text)
+            val json = JSONArray(response.text)
             cachedMovies = json
             json
         }
     }
 
-    private suspend fun getAllSeries(): JSONObject {
+    private suspend fun getAllSeries(): JSONArray {
         if (cachedSeries != null) return cachedSeries!!
         
         return withContext(Dispatchers.IO) {
             val response = app.get("$mainUrl/api_proxy.php?action=get_series")
-            val json = JSONObject(response.text)
+            val json = JSONArray(response.text)
             cachedSeries = json
             json
         }
@@ -266,16 +265,16 @@ class StreamFlix : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // CORRETO: ExtractorLinkType.M3U8 (não DIRECT)
+        // CORRETO: seguindo o padrão do PobreFlix
         callback(
-            ExtractorLink(
+            newExtractorLink(
                 source = name,
-                name = name,
+                name = "StreamFlix",
                 url = data,
-                referer = mainUrl,
-                quality = Qualities.Unknown.value,
                 type = ExtractorLinkType.M3U8
-            )
+            ) {
+                this.referer = mainUrl
+            }
         )
         return true
     }
