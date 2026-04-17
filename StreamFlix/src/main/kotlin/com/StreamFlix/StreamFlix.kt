@@ -61,7 +61,7 @@ class StreamFlix : MainAPI() {
             val poster = fixImageUrl(movie.optString("stream_icon"))
             val rating = movie.optDouble("rating_5based", 0.0)
             
-            // CORRIGIDO: segundo parâmetro deve ser String (URL)
+            // CORRIGIDO: segundo parâmetro é String com a URL
             newMovieSearchResponse(name, "movie?id=$id", TvType.Movie) {
                 this.posterUrl = poster
                 if (rating > 0) this.score = Score.from10(rating.toFloat() * 2)
@@ -83,7 +83,7 @@ class StreamFlix : MainAPI() {
             val poster = fixImageUrl(series.optString("cover"))
             val rating = series.optDouble("rating_5based", 0.0)
             
-            // CORRIGIDO: segundo parâmetro deve ser String (URL)
+            // CORRIGIDO: segundo parâmetro é String com a URL
             newTvSeriesSearchResponse(name, "series?id=$id", TvType.TvSeries) {
                 this.posterUrl = poster
                 if (rating > 0) this.score = Score.from10(rating.toFloat() * 2)
@@ -187,7 +187,6 @@ class StreamFlix : MainAPI() {
                 val year = info.optString("releaseDate").takeIf { it.isNotEmpty() }?.toIntOrNull()
                 val rating = info.optDouble("rating_5based", 0.0)
                 
-                // CORRIGIDO: o terceiro parâmetro é o tipo, o quarto é a URL do vídeo
                 newMovieLoadResponse(title, "movie?id=$id", TvType.Movie, videoUrl) {
                     this.posterUrl = poster
                     this.plot = plot
@@ -250,7 +249,6 @@ class StreamFlix : MainAPI() {
                     }
                 }
                 
-                // CORRIGIDO: o terceiro parâmetro é o tipo, o quarto é a lista de episódios
                 newTvSeriesLoadResponse(title, "series?id=$id", TvType.TvSeries, episodes) {
                     this.posterUrl = poster
                     this.plot = plot
@@ -269,11 +267,11 @@ class StreamFlix : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // CORRIGIDO: newExtractorLink com os parâmetros corretos
+        // CORRIGIDO: usando newExtractorLink como no PobreFlix
         callback(
             newExtractorLink(
                 source = name,
-                name = "MP4",
+                name = "StreamFlix",
                 url = data,
                 type = ExtractorLinkType.M3U8,
                 quality = Qualities.Unknown.value,
