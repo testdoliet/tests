@@ -46,19 +46,14 @@ class StreamFlix : MainAPI() {
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        println("📺 [StreamFlix] getMainPage - Página: $page, Seção: ${request.name}")
-        
         val isMovies = request.name == "Filmes"
         
         val items = if (isMovies) {
-            println("🎬 [StreamFlix] Carregando filmes - Página $page")
             getMoviesPaginated(page)
         } else {
-            println("📀 [StreamFlix] Carregando séries - Página $page")
             getSeriesPaginated(page)
         }
         
-        println("✅ [StreamFlix] Retornando ${items.size} itens")
         return newHomePageResponse(request.name, items, hasNext = items.size == PAGE_SIZE)
     }
 
@@ -172,52 +167,53 @@ class StreamFlix : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        println("📂 [StreamFlix] load() chamado com URL: '$url'")
-        
         val cleanUrl = url
             .removePrefix("https://streamflix.live/")
             .removePrefix("http://streamflix.live/")
             .removePrefix("streamflix.live/")
         
-        println("🧹 [StreamFlix] URL limpa: '$cleanUrl'")
-        
         return when {
             cleanUrl.startsWith("movie?id=") -> {
                 val id = cleanUrl.substringAfter("movie?id=")
-                println("🎬 [StreamFlix] Carregando filme ID: $id")
                 loadMovie(id)
             }
             cleanUrl.startsWith("series?id=") -> {
                 val id = cleanUrl.substringAfter("series?id=")
-                println("📀 [StreamFlix] Carregando série ID: $id")
                 loadSeries(id)
             }
-            else -> {
-                println("❌ [StreamFlix] URL não reconhecida: '$url'")
-                null
-            }
+            else -> null
         }
     }
 
     private suspend fun loadMovie(id: String): LoadResponse? {
         return withContext(Dispatchers.IO) {
             try {
-                // 1. Busca informações básicas
+                // 1. Busca informações do site (fallback)
                 val infoResponse = app.get("$mainUrl/api_proxy.php?action=get_vod_info&vod_id=$id")
                 val infoJson = JSONObject(infoResponse.body.string())
                 val info = infoJson.optJSONObject("info") ?: JSONObject()
                 val movieData = infoJson.optJSONObject("movie_data") ?: JSONObject()
                 
-                val title = info.optString("name", movieData.optString("name", "Título indisponível"))
-                val poster = fixImageUrl(info.optString("cover_big"))
+                val rawTitle = info.optString("name", movieData.optString("name", "Título indisponível"))
+                // Remove [L] e outras tags
+                val cleanTitle = rawTitle.replace(Regex("\\s*\\[[^\\]]+\\]\\s*$"), "").trim()
                 
-                // 2. Busca dados do TMDB
-                val encodedTitle = URLEncoder.encode(title, "UTF-8")
+                // 2. Busca TMDB (prioridade)
+                val encodedTitle = URLEncoder.encode(cleanTitle, "UTF-8")
                 val tmdbResponse = app.get("$mainUrl/api_proxy.php?action=tmdb_search&query=$encodedTitle&type=movie")
                 val tmdbJson = JSONObject(tmdbResponse.body.string())
                 val tmdbResult = tmdbJson.optJSONObject("result")
                 
-                // Banner (backdrop)
+                // POSTER (prioriza TMDB)
+                val poster = if (tmdbResult != null) {
+                    val posterPath = tmdbResult.optString("poster_path")
+                    if (posterPath.isNotEmpty()) "https://image.tmdb.org/t/p/w500$posterPath"
+                    else fixImageUrl(info.optString("cover_big"))
+                } else {
+                    fixImageUrl(info.optString("cover_big"))
+                }
+                
+                // BANNER (prioriza TMDB)
                 var backdrop: String? = null
                 if (tmdbResult != null) {
                     val backdropPath = tmdbResult.optString("backdrop_path")
@@ -232,11 +228,11 @@ class StreamFlix : MainAPI() {
                     }
                 }
                 
-                // Sinopse
+                // SINOPSE (prioriza TMDB)
                 val plot = tmdbResult?.optString("overview")?.takeIf { it.isNotEmpty() } 
                     ?: info.optString("plot", "Sinopse não disponível.")
                 
-                // Ano
+                // ANO (prioriza TMDB)
                 var year: Int? = null
                 if (tmdbResult != null) {
                     val releaseDate = tmdbResult.optString("release_date")
@@ -251,7 +247,7 @@ class StreamFlix : MainAPI() {
                     }
                 }
                 
-                // Avaliação
+                // AVALIAÇÃO (prioriza TMDB)
                 var rating: Float? = null
                 if (tmdbResult != null) {
                     val tmdbRating = tmdbResult.optDouble("vote_average", 0.0)
@@ -262,7 +258,7 @@ class StreamFlix : MainAPI() {
                     if (infoRating > 0) rating = (infoRating * 2).toFloat()
                 }
                 
-                // Gêneros
+                // GÊNEROS (prioriza TMDB)
                 val genres = mutableListOf<String>()
                 if (tmdbResult != null) {
                     val genreIds = tmdbResult.optJSONArray("genre_ids")
@@ -285,7 +281,7 @@ class StreamFlix : MainAPI() {
                 val streamJson = JSONObject(streamResponse.body.string())
                 val videoUrl = streamJson.getString("stream_url")
                 
-                newMovieLoadResponse(title, "movie?id=$id", TvType.Movie, videoUrl) {
+                newMovieLoadResponse(cleanTitle, "movie?id=$id", TvType.Movie, videoUrl) {
                     this.posterUrl = poster
                     this.backgroundPosterUrl = backdrop
                     this.plot = plot
@@ -294,149 +290,174 @@ class StreamFlix : MainAPI() {
                     if (genres.isNotEmpty()) this.tags = genres
                 }
             } catch (e: Exception) {
-                println("💥 [StreamFlix] ERRO ao carregar filme: ${e.message}")
                 null
             }
         }
     }
 
-private suspend fun loadSeries(id: String): LoadResponse? {
-    return withContext(Dispatchers.IO) {
-        try {
-            val infoResponse = app.get("$mainUrl/api_proxy.php?action=get_series_info&series_id=$id")
-            val json = JSONObject(infoResponse.body.string())
-            val info = json.optJSONObject("info") ?: JSONObject()
-            
-            val title = info.getString("name")
-            val poster = fixImageUrl(info.optString("cover"))
-            
-            // Banner (backdrop)
-            var backdrop: String? = null
-            val backdropArray = info.optJSONArray("backdrop_path")
-            if (backdropArray != null && backdropArray.length() > 0) {
-                backdrop = fixImageUrl(backdropArray.getString(0))
-            }
-            
-            // Sinopse
-            var plot = info.optString("plot", "Sinopse não disponível.")
-            
-            // Ano
-            var year: Int? = null
-            val releaseDate = info.optString("releaseDate")
-            if (releaseDate.isNotEmpty() && releaseDate.length >= 4) {
-                year = releaseDate.substring(0, 4).toIntOrNull()
-            }
-            
-            // Avaliação
-            var rating = info.optDouble("rating_5based", 0.0).takeIf { it > 0 }?.toFloat()
-            
-            // Gêneros
-            val genres = mutableListOf<String>()
-            val genreText = info.optString("genre")
-            if (genreText.isNotEmpty()) {
-                genres.addAll(genreText.split(",").map { it.trim() })
-            }
-            
-            // Elenco
-            val castText = info.optString("cast")
-            val actors = if (castText.isNotEmpty()) {
-                castText.split(",").map { it.trim() }.filter { it.isNotEmpty() }
-            } else null
-            
-            // Busca TMDB para complementar
-            val encodedTitle = URLEncoder.encode(title, "UTF-8")
-            val tmdbResponse = app.get("$mainUrl/api_proxy.php?action=tmdb_search&query=$encodedTitle&type=tv")
-            val tmdbJson = JSONObject(tmdbResponse.body.string())
-            val tmdbResult = tmdbJson.optJSONObject("result")
-            
-            if (tmdbResult != null) {
-                val tmdbPlot = tmdbResult.optString("overview")
-                if (tmdbPlot.isNotEmpty()) plot = tmdbPlot
+    private suspend fun loadSeries(id: String): LoadResponse? {
+        return withContext(Dispatchers.IO) {
+            try {
+                // 1. Busca episódios da API do StreamFlix
+                val infoResponse = app.get("$mainUrl/api_proxy.php?action=get_series_info&series_id=$id")
+                val json = JSONObject(infoResponse.body.string())
+                val info = json.optJSONObject("info") ?: JSONObject()
                 
-                val tmdbDate = tmdbResult.optString("first_air_date")
-                if (tmdbDate.isNotEmpty() && tmdbDate.length >= 4) {
-                    year = tmdbDate.substring(0, 4).toIntOrNull()
+                val rawTitle = info.getString("name")
+                // Remove [L] e outras tags
+                val cleanTitle = rawTitle.replace(Regex("\\s*\\[[^\\]]+\\]\\s*$"), "").trim()
+                
+                // 2. Busca TMDB (prioridade máxima para metadados)
+                val encodedTitle = URLEncoder.encode(cleanTitle, "UTF-8")
+                val tmdbResponse = app.get("$mainUrl/api_proxy.php?action=tmdb_search&query=$encodedTitle&type=tv")
+                val tmdbJson = JSONObject(tmdbResponse.body.string())
+                val tmdbResult = tmdbJson.optJSONObject("result")
+                
+                // POSTER (prioriza TMDB)
+                val poster = if (tmdbResult != null) {
+                    val posterPath = tmdbResult.optString("poster_path")
+                    if (posterPath.isNotEmpty()) "https://image.tmdb.org/t/p/w500$posterPath"
+                    else fixImageUrl(info.optString("cover"))
+                } else {
+                    fixImageUrl(info.optString("cover"))
                 }
                 
-                val tmdbRating = tmdbResult.optDouble("vote_average", 0.0)
-                if (tmdbRating > 0) rating = tmdbRating.toFloat()
-                
-                val backdropPath = tmdbResult.optString("backdrop_path")
-                if (backdropPath.isNotEmpty()) {
-                    backdrop = "https://image.tmdb.org/t/p/original$backdropPath"
-                }
-            }
-            
-            // Episódios
-            val episodes = mutableListOf<Episode>()
-            val episodesJson = json.optJSONObject("episodes")
-            
-            if (episodesJson != null) {
-                val seasonKeys = episodesJson.keys()
-                while (seasonKeys.hasNext()) {
-                    val seasonNum = seasonKeys.next().toIntOrNull() ?: continue
-                    val seasonArray = episodesJson.getJSONArray(seasonNum.toString())
-                    
-                    for (i in 0 until seasonArray.length()) {
-                        val ep = seasonArray.getJSONObject(i)
-                        val epNum = ep.getInt("episode_num")
-                        val epTitle = ep.getString("title")
-                        val epId = ep.getString("id")
-                        
-                        // Info do episódio
-                        val epInfo = ep.optJSONObject("info") ?: JSONObject()
-                        val epPlot = epInfo.optString("plot").takeIf { it.isNotEmpty() }
-                        val epImage = fixImageUrl(epInfo.optString("movie_image").takeIf { it.isNotEmpty() })
-                        val epDuration = epInfo.optInt("duration_secs", 0).takeIf { it > 0 }
-                        
-                        // Busca URL do vídeo
-                        val streamResponse = app.get("$mainUrl/api_proxy.php?action=get_stream_url&type=series&id=$epId")
-                        val streamJson = JSONObject(streamResponse.body.string())
-                        val videoUrl = streamJson.getString("stream_url")
-                        
-                        episodes.add(
-                            newEpisode(videoUrl) {
-                                this.name = epTitle
-                                this.season = seasonNum
-                                this.episode = epNum
-                                this.posterUrl = epImage
-                                this.description = epPlot
-                                if (epDuration != null && epDuration > 0) this.runTime = epDuration / 60
-                            }
-                        )
+                // BANNER (prioriza TMDB)
+                var backdrop: String? = null
+                if (tmdbResult != null) {
+                    val backdropPath = tmdbResult.optString("backdrop_path")
+                    if (backdropPath.isNotEmpty()) {
+                        backdrop = "https://image.tmdb.org/t/p/original$backdropPath"
                     }
                 }
-            }
-            
-            if (episodes.isEmpty()) return@withContext null
-            
-            newTvSeriesLoadResponse(title, "series?id=$id", TvType.TvSeries, episodes) {
-                this.posterUrl = poster
-                this.backgroundPosterUrl = backdrop
-                this.plot = plot
-                this.year = year
-                if (rating != null) this.score = Score.from10(rating)
-                if (genres.isNotEmpty()) this.tags = genres
-                
-                if (actors != null && actors.isNotEmpty()) {
-                    addActors(actors.map { Actor(it) })
+                if (backdrop == null) {
+                    val backdropArray = info.optJSONArray("backdrop_path")
+                    if (backdropArray != null && backdropArray.length() > 0) {
+                        backdrop = fixImageUrl(backdropArray.getString(0))
+                    }
                 }
+                
+                // SINOPSE (prioriza TMDB)
+                val plot = tmdbResult?.optString("overview")?.takeIf { it.isNotEmpty() } 
+                    ?: info.optString("plot", "Sinopse não disponível.")
+                
+                // ANO (prioriza TMDB)
+                var year: Int? = null
+                if (tmdbResult != null) {
+                    val firstAirDate = tmdbResult.optString("first_air_date")
+                    if (firstAirDate.isNotEmpty() && firstAirDate.length >= 4) {
+                        year = firstAirDate.substring(0, 4).toIntOrNull()
+                    }
+                }
+                if (year == null) {
+                    val releaseDate = info.optString("releaseDate")
+                    if (releaseDate.isNotEmpty() && releaseDate.length >= 4) {
+                        year = releaseDate.substring(0, 4).toIntOrNull()
+                    }
+                }
+                
+                // AVALIAÇÃO (prioriza TMDB)
+                var rating: Float? = null
+                if (tmdbResult != null) {
+                    val tmdbRating = tmdbResult.optDouble("vote_average", 0.0)
+                    if (tmdbRating > 0) rating = tmdbRating.toFloat()
+                }
+                if (rating == null) {
+                    val infoRating = info.optDouble("rating_5based", 0.0)
+                    if (infoRating > 0) rating = (infoRating * 2).toFloat()
+                }
+                
+                // GÊNEROS (prioriza TMDB)
+                val genres = mutableListOf<String>()
+                if (tmdbResult != null) {
+                    val genreIds = tmdbResult.optJSONArray("genre_ids")
+                    if (genreIds != null) {
+                        for (i in 0 until genreIds.length()) {
+                            val genreId = genreIds.getInt(i)
+                            genreMap[genreId]?.let { genres.add(it) }
+                        }
+                    }
+                }
+                if (genres.isEmpty()) {
+                    val genreText = info.optString("genre")
+                    if (genreText.isNotEmpty()) {
+                        genres.addAll(genreText.split(",").map { it.trim() })
+                    }
+                }
+                
+                // ELENCO (fallback do site)
+                val castText = info.optString("cast")
+                val actors = if (castText.isNotEmpty()) {
+                    castText.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+                } else null
+                
+                // 3. Episódios
+                val episodes = mutableListOf<Episode>()
+                val episodesJson = json.optJSONObject("episodes")
+                
+                if (episodesJson != null) {
+                    val seasonKeys = episodesJson.keys()
+                    while (seasonKeys.hasNext()) {
+                        val seasonNum = seasonKeys.next().toIntOrNull() ?: continue
+                        val seasonArray = episodesJson.getJSONArray(seasonNum.toString())
+                        
+                        for (i in 0 until seasonArray.length()) {
+                            val ep = seasonArray.getJSONObject(i)
+                            val epNum = ep.getInt("episode_num")
+                            val epTitle = ep.getString("title")
+                            val epId = ep.getString("id")
+                            
+                            // Info do episódio
+                            val epInfo = ep.optJSONObject("info") ?: JSONObject()
+                            val epPlot = epInfo.optString("plot").takeIf { it.isNotEmpty() }
+                            val epImage = fixImageUrl(epInfo.optString("movie_image").takeIf { it.isNotEmpty() })
+                            val epDuration = epInfo.optInt("duration_secs", 0).takeIf { it > 0 }
+                            
+                            // Busca URL do vídeo
+                            val streamResponse = app.get("$mainUrl/api_proxy.php?action=get_stream_url&type=series&id=$epId")
+                            val streamJson = JSONObject(streamResponse.body.string())
+                            val videoUrl = streamJson.getString("stream_url")
+                            
+                            episodes.add(
+                                newEpisode(videoUrl) {
+                                    this.name = epTitle
+                                    this.season = seasonNum
+                                    this.episode = epNum
+                                    this.posterUrl = epImage
+                                    this.description = epPlot
+                                    if (epDuration != null && epDuration > 0) this.runTime = epDuration / 60
+                                }
+                            )
+                        }
+                    }
+                }
+                
+                if (episodes.isEmpty()) return@withContext null
+                
+                newTvSeriesLoadResponse(cleanTitle, "series?id=$id", TvType.TvSeries, episodes) {
+                    this.posterUrl = poster
+                    this.backgroundPosterUrl = backdrop
+                    this.plot = plot
+                    this.year = year
+                    if (rating != null) this.score = Score.from10(rating)
+                    if (genres.isNotEmpty()) this.tags = genres
+                    
+                    if (actors != null && actors.isNotEmpty()) {
+                        addActors(actors.map { Actor(it) })
+                    }
+                }
+            } catch (e: Exception) {
+                null
             }
-        } catch (e: Exception) {
-            println("💥 [StreamFlix] ERRO ao carregar série: ${e.message}")
-            null
         }
     }
-}
-    
+
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        println("🔗 [StreamFlix] loadLinks: ${data.take(80)}...")
-        
         callback(
             newExtractorLink(
                 source = name,
@@ -457,10 +478,6 @@ private suspend fun loadSeries(id: String): LoadResponse? {
         var fixed = url.trim()
         if (fixed.startsWith("//")) fixed = "https:$fixed"
         if (!fixed.startsWith("http") && fixed.startsWith("/")) fixed = "$mainUrl$fixed"
-        
-        // Remove tamanhos específicos para pegar imagem original
-        fixed = fixed.replace("/w600_and_h900_bestv2/", "/w500/")
-        fixed = fixed.replace("/w1280/", "/original/")
         
         return fixed
     }
