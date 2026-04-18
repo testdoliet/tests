@@ -1,93 +1,79 @@
 package com.StreamFlix
 
-import android.widget.LinearLayout
-import android.widget.TextView
-import android.graphics.Typeface
-import android.annotation.SuppressLint
 import android.app.Dialog
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
-import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import android.widget.ImageView
-import android.widget.RadioButton
-import android.widget.RadioGroup
-import android.widget.Toast
+import android.widget.Button
+import android.widget.CheckBox
+import android.widget.LinearLayout
+import android.widget.ScrollView
+import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
-import androidx.core.widget.NestedScrollView
-import com.google.android.material.bottomsheet.BottomSheetBehavior
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.google.android.material.bottomsheet.BottomSheetDialogFragment
 
 class StreamFlixSettingsFragment : BottomSheetDialogFragment() {
 
-    @SuppressLint("UseCompatLoadingForDrawables")
     override fun onCreateView(
-        inflater: LayoutInflater,
+        inflater: android.view.LayoutInflater,
         container: ViewGroup?,
         savedInstanceState: Bundle?
-    ): View? {
-        // Infla o layout
-        val view = NestedScrollView(requireContext()).apply {
-            layoutParams = ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            )
-        }
-
-        val contentLayout = LinearLayout(requireContext()).apply {
+    ): View {
+        val scrollView = ScrollView(requireContext())
+        val layout = LinearLayout(requireContext()).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(40, 40, 40, 40)
         }
 
         // Título
         val titleText = TextView(requireContext()).apply {
-            text = "StreamFlix Settings"
+            text = "⚙️ StreamFlix Settings"
             textSize = 20f
-            setTypeface(typeface, Typeface.BOLD)
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
             layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
             ).apply { bottomMargin = 20 }
         }
-        contentLayout.addView(titleText)
+        layout.addView(titleText)
 
         // Divisor
-        contentLayout.addView(View(requireContext()).apply {
+        val divider = View(requireContext()).apply {
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 2
-            ).apply { 
+            ).apply {
                 bottomMargin = 20
                 topMargin = 10
             }
             setBackgroundColor(0x33FFFFFF)
-        })
+        }
+        layout.addView(divider)
 
         // Seção de Filmes
         val moviesTitle = TextView(requireContext()).apply {
-            text = "🎬 Filmes"
+            text = "🎬 FILMES"
             textSize = 18f
-            setTypeface(typeface, Typeface.BOLD)
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { 
+            ).apply {
                 topMargin = 20
                 bottomMargin = 15
             }
         }
-        contentLayout.addView(moviesTitle)
+        layout.addView(moviesTitle)
 
-        // Checkboxes para filmes
         val movieCategories = StreamFlixProvider.ALL_MOVIE_CATEGORIES
         val activeMovies = StreamFlixProvider.getActiveMovieCategories().keys
         val movieCheckStates = mutableMapOf<String, Boolean>()
 
         movieCategories.forEach { (id, name) ->
-            val checkBox = android.widget.CheckBox(requireContext()).apply {
+            val checkBox = CheckBox(requireContext()).apply {
                 text = name
                 isChecked = activeMovies.contains(id)
                 layoutParams = LinearLayout.LayoutParams(
@@ -98,32 +84,31 @@ class StreamFlixSettingsFragment : BottomSheetDialogFragment() {
                     movieCheckStates[id] = isChecked
                 }
             }
-            contentLayout.addView(checkBox)
-            movieCheckStates[id] = isChecked
+            layout.addView(checkBox)
+            movieCheckStates[id] = checkBox.isChecked
         }
 
         // Seção de Séries
         val seriesTitle = TextView(requireContext()).apply {
-            text = "📺 Séries"
+            text = "📺 SÉRIES"
             textSize = 18f
-            setTypeface(typeface, Typeface.BOLD)
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { 
+            ).apply {
                 topMargin = 30
                 bottomMargin = 15
             }
         }
-        contentLayout.addView(seriesTitle)
+        layout.addView(seriesTitle)
 
-        // Checkboxes para séries
         val seriesCategories = StreamFlixProvider.ALL_SERIES_CATEGORIES
         val activeSeries = StreamFlixProvider.getActiveSeriesCategories().keys
         val seriesCheckStates = mutableMapOf<String, Boolean>()
 
         seriesCategories.forEach { (id, name) ->
-            val checkBox = android.widget.CheckBox(requireContext()).apply {
+            val checkBox = CheckBox(requireContext()).apply {
                 text = name
                 isChecked = activeSeries.contains(id)
                 layoutParams = LinearLayout.LayoutParams(
@@ -134,20 +119,55 @@ class StreamFlixSettingsFragment : BottomSheetDialogFragment() {
                     seriesCheckStates[id] = isChecked
                 }
             }
-            contentLayout.addView(checkBox)
-            seriesCheckStates[id] = isChecked
+            layout.addView(checkBox)
+            seriesCheckStates[id] = checkBox.isChecked
         }
 
-        // Botão Salvar
-        val saveButton = android.widget.Button(requireContext()).apply {
+        // Botões
+        val selectAllButton = Button(requireContext()).apply {
+            text = "✅ Selecionar Todas"
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = 30 }
+            setOnClickListener {
+                movieCheckStates.keys.forEach { movieCheckStates[it] = true }
+                seriesCheckStates.keys.forEach { seriesCheckStates[it] = true }
+                for (i in 0 until layout.childCount) {
+                    val child = layout.getChildAt(i)
+                    if (child is CheckBox) {
+                        child.isChecked = true
+                    }
+                }
+            }
+        }
+        layout.addView(selectAllButton)
+
+        val deselectAllButton = Button(requireContext()).apply {
+            text = "❌ Desmarcar Todas"
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = 10 }
+            setOnClickListener {
+                movieCheckStates.keys.forEach { movieCheckStates[it] = false }
+                seriesCheckStates.keys.forEach { seriesCheckStates[it] = false }
+                for (i in 0 until layout.childCount) {
+                    val child = layout.getChildAt(i)
+                    if (child is CheckBox) {
+                        child.isChecked = false
+                    }
+                }
+            }
+        }
+        layout.addView(deselectAllButton)
+
+        val saveButton = Button(requireContext()).apply {
             text = "💾 Salvar e Reiniciar"
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { 
-                topMargin = 40
-                bottomMargin = 20
-            }
+            ).apply { topMargin = 20 }
             setOnClickListener {
                 val selectedMovies = movieCheckStates.filter { it.value }.keys
                 val selectedSeries = seriesCheckStates.filter { it.value }.keys
@@ -157,68 +177,30 @@ class StreamFlixSettingsFragment : BottomSheetDialogFragment() {
                 
                 AlertDialog.Builder(requireContext())
                     .setTitle("Reiniciar App?")
-                    .setMessage("As configurações foram salvas. Reiniciar o aplicativo para aplicar as mudanças?")
+                    .setMessage("Configurações salvas! Reiniciar o aplicativo para aplicar as mudanças?")
                     .setPositiveButton("Sim") { _, _ ->
                         restartApp(requireContext())
                     }
                     .setNegativeButton("Não") { dialog, _ ->
                         dialog.dismiss()
-                        Toast.makeText(requireContext(), "Configurações salvas! Reinicie o app manualmente.", Toast.LENGTH_LONG).show()
                         dismiss()
                     }
                     .show()
             }
         }
-        contentLayout.addView(saveButton)
+        layout.addView(saveButton)
 
-        // Botão Selecionar Todos
-        val selectAllButton = android.widget.Button(requireContext()).apply {
-            text = "✅ Selecionar Todos"
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { bottomMargin = 10 }
-            setOnClickListener {
-                movieCheckStates.keys.forEach { movieCheckStates[it] = true }
-                seriesCheckStates.keys.forEach { seriesCheckStates[it] = true }
-                // Atualizar UI
-                for (i in 0 until contentLayout.childCount) {
-                    val child = contentLayout.getChildAt(i)
-                    if (child is android.widget.CheckBox) {
-                        child.isChecked = true
-                    }
-                }
-            }
-        }
-        contentLayout.addView(selectAllButton)
-
-        // Botão Desmarcar Todos
-        val deselectAllButton = android.widget.Button(requireContext()).apply {
-            text = "❌ Desmarcar Todos"
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            )
-            setOnClickListener {
-                movieCheckStates.keys.forEach { movieCheckStates[it] = false }
-                seriesCheckStates.keys.forEach { seriesCheckStates[it] = false }
-                for (i in 0 until contentLayout.childCount) {
-                    val child = contentLayout.getChildAt(i)
-                    if (child is android.widget.CheckBox) {
-                        child.isChecked = false
-                    }
-                }
-            }
-        }
-        contentLayout.addView(deselectAllButton)
-
-        view.addView(contentLayout)
-        return view
+        scrollView.addView(layout)
+        return scrollView
     }
 
     override fun onCreateDialog(savedInstanceState: Bundle?): Dialog {
-        val dialog = super.onCreateDialog(savedInstanceState)
-        (dialog as? BottomSheetDialog)?.behavior?.state = BottomSheetBehavior.STATE_EXPANDED
+        val dialog = super.onCreateDialog(savedInstanceState) as BottomSheetDialog
+        dialog.behavior.peekHeight = android.util.TypedValue.applyDimension(
+            android.util.TypedValue.COMPLEX_UNIT_DIP,
+            600f,
+            resources.displayMetrics
+        ).toInt()
         return dialog
     }
 
