@@ -106,8 +106,6 @@ class StreamFlix : MainAPI() {
             val (cleanName, dubStatus, qualityTag) = processTitle(rawName)
             val id = movie.getInt("stream_id")
             val poster = fixImageUrl(movie.optString("stream_icon"))
-            
-            // AVALIAÇÃO
             val rating = movie.optDouble("rating_5based", 0.0).takeIf { it > 0 }?.let { it.toFloat() * 2 }
             
             // USANDO newAnimeSearchResponse (aceita quality e dubStatus)
@@ -144,8 +142,6 @@ class StreamFlix : MainAPI() {
             val (cleanName, dubStatus, qualityTag) = processTitle(rawName)
             val id = series.getInt("series_id")
             val poster = fixImageUrl(series.optString("cover"))
-            
-            // AVALIAÇÃO
             val rating = series.optDouble("rating_5based", 0.0).takeIf { it > 0 }?.let { it.toFloat() * 2 }
             
             // USANDO newAnimeSearchResponse (aceita quality e dubStatus)
@@ -273,7 +269,6 @@ class StreamFlix : MainAPI() {
 
     // ==================== FUNÇÕES AUXILIARES ====================
     
-    // Verifica se é conteúdo adulto
     private fun isAdultContent(title: String): Boolean {
         val adultKeywords = listOf(
             "XXX", "ADULTOS", "Porn", "Sexo", "Erótico", "Erótica",
@@ -283,7 +278,6 @@ class StreamFlix : MainAPI() {
         return adultKeywords.any { titleUpper.contains(it.uppercase()) }
     }
 
-    // Processa o título: limpa, extrai DUB/Legendado e qualidade
     private fun processTitle(rawTitle: String): Triple<String, EnumSet<DubStatus>?, SearchQuality?> {
         var cleanTitle = rawTitle.trim()
         var dubStatus: EnumSet<DubStatus>? = null
@@ -329,7 +323,7 @@ class StreamFlix : MainAPI() {
                 val info = infoJson.optJSONObject("info") ?: JSONObject()
                 
                 val rawTitle = info.optString("name", "Título indisponível")
-                val (cleanTitle, dubStatus, qualityTag) = processTitle(rawTitle)
+                val (cleanTitle, _, _) = processTitle(rawTitle)
                 
                 val posterFallback = fixImageUrl(info.optString("cover_big"))
                 
@@ -357,8 +351,6 @@ class StreamFlix : MainAPI() {
                     this.score = rating
                     this.duration = duration
                     this.tags = tags
-                    if (dubStatus != null) this.dubStatus = dubStatus
-                    if (qualityTag != null) this.quality = qualityTag
                     
                     if (actors != null && actors.isNotEmpty()) {
                         addActors(actors)
@@ -440,7 +432,7 @@ class StreamFlix : MainAPI() {
                 val info = json.optJSONObject("info") ?: JSONObject()
                 
                 val rawTitle = info.getString("name")
-                val (cleanTitle, dubStatus, qualityTag) = processTitle(rawTitle)
+                val (cleanTitle, _, _) = processTitle(rawTitle)
                 
                 val posterFallback = fixImageUrl(info.optString("cover"))
                 
@@ -466,8 +458,6 @@ class StreamFlix : MainAPI() {
                     this.year = year
                     this.score = rating
                     this.tags = tags
-                    if (dubStatus != null) this.dubStatus = dubStatus
-                    if (qualityTag != null) this.quality = qualityTag
                     
                     if (actors != null && actors.isNotEmpty()) {
                         addActors(actors)
