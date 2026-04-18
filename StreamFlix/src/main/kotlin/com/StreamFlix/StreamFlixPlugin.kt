@@ -1,8 +1,5 @@
 package com.StreamFlix
 
-import android.widget.LinearLayout
-import android.widget.TextView
-import android.graphics.Typeface
 import android.content.Context
 import androidx.appcompat.app.AppCompatActivity
 import com.lagradost.cloudstream3.CloudStreamApp.Companion.getKey
@@ -30,8 +27,7 @@ class StreamFlixProvider : Plugin() {
             "70" to "COMÉDIA",
             "74" to "DRAMA",
             "72" to "TERROR",
-            "98" to "FICÇÃO CIENTÍFICA",
-            "71" to "Legendados"
+            "98" to "FICÇÃO CIENTÍFICA"
         )
 
         val ALL_SERIES_CATEGORIES = mapOf(
