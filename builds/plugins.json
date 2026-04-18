@@ -434,11 +434,11 @@
     },
     {
         "iconUrl": "https://openclipart.org/image/2400px/svg_to_png/193323/-S.png",
-        "jarFileSize": 212188,
-        "fileHash": "sha256-56b27b7e9d2a33547994cba744c190cbc67e448d8fd0b79b0277b8c59a2e5744",
+        "jarFileSize": 211815,
+        "fileHash": "sha256-008292ac5bce68a4b7b4bc4c1cdfca4abcea5e0edcf325f84bfd9b0bf8c072f4",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/lawlietbt/lietrepo",
-        "fileSize": 45306,
+        "fileSize": 45267,
         "status": 1,
         "language": "pt-br",
         "authors": [
@@ -454,7 +454,7 @@
         "description": "StreamFlix - Filmes e S\u00e9ries Online em Portugu\u00eas | Lan\u00e7amentos e Cl\u00e1ssicos",
         "url": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/StreamFlix.cs3",
         "name": "StreamFlix",
-        "jarHash": "sha256-f1545f29bcc867571045b6e2b413c3f3a503999d94a052da585ad4ee10a6221d"
+        "jarHash": "sha256-65ba11e9efc84e6823d373c3e03ed4704efca5a215837b8b74e67e349e466006"
     },
     {
         "iconUrl": "https://superflix1.cloud/wp-content/uploads/2024/07/FAVIFLIX-1-300x300.png",
