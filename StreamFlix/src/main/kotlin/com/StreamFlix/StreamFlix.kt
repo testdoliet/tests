@@ -1,8 +1,5 @@
 package com.StreamFlix
 
-import android.widget.LinearLayout
-import android.widget.TextView
-import android.graphics.Typeface
 import android.content.Context
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
@@ -157,19 +154,12 @@ class StreamFlix : MainAPI() {
     private fun cleanTitle(title: String): String {
         var cleaned = title.trim()
         
-        // Remove 4K
         cleaned = cleaned.replace(Regex("\\b4K\\b", RegexOption.IGNORE_CASE), "")
         cleaned = cleaned.replace(Regex("\\s*4K\\s*", RegexOption.IGNORE_CASE), " ")
-        
-        // Remove ano entre parênteses
         cleaned = cleaned.replace(Regex("\\s*\\(\\d{4}\\)\\s*"), " ")
         cleaned = cleaned.replace(Regex("\\s*\\(\\d{4}\\)\$"), "")
-        
-        // Remove tags como [HDR], [Hybrid], [HD], [FULLHD]
         cleaned = cleaned.replace(Regex("\\s*\\[[^\\]]+\\]\\s*"), " ")
         cleaned = cleaned.replace(Regex("\\s*\\[[^\\]]+\\]\\s*\$"), "")
-        
-        // Remove espaços duplicados
         cleaned = cleaned.replace(Regex("\\s+"), " ").trim()
         
         return cleaned
@@ -755,19 +745,4 @@ class StreamFlix : MainAPI() {
     )
 
     private data class TMDBCast(
-        @JsonProperty("name") val name: String,
-        @JsonProperty("character") val character: String?,
-        @JsonProperty("profile_path") val profile_path: String?
-    )
-
-    private data class TMDBVideos(
-        @JsonProperty("results") val results: List<TMDBVideo>
-    )
-
-    private data class TMDBVideo(
-        @JsonProperty("key") val key: String,
-        @JsonProperty("site") val site: String,
-        @JsonProperty("type") val type: String,
-        @JsonProperty("official") val official: Boolean? = false
-    )
-}
+        @JsonProperty("name")
