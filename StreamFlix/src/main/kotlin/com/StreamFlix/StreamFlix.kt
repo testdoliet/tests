@@ -59,27 +59,38 @@ class StreamFlix : MainAPI() {
     // MAIN PAGE DINÂMICO com todas as categorias
     override val mainPage = mainPageOf(
         *MOVIE_CATEGORIES.map { (id, name) ->
-            "$mainUrl/api_proxy.php?action=get_vod_streams&category_id=$id" to name
+            "$id" to name  // Usamos o ID como URL, o nome como título
         }.toTypedArray(),
         *SERIES_CATEGORIES.map { (id, name) ->
-            "$mainUrl/api_proxy.php?action=get_series&category_id=$id" to name
+            "series_$id" to name  // Prefixo para séries
         }.toTypedArray()
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         println("📺 [StreamFlix] getMainPage - Página: $page, Seção: ${request.name}")
         
-        // Extrai o category_id da URL
-        val categoryId = request.url.substringAfter("category_id=").substringBefore("&")
+        // Extrai o category_id do request.name ou da URL da request
+        val categoryId = when {
+            MOVIE_CATEGORIES.values.contains(request.name) -> {
+                MOVIE_CATEGORIES.entries.find { it.value == request.name }?.key
+            }
+            SERIES_CATEGORIES.values.contains(request.name) -> {
+                SERIES_CATEGORIES.entries.find { it.value == request.name }?.key
+            }
+            else -> null
+        }
         
-        val isMovies = request.url.contains("get_vod_streams")
+        val isMovies = MOVIE_CATEGORIES.values.contains(request.name)
         
-        val items = if (isMovies) {
-            println("🎬 [StreamFlix] Carregando filmes da categoria $categoryId - Página $page")
+        val items = if (isMovies && categoryId != null) {
+            println("🎬 [StreamFlix] Carregando filmes da categoria ${MOVIE_CATEGORIES[categoryId]} - Página $page")
             getMoviesByCategory(categoryId, page)
-        } else {
-            println("📀 [StreamFlix] Carregando séries da categoria $categoryId - Página $page")
+        } else if (!isMovies && categoryId != null) {
+            println("📀 [StreamFlix] Carregando séries da categoria ${SERIES_CATEGORIES[categoryId]} - Página $page")
             getSeriesByCategory(categoryId, page)
+        } else {
+            println("❌ [StreamFlix] Categoria não encontrada: ${request.name}")
+            emptyList()
         }
         
         println("✅ [StreamFlix] Retornando ${items.size} itens")
