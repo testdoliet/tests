@@ -15,6 +15,7 @@ import org.json.JSONObject
 import java.net.URLEncoder
 import java.text.SimpleDateFormat
 import java.util.EnumSet
+import java.util.Locale
 
 @CloudstreamPlugin
 class StreamFlixProvider : Plugin() {
@@ -55,49 +56,60 @@ class StreamFlix : MainAPI() {
         "118" to "Séries - Max (HBO Max)", "123" to "Séries - Paramount+"
     )
 
-    private val genreMap = mapOf(
-        28 to "Ação", 12 to "Aventura", 16 to "Animação", 35 to "Comédia",
-        80 to "Crime", 99 to "Documentário", 18 to "Drama", 10751 to "Família",
-        14 to "Fantasia", 36 to "História", 27 to "Terror", 10402 to "Música",
-        9648 to "Mistério", 10749 to "Romance", 878 to "Ficção Científica",
-        53 to "Thriller", 10752 to "Guerra", 37 to "Faroeste"
-    )
-
+    // MAIN PAGE DINÂMICO com todas as categorias
     override val mainPage = mainPageOf(
-        "$mainUrl/api_proxy.php?action=get_vod_streams" to "Filmes",
-        "$mainUrl/api_proxy.php?action=get_series" to "Séries"
+        *MOVIE_CATEGORIES.map { (id, name) ->
+            "$mainUrl/api_proxy.php?action=get_vod_streams&category_id=$id" to name
+        }.toTypedArray(),
+        *SERIES_CATEGORIES.map { (id, name) ->
+            "$mainUrl/api_proxy.php?action=get_series&category_id=$id" to name
+        }.toTypedArray()
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         println("📺 [StreamFlix] getMainPage - Página: $page, Seção: ${request.name}")
         
-        val isMovies = request.name == "Filmes"
+        // Extrai o category_id da URL
+        val categoryId = request.url.substringAfter("category_id=").substringBefore("&")
+        
+        val isMovies = request.url.contains("get_vod_streams")
         
         val items = if (isMovies) {
-            println("🎬 [StreamFlix] Carregando filmes - Página $page")
-            getMoviesPaginated(page)
+            println("🎬 [StreamFlix] Carregando filmes da categoria $categoryId - Página $page")
+            getMoviesByCategory(categoryId, page)
         } else {
-            println("📀 [StreamFlix] Carregando séries - Página $page")
-            getSeriesPaginated(page)
+            println("📀 [StreamFlix] Carregando séries da categoria $categoryId - Página $page")
+            getSeriesByCategory(categoryId, page)
         }
         
         println("✅ [StreamFlix] Retornando ${items.size} itens")
         return newHomePageResponse(request.name, items, hasNext = items.size == PAGE_SIZE)
     }
 
-    private suspend fun getMoviesPaginated(page: Int): List<SearchResponse> {
+    // FILTRA FILMES POR CATEGORIA
+    private suspend fun getMoviesByCategory(categoryId: String, page: Int): List<SearchResponse> {
         val allMovies = getAllMovies()
-        val start = page * PAGE_SIZE
-        val end = minOf(start + PAGE_SIZE, allMovies.length())
         
-        if (start >= allMovies.length()) return emptyList()
+        // Filtra filmes pela categoria
+        val categoryMovies = mutableListOf<JSONObject>()
+        for (i in 0 until allMovies.length()) {
+            val movie = allMovies.getJSONObject(i)
+            val movieCategories = getCategoryIds(movie)
+            if (movieCategories.contains(categoryId)) {
+                categoryMovies.add(movie)
+            }
+        }
+        
+        val start = page * PAGE_SIZE
+        val end = minOf(start + PAGE_SIZE, categoryMovies.size)
+        
+        if (start >= categoryMovies.size) return emptyList()
         
         val results = mutableListOf<SearchResponse>()
         for (i in start until end) {
-            val movie = allMovies.getJSONObject(i)
+            val movie = categoryMovies[i]
             val rawName = movie.getString("name")
             
-            // BLOQUEAR CONTEÚDO ADULTO
             if (isAdultContent(rawName)) {
                 println("🔞 [StreamFlix] Conteúdo adulto bloqueado: '$rawName'")
                 continue
@@ -108,7 +120,6 @@ class StreamFlix : MainAPI() {
             val poster = fixImageUrl(movie.optString("stream_icon"))
             val rating = movie.optDouble("rating_5based", 0.0).takeIf { it > 0 }?.let { it.toFloat() * 2 }
             
-            // USANDO newAnimeSearchResponse (aceita quality e dubStatus)
             results.add(
                 newAnimeSearchResponse(cleanName, "movie?id=$id", TvType.Movie) {
                     this.posterUrl = poster
@@ -121,19 +132,30 @@ class StreamFlix : MainAPI() {
         return results
     }
 
-    private suspend fun getSeriesPaginated(page: Int): List<SearchResponse> {
+    // FILTRA SÉRIES POR CATEGORIA
+    private suspend fun getSeriesByCategory(categoryId: String, page: Int): List<SearchResponse> {
         val allSeries = getAllSeries()
-        val start = page * PAGE_SIZE
-        val end = minOf(start + PAGE_SIZE, allSeries.length())
         
-        if (start >= allSeries.length()) return emptyList()
+        // Filtra séries pela categoria
+        val categorySeries = mutableListOf<JSONObject>()
+        for (i in 0 until allSeries.length()) {
+            val series = allSeries.getJSONObject(i)
+            val seriesCategories = getCategoryIds(series)
+            if (seriesCategories.contains(categoryId)) {
+                categorySeries.add(series)
+            }
+        }
+        
+        val start = page * PAGE_SIZE
+        val end = minOf(start + PAGE_SIZE, categorySeries.size)
+        
+        if (start >= categorySeries.size) return emptyList()
         
         val results = mutableListOf<SearchResponse>()
         for (i in start until end) {
-            val series = allSeries.getJSONObject(i)
+            val series = categorySeries[i]
             val rawName = series.getString("name")
             
-            // BLOQUEAR CONTEÚDO ADULTO
             if (isAdultContent(rawName)) {
                 println("🔞 [StreamFlix] Conteúdo adulto bloqueado: '$rawName'")
                 continue
@@ -144,7 +166,6 @@ class StreamFlix : MainAPI() {
             val poster = fixImageUrl(series.optString("cover"))
             val rating = series.optDouble("rating_5based", 0.0).takeIf { it > 0 }?.let { it.toFloat() * 2 }
             
-            // USANDO newAnimeSearchResponse (aceita quality e dubStatus)
             results.add(
                 newAnimeSearchResponse(cleanName, "series?id=$id", TvType.TvSeries) {
                     this.posterUrl = poster
@@ -155,6 +176,32 @@ class StreamFlix : MainAPI() {
             )
         }
         return results
+    }
+
+    // OBTÉM IDs DE CATEGORIA DE UM ITEM (suporta category_id e category_ids)
+    private fun getCategoryIds(obj: JSONObject): Set<String> {
+        val ids = mutableSetOf<String>()
+        
+        // Tenta pegar category_ids (array)
+        val categoryIdsArray = obj.optJSONArray("category_ids")
+        if (categoryIdsArray != null) {
+            for (i in 0 until categoryIdsArray.length()) {
+                ids.add(categoryIdsArray.getInt(i).toString())
+            }
+        }
+        
+        // Fallback para category_id (string ou int)
+        val categoryId = obj.optString("category_id", null)
+        if (categoryId != null && categoryId.isNotEmpty() && categoryId != "null") {
+            ids.add(categoryId)
+        } else {
+            val categoryIdInt = obj.optInt("category_id", -1)
+            if (categoryIdInt != -1) {
+                ids.add(categoryIdInt.toString())
+            }
+        }
+        
+        return ids
     }
 
     private suspend fun getAllMovies(): JSONArray {
@@ -274,8 +321,8 @@ class StreamFlix : MainAPI() {
             "XXX", "ADULTOS", "Porn", "Sexo", "Erótico", "Erótica",
             "Hardcore", "18+", "Adult", "Erotico", "18 anos"
         )
-        val titleUpper = title.uppercase()
-        return adultKeywords.any { titleUpper.contains(it.uppercase()) }
+        val titleUpper = title.uppercase(Locale.getDefault())
+        return adultKeywords.any { titleUpper.contains(it.uppercase(Locale.getDefault())) }
     }
 
     private fun processTitle(rawTitle: String): Triple<String, EnumSet<DubStatus>?, SearchQuality?> {
@@ -283,19 +330,16 @@ class StreamFlix : MainAPI() {
         var dubStatus: EnumSet<DubStatus>? = null
         var qualityTag: SearchQuality? = null
         
-        // Verifica [L] no final para Legendado
         if (cleanTitle.matches(Regex(".*\\[L\\]\\s*$"))) {
             dubStatus = EnumSet.of(DubStatus.Subbed)
             cleanTitle = cleanTitle.replace(Regex("\\s*\\[L\\]\\s*$"), "").trim()
         }
         
-        // Verifica 4K no final
         if (cleanTitle.matches(Regex(".*4K\\s*$", RegexOption.IGNORE_CASE))) {
             qualityTag = SearchQuality.FourK
             cleanTitle = cleanTitle.replace(Regex("\\s*4K\\s*$", RegexOption.IGNORE_CASE), "").trim()
         }
         
-        // Remove outras tags isoladas no final
         cleanTitle = cleanTitle.replace(Regex("\\s*\\[[^\\]]+\\]\\s*$"), "").trim()
         
         return Triple(cleanTitle, dubStatus, qualityTag)
@@ -608,9 +652,9 @@ class StreamFlix : MainAPI() {
                             if (duration != null && duration > 0) this.runTime = duration
                             if (tmdbEpisode?.air_date != null) {
                                 try {
-                                    val dateFormatter = SimpleDateFormat("yyyy-MM-dd")
+                                    val dateFormatter = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
                                     val date = dateFormatter.parse(tmdbEpisode.air_date)
-                                    this.date = date.time
+                                    this.date = date?.time
                                 } catch (e: Exception) { }
                             }
                         }
