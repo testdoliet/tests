@@ -59,17 +59,16 @@ class StreamFlix : MainAPI() {
     // MAIN PAGE DINÂMICO com todas as categorias
     override val mainPage = mainPageOf(
         *MOVIE_CATEGORIES.map { (id, name) ->
-            "$id" to name  // Usamos o ID como URL, o nome como título
+            "$id" to name
         }.toTypedArray(),
         *SERIES_CATEGORIES.map { (id, name) ->
-            "series_$id" to name  // Prefixo para séries
+            "series_$id" to name
         }.toTypedArray()
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         println("📺 [StreamFlix] getMainPage - Página: $page, Seção: ${request.name}")
         
-        // Extrai o category_id do request.name ou da URL da request
         val categoryId = when {
             MOVIE_CATEGORIES.values.contains(request.name) -> {
                 MOVIE_CATEGORIES.entries.find { it.value == request.name }?.key
@@ -101,7 +100,6 @@ class StreamFlix : MainAPI() {
     private suspend fun getMoviesByCategory(categoryId: String, page: Int): List<SearchResponse> {
         val allMovies = getAllMovies()
         
-        // Filtra filmes pela categoria
         val categoryMovies = mutableListOf<JSONObject>()
         for (i in 0 until allMovies.length()) {
             val movie = allMovies.getJSONObject(i)
@@ -129,14 +127,20 @@ class StreamFlix : MainAPI() {
             val (cleanName, dubStatus, qualityTag) = processTitle(rawName)
             val id = movie.getInt("stream_id")
             val poster = fixImageUrl(movie.optString("stream_icon"))
-            val rating = movie.optDouble("rating_5based", 0.0).takeIf { it > 0 }?.let { it.toFloat() * 2 }
+            val ratingValue = movie.optDouble("rating_5based", 0.0).takeIf { it > 0 }?.let { it.toFloat() * 2 }
             
             results.add(
                 newAnimeSearchResponse(cleanName, "movie?id=$id", TvType.Movie) {
                     this.posterUrl = poster
                     if (qualityTag != null) this.quality = qualityTag
                     if (dubStatus != null) this.dubStatus = dubStatus
-                    if (rating != null) this.score = Score.from10(rating)
+                    
+                    // Badge para rating 0
+                    if (ratingValue == null || ratingValue == 0f) {
+                        this.rating = null
+                    } else {
+                        this.score = Score.from10(ratingValue)
+                    }
                 }
             )
         }
@@ -147,7 +151,6 @@ class StreamFlix : MainAPI() {
     private suspend fun getSeriesByCategory(categoryId: String, page: Int): List<SearchResponse> {
         val allSeries = getAllSeries()
         
-        // Filtra séries pela categoria
         val categorySeries = mutableListOf<JSONObject>()
         for (i in 0 until allSeries.length()) {
             val series = allSeries.getJSONObject(i)
@@ -175,25 +178,29 @@ class StreamFlix : MainAPI() {
             val (cleanName, dubStatus, qualityTag) = processTitle(rawName)
             val id = series.getInt("series_id")
             val poster = fixImageUrl(series.optString("cover"))
-            val rating = series.optDouble("rating_5based", 0.0).takeIf { it > 0 }?.let { it.toFloat() * 2 }
+            val ratingValue = series.optDouble("rating_5based", 0.0).takeIf { it > 0 }?.let { it.toFloat() * 2 }
             
             results.add(
                 newAnimeSearchResponse(cleanName, "series?id=$id", TvType.TvSeries) {
                     this.posterUrl = poster
                     if (qualityTag != null) this.quality = qualityTag
                     if (dubStatus != null) this.dubStatus = dubStatus
-                    if (rating != null) this.score = Score.from10(rating)
+                    
+                    // Badge para rating 0
+                    if (ratingValue == null || ratingValue == 0f) {
+                        this.rating = null
+                    } else {
+                        this.score = Score.from10(ratingValue)
+                    }
                 }
             )
         }
         return results
     }
 
-    // OBTÉM IDs DE CATEGORIA DE UM ITEM (suporta category_id e category_ids)
     private fun getCategoryIds(obj: JSONObject): Set<String> {
         val ids = mutableSetOf<String>()
         
-        // Tenta pegar category_ids (array)
         val categoryIdsArray = obj.optJSONArray("category_ids")
         if (categoryIdsArray != null) {
             for (i in 0 until categoryIdsArray.length()) {
@@ -201,7 +208,6 @@ class StreamFlix : MainAPI() {
             }
         }
         
-        // Fallback para category_id (string ou int)
         val categoryId = obj.optString("category_id", null)
         if (categoryId != null && categoryId.isNotEmpty() && categoryId != "null") {
             ids.add(categoryId)
@@ -259,14 +265,19 @@ class StreamFlix : MainAPI() {
                 val (cleanName, dubStatus, qualityTag) = processTitle(rawName)
                 val id = movie.getInt("stream_id")
                 val poster = fixImageUrl(movie.optString("stream_icon"))
-                val rating = movie.optDouble("rating_5based", 0.0).takeIf { it > 0 }?.let { it.toFloat() * 2 }
+                val ratingValue = movie.optDouble("rating_5based", 0.0).takeIf { it > 0 }?.let { it.toFloat() * 2 }
                 
                 results.add(
                     newAnimeSearchResponse(cleanName, "movie?id=$id", TvType.Movie) {
                         this.posterUrl = poster
                         if (qualityTag != null) this.quality = qualityTag
                         if (dubStatus != null) this.dubStatus = dubStatus
-                        if (rating != null) this.score = Score.from10(rating)
+                        
+                        if (ratingValue == null || ratingValue == 0f) {
+                            this.rating = null
+                        } else {
+                            this.score = Score.from10(ratingValue)
+                        }
                     }
                 )
             }
@@ -282,14 +293,19 @@ class StreamFlix : MainAPI() {
                 val (cleanName, dubStatus, qualityTag) = processTitle(rawName)
                 val id = series.getInt("series_id")
                 val poster = fixImageUrl(series.optString("cover"))
-                val rating = series.optDouble("rating_5based", 0.0).takeIf { it > 0 }?.let { it.toFloat() * 2 }
+                val ratingValue = series.optDouble("rating_5based", 0.0).takeIf { it > 0 }?.let { it.toFloat() * 2 }
                 
                 results.add(
                     newAnimeSearchResponse(cleanName, "series?id=$id", TvType.TvSeries) {
                         this.posterUrl = poster
                         if (qualityTag != null) this.quality = qualityTag
                         if (dubStatus != null) this.dubStatus = dubStatus
-                        if (rating != null) this.score = Score.from10(rating)
+                        
+                        if (ratingValue == null || ratingValue == 0f) {
+                            this.rating = null
+                        } else {
+                            this.score = Score.from10(ratingValue)
+                        }
                     }
                 )
             }
@@ -341,16 +357,23 @@ class StreamFlix : MainAPI() {
         var dubStatus: EnumSet<DubStatus>? = null
         var qualityTag: SearchQuality? = null
         
-        if (cleanTitle.matches(Regex(".*\\[L\\]\\s*$"))) {
+        // Verifica Legendado [L] no final
+        if (cleanTitle.matches(Regex(".*\\[L\\]\\s*$", RegexOption.IGNORE_CASE))) {
             dubStatus = EnumSet.of(DubStatus.Subbed)
-            cleanTitle = cleanTitle.replace(Regex("\\s*\\[L\\]\\s*$"), "").trim()
+            cleanTitle = cleanTitle.replace(Regex("\\s*\\[L\\]\\s*$", RegexOption.IGNORE_CASE), "").trim()
+        } else {
+            // Se não tem [L], é Dublado
+            dubStatus = EnumSet.of(DubStatus.Dubbed)
         }
         
-        if (cleanTitle.matches(Regex(".*4K\\s*$", RegexOption.IGNORE_CASE))) {
+        // Verifica 4K isolado no final (caso insensitivo)
+        val fourKRegex = Regex("\\s+4K\\s*$", RegexOption.IGNORE_CASE)
+        if (fourKRegex.containsMatchIn(cleanTitle)) {
             qualityTag = SearchQuality.FourK
-            cleanTitle = cleanTitle.replace(Regex("\\s*4K\\s*$", RegexOption.IGNORE_CASE), "").trim()
+            cleanTitle = cleanTitle.replace(fourKRegex, "").trim()
         }
         
+        // Remove outras tags isoladas no final
         cleanTitle = cleanTitle.replace(Regex("\\s*\\[[^\\]]+\\]\\s*$"), "").trim()
         
         return Triple(cleanTitle, dubStatus, qualityTag)
@@ -378,7 +401,7 @@ class StreamFlix : MainAPI() {
                 val info = infoJson.optJSONObject("info") ?: JSONObject()
                 
                 val rawTitle = info.optString("name", "Título indisponível")
-                val (cleanTitle, _, _) = processTitle(rawTitle)
+                val (cleanTitle, dubStatus, qualityTag) = processTitle(rawTitle)
                 
                 val posterFallback = fixImageUrl(info.optString("cover_big"))
                 
@@ -406,6 +429,14 @@ class StreamFlix : MainAPI() {
                     this.score = rating
                     this.duration = duration
                     this.tags = tags
+                    
+                    // Adiciona badges de dublagem e qualidade
+                    if (dubStatus != null) {
+                        this.dubStatus = dubStatus
+                    }
+                    if (qualityTag != null) {
+                        this.quality = qualityTag
+                    }
                     
                     if (actors != null && actors.isNotEmpty()) {
                         addActors(actors)
@@ -487,7 +518,7 @@ class StreamFlix : MainAPI() {
                 val info = json.optJSONObject("info") ?: JSONObject()
                 
                 val rawTitle = info.getString("name")
-                val (cleanTitle, _, _) = processTitle(rawTitle)
+                val (cleanTitle, dubStatus, qualityTag) = processTitle(rawTitle)
                 
                 val posterFallback = fixImageUrl(info.optString("cover"))
                 
@@ -513,6 +544,14 @@ class StreamFlix : MainAPI() {
                     this.year = year
                     this.score = rating
                     this.tags = tags
+                    
+                    // Adiciona badges de dublagem e qualidade
+                    if (dubStatus != null) {
+                        this.dubStatus = dubStatus
+                    }
+                    if (qualityTag != null) {
+                        this.quality = qualityTag
+                    }
                     
                     if (actors != null && actors.isNotEmpty()) {
                         addActors(actors)
@@ -758,50 +797,4 @@ class StreamFlix : MainAPI() {
         @JsonProperty("credits") val credits: TMDBCredits?,
         @JsonProperty("videos") val videos: TMDBVideos?,
         @JsonProperty("vote_average") val vote_average: Double?,
-        @JsonProperty("seasons") val seasons: List<TMDBSeason>? = null
-    )
-
-    private data class TMDBSeason(
-        @JsonProperty("season_number") val season_number: Int,
-        @JsonProperty("episode_count") val episode_count: Int
-    )
-
-    private data class TMDBSeasonResponse(
-        @JsonProperty("episodes") val episodes: List<TMDBEpisode>,
-        @JsonProperty("air_date") val air_date: String?
-    )
-
-    private data class TMDBEpisode(
-        @JsonProperty("episode_number") val episode_number: Int,
-        @JsonProperty("name") val name: String,
-        @JsonProperty("overview") val overview: String?,
-        @JsonProperty("still_path") val still_path: String?,
-        @JsonProperty("runtime") val runtime: Int?,
-        @JsonProperty("air_date") val air_date: String?
-    )
-
-    private data class TMDBGenre(
-        @JsonProperty("name") val name: String
-    )
-
-    private data class TMDBCredits(
-        @JsonProperty("cast") val cast: List<TMDBCast>
-    )
-
-    private data class TMDBCast(
-        @JsonProperty("name") val name: String,
-        @JsonProperty("character") val character: String?,
-        @JsonProperty("profile_path") val profile_path: String?
-    )
-
-    private data class TMDBVideos(
-        @JsonProperty("results") val results: List<TMDBVideo>
-    )
-
-    private data class TMDBVideo(
-        @JsonProperty("key") val key: String,
-        @JsonProperty("site") val site: String,
-        @JsonProperty("type") val type: String,
-        @JsonProperty("official") val official: Boolean? = false
-    )
-}
+        @JsonProperty("seasons") val seasons:
