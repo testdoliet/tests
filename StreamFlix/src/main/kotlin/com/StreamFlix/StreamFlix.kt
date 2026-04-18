@@ -110,11 +110,12 @@ class StreamFlix : MainAPI() {
             // AVALIAÇÃO
             val rating = movie.optDouble("rating_5based", 0.0).takeIf { it > 0 }?.let { it.toFloat() * 2 }
             
+            // USANDO newAnimeSearchResponse (aceita quality e dubStatus)
             results.add(
-                newMovieSearchResponse(cleanName, "movie?id=$id") {
+                newAnimeSearchResponse(cleanName, "movie?id=$id", TvType.Movie) {
                     this.posterUrl = poster
-                    this.dubStatus = dubStatus
                     if (qualityTag != null) this.quality = qualityTag
+                    if (dubStatus != null) this.dubStatus = dubStatus
                     if (rating != null) this.score = Score.from10(rating)
                 }
             )
@@ -147,11 +148,12 @@ class StreamFlix : MainAPI() {
             // AVALIAÇÃO
             val rating = series.optDouble("rating_5based", 0.0).takeIf { it > 0 }?.let { it.toFloat() * 2 }
             
+            // USANDO newAnimeSearchResponse (aceita quality e dubStatus)
             results.add(
-                newTvSeriesSearchResponse(cleanName, "series?id=$id") {
+                newAnimeSearchResponse(cleanName, "series?id=$id", TvType.TvSeries) {
                     this.posterUrl = poster
-                    this.dubStatus = dubStatus
                     if (qualityTag != null) this.quality = qualityTag
+                    if (dubStatus != null) this.dubStatus = dubStatus
                     if (rating != null) this.score = Score.from10(rating)
                 }
             )
@@ -206,10 +208,10 @@ class StreamFlix : MainAPI() {
                 val rating = movie.optDouble("rating_5based", 0.0).takeIf { it > 0 }?.let { it.toFloat() * 2 }
                 
                 results.add(
-                    newMovieSearchResponse(cleanName, "movie?id=$id") {
+                    newAnimeSearchResponse(cleanName, "movie?id=$id", TvType.Movie) {
                         this.posterUrl = poster
-                        this.dubStatus = dubStatus
                         if (qualityTag != null) this.quality = qualityTag
+                        if (dubStatus != null) this.dubStatus = dubStatus
                         if (rating != null) this.score = Score.from10(rating)
                     }
                 )
@@ -229,10 +231,10 @@ class StreamFlix : MainAPI() {
                 val rating = series.optDouble("rating_5based", 0.0).takeIf { it > 0 }?.let { it.toFloat() * 2 }
                 
                 results.add(
-                    newTvSeriesSearchResponse(cleanName, "series?id=$id") {
+                    newAnimeSearchResponse(cleanName, "series?id=$id", TvType.TvSeries) {
                         this.posterUrl = poster
-                        this.dubStatus = dubStatus
                         if (qualityTag != null) this.quality = qualityTag
+                        if (dubStatus != null) this.dubStatus = dubStatus
                         if (rating != null) this.score = Score.from10(rating)
                     }
                 )
@@ -355,7 +357,7 @@ class StreamFlix : MainAPI() {
                     this.score = rating
                     this.duration = duration
                     this.tags = tags
-                    this.dubStatus = dubStatus
+                    if (dubStatus != null) this.dubStatus = dubStatus
                     if (qualityTag != null) this.quality = qualityTag
                     
                     if (actors != null && actors.isNotEmpty()) {
@@ -464,7 +466,7 @@ class StreamFlix : MainAPI() {
                     this.year = year
                     this.score = rating
                     this.tags = tags
-                    this.dubStatus = dubStatus
+                    if (dubStatus != null) this.dubStatus = dubStatus
                     if (qualityTag != null) this.quality = qualityTag
                     
                     if (actors != null && actors.isNotEmpty()) {
