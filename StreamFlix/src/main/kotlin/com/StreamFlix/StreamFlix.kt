@@ -789,4 +789,36 @@ class StreamFlix : MainAPI() {
     )
 
     private data class TMDBEpisode(
-        @JsonProperty("episode_number")
+        @JsonProperty("episode_number") val episode_number: Int,
+        @JsonProperty("name") val name: String,
+        @JsonProperty("overview") val overview: String?,
+        @JsonProperty("still_path") val still_path: String?,
+        @JsonProperty("runtime") val runtime: Int?,
+        @JsonProperty("air_date") val air_date: String?
+    )
+
+    private data class TMDBGenre(
+        @JsonProperty("name") val name: String
+    )
+
+    private data class TMDBCredits(
+        @JsonProperty("cast") val cast: List<TMDBCast>
+    )
+
+    private data class TMDBCast(
+        @JsonProperty("name") val name: String,
+        @JsonProperty("character") val character: String?,
+        @JsonProperty("profile_path") val profile_path: String?
+    )
+
+    private data class TMDBVideos(
+        @JsonProperty("results") val results: List<TMDBVideo>
+    )
+
+    private data class TMDBVideo(
+        @JsonProperty("key") val key: String,
+        @JsonProperty("site") val site: String,
+        @JsonProperty("type") val type: String,
+        @JsonProperty("official") val official: Boolean? = false
+    )
+}
