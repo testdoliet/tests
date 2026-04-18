@@ -13,7 +13,6 @@ import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.URLEncoder
-import java.text.Normalizer
 import java.text.SimpleDateFormat
 import java.util.EnumSet
 import java.util.Locale
@@ -124,16 +123,11 @@ class StreamFlix : MainAPI() {
             val poster = fixImageUrl(movie.optString("stream_icon"))
             val ratingValue = movie.optDouble("rating_5based", 0.0).let { it.toFloat() * 2 }
             
-            // Obtém qualidade baseado nas tags do filme
-            val movieTags = getMovieTags(movie)
-            val qualityFromTags = getSearchQuality(movieTags)
-            
             results.add(
                 newAnimeSearchResponse(finalName, "movie?id=$id", TvType.Movie) {
                     this.posterUrl = poster
-                    // Prioriza a badge 4K da categoria, senão usa a qualidade das tags
+                    // Só adiciona badge 4K se for da categoria 4K ou se o nome tiver 4K
                     if (qualityTag != null) this.quality = qualityTag
-                    else if (qualityFromTags != null) this.quality = qualityFromTags
                     if (dubStatus != null) this.dubStatus = dubStatus
                     this.score = Score.from10(ratingValue)
                 }
@@ -176,15 +170,10 @@ class StreamFlix : MainAPI() {
             val poster = fixImageUrl(series.optString("cover"))
             val ratingValue = series.optDouble("rating_5based", 0.0).let { it.toFloat() * 2 }
             
-            // Obtém qualidade baseado nas tags da série
-            val seriesTags = getSeriesTags(series)
-            val qualityFromTags = getSearchQuality(seriesTags)
-            
             results.add(
                 newAnimeSearchResponse(finalName, "series?id=$id", TvType.TvSeries) {
                     this.posterUrl = poster
                     if (qualityTag != null) this.quality = qualityTag
-                    else if (qualityFromTags != null) this.quality = qualityFromTags
                     if (dubStatus != null) this.dubStatus = dubStatus
                     this.score = Score.from10(ratingValue)
                 }
@@ -193,70 +182,14 @@ class StreamFlix : MainAPI() {
         return results
     }
 
-    // FUNÇÃO PARA OBTER TAGS DO FILME
-    private fun getMovieTags(movie: JSONObject): List<String> {
-        val tags = mutableListOf<String>()
-        
-        // Verifica qualidade pelo nome
-        val name = movie.optString("name", "")
-        if (name.contains("4K", ignoreCase = true)) tags.add("4K")
-        if (name.contains("2160p", ignoreCase = true)) tags.add("2160p")
-        if (name.contains("1080p", ignoreCase = true)) tags.add("1080p")
-        if (name.contains("720p", ignoreCase = true)) tags.add("720p")
-        if (name.contains("HD", ignoreCase = true)) tags.add("HD")
-        
-        // Verifica categoria
-        val categoryId = movie.optString("category_id", "")
-        if (categoryId == "73") tags.add("4K")
-        
-        return tags
-    }
-
-    // FUNÇÃO PARA OBTER TAGS DA SÉRIE
-    private fun getSeriesTags(series: JSONObject): List<String> {
-        val tags = mutableListOf<String>()
-        
-        val name = series.optString("name", "")
-        if (name.contains("4K", ignoreCase = true)) tags.add("4K")
-        if (name.contains("2160p", ignoreCase = true)) tags.add("2160p")
-        if (name.contains("1080p", ignoreCase = true)) tags.add("1080p")
-        if (name.contains("720p", ignoreCase = true)) tags.add("720p")
-        
-        return tags
-    }
-
-    // FUNÇÃO PARA DETERMINAR QUALIDADE BASEADO NAS TAGS (copiada do 4KHDHub)
-    private fun getSearchQuality(tags: List<String>): SearchQuality? {
-        if (tags.isEmpty()) return null
-        val text = Normalizer.normalize(tags.joinToString(" "), Normalizer.Form.NFKC).lowercase()
-        val patterns = listOf(
-            Regex("\\b(4k|ds4k|uhd|2160p)\\b") to SearchQuality.FourK,
-            Regex("\\b(1440p|qhd)\\b") to SearchQuality.BlueRay,
-            Regex("\\b(bluray|bdrip|blu[- ]?ray)\\b") to SearchQuality.BlueRay,
-            Regex("\\b(1080p|fullhd)\\b") to SearchQuality.HD,
-            Regex("\\b(720p)\\b") to SearchQuality.SD,
-            Regex("\\b(web[- ]?dl|webrip|webdl)\\b") to SearchQuality.WebRip,
-            Regex("\\b(hdrip|hdtv)\\b") to SearchQuality.HD,
-            Regex("\\b(camrip|cam[- ]?rip)\\b") to SearchQuality.CamRip,
-            Regex("\\b(hdts|hdcam|hdtc)\\b") to SearchQuality.HdCam,
-            Regex("\\b(cam)\\b") to SearchQuality.Cam,
-            Regex("\\b(dvd)\\b") to SearchQuality.DVD,
-            Regex("\\b(hq)\\b") to SearchQuality.HQ
-        )
-        for ((regex, quality) in patterns) {
-            if (regex.containsMatchIn(text)) return quality
-        }
-        return null
-    }
-
     // FUNÇÃO DE PROCESSAMENTO DO TÍTULO (verifica [L] e 4K)
     private fun processTitle(rawTitle: String, isFourKCategory: Boolean): Triple<String, EnumSet<DubStatus>?, SearchQuality?> {
         var cleanTitle = rawTitle.trim()
         var dubStatus: EnumSet<DubStatus>? = null
         var qualityTag: SearchQuality? = null
         
-        // Badge 4K para categoria 4K
-        if (isFourKCategory) {
+        // Badge 4K para categoria 4K OU se o nome tiver 4K
+        if (isFourKCategory || Regex("\\b4K\\b", RegexOption.IGNORE_CASE).containsMatchIn(cleanTitle)) {
             qualityTag = SearchQuality.FourK
         }
         
@@ -368,14 +301,10 @@ class StreamFlix : MainAPI() {
                 val poster = fixImageUrl(movie.optString("stream_icon"))
                 val ratingValue = movie.optDouble("rating_5based", 0.0).let { it.toFloat() * 2 }
                 
-                val movieTags = getMovieTags(movie)
-                val qualityFromTags = getSearchQuality(movieTags)
-                
                 results.add(
                     newAnimeSearchResponse(finalName, "movie?id=$id", TvType.Movie) {
                         this.posterUrl = poster
                         if (qualityTag != null) this.quality = qualityTag
-                        else if (qualityFromTags != null) this.quality = qualityFromTags
                         if (dubStatus != null) this.dubStatus = dubStatus
                         this.score = Score.from10(ratingValue)
                     }
@@ -396,14 +325,10 @@ class StreamFlix : MainAPI() {
                 val poster = fixImageUrl(series.optString("cover"))
                 val ratingValue = series.optDouble("rating_5based", 0.0).let { it.toFloat() * 2 }
                 
-                val seriesTags = getSeriesTags(series)
-                val qualityFromTags = getSearchQuality(seriesTags)
-                
                 results.add(
                     newAnimeSearchResponse(finalName, "series?id=$id", TvType.TvSeries) {
                         this.posterUrl = poster
                         if (qualityTag != null) this.quality = qualityTag
-                        else if (qualityFromTags != null) this.quality = qualityFromTags
                         if (dubStatus != null) this.dubStatus = dubStatus
                         this.score = Score.from10(ratingValue)
                     }
@@ -739,14 +664,19 @@ class StreamFlix : MainAPI() {
                     val description = tmdbEpisode?.overview?.takeIf { it.isNotEmpty() } ?: epPlotFallback
                     val duration = tmdbEpisode?.runtime ?: (epDurationFallback?.let { it / 60 })
                     
-                    // AVALIAÇÃO DO EPISÓDIO (como no 4KHDHub)
-                    val epRating = tmdbEpisode?.let { episode ->
-                        runCatching {
-                            // Tenta buscar rating específico do episódio
-                            val episodeDetails = app.get("https://api.themoviedb.org/3/tv/${tmdbData?.title}/season/$seasonNum/episode/$epNum?api_key=$TMDB_API_KEY&language=pt-BR")
-                            val epDetailsJson = JSONObject(episodeDetails.text)
-                            epDetailsJson.optDouble("vote_average").takeIf { it > 0 }
-                        }.getOrNull()
+                    // CORREÇÃO: Busca a avaliação do episódio corretamente
+                    var epRating: Double? = null
+                    if (tmdbData?.title != null && seasonNum != null && epNum != null) {
+                        try {
+                            val episodeDetailsUrl = "https://api.themoviedb.org/3/tv/${tmdbData.title}/season/$seasonNum/episode/$epNum?api_key=$TMDB_API_KEY&language=pt-BR"
+                            val episodeResponse = app.get(episodeDetailsUrl, timeout = 5_000)
+                            if (episodeResponse.code == 200) {
+                                val epDetailsJson = JSONObject(episodeResponse.text)
+                                epRating = epDetailsJson.optDouble("vote_average").takeIf { it > 0 }
+                            }
+                        } catch (e: Exception) {
+                            // Não conseguiu buscar avaliação do episódio
+                        }
                     }
                     
                     episodes.add(
