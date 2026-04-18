@@ -51,7 +51,7 @@ class StreamFlix : MainAPI() {
         "107" to "Séries - Netflix", "109" to "Séries - Apple TV",
         "112" to "Séries - Crunchyroll",
         "115" to "Séries - Disney Plus", "126" to "Séries - Doramas",
-        "117" to "Séries - Globoplay", "119" to "Séries - Legendadas"
+        "117" to "Séries - Globoplay", "119" to "Séries - Legendadas",
         "118" to "Séries - Max (HBO Max)", 
     )
 
