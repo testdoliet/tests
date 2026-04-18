@@ -113,10 +113,7 @@ class StreamFlix : MainAPI() {
             
             if (isAdultContent(rawName)) continue
             
-            // PRIMEIRO: processa o título ORIGINAL (com [L] ainda presente)
             val (cleanName, dubStatus, qualityTag) = processTitle(rawName, isFourKCategory)
-            
-            // DEPOIS: limpa o título para exibição (remove tags)
             val finalName = cleanTitle(cleanName)
             
             val id = movie.getInt("stream_id")
@@ -126,7 +123,6 @@ class StreamFlix : MainAPI() {
             results.add(
                 newAnimeSearchResponse(finalName, "movie?id=$id", TvType.Movie) {
                     this.posterUrl = poster
-                    // Só adiciona badge 4K se for da categoria 4K ou se o nome tiver 4K
                     if (qualityTag != null) this.quality = qualityTag
                     if (dubStatus != null) this.dubStatus = dubStatus
                     this.score = Score.from10(ratingValue)
@@ -160,10 +156,7 @@ class StreamFlix : MainAPI() {
             
             if (isAdultContent(rawName)) continue
             
-            // PRIMEIRO: processa o título ORIGINAL (com [L] ainda presente)
             val (cleanName, dubStatus, qualityTag) = processTitle(rawName, false)
-            
-            // DEPOIS: limpa o título para exibição (remove tags)
             val finalName = cleanTitle(cleanName)
             
             val id = series.getInt("series_id")
@@ -182,56 +175,42 @@ class StreamFlix : MainAPI() {
         return results
     }
 
-    // FUNÇÃO DE PROCESSAMENTO DO TÍTULO (verifica [L] e 4K)
     private fun processTitle(rawTitle: String, isFourKCategory: Boolean): Triple<String, EnumSet<DubStatus>?, SearchQuality?> {
         var cleanTitle = rawTitle.trim()
         var dubStatus: EnumSet<DubStatus>? = null
         var qualityTag: SearchQuality? = null
         
-        // Badge 4K para categoria 4K OU se o nome tiver 4K
         if (isFourKCategory || Regex("\\b4K\\b", RegexOption.IGNORE_CASE).containsMatchIn(cleanTitle)) {
             qualityTag = SearchQuality.FourK
         }
         
-        // Verifica [L] em QUALQUER lugar do título ORIGINAL
         val hasLegTag = Regex("\\[L\\]", RegexOption.IGNORE_CASE).containsMatchIn(cleanTitle)
         
         if (hasLegTag) {
-            dubStatus = EnumSet.of(DubStatus.Subbed)  // LEGENDADO
-            // Remove o [L] do título
+            dubStatus = EnumSet.of(DubStatus.Subbed)
             cleanTitle = cleanTitle.replace(Regex("\\s*\\[L\\]\\s*", RegexOption.IGNORE_CASE), " ")
             cleanTitle = cleanTitle.replace(Regex("\\s*\\[L\\]\\s*\$", RegexOption.IGNORE_CASE), "")
         } else {
-            dubStatus = EnumSet.of(DubStatus.Dubbed)  // DUBLADO
+            dubStatus = EnumSet.of(DubStatus.Dubbed)
         }
         
         return Triple(cleanTitle, dubStatus, qualityTag)
     }
 
-    // FUNÇÃO DE LIMPEZA DO TÍTULO PARA EXIBIÇÃO
     private fun cleanTitle(title: String): String {
         var cleaned = title.trim()
         
-        // Remove 4K
         cleaned = cleaned.replace(Regex("\\b4K\\b", RegexOption.IGNORE_CASE), "")
         cleaned = cleaned.replace(Regex("\\s*4K\\s*", RegexOption.IGNORE_CASE), " ")
-        
-        // Remove ano entre parênteses
         cleaned = cleaned.replace(Regex("\\s*\\(\\d{4}\\)\\s*"), " ")
         cleaned = cleaned.replace(Regex("\\s*\\(\\d{4}\\)\$"), "")
-        
-        // Remove TODAS as tags restantes entre colchetes
         cleaned = cleaned.replace(Regex("\\s*\\[[^\\]]+\\]\\s*"), " ")
         cleaned = cleaned.replace(Regex("\\s*\\[[^\\]]+\\]\\s*\$"), "")
-        
-        // Remove tags específicas
         cleaned = cleaned.replace(Regex("\\s*HDR\\s*", RegexOption.IGNORE_CASE), " ")
         cleaned = cleaned.replace(Regex("\\s*HYBRID\\s*", RegexOption.IGNORE_CASE), " ")
         cleaned = cleaned.replace(Regex("\\s*HD\\s*", RegexOption.IGNORE_CASE), " ")
         cleaned = cleaned.replace(Regex("\\s*FULLHD\\s*", RegexOption.IGNORE_CASE), " ")
         cleaned = cleaned.replace(Regex("\\s*UHD\\s*", RegexOption.IGNORE_CASE), " ")
-        
-        // Remove espaços duplicados
         cleaned = cleaned.replace(Regex("\\s+"), " ").trim()
         
         return cleaned
@@ -493,17 +472,23 @@ class StreamFlix : MainAPI() {
     private suspend fun loadSeries(id: String): LoadResponse? {
         return withContext(Dispatchers.IO) {
             try {
+                println("📺 [DEBUG] Carregando série ID: $id")
+                
                 val infoResponse = app.get("$mainUrl/api_proxy.php?action=get_series_info&series_id=$id")
                 val json = JSONObject(infoResponse.body.string())
                 val info = json.optJSONObject("info") ?: JSONObject()
                 
                 val rawTitle = info.getString("name")
+                println("📺 [DEBUG] Título original: $rawTitle")
+                
                 val (cleanName, _, _) = processTitle(rawTitle, false)
                 val finalTitle = cleanTitle(cleanName)
+                println("📺 [DEBUG] Título limpo: $finalTitle")
                 
                 val posterFallback = fixImageUrl(info.optString("cover"))
                 
                 val tmdbData = searchSeriesOnTMDB(cleanTitleForTMDB(finalTitle))
+                println("📺 [DEBUG] TMDB Data: title=${tmdbData?.title}, id=${tmdbData?.let { it.title }}")
                 
                 val backdrop = tmdbData?.backdropUrl ?: fixImageUrl(info.optString("cover"))
                 val poster = tmdbData?.posterUrl ?: posterFallback
@@ -515,6 +500,7 @@ class StreamFlix : MainAPI() {
                 val trailerUrl = tmdbData?.youtubeTrailer
                 
                 val episodes = extractEpisodes(json, tmdbData)
+                println("📺 [DEBUG] Total de episódios carregados: ${episodes.size}")
                 
                 if (episodes.isEmpty()) return@withContext null
                 
@@ -534,6 +520,8 @@ class StreamFlix : MainAPI() {
                     }
                 }
             } catch (e: Exception) {
+                println("💥 [DEBUG] Erro ao carregar série: ${e.message}")
+                e.printStackTrace()
                 null
             }
         }
@@ -554,11 +542,12 @@ class StreamFlix : MainAPI() {
             
             val searchResult = response.parsedSafe<TMDBSearchResponse>() ?: return null
             val result = searchResult.results.firstOrNull() ?: return null
+            println("🔍 [DEBUG] TMDB Search encontrado: ID=${result.id}, Name=${result.name}")
             
             val details = getTMDBSeriesDetails(result.id)
             
             TMDBSeriesInfo(
-                title = result.name,
+                title = result.id.toString(), // Guarda o ID como string para usar nas requisições
                 year = result.first_air_date?.substring(0, 4)?.toIntOrNull(),
                 posterUrl = result.poster_path?.let { "$tmdbImageUrl/w500$it" },
                 backdropUrl = details?.backdrop_path?.let { "$tmdbImageUrl/original$it" },
@@ -575,6 +564,7 @@ class StreamFlix : MainAPI() {
                 seasonsEpisodes = getTMDBAllSeasons(result.id, details)
             )
         } catch (e: Exception) {
+            println("🔍 [DEBUG] Erro na busca TMDB: ${e.message}")
             null
         }
     }
@@ -637,11 +627,16 @@ class StreamFlix : MainAPI() {
         val episodes = mutableListOf<Episode>()
         val episodesJson = json.optJSONObject("episodes")
         
+        println("📺 [DEBUG] extractEpisodes - tmdbData?.title = ${tmdbData?.title}")
+        
         if (episodesJson != null) {
             val seasonKeys = episodesJson.keys()
             while (seasonKeys.hasNext()) {
                 val seasonNum = seasonKeys.next().toIntOrNull() ?: continue
+                println("📺 [DEBUG] Processando temporada $seasonNum")
+                
                 val seasonArray = episodesJson.getJSONArray(seasonNum.toString())
+                println("📺 [DEBUG] Temporada $seasonNum tem ${seasonArray.length()} episódios")
                 
                 for (i in 0 until seasonArray.length()) {
                     val ep = seasonArray.getJSONObject(i)
@@ -664,19 +659,27 @@ class StreamFlix : MainAPI() {
                     val description = tmdbEpisode?.overview?.takeIf { it.isNotEmpty() } ?: epPlotFallback
                     val duration = tmdbEpisode?.runtime ?: (epDurationFallback?.let { it / 60 })
                     
-                    // CORREÇÃO: Busca a avaliação do episódio corretamente
+                    // CORREÇÃO: Busca a avaliação do episódio usando o ID correto da série
                     var epRating: Double? = null
-                    if (tmdbData?.title != null && seasonNum != null && epNum != null) {
+                    val seriesTmdbId = tmdbData?.title?.toIntOrNull()
+                    
+                    if (seriesTmdbId != null && seasonNum != null && epNum != null) {
                         try {
-                            val episodeDetailsUrl = "https://api.themoviedb.org/3/tv/${tmdbData.title}/season/$seasonNum/episode/$epNum?api_key=$TMDB_API_KEY&language=pt-BR"
+                            println("📺 [DEBUG] Buscando rating do episódio S${seasonNum}E${epNum} para série ID $seriesTmdbId")
+                            val episodeDetailsUrl = "https://api.themoviedb.org/3/tv/$seriesTmdbId/season/$seasonNum/episode/$epNum?api_key=$TMDB_API_KEY&language=pt-BR"
                             val episodeResponse = app.get(episodeDetailsUrl, timeout = 5_000)
                             if (episodeResponse.code == 200) {
                                 val epDetailsJson = JSONObject(episodeResponse.text)
                                 epRating = epDetailsJson.optDouble("vote_average").takeIf { it > 0 }
+                                println("📺 [DEBUG] Rating do episódio S${seasonNum}E${epNum}: $epRating")
+                            } else {
+                                println("📺 [DEBUG] Falha ao buscar episódio: HTTP ${episodeResponse.code}")
                             }
                         } catch (e: Exception) {
-                            // Não conseguiu buscar avaliação do episódio
+                            println("📺 [DEBUG] Erro ao buscar rating do episódio: ${e.message}")
                         }
+                    } else {
+                        println("📺 [DEBUG] Não foi possível buscar rating - seriesTmdbId=$seriesTmdbId, seasonNum=$seasonNum, epNum=$epNum")
                     }
                     
                     episodes.add(
@@ -687,7 +690,12 @@ class StreamFlix : MainAPI() {
                             this.posterUrl = thumb
                             this.description = description
                             if (duration != null && duration > 0) this.runTime = duration
-                            if (epRating != null && epRating > 0) this.score = Score.from10(epRating)
+                            if (epRating != null && epRating > 0) {
+                                println("📺 [DEBUG] Adicionando rating $epRating ao episódio S${seasonNum}E${epNum}")
+                                this.score = Score.from10(epRating)
+                            } else {
+                                println("📺 [DEBUG] Sem rating para o episódio S${seasonNum}E${epNum}")
+                            }
                             if (tmdbEpisode?.air_date != null) {
                                 try {
                                     val dateFormatter = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
@@ -699,8 +707,11 @@ class StreamFlix : MainAPI() {
                     )
                 }
             }
+        } else {
+            println("📺 [DEBUG] episodesJson é null!")
         }
         
+        println("📺 [DEBUG] Total de episódios processados: ${episodes.size}")
         return episodes
     }
 
@@ -749,7 +760,7 @@ class StreamFlix : MainAPI() {
     )
 
     private data class TMDBSeriesInfo(
-        val title: String?,
+        val title: String?,  // Agora guarda o ID da série como string
         val year: Int?,
         val posterUrl: String?,
         val backdropUrl: String?,
