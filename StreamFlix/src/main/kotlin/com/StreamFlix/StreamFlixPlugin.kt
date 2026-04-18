@@ -1,5 +1,8 @@
 package com.StreamFlix
 
+import android.widget.LinearLayout
+import android.widget.TextView
+import android.graphics.Typeface
 import android.content.Context
 import androidx.appcompat.app.AppCompatActivity
 import com.lagradost.cloudstream3.CloudStreamApp.Companion.getKey
