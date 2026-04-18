@@ -40,20 +40,23 @@ class StreamFlix : MainAPI() {
     private val TMDB_API_KEY = BuildConfig.TMDB_API_KEY
     private val TMDB_ACCESS_TOKEN = BuildConfig.TMDB_ACCESS_TOKEN
 
-    // Categorias
+    // Categorias reduzidas (50% menos)
     private val MOVIE_CATEGORIES = mapOf(
-        "73" to "4K", "69" to "Ação", "96" to "Animação", "70" to "Comédia",
-        "74" to "Drama", "72" to "Terror", "90" to "Suspense", "92" to "Romance",
-        "98" to "Ficção Científica", "75" to "Nacionais", "71" to "Legendados",
-        "97" to "Lançamentos"
+        "73" to "4K",
+        "69" to "AÇÃO",
+        "70" to "COMÉDIA",
+        "74" to "DRAMA",
+        "72" to "TERROR",
+        "98" to "FICÇÃO CIENTÍFICA",
+        "71" to "Legendados"
     )
 
     private val SERIES_CATEGORIES = mapOf(
-        "107" to "Séries - Netflix", "109" to "Séries - Apple TV",
-        "112" to "Séries - Crunchyroll", "114" to "Séries - Discovery",
-        "115" to "Séries - Disney Plus", "126" to "Séries - Doramas",
-        "117" to "Séries - Globoplay", "119" to "Séries - Legendadas",
-        "118" to "Séries - Max (HBO Max)", "123" to "Séries - Paramount+"
+        "107" to "Séries - Netflix",
+        "118" to "Séries - HBO Max",
+        "109" to "Séries - Apple TV",
+        "112" to "Séries - Crunchyroll",
+        "126" to "Séries - Doramas"
     )
 
     override val mainPage = mainPageOf(
@@ -114,9 +117,8 @@ class StreamFlix : MainAPI() {
             
             if (isAdultContent(rawName)) continue
             
-            if (isFourKCategory) {
-                rawName = rawName.replace(Regex("\\s*4K\\s*$", RegexOption.IGNORE_CASE), "").trim()
-            }
+            // Limpa o título ANTES de processar
+            rawName = cleanTitle(rawName)
             
             val (cleanName, dubStatus, qualityTag) = processTitle(rawName, isFourKCategory)
             val id = movie.getInt("stream_id")
@@ -160,9 +162,8 @@ class StreamFlix : MainAPI() {
             
             if (isAdultContent(rawName)) continue
             
-            if (isFourKCategory) {
-                rawName = rawName.replace(Regex("\\s*4K\\s*$", RegexOption.IGNORE_CASE), "").trim()
-            }
+            // Limpa o título ANTES de processar
+            rawName = cleanTitle(rawName)
             
             val (cleanName, dubStatus, qualityTag) = processTitle(rawName, isFourKCategory)
             val id = series.getInt("series_id")
@@ -179,6 +180,25 @@ class StreamFlix : MainAPI() {
             )
         }
         return results
+    }
+
+    // FUNÇÃO ESPECIALIZADA PARA LIMPAR O TÍTULO REMOVENDO 4K
+    private fun cleanTitle(title: String): String {
+        var cleaned = title.trim()
+        
+        // Remove 4K em qualquer lugar do título (case insensitive)
+        // Padrões: "4K", "4k", " 4K ", "4K ", " 4K"
+        cleaned = cleaned.replace(Regex("\\b4K\\b", RegexOption.IGNORE_CASE), "")
+        cleaned = cleaned.replace(Regex("\\s*4K\\s*", RegexOption.IGNORE_CASE), " ")
+        
+        // Remove tags como [L], [HD], [FULLHD] etc
+        cleaned = cleaned.replace(Regex("\\s*\\[[^\\]]+\\]\\s*$"), "")
+        cleaned = cleaned.replace(Regex("\\s*\\[[^\\]]+\\]\\s*"), " ")
+        
+        // Remove espaços duplicados e trim
+        cleaned = cleaned.replace(Regex("\\s+"), " ").trim()
+        
+        return cleaned
     }
 
     private fun getCategoryIds(obj: JSONObject): Set<String> {
@@ -235,10 +255,11 @@ class StreamFlix : MainAPI() {
         val allMovies = getAllMovies()
         for (i in 0 until allMovies.length()) {
             val movie = allMovies.getJSONObject(i)
-            val rawName = movie.getString("name")
+            var rawName = movie.getString("name")
             if (rawName.lowercase().contains(queryLower)) {
                 if (isAdultContent(rawName)) continue
                 
+                rawName = cleanTitle(rawName)
                 val (cleanName, dubStatus, qualityTag) = processTitle(rawName, false)
                 val id = movie.getInt("stream_id")
                 val poster = fixImageUrl(movie.optString("stream_icon"))
@@ -258,10 +279,11 @@ class StreamFlix : MainAPI() {
         val allSeries = getAllSeries()
         for (i in 0 until allSeries.length()) {
             val series = allSeries.getJSONObject(i)
-            val rawName = series.getString("name")
+            var rawName = series.getString("name")
             if (rawName.lowercase().contains(queryLower)) {
                 if (isAdultContent(rawName)) continue
                 
+                rawName = cleanTitle(rawName)
                 val (cleanName, dubStatus, qualityTag) = processTitle(rawName, false)
                 val id = series.getInt("series_id")
                 val poster = fixImageUrl(series.optString("cover"))
@@ -327,11 +349,15 @@ class StreamFlix : MainAPI() {
             dubStatus = EnumSet.of(DubStatus.Dubbed)
         }
         
-        // Remove 4K do título se existir
-        cleanTitle = cleanTitle.replace(Regex("\\s*4K\\s*$", RegexOption.IGNORE_CASE), "").trim()
+        // Remove qualquer 4K remanescente (segurança)
+        cleanTitle = cleanTitle.replace(Regex("\\b4K\\b", RegexOption.IGNORE_CASE), "").trim()
+        cleanTitle = cleanTitle.replace(Regex("\\s*4K\\s*", RegexOption.IGNORE_CASE), " ").trim()
         
         // Remove outras tags
         cleanTitle = cleanTitle.replace(Regex("\\s*\\[[^\\]]+\\]\\s*$"), "").trim()
+        
+        // Remove espaços duplicados
+        cleanTitle = cleanTitle.replace(Regex("\\s+"), " ").trim()
         
         return Triple(cleanTitle, dubStatus, qualityTag)
     }
@@ -339,10 +365,12 @@ class StreamFlix : MainAPI() {
     private fun cleanTitleForTMDB(title: String): String {
         var cleaned = title.trim()
         cleaned = cleaned.replace(Regex("\\s*\\[[^\\]]+\\]\\s*$"), "")
+        cleaned = cleaned.replace(Regex("\\b4K\\b", RegexOption.IGNORE_CASE), "")
         cleaned = cleaned.replace(Regex("\\s*4K\\s*", RegexOption.IGNORE_CASE), " ")
         cleaned = cleaned.replace(Regex("\\s*HD\\s*", RegexOption.IGNORE_CASE), " ")
         cleaned = cleaned.replace(Regex("\\s*FULLHD\\s*", RegexOption.IGNORE_CASE), " ")
-        return cleaned.trim()
+        cleaned = cleaned.replace(Regex("\\s+"), " ").trim()
+        return cleaned
     }
 
     private suspend fun loadMovie(id: String): LoadResponse? {
@@ -353,11 +381,12 @@ class StreamFlix : MainAPI() {
                 val info = infoJson.optJSONObject("info") ?: JSONObject()
                 
                 val rawTitle = info.optString("name", "Título indisponível")
-                val (cleanTitle, _, _) = processTitle(rawTitle, false)
+                val cleanTitleResult = cleanTitle(rawTitle)
+                val (finalTitle, _, _) = processTitle(cleanTitleResult, false)
                 
                 val posterFallback = fixImageUrl(info.optString("cover_big"))
                 
-                val tmdbData = searchMovieOnTMDB(cleanTitleForTMDB(cleanTitle))
+                val tmdbData = searchMovieOnTMDB(cleanTitleForTMDB(finalTitle))
                 
                 val backdrop = tmdbData?.backdropUrl ?: fixImageUrl(info.optString("cover_big"))
                 val poster = tmdbData?.posterUrl ?: posterFallback
@@ -373,7 +402,7 @@ class StreamFlix : MainAPI() {
                 val streamJson = JSONObject(streamResponse.body.string())
                 val videoUrl = streamJson.getString("stream_url")
                 
-                newMovieLoadResponse(cleanTitle, "movie?id=$id", TvType.Movie, videoUrl) {
+                newMovieLoadResponse(finalTitle, "movie?id=$id", TvType.Movie, videoUrl) {
                     this.posterUrl = poster
                     this.backgroundPosterUrl = backdrop
                     this.plot = plot
@@ -457,11 +486,12 @@ class StreamFlix : MainAPI() {
                 val info = json.optJSONObject("info") ?: JSONObject()
                 
                 val rawTitle = info.getString("name")
-                val (cleanTitle, _, _) = processTitle(rawTitle, false)
+                val cleanTitleResult = cleanTitle(rawTitle)
+                val (finalTitle, _, _) = processTitle(cleanTitleResult, false)
                 
                 val posterFallback = fixImageUrl(info.optString("cover"))
                 
-                val tmdbData = searchSeriesOnTMDB(cleanTitleForTMDB(cleanTitle))
+                val tmdbData = searchSeriesOnTMDB(cleanTitleForTMDB(finalTitle))
                 
                 val backdrop = tmdbData?.backdropUrl ?: fixImageUrl(info.optString("cover"))
                 val poster = tmdbData?.posterUrl ?: posterFallback
@@ -476,7 +506,7 @@ class StreamFlix : MainAPI() {
                 
                 if (episodes.isEmpty()) return@withContext null
                 
-                newTvSeriesLoadResponse(cleanTitle, "series?id=$id", TvType.TvSeries, episodes) {
+                newTvSeriesLoadResponse(finalTitle, "series?id=$id", TvType.TvSeries, episodes) {
                     this.posterUrl = poster
                     this.backgroundPosterUrl = backdrop
                     this.plot = plot
