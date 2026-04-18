@@ -95,7 +95,6 @@ class StreamFlix : MainAPI() {
     private suspend fun getMoviesByCategory(categoryId: String, page: Int): List<SearchResponse> {
         val allMovies = getAllMovies()
         val isFourKCategory = categoryId == "73"
-        val isLegendadosCategory = categoryId == "71"
         
         val categoryMovies = mutableListOf<JSONObject>()
         for (i in 0 until allMovies.length()) {
@@ -121,7 +120,7 @@ class StreamFlix : MainAPI() {
             // Limpa o título
             rawName = cleanTitle(rawName)
             
-            val (cleanName, dubStatus, qualityTag) = processTitle(rawName, isFourKCategory, isLegendadosCategory)
+            val (cleanName, dubStatus, qualityTag) = processTitle(rawName, isFourKCategory)
             val id = movie.getInt("stream_id")
             val poster = fixImageUrl(movie.optString("stream_icon"))
             val ratingValue = movie.optDouble("rating_5based", 0.0).let { it.toFloat() * 2 }
@@ -141,7 +140,6 @@ class StreamFlix : MainAPI() {
     private suspend fun getSeriesByCategory(categoryId: String, page: Int): List<SearchResponse> {
         val allSeries = getAllSeries()
         val isFourKCategory = categoryId == "73"
-        val isLegendadosCategory = categoryId == "71"
         
         val categorySeries = mutableListOf<JSONObject>()
         for (i in 0 until allSeries.length()) {
@@ -166,7 +164,7 @@ class StreamFlix : MainAPI() {
             
             rawName = cleanTitle(rawName)
             
-            val (cleanName, dubStatus, qualityTag) = processTitle(rawName, isFourKCategory, isLegendadosCategory)
+            val (cleanName, dubStatus, qualityTag) = processTitle(rawName, isFourKCategory)
             val id = series.getInt("series_id")
             val poster = fixImageUrl(series.optString("cover"))
             val ratingValue = series.optDouble("rating_5based", 0.0).let { it.toFloat() * 2 }
@@ -195,9 +193,9 @@ class StreamFlix : MainAPI() {
         cleaned = cleaned.replace(Regex("\\s*\\(\\d{4}\\)\\s*"), " ")
         cleaned = cleaned.replace(Regex("\\s*\\(\\d{4}\\)\$"), "")
         
-        // Remove tags como [L], [HD], [FULLHD] etc
-        cleaned = cleaned.replace(Regex("\\s*\\[[^\\]]+\\]\\s*"), " ")
-        cleaned = cleaned.replace(Regex("\\s*\\[[^\\]]+\\]\\s*\$"), "")
+        // Remove tags como [L], [HD], [FULLHD] etc (mas guarda informação para o processTitle)
+        cleaned = cleaned.replace(Regex("\\s*\\[HD\\]\\s*", RegexOption.IGNORE_CASE), " ")
+        cleaned = cleaned.replace(Regex("\\s*\\[FULLHD\\]\\s*", RegexOption.IGNORE_CASE), " ")
         
         // Remove espaços duplicados e trim
         cleaned = cleaned.replace(Regex("\\s+"), " ").trim()
@@ -264,7 +262,7 @@ class StreamFlix : MainAPI() {
                 if (isAdultContent(rawName)) continue
                 
                 rawName = cleanTitle(rawName)
-                val (cleanName, dubStatus, qualityTag) = processTitle(rawName, false, false)
+                val (cleanName, dubStatus, qualityTag) = processTitle(rawName, false)
                 val id = movie.getInt("stream_id")
                 val poster = fixImageUrl(movie.optString("stream_icon"))
                 val ratingValue = movie.optDouble("rating_5based", 0.0).let { it.toFloat() * 2 }
@@ -288,7 +286,7 @@ class StreamFlix : MainAPI() {
                 if (isAdultContent(rawName)) continue
                 
                 rawName = cleanTitle(rawName)
-                val (cleanName, dubStatus, qualityTag) = processTitle(rawName, false, false)
+                val (cleanName, dubStatus, qualityTag) = processTitle(rawName, false)
                 val id = series.getInt("series_id")
                 val poster = fixImageUrl(series.optString("cover"))
                 val ratingValue = series.optDouble("rating_5based", 0.0).let { it.toFloat() * 2 }
@@ -335,7 +333,7 @@ class StreamFlix : MainAPI() {
         return adultKeywords.any { titleUpper.contains(it.uppercase(Locale.getDefault())) }
     }
 
-    private fun processTitle(rawTitle: String, isFourKCategory: Boolean, isLegendadosCategory: Boolean): Triple<String, EnumSet<DubStatus>?, SearchQuality?> {
+    private fun processTitle(rawTitle: String, isFourKCategory: Boolean): Triple<String, EnumSet<DubStatus>?, SearchQuality?> {
         var cleanTitle = rawTitle.trim()
         var dubStatus: EnumSet<DubStatus>? = null
         var qualityTag: SearchQuality? = null
@@ -345,17 +343,16 @@ class StreamFlix : MainAPI() {
             qualityTag = SearchQuality.FourK
         }
         
-        // Verifica Legendado [L] - PRIORIDADE MÁXIMA
-        // Se tem [L] no título OU está na categoria Legendados
+        // Verifica [L] em QUALQUER lugar do título
         val hasLegTag = Regex("\\[L\\]", RegexOption.IGNORE_CASE).containsMatchIn(cleanTitle)
         
-        if (hasLegTag || isLegendadosCategory) {
-            dubStatus = EnumSet.of(DubStatus.Subbed)
+        if (hasLegTag) {
+            dubStatus = EnumSet.of(DubStatus.Subbed)  // LEGENDADO
             // Remove o [L] do título
             cleanTitle = cleanTitle.replace(Regex("\\s*\\[L\\]\\s*", RegexOption.IGNORE_CASE), " ")
             cleanTitle = cleanTitle.replace(Regex("\\s*\\[L\\]\\s*\$", RegexOption.IGNORE_CASE), "")
         } else {
-            dubStatus = EnumSet.of(DubStatus.Dubbed)
+            dubStatus = EnumSet.of(DubStatus.Dubbed)  // DUBLADO
         }
         
         // Limpeza final
@@ -398,7 +395,7 @@ class StreamFlix : MainAPI() {
                 
                 val rawTitle = info.optString("name", "Título indisponível")
                 val cleanTitleResult = cleanTitle(rawTitle)
-                val (finalTitle, _, _) = processTitle(cleanTitleResult, false, false)
+                val (finalTitle, _, _) = processTitle(cleanTitleResult, false)
                 
                 val posterFallback = fixImageUrl(info.optString("cover_big"))
                 
@@ -503,7 +500,7 @@ class StreamFlix : MainAPI() {
                 
                 val rawTitle = info.getString("name")
                 val cleanTitleResult = cleanTitle(rawTitle)
-                val (finalTitle, _, _) = processTitle(cleanTitleResult, false, false)
+                val (finalTitle, _, _) = processTitle(cleanTitleResult, false)
                 
                 val posterFallback = fixImageUrl(info.optString("cover"))
                 
