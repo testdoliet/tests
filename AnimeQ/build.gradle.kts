@@ -7,5 +7,4 @@ cloudstream {
     status = 1
     tvTypes = listOf("Anime", "AnimeMovie")
     iconUrl = "https://animeq.net/wp-content/uploads/2025/06/Favicon-AnimeQ-1-150x150.png"
-    isCrossPlatform = true
 }
