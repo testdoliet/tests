@@ -7,5 +7,4 @@ cloudstream {
     status = 1
     tvTypes = listOf("Anime, AsianDrama")
     iconUrl = "https://www.hinatasoul.com/favicon.png"
-    isCrossPlatform = true
 }
