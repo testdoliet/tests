@@ -20,7 +20,9 @@ import java.util.Locale
 @CloudstreamPlugin
 class StreamFlixProvider : Plugin() {
     override fun load(context: Context) {
+        println("🚀 [StreamFlix] Plugin carregando...")
         registerMainAPI(StreamFlix())
+        println("✅ [StreamFlix] Plugin registrado com sucesso!")
     }
 }
 
@@ -41,17 +43,17 @@ class StreamFlix : MainAPI() {
     private val TMDB_ACCESS_TOKEN = BuildConfig.TMDB_ACCESS_TOKEN
 
     private val MOVIE_CATEGORIES = mapOf(
-        "73" to "FILMES EM 4K",
-        "69" to "FILMES DE AÇÃO",
-        "70" to "FILMES DE COMÉDIA",
-        "74" to "FILMES DE DRAMA",
-        "72" to "FILMES DE TERROR"
+        "73" to "🎬 FILMES EM 4K",
+        "69" to "🎬 FILMES DE AÇÃO",
+        "70" to "🎬 FILMES DE COMÉDIA",
+        "74" to "🎬 FILMES DE DRAMA",
+        "72" to "🎬 FILMES DE TERROR"
     )
 
     private val SERIES_CATEGORIES = mapOf(
-        "107" to "SÉRIES",
-        "126" to "DORAMAS",
-        "112" to "ANIMES"
+        "107" to "📺 SÉRIES",
+        "126" to "🇰🇷 DORAMAS",
+        "112" to "🇯🇵 ANIMES"
     )
 
     override val mainPage = mainPageOf(
@@ -64,6 +66,8 @@ class StreamFlix : MainAPI() {
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
+        println("📱 [StreamFlix] getMainPage - Página: $page, Categoria: ${request.name}")
+        
         val categoryId = when {
             MOVIE_CATEGORIES.values.contains(request.name) -> {
                 MOVIE_CATEGORIES.entries.find { it.value == request.name }?.key
@@ -73,6 +77,8 @@ class StreamFlix : MainAPI() {
             }
             else -> null
         }
+        
+        println("🔍 [StreamFlix] Category ID: $categoryId")
         
         val isMovies = MOVIE_CATEGORIES.values.contains(request.name)
         
@@ -84,11 +90,16 @@ class StreamFlix : MainAPI() {
             emptyList()
         }
         
+        println("✅ [StreamFlix] Retornando ${items.size} itens para ${request.name}")
         return newHomePageResponse(request.name, items, hasNext = items.size == PAGE_SIZE)
     }
 
     private suspend fun getMoviesByCategory(categoryId: String, page: Int): List<SearchResponse> {
+        println("🎬 [StreamFlix] getMoviesByCategory - ID: $categoryId, Página: $page")
+        
         val allMovies = getAllMovies()
+        println("📊 [StreamFlix] Total de filmes: ${allMovies.length()}")
+        
         val isFourKCategory = categoryId == "73"
         
         val categoryMovies = mutableListOf<JSONObject>()
@@ -100,17 +111,25 @@ class StreamFlix : MainAPI() {
             }
         }
         
+        println("📊 [StreamFlix] Filmes na categoria $categoryId: ${categoryMovies.size}")
+        
         val start = page * PAGE_SIZE
         val end = minOf(start + PAGE_SIZE, categoryMovies.size)
         
-        if (start >= categoryMovies.size) return emptyList()
+        if (start >= categoryMovies.size) {
+            println("⚠️ [StreamFlix] Sem mais filmes na página $page")
+            return emptyList()
+        }
         
         val results = mutableListOf<SearchResponse>()
         for (i in start until end) {
             val movie = categoryMovies[i]
             val rawName = movie.getString("name")
             
-            if (isAdultContent(rawName)) continue
+            if (isAdultContent(rawName)) {
+                println("🔞 [StreamFlix] Pulando conteúdo adulto: $rawName")
+                continue
+            }
             
             val (cleanName, dubStatus, qualityTag) = processTitle(rawName, isFourKCategory)
             val finalName = cleanTitle(cleanName)
@@ -118,6 +137,8 @@ class StreamFlix : MainAPI() {
             val id = movie.getInt("stream_id")
             val poster = fixImageUrl(movie.optString("stream_icon"))
             val ratingValue = movie.optDouble("rating_5based", 0.0).let { it.toFloat() * 2 }
+            
+            println("🎯 [StreamFlix] Filme: $finalName (ID: $id) - Qualidade: $qualityTag")
             
             results.add(
                 newAnimeSearchResponse(finalName, "movie?id=$id", TvType.Movie) {
@@ -132,7 +153,10 @@ class StreamFlix : MainAPI() {
     }
 
     private suspend fun getSeriesByCategory(categoryId: String, page: Int): List<SearchResponse> {
+        println("📺 [StreamFlix] getSeriesByCategory - ID: $categoryId, Página: $page")
+        
         val allSeries = getAllSeries()
+        println("📊 [StreamFlix] Total de séries: ${allSeries.length()}")
         
         val categorySeries = mutableListOf<JSONObject>()
         for (i in 0 until allSeries.length()) {
@@ -143,17 +167,25 @@ class StreamFlix : MainAPI() {
             }
         }
         
+        println("📊 [StreamFlix] Séries na categoria $categoryId: ${categorySeries.size}")
+        
         val start = page * PAGE_SIZE
         val end = minOf(start + PAGE_SIZE, categorySeries.size)
         
-        if (start >= categorySeries.size) return emptyList()
+        if (start >= categorySeries.size) {
+            println("⚠️ [StreamFlix] Sem mais séries na página $page")
+            return emptyList()
+        }
         
         val results = mutableListOf<SearchResponse>()
         for (i in start until end) {
             val series = categorySeries[i]
             val rawName = series.getString("name")
             
-            if (isAdultContent(rawName)) continue
+            if (isAdultContent(rawName)) {
+                println("🔞 [StreamFlix] Pulando conteúdo adulto: $rawName")
+                continue
+            }
             
             val (cleanName, dubStatus, qualityTag) = processTitle(rawName, false)
             val finalName = cleanTitle(cleanName)
@@ -161,6 +193,8 @@ class StreamFlix : MainAPI() {
             val id = series.getInt("series_id")
             val poster = fixImageUrl(series.optString("cover"))
             val ratingValue = series.optDouble("rating_5based", 0.0).let { it.toFloat() * 2 }
+            
+            println("🎯 [StreamFlix] Série: $finalName (ID: $id)")
             
             results.add(
                 newAnimeSearchResponse(finalName, "series?id=$id", TvType.TvSeries) {
@@ -175,12 +209,15 @@ class StreamFlix : MainAPI() {
     }
 
     private fun processTitle(rawTitle: String, isFourKCategory: Boolean): Triple<String, EnumSet<DubStatus>?, SearchQuality?> {
+        println("🔧 [StreamFlix] Processando título: $rawTitle")
+        
         var cleanTitle = rawTitle.trim()
         var dubStatus: EnumSet<DubStatus>? = null
         var qualityTag: SearchQuality? = null
         
         if (isFourKCategory || Regex("\\b4K\\b", RegexOption.IGNORE_CASE).containsMatchIn(cleanTitle)) {
             qualityTag = SearchQuality.FourK
+            println("  🎬 Qualidade 4K detectada")
         }
         
         val hasLegTag = Regex("\\[L\\]", RegexOption.IGNORE_CASE).containsMatchIn(cleanTitle)
@@ -189,10 +226,13 @@ class StreamFlix : MainAPI() {
             dubStatus = EnumSet.of(DubStatus.Subbed)
             cleanTitle = cleanTitle.replace(Regex("\\s*\\[L\\]\\s*", RegexOption.IGNORE_CASE), " ")
             cleanTitle = cleanTitle.replace(Regex("\\s*\\[L\\]\\s*\$", RegexOption.IGNORE_CASE), "")
+            println("  📝 Legendado detectado")
         } else {
             dubStatus = EnumSet.of(DubStatus.Dubbed)
+            println("  🎤 Dublado detectado")
         }
         
+        println("  ✅ Título limpo: $cleanTitle")
         return Triple(cleanTitle, dubStatus, qualityTag)
     }
 
@@ -239,34 +279,51 @@ class StreamFlix : MainAPI() {
     }
 
     private suspend fun getAllMovies(): JSONArray {
-        if (cachedMovies != null) return cachedMovies!!
+        if (cachedMovies != null) {
+            println("💾 [StreamFlix] Usando cache de filmes (${cachedMovies?.length()} itens)")
+            return cachedMovies!!
+        }
         
+        println("🌐 [StreamFlix] Buscando filmes da API...")
         return withContext(Dispatchers.IO) {
             val response = app.get("$mainUrl/api_proxy.php?action=get_vod_streams")
             val json = JSONArray(response.body.string())
             cachedMovies = json
+            println("✅ [StreamFlix] Carregados ${json.length()} filmes")
             json
         }
     }
 
     private suspend fun getAllSeries(): JSONArray {
-        if (cachedSeries != null) return cachedSeries!!
+        if (cachedSeries != null) {
+            println("💾 [StreamFlix] Usando cache de séries (${cachedSeries?.length()} itens)")
+            return cachedSeries!!
+        }
         
+        println("🌐 [StreamFlix] Buscando séries da API...")
         return withContext(Dispatchers.IO) {
             val response = app.get("$mainUrl/api_proxy.php?action=get_series")
             val json = JSONArray(response.body.string())
             cachedSeries = json
+            println("✅ [StreamFlix] Carregadas ${json.length()} séries")
             json
         }
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        if (query.length < 2) return emptyList()
+        println("🔍 [StreamFlix] Buscando por: $query")
+        
+        if (query.length < 2) {
+            println("⚠️ [StreamFlix] Query muito curta: ${query.length} caracteres")
+            return emptyList()
+        }
         
         val results = mutableListOf<SearchResponse>()
         val queryLower = query.lowercase()
         
         val allMovies = getAllMovies()
+        println("📊 [StreamFlix] Buscando em ${allMovies.length()} filmes...")
+        
         for (i in 0 until allMovies.length()) {
             val movie = allMovies.getJSONObject(i)
             val rawName = movie.getString("name")
@@ -278,6 +335,8 @@ class StreamFlix : MainAPI() {
                 val id = movie.getInt("stream_id")
                 val poster = fixImageUrl(movie.optString("stream_icon"))
                 val ratingValue = movie.optDouble("rating_5based", 0.0).let { it.toFloat() * 2 }
+                
+                println("  🎯 Encontrado filme: $finalName (ID: $id)")
                 
                 results.add(
                     newAnimeSearchResponse(finalName, "movie?id=$id", TvType.Movie) {
@@ -291,6 +350,8 @@ class StreamFlix : MainAPI() {
         }
         
         val allSeries = getAllSeries()
+        println("📊 [StreamFlix] Buscando em ${allSeries.length()} séries...")
+        
         for (i in 0 until allSeries.length()) {
             val series = allSeries.getJSONObject(i)
             val rawName = series.getString("name")
@@ -303,6 +364,8 @@ class StreamFlix : MainAPI() {
                 val poster = fixImageUrl(series.optString("cover"))
                 val ratingValue = series.optDouble("rating_5based", 0.0).let { it.toFloat() * 2 }
                 
+                println("  🎯 Encontrada série: $finalName (ID: $id)")
+                
                 results.add(
                     newAnimeSearchResponse(finalName, "series?id=$id", TvType.TvSeries) {
                         this.posterUrl = poster
@@ -314,10 +377,13 @@ class StreamFlix : MainAPI() {
             }
         }
         
+        println("✅ [StreamFlix] Busca finalizada: ${results.size} resultados")
         return results
     }
 
     override suspend fun load(url: String): LoadResponse? {
+        println("📥 [StreamFlix] Carregando URL: $url")
+        
         val cleanUrl = url
             .removePrefix("https://streamflix.live/")
             .removePrefix("http://streamflix.live/")
@@ -326,13 +392,18 @@ class StreamFlix : MainAPI() {
         return when {
             cleanUrl.startsWith("movie?id=") -> {
                 val id = cleanUrl.substringAfter("movie?id=")
+                println("🎬 Carregando filme ID: $id")
                 loadMovie(id)
             }
             cleanUrl.startsWith("series?id=") -> {
                 val id = cleanUrl.substringAfter("series?id=")
+                println("📺 Carregando série ID: $id")
                 loadSeries(id)
             }
-            else -> null
+            else -> {
+                println("❌ URL não reconhecida: $cleanUrl")
+                null
+            }
         }
     }
 
@@ -364,19 +435,32 @@ class StreamFlix : MainAPI() {
     }
 
     private suspend fun loadMovie(id: String): LoadResponse? {
+        println("🎬 [StreamFlix] loadMovie - ID: $id")
+        
         return withContext(Dispatchers.IO) {
             try {
+                println("🌐 Buscando informações do filme...")
                 val infoResponse = app.get("$mainUrl/api_proxy.php?action=get_vod_info&vod_id=$id")
                 val infoJson = JSONObject(infoResponse.body.string())
                 val info = infoJson.optJSONObject("info") ?: JSONObject()
                 
                 val rawTitle = info.optString("name", "Título indisponível")
+                println("📝 Título original: $rawTitle")
+                
                 val (cleanName, _, _) = processTitle(rawTitle, false)
                 val finalTitle = cleanTitle(cleanName)
+                println("✅ Título limpo: $finalTitle")
                 
                 val posterFallback = fixImageUrl(info.optString("cover_big"))
                 
+                println("🔍 Buscando no TMDB: ${cleanTitleForTMDB(finalTitle)}")
                 val tmdbData = searchMovieOnTMDB(cleanTitleForTMDB(finalTitle))
+                
+                if (tmdbData != null) {
+                    println("✅ TMDB encontrado: ${tmdbData.title}")
+                } else {
+                    println("⚠️ TMDB não encontrado, usando dados locais")
+                }
                 
                 val backdrop = tmdbData?.backdropUrl ?: fixImageUrl(info.optString("cover_big"))
                 val poster = tmdbData?.posterUrl ?: posterFallback
@@ -388,9 +472,11 @@ class StreamFlix : MainAPI() {
                 val actors = tmdbData?.actors
                 val trailerUrl = tmdbData?.youtubeTrailer
                 
+                println("🌐 Buscando URL do stream...")
                 val streamResponse = app.get("$mainUrl/api_proxy.php?action=get_stream_url&type=movie&id=$id")
                 val streamJson = JSONObject(streamResponse.body.string())
                 val videoUrl = streamJson.getString("stream_url")
+                println("✅ URL do stream obtida: ${videoUrl.take(80)}...")
                 
                 newMovieLoadResponse(finalTitle, "movie?id=$id", TvType.Movie, videoUrl) {
                     this.posterUrl = poster
@@ -409,12 +495,16 @@ class StreamFlix : MainAPI() {
                     }
                 }
             } catch (e: Exception) {
+                println("❌ [StreamFlix] Erro ao carregar filme: ${e.message}")
+                e.printStackTrace()
                 null
             }
         }
     }
 
     private suspend fun searchMovieOnTMDB(query: String): TMDBMovieInfo? {
+        println("🔍 [StreamFlix] searchMovieOnTMDB - Query: $query")
+        
         return try {
             val encodedQuery = URLEncoder.encode(query, "UTF-8")
             val url = "https://api.themoviedb.org/3/search/movie?api_key=$TMDB_API_KEY&query=$encodedQuery&language=pt-BR"
@@ -425,10 +515,15 @@ class StreamFlix : MainAPI() {
             )
             
             val response = app.get(url, headers = headers, timeout = 10_000)
-            if (response.code != 200) return null
+            if (response.code != 200) {
+                println("⚠️ TMDB erro: ${response.code}")
+                return null
+            }
             
             val searchResult = response.parsedSafe<TMDBSearchResponse>() ?: return null
             val result = searchResult.results.firstOrNull() ?: return null
+            
+            println("✅ TMDB encontrado: ${result.title} (ID: ${result.id})")
             
             val details = getTMDBMovieDetails(result.id)
             
@@ -450,6 +545,7 @@ class StreamFlix : MainAPI() {
                 youtubeTrailer = getHighQualityTrailer(details?.videos?.results)
             )
         } catch (e: Exception) {
+            println("❌ TMDB erro: ${e.message}")
             null
         }
     }
@@ -469,19 +565,32 @@ class StreamFlix : MainAPI() {
     }
 
     private suspend fun loadSeries(id: String): LoadResponse? {
+        println("📺 [StreamFlix] loadSeries - ID: $id")
+        
         return withContext(Dispatchers.IO) {
             try {
+                println("🌐 Buscando informações da série...")
                 val infoResponse = app.get("$mainUrl/api_proxy.php?action=get_series_info&series_id=$id")
                 val json = JSONObject(infoResponse.body.string())
                 val info = json.optJSONObject("info") ?: JSONObject()
                 
                 val rawTitle = info.getString("name")
+                println("📝 Título original: $rawTitle")
+                
                 val (cleanName, _, _) = processTitle(rawTitle, false)
                 val finalTitle = cleanTitle(cleanName)
+                println("✅ Título limpo: $finalTitle")
                 
                 val posterFallback = fixImageUrl(info.optString("cover"))
                 
+                println("🔍 Buscando no TMDB: ${cleanTitleForTMDB(finalTitle)}")
                 val tmdbData = searchSeriesOnTMDB(cleanTitleForTMDB(finalTitle))
+                
+                if (tmdbData != null) {
+                    println("✅ TMDB encontrado para série")
+                } else {
+                    println("⚠️ TMDB não encontrado, usando dados locais")
+                }
                 
                 val backdrop = tmdbData?.backdropUrl ?: fixImageUrl(info.optString("cover"))
                 val poster = tmdbData?.posterUrl ?: posterFallback
@@ -492,9 +601,15 @@ class StreamFlix : MainAPI() {
                 val actors = tmdbData?.actors
                 val trailerUrl = tmdbData?.youtubeTrailer
                 
+                println("📺 Extraindo episódios...")
                 val episodes = extractEpisodes(json, tmdbData, seriesRating)
                 
-                if (episodes.isEmpty()) return@withContext null
+                if (episodes.isEmpty()) {
+                    println("❌ Nenhum episódio encontrado!")
+                    return@withContext null
+                }
+                
+                println("✅ ${episodes.size} episódios encontrados")
                 
                 newTvSeriesLoadResponse(finalTitle, "series?id=$id", TvType.TvSeries, episodes) {
                     this.posterUrl = poster
@@ -512,12 +627,16 @@ class StreamFlix : MainAPI() {
                     }
                 }
             } catch (e: Exception) {
+                println("❌ [StreamFlix] Erro ao carregar série: ${e.message}")
+                e.printStackTrace()
                 null
             }
         }
     }
 
     private suspend fun searchSeriesOnTMDB(query: String): TMDBSeriesInfo? {
+        println("🔍 [StreamFlix] searchSeriesOnTMDB - Query: $query")
+        
         return try {
             val encodedQuery = URLEncoder.encode(query, "UTF-8")
             val url = "https://api.themoviedb.org/3/search/tv?api_key=$TMDB_API_KEY&query=$encodedQuery&language=pt-BR"
@@ -528,10 +647,15 @@ class StreamFlix : MainAPI() {
             )
             
             val response = app.get(url, headers = headers, timeout = 10_000)
-            if (response.code != 200) return null
+            if (response.code != 200) {
+                println("⚠️ TMDB erro: ${response.code}")
+                return null
+            }
             
             val searchResult = response.parsedSafe<TMDBSearchResponse>() ?: return null
             val result = searchResult.results.firstOrNull() ?: return null
+            
+            println("✅ TMDB encontrado: ${result.name} (ID: ${result.id})")
             
             val details = getTMDBSeriesDetails(result.id)
             
@@ -553,6 +677,7 @@ class StreamFlix : MainAPI() {
                 seasonsEpisodes = getTMDBAllSeasons(result.id, details)
             )
         } catch (e: Exception) {
+            println("❌ TMDB erro: ${e.message}")
             null
         }
     }
@@ -572,12 +697,16 @@ class StreamFlix : MainAPI() {
     }
 
     private suspend fun getTMDBAllSeasons(seriesId: Int, details: TMDBDetailsResponse?): Map<Int, List<TMDBEpisode>> {
+        println("📺 [StreamFlix] Buscando temporadas do TMDB...")
+        
         val seasonsEpisodes = mutableMapOf<Int, List<TMDBEpisode>>()
         val seasons = details?.seasons ?: return emptyMap()
         
         for (season in seasons) {
             if (season.season_number > 0) {
                 val seasonNumber = season.season_number
+                println("  🌐 Buscando temporada $seasonNumber...")
+                
                 val seasonUrl = "https://api.themoviedb.org/3/tv/$seriesId/season/$seasonNumber?api_key=$TMDB_API_KEY&language=pt-BR"
                 val headers = mapOf(
                     "Authorization" to "Bearer $TMDB_ACCESS_TOKEN",
@@ -588,10 +717,12 @@ class StreamFlix : MainAPI() {
                     val seasonData = seasonResponse.parsedSafe<TMDBSeasonResponse>()
                     seasonData?.episodes?.let { episodes ->
                         seasonsEpisodes[seasonNumber] = episodes
+                        println("  ✅ Temporada $seasonNumber: ${episodes.size} episódios")
                     }
                 }
             }
         }
+        
         return seasonsEpisodes
     }
 
@@ -612,6 +743,8 @@ class StreamFlix : MainAPI() {
     }
 
     private suspend fun extractEpisodes(json: JSONObject, tmdbData: TMDBSeriesInfo?, seriesRating: Score?): List<Episode> {
+        println("📺 [StreamFlix] Extraindo episódios...")
+        
         val episodes = mutableListOf<Episode>()
         val episodesJson = json.optJSONObject("episodes")
         
@@ -619,6 +752,8 @@ class StreamFlix : MainAPI() {
             val seasonKeys = episodesJson.keys()
             while (seasonKeys.hasNext()) {
                 val seasonNum = seasonKeys.next().toIntOrNull() ?: continue
+                println("  📺 Processando temporada $seasonNum...")
+                
                 val seasonArray = episodesJson.getJSONArray(seasonNum.toString())
                 
                 for (i in 0 until seasonArray.length()) {
@@ -633,6 +768,8 @@ class StreamFlix : MainAPI() {
                     val epDurationFallback = epInfo.optInt("duration_secs", 0).takeIf { it > 0 }
                     
                     val tmdbEpisode = tmdbData?.seasonsEpisodes?.get(seasonNum)?.find { it.episode_number == epNum }
+                    
+                    println("    🎯 Episódio $epNum: $epTitle (ID: $epId)")
                     
                     val streamResponse = app.get("$mainUrl/api_proxy.php?action=get_stream_url&type=series&id=$epId")
                     val streamJson = JSONObject(streamResponse.body.string())
@@ -654,6 +791,7 @@ class StreamFlix : MainAPI() {
                                 val ratingValue = epDetailsJson.optDouble("vote_average").takeIf { it > 0 }
                                 if (ratingValue != null) {
                                     epRating = Score.from10(ratingValue)
+                                    println("      ⭐ Avaliação TMDB: $ratingValue")
                                 }
                             }
                         } catch (e: Exception) { }
@@ -685,6 +823,7 @@ class StreamFlix : MainAPI() {
             }
         }
         
+        println("✅ [StreamFlix] Total de episódios extraídos: ${episodes.size}")
         return episodes
     }
 
@@ -694,6 +833,8 @@ class StreamFlix : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
+        println("🔗 [StreamFlix] Carregando links para: ${data.take(80)}...")
+        
         callback(
             newExtractorLink(
                 source = name,
@@ -704,6 +845,8 @@ class StreamFlix : MainAPI() {
                 this.referer = mainUrl
             }
         )
+        
+        println("✅ [StreamFlix] Link adicionado")
         return true
     }
 
@@ -718,6 +861,7 @@ class StreamFlix : MainAPI() {
         return fixed
     }
 
+    // Data classes
     private data class TMDBMovieInfo(
         val title: String?,
         val year: Int?,
