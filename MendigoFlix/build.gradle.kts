@@ -3,10 +3,16 @@ plugins {
 }
 
 android {
+    buildFeatures {
+        buildConfig = true
+    }
+    
     namespace = "com.MendigoFlix"
     compileSdk = 33
 
     defaultConfig {
+        minSdk = 24
+
         val tmdbApiKey = System.getenv("TMDB_API_KEY") ?: "dummy"
         buildConfigField("String", "TMDB_API_KEY", "\"$tmdbApiKey\"")
     }
