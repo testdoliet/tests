@@ -13,8 +13,11 @@ android {
     defaultConfig {
         minSdk = 24
 
-        val tmdbApiKey = System.getenv("TMDB_API_KEY") ?: "dummy"
+        val tmdbApiKey = System.getenv("TMDB_API_KEY") ?: "dummy_api_key"
+        val tmdbAccessToken = System.getenv("TMDB_ACCESS_TOKEN") ?: "dummy_access_token"
+        
         buildConfigField("String", "TMDB_API_KEY", "\"$tmdbApiKey\"")
+        buildConfigField("String", "TMDB_ACCESS_TOKEN", "\"$tmdbAccessToken\"")
     }
 }
 
