@@ -15,14 +15,11 @@ import org.json.JSONObject
 import java.net.URLEncoder
 import java.text.SimpleDateFormat
 import java.util.*
-import kotlin.math.min
 
 @CloudstreamPlugin
 class StreamFlixProvider : Plugin() {
     override fun load(context: Context) {
-        println("🚀 [StreamFlix] Plugin carregando...")
         registerMainAPI(StreamFlix())
-        println("✅ [StreamFlix] Plugin registrado com sucesso!")
     }
 }
 
@@ -36,180 +33,52 @@ class StreamFlix : MainAPI() {
 
     private var cachedMovies: JSONArray? = null
     private var cachedSeries: JSONArray? = null
-    private var movieCategories: List<CategoryInfo>? = null
-    private var seriesCategories: List<CategoryInfo>? = null
     private val PAGE_SIZE = 30
 
     private val tmdbImageUrl = "https://image.tmdb.org/t/p"
     private val TMDB_API_KEY = BuildConfig.TMDB_API_KEY
     private val TMDB_ACCESS_TOKEN = BuildConfig.TMDB_ACCESS_TOKEN
 
-    // Categorias serão carregadas dinamicamente
-    private var dynamicMovieCategories: Map<String, String> = emptyMap()
-    private var dynamicSeriesCategories: Map<String, String> = emptyMap()
+    // Categorias estáticas (baseadas nas respostas da API)
+    private val MOVIE_CATEGORIES = mapOf(
+        "243" to "🎬 LANÇAMENTOS",
+        "218" to "🎬 AÇÃO",
+        "217" to "🎬 COMÉDIA",
+        "253" to "🎬 DRAMA",
+        "255" to "🎬 TERROR",
+        "245" to "🎬 4K"
+    )
 
-    data class CategoryInfo(
-        val id: String,
-        val name: String,
-        val count: Int = 0
+    private val SERIES_CATEGORIES = mapOf(
+        "209" to "📺 NETFLIX",
+        "208" to "📺 MAX",
+        "195" to "📺 AMAZON PRIME",
+        "202" to "📺 DISNEY+",
+        "204" to "🇰🇷 DORAMAS",
+        "199" to "🇯🇵 ANIMES"
     )
 
     override val mainPage = mainPageOf(
-        *dynamicMovieCategories.map { (id, name) ->
+        *MOVIE_CATEGORIES.map { (id, name) ->
             id to name
         }.toTypedArray(),
-        *dynamicSeriesCategories.map { (id, name) ->
+        *SERIES_CATEGORIES.map { (id, name) ->
             "series_$id" to name
         }.toTypedArray()
     )
 
-    // Atualiza o mainPage dinamicamente
-    override fun getMainPageRequest(): List<Pair<String, MainPageRequest>> {
-        return buildMainPage()
-    }
-
-    private suspend fun buildMainPage(): List<Pair<String, MainPageRequest>> {
-        val movieCats = getMovieCategoriesWithCount()
-        val seriesCats = getSeriesCategoriesWithCount()
-        
-        // Filtra categorias com pelo menos 25 itens
-        val validMovieCats = movieCats.filter { it.count >= 25 }
-        val validSeriesCats = seriesCats.filter { it.count >= 25 }
-        
-        println("📊 [StreamFlix] Filmes: ${validMovieCats.size} categorias com ≥25 itens")
-        println("📊 [StreamFlix] Séries: ${validSeriesCats.size} categorias com ≥25 itens")
-        
-        // Pega até 4 de cada (ou todas se tiver menos)
-        val selectedMovies = validMovieCats.take(4)
-        val selectedSeries = validSeriesCats.take(4)
-        
-        // Atualiza os mapas
-        dynamicMovieCategories = selectedMovies.associate { it.id to "🎬 ${it.name}" }
-        dynamicSeriesCategories = selectedSeries.associate { it.id to "📺 ${it.name}" }
-        
-        val requests = mutableListOf<Pair<String, MainPageRequest>>()
-        
-        requests.addAll(dynamicMovieCategories.map { (id, name) ->
-            id to MainPageRequest(name, 1)
-        })
-        
-        requests.addAll(dynamicSeriesCategories.map { (id, name) ->
-            "series_$id" to MainPageRequest(name, 1)
-        })
-        
-        return requests
-    }
-
-    private suspend fun getMovieCategoriesWithCount(): List<CategoryInfo> {
-        if (movieCategories != null) return movieCategories!!
-        
-        println("🌐 [StreamFlix] Buscando categorias de filmes...")
-        
-        return withContext(Dispatchers.IO) {
-            try {
-                val response = app.get("$mainUrl/api_proxy.php?action=get_vod_categories")
-                val jsonArray = JSONArray(response.body.string())
-                
-                val allMovies = getAllMovies()
-                val movieCountMap = mutableMapOf<String, Int>()
-                
-                // Conta filmes por categoria
-                for (i in 0 until allMovies.length()) {
-                    val movie = allMovies.getJSONObject(i)
-                    val categories = getCategoryIds(movie)
-                    for (catId in categories) {
-                        movieCountMap[catId] = movieCountMap.getOrDefault(catId, 0) + 1
-                    }
-                }
-                
-                val categories = mutableListOf<CategoryInfo>()
-                for (i in 0 until jsonArray.length()) {
-                    val obj = jsonArray.getJSONObject(i)
-                    val id = obj.getString("category_id")
-                    val name = obj.getString("category_name")
-                        .replace("\\u[0-9a-fA-F]{4}".toRegex()) { 
-                            val code = it.value.substring(2).toInt(16)
-                            code.toChar().toString()
-                        }
-                        .replace(Regex("[⭐✅⚡✏️🔞🎬📺🇰🇷🇯🇵]"), "")
-                        .trim()
-                    
-                    val count = movieCountMap.getOrDefault(id, 0)
-                    categories.add(CategoryInfo(id, name, count))
-                }
-                
-                movieCategories = categories.sortedByDescending { it.count }
-                println("✅ [StreamFlix] Carregadas ${movieCategories?.size} categorias de filmes")
-                movieCategories!!
-            } catch (e: Exception) {
-                println("❌ [StreamFlix] Erro ao buscar categorias: ${e.message}")
-                emptyList()
-            }
-        }
-    }
-
-    private suspend fun getSeriesCategoriesWithCount(): List<CategoryInfo> {
-        if (seriesCategories != null) return seriesCategories!!
-        
-        println("🌐 [StreamFlix] Buscando categorias de séries...")
-        
-        return withContext(Dispatchers.IO) {
-            try {
-                val response = app.get("$mainUrl/api_proxy.php?action=get_series_categories")
-                val jsonArray = JSONArray(response.body.string())
-                
-                val allSeries = getAllSeries()
-                val seriesCountMap = mutableMapOf<String, Int>()
-                
-                // Conta séries por categoria
-                for (i in 0 until allSeries.length()) {
-                    val series = allSeries.getJSONObject(i)
-                    val categories = getCategoryIds(series)
-                    for (catId in categories) {
-                        seriesCountMap[catId] = seriesCountMap.getOrDefault(catId, 0) + 1
-                    }
-                }
-                
-                val categories = mutableListOf<CategoryInfo>()
-                for (i in 0 until jsonArray.length()) {
-                    val obj = jsonArray.getJSONObject(i)
-                    val id = obj.getString("category_id")
-                    val name = obj.getString("category_name")
-                        .replace("\\u[0-9a-fA-F]{4}".toRegex()) { 
-                            val code = it.value.substring(2).toInt(16)
-                            code.toChar().toString()
-                        }
-                        .replace(Regex("[⭐✅⚡✏️🔞🎬📺🇰🇷🇯🇵]"), "")
-                        .trim()
-                    
-                    val count = seriesCountMap.getOrDefault(id, 0)
-                    categories.add(CategoryInfo(id, name, count))
-                }
-                
-                seriesCategories = categories.sortedByDescending { it.count }
-                println("✅ [StreamFlix] Carregadas ${seriesCategories?.size} categorias de séries")
-                seriesCategories!!
-            } catch (e: Exception) {
-                println("❌ [StreamFlix] Erro ao buscar categorias: ${e.message}")
-                emptyList()
-            }
-        }
-    }
-
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        println("📱 [StreamFlix] getMainPage - Página: $page, Categoria: ${request.name}")
-        
         val categoryId = when {
-            dynamicMovieCategories.values.contains(request.name) -> {
-                dynamicMovieCategories.entries.find { it.value == request.name }?.key
+            MOVIE_CATEGORIES.values.contains(request.name) -> {
+                MOVIE_CATEGORIES.entries.find { it.value == request.name }?.key
             }
-            dynamicSeriesCategories.values.contains(request.name) -> {
-                dynamicSeriesCategories.entries.find { it.value == request.name }?.key
+            SERIES_CATEGORIES.values.contains(request.name) -> {
+                SERIES_CATEGORIES.entries.find { it.value == request.name }?.key
             }
             else -> null
         }
         
-        val isMovies = dynamicMovieCategories.values.contains(request.name)
+        val isMovies = MOVIE_CATEGORIES.values.contains(request.name)
         
         val items = if (isMovies && categoryId != null) {
             getMoviesByCategory(categoryId, page)
@@ -223,8 +92,6 @@ class StreamFlix : MainAPI() {
     }
 
     private suspend fun getMoviesByCategory(categoryId: String, page: Int): List<SearchResponse> {
-        println("🎬 [StreamFlix] getMoviesByCategory - ID: $categoryId, Página: $page")
-        
         val allMovies = getAllMovies()
         
         val categoryMovies = mutableListOf<JSONObject>()
@@ -248,7 +115,7 @@ class StreamFlix : MainAPI() {
             
             if (isAdultContent(rawName)) continue
             
-            val (cleanName, dubStatus, qualityTag) = processTitle(rawName, false)
+            val (cleanName, dubStatus, qualityTag) = processTitle(rawName, categoryId == "245")
             val finalName = cleanTitle(cleanName)
             
             val id = movie.getInt("stream_id")
@@ -268,8 +135,6 @@ class StreamFlix : MainAPI() {
     }
 
     private suspend fun getSeriesByCategory(categoryId: String, page: Int): List<SearchResponse> {
-        println("📺 [StreamFlix] getSeriesByCategory - ID: $categoryId, Página: $page")
-        
         val allSeries = getAllSeries()
         
         val categorySeries = mutableListOf<JSONObject>()
