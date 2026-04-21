@@ -7,5 +7,4 @@ cloudstream {
     status = 1
     tvTypes = listOf("Live")
     iconUrl = "https://reidoscanais.io/favicon.png"
-    isCrossPlatform = true
 }
