@@ -1,11 +1,10 @@
 [
     {
         "iconUrl": "https://animefire.io/img/icons/favicon-192x192.png",
-        "jarFileSize": 144708,
-        "fileHash": "sha256-b3c56b7f69adfdf0546aef376019f76ff93b08747c93f1edb615c9fa726863a7",
+        "fileHash": "sha256-3f8db7b0ff849718a8526a0dcdc47546e6837ff46e9d1cf9d940db9e0c5f2326",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/lawlietbt/lietrepo",
-        "fileSize": 42040,
+        "fileSize": 42076,
         "status": 1,
         "language": "pt-br",
         "authors": [
@@ -16,16 +15,13 @@
         ],
         "version": 1,
         "internalName": "AnimeFire",
-        "jarUrl": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/AnimeFire.jar",
         "description": "Site brasileiro de animes em portugu\u00eas",
         "url": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/AnimeFire.cs3",
-        "name": "AnimeFire",
-        "jarHash": "sha256-81d9dd51492be0b987c0cfe7c7d5ed4a3cbe213c6c6a8104ed2ff1bdb9427c8e"
+        "name": "AnimeFire"
     },
     {
         "iconUrl": "https://www.animesflix.site/assets/animesflix/images/favicon.webp",
-        "jarFileSize": 98823,
-        "fileHash": "sha256-8c8b475d322ee9cd00170f7d3e4df066f63420f8cf576c17de4fc5c6575aba6b",
+        "fileHash": "sha256-27a0b4618c12c457373d5a059d34240b72bbbb80a876efa6e6728f5d247119af",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/lawlietbt/lietrepo",
         "fileSize": 33901,
@@ -40,15 +36,12 @@
         ],
         "version": 1,
         "internalName": "AnimeFlix",
-        "jarUrl": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/AnimeFlix.jar",
         "description": "AnimesFlix - Assista Animes Online Gr\u00e1tis em HD Dublado e Legendado",
         "url": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/AnimeFlix.cs3",
-        "name": "AnimeFlix",
-        "jarHash": "sha256-17d9a7e299f88e3116254238657e1de67e2ee3bb8ccabd1258fee8f104e3f8f0"
+        "name": "AnimeFlix"
     },
     {
         "iconUrl": "https://animeq.net/wp-content/uploads/2025/06/Favicon-AnimeQ-1-150x150.png",
-        "jarFileSize": 125956,
         "fileHash": "sha256-f13d917c6b1c8465dac9bbd76123829850a5bd5bf52f11a975e924782c78fc38",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/lawlietbt/lietrepo",
@@ -64,15 +57,12 @@
         ],
         "version": 1,
         "internalName": "AnimeQ",
-        "jarUrl": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/AnimeQ.jar",
         "description": "AnimeQ \u00e9 um site para assistir seus animes favoritos online e de onde quiser, temos uma lista completa com diversos animes recentes e antigos para voc\u00ea explorar, incluindo animes legendados, dublados, filmes, tokusatsus e mais. A melhor maneira de assistir animes online gr\u00e1tis em HD sempre atualizados!",
         "url": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/AnimeQ.cs3",
-        "name": "AnimeQ",
-        "jarHash": "sha256-461a117f20752d861f42875b8f67a0a7fa1d9d3c7110dc93e49c29502af592c4"
+        "name": "AnimeQ"
     },
     {
         "iconUrl": "https://www.anitube.news/wp-content/uploads/cropped-Favicon6-192x192.png",
-        "jarFileSize": 116640,
         "fileHash": "sha256-01851e1554a66aeb7b3554b9edd637935e28c727e17b42cf7c1657fbd1c0a457",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/lawlietbt/lietrepo",
@@ -87,19 +77,16 @@
         ],
         "version": 1,
         "internalName": "AniTube",
-        "jarUrl": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/AniTube.jar",
         "description": "AniTube \u00e9 um site para assistir seus animes favoritos online e de onde quiser, temos uma lista completa com diversos animes recentes e antigos para voc\u00ea explorar e o melhor disso tudo \u00e9 a qualidade do nosso site que o diferencia de outros.",
         "url": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/AniTube.cs3",
-        "name": "AniTube",
-        "jarHash": "sha256-1e69f3f9d15e0cad2db2c7e9787552fa0fbea684d1034de1cc159f8fd94102da"
+        "name": "AniTube"
     },
     {
         "iconUrl": "https://betterflix.vercel.app/favicon.svg",
-        "jarFileSize": 223183,
-        "fileHash": "sha256-6ef2a16908d73f2ea6032b58968ba8e0cd91e36d9486a9bb7c6984db13475582",
+        "fileHash": "sha256-95c7d02f3c0c2b46d9a3b112bf3976cd616f2b3b5442fde46f23bb39fd1ab0c6",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/lawlietbt/lietrepo",
-        "fileSize": 57898,
+        "fileSize": 57899,
         "status": 1,
         "language": "pt-br",
         "authors": [
@@ -114,19 +101,16 @@
         ],
         "version": 2,
         "internalName": "BetterFlix",
-        "jarUrl": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/BetterFlix.jar",
         "description": "BetterFlix | Assista filmes, s\u00e9ries, animes, doramas e canais de tv online e gr\u00e1tis",
         "url": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/BetterFlix.cs3",
-        "name": "BetterFlix",
-        "jarHash": "sha256-1efb44e01b81a8bc8d7d94dcbeefabe92b9dce38f5a775262e6b06007efce468"
+        "name": "BetterFlix"
     },
     {
         "iconUrl": "https://cineagora.net/templates/cineagora/images/touch-icon-180x180.png",
-        "jarFileSize": 245813,
-        "fileHash": "sha256-5795b335ef27e5c3b858341464bb4fe5e47c58e0888e9ff4c1098c015d98cf23",
+        "fileHash": "sha256-2227a8f05654f757093dd7b35628e11554e5d12dedc54d427f4a8dc7d7ff826b",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/lawlietbt/lietrepo",
-        "fileSize": 65717,
+        "fileSize": 65458,
         "status": 1,
         "language": "pt-br",
         "authors": [
@@ -139,15 +123,12 @@
         ],
         "version": 1,
         "internalName": "CineAgora",
-        "jarUrl": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/CineAgora.jar",
         "description": "Assista filmes e s\u00e9ries online gr\u00e1tis em HD no CineAgora",
         "url": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/CineAgora.cs3",
-        "name": "CineAgora",
-        "jarHash": "sha256-063661dffc93acb1d8ec1bdf213e8fbfb91ae9a68d73faa72d2dc3047c017313"
+        "name": "CineAgora"
     },
     {
         "iconUrl": "https://www.dattebayo-br.com/favicon.png",
-        "jarFileSize": 73498,
         "fileHash": "sha256-c616fd4c7ea4d48a272645530073f4468901e102c59a6273870ae6dfa84a82ad",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/lawlietbt/lietrepo",
@@ -162,19 +143,16 @@
         ],
         "version": 1,
         "internalName": "DattebayoBR",
-        "jarUrl": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/DattebayoBR.jar",
         "description": "DattebayoBR Animes Online",
         "url": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/DattebayoBR.cs3",
-        "name": "DattebayoBR",
-        "jarHash": "sha256-dd399e31c2a607283338106da8cdaa2dafaa57caaedc4c2bd3a3dfdac4f04808"
+        "name": "DattebayoBR"
     },
     {
         "iconUrl": "https://www.doramogo.net/assets/doramogo/images/apple-touch-icon.webp?version=200.50.10",
-        "jarFileSize": 229853,
-        "fileHash": "sha256-cc7c825fd53132045a97c9f88bb6a0b5de7c0c2b03ebaa169384e9754d8e36b4",
+        "fileHash": "sha256-3822d5b43f57b7f2c02aa08cc202a5f4e0a5d29e59b4e31ecb811b600d214ffb",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/lawlietbt/lietrepo",
-        "fileSize": 58395,
+        "fileSize": 58128,
         "status": 1,
         "language": "pt-br",
         "authors": [
@@ -185,15 +163,12 @@
         ],
         "version": 1,
         "internalName": "Doramogo",
-        "jarUrl": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/Doramogo.jar",
         "description": "Site de Doramas online",
         "url": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/Doramogo.cs3",
-        "name": "Doramogo",
-        "jarHash": "sha256-4533abfe1ad1b2533a66944ca4f0af694bbf2a4cf1aab901acc6fd3b0ddfcbd3"
+        "name": "Doramogo"
     },
     {
         "iconUrl": "https://embedtv.best/assets/icon.png",
-        "jarFileSize": 41536,
         "fileHash": "sha256-d8e587497510bd2d5d12e9dd1e53bd48e7a8de6b161f5ef93878ee67f0059e4e",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/lawlietbt/lietrepo",
@@ -208,19 +183,16 @@
         ],
         "version": 1,
         "internalName": "EmbedTV",
-        "jarUrl": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/EmbedTV.jar",
         "description": "Embed TV - O melhor site de TV online. ",
         "url": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/EmbedTV.cs3",
-        "name": "EmbedTV",
-        "jarHash": "sha256-c723cfa5f21cd3553b851a0b73e4f9afa699a510a9759501c052906c00b77947"
+        "name": "EmbedTV"
     },
     {
         "iconUrl": "https://filmesonlinex.wf/wp-content/uploads/2025/05/favicon.png",
-        "jarFileSize": 129187,
-        "fileHash": "sha256-f04d417a08ae418affd2642108bd6f7e7cd34d76f43a2bf57b75d493bc7c4a50",
+        "fileHash": "sha256-fb9fb38c189e875c24e857c177b331103ebb51c8302729b30264a3a01bb911fa",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/lawlietbt/lietrepo",
-        "fileSize": 33530,
+        "fileSize": 33291,
         "status": 1,
         "language": "pt-br",
         "authors": [
@@ -232,19 +204,16 @@
         ],
         "version": 1,
         "internalName": "FilmesOnlineX",
-        "jarUrl": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/FilmesOnlineX.jar",
         "description": "Filmes Online X - Assistir Filmes Online Gr\u00e1tis Dublado e Legendado em HD 720P e 1080P",
         "url": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/FilmesOnlineX.cs3",
-        "name": "FilmesOnlineX",
-        "jarHash": "sha256-1f47216db52d63e08af5d3418e6d364893e4d917b2b9fc94a58e9aa201c1078f"
+        "name": "FilmesOnlineX"
     },
     {
         "iconUrl": "https://blogger.googleusercontent.com/img/a/AVvXsEgNF0FEoFIlzsxkDmJIqwACYHLFKf0M9XoinXL7dxraDkF8IO5hTgVrZid-odbrtRWS_4P2bdgXx-050Wy2MrvN3CCAdWGvUOd__wIj1feE-m0daGOr9VUReDdNAjeIViNEiW3F4-sUpb6OVfa6nsSDm3g3uj6dCpaStQH2lSKQ_4YI7IOOt_f6H1LrGwE=s817",
-        "jarFileSize": 61185,
-        "fileHash": "sha256-127811dbd4adf481ac4aa6ce4455b0381d0a46a6ecb6744e02d3f3ec7f79b437",
+        "fileHash": "sha256-5f2cb9dc687848e7a42c9ae01fcb151487cdb7acfe183846a170ef2f498792d9",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/lawlietbt/lietrepo",
-        "fileSize": 21694,
+        "fileSize": 21695,
         "status": 1,
         "language": "pt-br",
         "authors": [
@@ -257,15 +226,12 @@
         ],
         "version": 1,
         "internalName": "FilmesPK",
-        "jarUrl": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/FilmesPK.jar",
         "description": "Filmes PK. Site criado com o objetivo de reunir informa\u00e7\u00f5es sobre s\u00e9ries e filmes de TV gratuitamente sem intuito de fins lucrativos. Rave PK",
         "url": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/FilmesPK.cs3",
-        "name": "FilmesPK",
-        "jarHash": "sha256-f29e0ff60d1f8d0d8ed72802390fdadc6d2154b2294d3f3dc762b781e878b7fb"
+        "name": "FilmesPK"
     },
     {
         "iconUrl": "https://goyabu.io/wp-content/uploads/2025/12/cropped-goyabu-favicon-192x192.png",
-        "jarFileSize": 101231,
         "fileHash": "sha256-e50218c18fdb88ee1b3c0b29426f30ed07ffe0a8c724c2ae2fe9774a80cb77a6",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/lawlietbt/lietrepo",
@@ -280,15 +246,12 @@
         ],
         "version": 1,
         "internalName": "Goyabu",
-        "jarUrl": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/Goyabu.jar",
         "description": "Animes Online em HD gratuitamente no Goyabu",
         "url": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/Goyabu.cs3",
-        "name": "Goyabu",
-        "jarHash": "sha256-20d6a858b91acdb4220f39f8510b6a98823972afb08950e4e68dc92749964d6f"
+        "name": "Goyabu"
     },
     {
         "iconUrl": "https://www.hinatasoul.com/favicon.png",
-        "jarFileSize": 75923,
         "fileHash": "sha256-89de5fb493e205cff254ed2698e6746c0b924cc4440a03e66f44446590daf19d",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/lawlietbt/lietrepo",
@@ -303,19 +266,16 @@
         ],
         "version": 1,
         "internalName": "HinataSoul",
-        "jarUrl": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/HinataSoul.jar",
         "description": "hinatasoul.com",
         "url": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/HinataSoul.cs3",
-        "name": "HinataSoul",
-        "jarHash": "sha256-94bf74b648b8b91cc02a29b9cb547f4e55ba1d28658b29b1c4ce814a759c3a04"
+        "name": "HinataSoul"
     },
     {
         "iconUrl": "https://mendigoflix.lol/assets/favicon.png",
-        "jarFileSize": 267269,
-        "fileHash": "sha256-c3ccda557428ca4fb24a158f31b500bbce1c580206b614d9e6457aa7f8cd1cc7",
+        "fileHash": "sha256-86d2fb079b96772b0edf69e328418807ff8203cdc1cbbc8d0e1715976f1c3e30",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/lawlietbt/lietrepo",
-        "fileSize": 64583,
+        "fileSize": 64327,
         "status": 1,
         "language": "pt-br",
         "authors": [
@@ -328,19 +288,16 @@
         ],
         "version": 1,
         "internalName": "MendigoFlix",
-        "jarUrl": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/MendigoFlix.jar",
         "description": "MendigoFlix - Filmes e S\u00e9ries em Portugu\u00eas",
         "url": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/MendigoFlix.cs3",
-        "name": "MendigoFlix",
-        "jarHash": "sha256-fa75fb1e168f6a4212885e72cbebfce3bd2b3d85ccdfd501558ba010dcdfea20"
+        "name": "MendigoFlix"
     },
     {
         "iconUrl": "https://nexflix.vip/uploads/favicon.png",
-        "jarFileSize": 173377,
-        "fileHash": "sha256-0ec2b0dc64e5c34564e9869670b2d744aa4d9c03de02c7b91ce91276f915fc76",
+        "fileHash": "sha256-71005df9ccadfbbc9417d4e6a7c341f889448d8b1ce23611eade3124da8cc842",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/lawlietbt/lietrepo",
-        "fileSize": 43308,
+        "fileSize": 43041,
         "status": 1,
         "language": "pt-br",
         "authors": [
@@ -354,15 +311,12 @@
         ],
         "version": 1,
         "internalName": "Nexflix",
-        "jarUrl": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/Nexflix.jar",
         "description": "Assistir filmes online, Assistir s\u00e9ries online, Lan\u00e7amentos de filmes, Filmes 1080p, S\u00e9ries, Animes e Doramas gr\u00e1tis.",
         "url": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/Nexflix.cs3",
-        "name": "Nexflix",
-        "jarHash": "sha256-12245ed0ca36f4e18819fcac423f78b58b80d7dfc954c96bf8e53be17d01cdf6"
+        "name": "Nexflix"
     },
     {
         "iconUrl": "https://www.image2url.com/r2/default/images/1776018665375-eafe8c65-10f1-490c-9994-2f519402b6e3.png",
-        "jarFileSize": 127061,
         "fileHash": "sha256-0a0037f471f9f5a42f62bfa6242fff225492b557be89f1d3911c1a293172231a",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/lawlietbt/lietrepo",
@@ -380,15 +334,12 @@
         ],
         "version": 1,
         "internalName": "PobreFlix",
-        "jarUrl": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/PobreFlix.jar",
         "description": "PobreFlix, assistir online, filmes, s\u00e9ries, animes, doramas",
         "url": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/PobreFlix.cs3",
-        "name": "PobreFlix",
-        "jarHash": "sha256-d60e4985cdc069224d4d428413d1392a645269095e83d8889abf96010223610d"
+        "name": "PobreFlix"
     },
     {
         "iconUrl": "https://reidoscanais.io/favicon.png",
-        "jarFileSize": 61258,
         "fileHash": "sha256-4dd4ef088d53ce7647594742399a8b1a459c8aea55b810f245d4db335ab5bfb0",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/lawlietbt/lietrepo",
@@ -403,15 +354,12 @@
         ],
         "version": 1,
         "internalName": "ReiDosCanais",
-        "jarUrl": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/ReiDosCanais.jar",
         "description": "Assista TV ao vivo gratuitamente no Rei dos Canais. Canais de esportes, entretenimento, not\u00edcias, filmes e s\u00e9ries gratuitos. Eventos esportivos ao vivo sem cadastro, direto do seu navegador.",
         "url": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/ReiDosCanais.cs3",
-        "name": "ReiDosCanais",
-        "jarHash": "sha256-b97e5c79eb69dbe7a1d3c830e0556fb61e0fa5c6944e13457f0ae2ad1fd01396"
+        "name": "ReiDosCanais"
     },
     {
         "iconUrl": "https://www.image2url.com/r2/default/images/1776423716151-20e5aa74-a764-4d60-8575-0851d8ab37df.png",
-        "jarFileSize": 34673,
         "fileHash": "sha256-1ab8d2a0cd72a7f096b082dc9ed3a6f3f4848cda43fde58b9309e7eeb882ec82",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/lawlietbt/lietrepo",
@@ -426,19 +374,16 @@
         ],
         "version": 1,
         "internalName": "ReiDosEmbeds",
-        "jarUrl": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/ReiDosEmbeds.jar",
         "description": "Rei dos Embeds - O melhor diret\u00f3rio de canais ao vivo. Mais de 150 canais dispon\u00edveis.",
         "url": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/ReiDosEmbeds.cs3",
-        "name": "ReiDosEmbeds",
-        "jarHash": "sha256-ca176a1838be80b681167aa67e5aed27160708b7edf864a645945e46dcc3cc69"
+        "name": "ReiDosEmbeds"
     },
     {
         "iconUrl": "https://openclipart.org/image/2400px/svg_to_png/193323/-S.png",
-        "jarFileSize": 215562,
-        "fileHash": "sha256-a3c84790c53b98b983f3440c2ca99c1279671c0e85f2066ddadacc7d501ef6c1",
+        "fileHash": "sha256-deedc8ddcc7dd0f86952655c35495856f717685f597bbd6e6f58449fb5172b37",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/lawlietbt/lietrepo",
-        "fileSize": 47386,
+        "fileSize": 50018,
         "status": 1,
         "language": "pt-br",
         "authors": [
@@ -450,19 +395,16 @@
         ],
         "version": 3,
         "internalName": "StreamFlix",
-        "jarUrl": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/StreamFlix.jar",
         "description": "StreamFlix - Filmes e S\u00e9ries Online em Portugu\u00eas | Lan\u00e7amentos e Cl\u00e1ssicos",
         "url": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/StreamFlix.cs3",
-        "name": "StreamFlix",
-        "jarHash": "sha256-73cf0b5334fb309b8e56261c2f10127938a383582b6db8d15257b91a8e65e50e"
+        "name": "StreamFlix"
     },
     {
         "iconUrl": "https://superflix1.cloud/wp-content/uploads/2024/07/FAVIFLIX-1-300x300.png",
-        "jarFileSize": 95974,
-        "fileHash": "sha256-2a4e39ecbcb3a688ed9c49b9dbb5e1495093d78336c6c9497905e0045036a7eb",
+        "fileHash": "sha256-a1060c39ed08218aa09b730a9745fbf299811786fba9a5de5aefd01e5f25335d",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/lawlietbt/lietrepo",
-        "fileSize": 27216,
+        "fileSize": 27217,
         "status": 1,
         "language": "pt-br",
         "authors": [
@@ -474,15 +416,12 @@
         ],
         "version": 1,
         "internalName": "Superflix",
-        "jarUrl": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/Superflix.jar",
         "description": "Superflix - Assistir Filmes e S\u00e9ries Online HD",
         "url": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/Superflix.cs3",
-        "name": "Superflix",
-        "jarHash": "sha256-b210d2c9b10550ba935bd048a8663fe3b83e986b06aad85f6c21a7da9bbd1d9d"
+        "name": "Superflix"
     },
     {
         "iconUrl": "https://topanimes.net/wp-content/uploads/2025/11/1009988.png",
-        "jarFileSize": 319872,
         "fileHash": "sha256-a663e43db7deea16cce991eb43407d905717f8efec2e026366c0d02cfc436007",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/lawlietbt/lietrepo",
@@ -497,10 +436,8 @@
         ],
         "version": 1,
         "internalName": "TopAnimes",
-        "jarUrl": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/TopAnimes.jar",
         "description": "TOPANIMES.NET - Animes Online Gr\u00e1tis em FHD!",
         "url": "https://github.com/testdoliet/tests/raw/refs/heads/main/builds/TopAnimes.cs3",
-        "name": "TopAnimes",
-        "jarHash": "sha256-a9312f33276c381bba6811e84d380e5ef3339c6b82a02d5b645892d021df6575"
+        "name": "TopAnimes"
     }
 ]
