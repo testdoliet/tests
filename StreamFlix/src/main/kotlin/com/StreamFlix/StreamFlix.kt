@@ -48,7 +48,7 @@ class StreamFlix : MainAPI() {
         for (category in movieCategories.take(4)) {
             val movies = getMoviesByCategory(category.id, 0)
             if (movies.isNotEmpty()) {
-                categories.add(HomePageList("🎬 ${category.name}", movies, isHorizontalImages = false))
+                categories.add(HomePageList("Filmes - ${category.name}", movies, isHorizontalImages = false))
             }
         }
         
@@ -56,7 +56,7 @@ class StreamFlix : MainAPI() {
         for (category in seriesCategories.take(4)) {
             val series = getSeriesByCategory(category.id, 0)
             if (series.isNotEmpty()) {
-                categories.add(HomePageList("📺 ${category.name}", series, isHorizontalImages = false))
+                categories.add(HomePageList("Séries - ${category.name}", series, isHorizontalImages = false))
             }
         }
         
@@ -759,17 +759,98 @@ class StreamFlix : MainAPI() {
         
         return episodes
     }
-
-    override suspend fun loadLinks(
-        data: String,
-        isCasting: Boolean,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
+override suspend fun loadLinks(
+    data: String,
+    isCasting: Boolean,
+    subtitleCallback: (SubtitleFile) -> Unit,
+    callback: (ExtractorLink) -> Unit
+): Boolean {
+    println("🔗 [StreamFlix] Carregando links para: ${data.take(80)}...")
+    
+    var quality = 0
+    var resolution = ""
+    
+    try {
+        val response = app.get(data, headers = mapOf(
+            "Range" to "bytes=0-5242880",
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        ))
+        
+        val bytes = response.body.bytes()
+        
+        // Procura por 'tkhd' box para resolução
+        for (i in 0 until bytes.size - 20) {
+            if (bytes[i] == 0x74.toByte() && bytes[i+1] == 0x6B.toByte() && 
+                bytes[i+2] == 0x68.toByte() && bytes[i+3] == 0x64.toByte()) {
+                
+                for (offset in 48..80) {
+                    if (i + offset + 8 <= bytes.size) {
+                        val widthFixed = ((bytes[i+offset].toInt() and 0xFF) shl 24) or
+                                       ((bytes[i+offset+1].toInt() and 0xFF) shl 16) or
+                                       ((bytes[i+offset+2].toInt() and 0xFF) shl 8) or
+                                       (bytes[i+offset+3].toInt() and 0xFF)
+                        val heightFixed = ((bytes[i+offset+4].toInt() and 0xFF) shl 24) or
+                                        ((bytes[i+offset+5].toInt() and 0xFF) shl 16) or
+                                        ((bytes[i+offset+6].toInt() and 0xFF) shl 8) or
+                                        (bytes[i+offset+7].toInt() and 0xFF)
+                        
+                        val width = Math.round(widthFixed / 65536.0)
+                        val height = Math.round(heightFixed / 65536.0)
+                        
+                        if (width in 640..7680 && height in 360..4320) {
+                            resolution = "${width}x${height}"
+                            val pixels = width * height
+                            quality = when {
+                                pixels >= 6000000 -> 2160
+                                pixels >= 1400000 -> 1080
+                                pixels >= 700000 -> 720
+                                else -> 480
+                            }
+                            println("✅ [StreamFlix] Qualidade detectada: ${quality}p (${resolution})")
+                            break
+                        }
+                    }
+                }
+                if (resolution.isNotEmpty()) break
+            }
+        }
+        
+        val qualityString = when (quality) {
+            2160 -> "4K"
+            1080 -> "1080p"
+            720 -> "720p"
+            480 -> "480p"
+            else -> if (resolution.isNotEmpty()) "?" else "?"
+        }
+        
+        val sourceName = if (resolution.isNotEmpty()) {
+            "$name - ${qualityString} (${resolution})"
+        } else {
+            "$name - ${qualityString}"
+        }
+        
         callback(
             newExtractorLink(
-                source = name,
-                name = "StreamFlix",
+                source = sourceName,
+                name = sourceName,
+                url = data,
+                type = ExtractorLinkType.VIDEO
+            ) {
+                this.referer = mainUrl
+                if (quality > 0) this.quality = quality
+            }
+        )
+        println("✅ [StreamFlix] Stream adicionado: $sourceName")
+        return true
+        
+    } catch (e: Exception) {
+        // Se der erro na detecção, adiciona mesmo assim
+        println("⚠️ [StreamFlix] Erro ao detectar qualidade: ${e.message}, adicionando sem qualidade")
+        
+        callback(
+            newExtractorLink(
+                source = "$name - ?",
+                name = "$name - ?",
                 url = data,
                 type = ExtractorLinkType.VIDEO
             ) {
@@ -778,7 +859,8 @@ class StreamFlix : MainAPI() {
         )
         return true
     }
-
+}
+    
     private fun fixImageUrl(url: String?): String? {
         if (url.isNullOrBlank()) return null
         if (url.startsWith("data:")) return null
