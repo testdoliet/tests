@@ -42,172 +42,128 @@ class StreamFlix : MainAPI() {
     private data class Category(val id: String, val name: String, val count: Int = 0)
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        println("📱 [StreamFlix] getMainPage chamado - página: $page")
-        
         val categories = mutableListOf<HomePageList>()
         
-        // Carrega categorias de filmes
         val movieCategories = getMovieCategories()
-        println("🎬 [StreamFlix] Categorias de filmes encontradas: ${movieCategories.size}")
         for (category in movieCategories.take(4)) {
-            println("  -> Carregando filmes da categoria: ${category.name} (${category.id}) com ${category.count} itens")
             val movies = getMoviesByCategory(category.id, 0)
-            println("  -> Filmes carregados: ${movies.size}")
             if (movies.isNotEmpty()) {
                 categories.add(HomePageList("🎬 ${category.name}", movies, isHorizontalImages = false))
             }
         }
         
-        // Carrega categorias de séries
         val seriesCategories = getSeriesCategories()
-        println("📺 [StreamFlix] Categorias de séries encontradas: ${seriesCategories.size}")
         for (category in seriesCategories.take(4)) {
-            println("  -> Carregando séries da categoria: ${category.name} (${category.id}) com ${category.count} itens")
             val series = getSeriesByCategory(category.id, 0)
-            println("  -> Séries carregadas: ${series.size}")
             if (series.isNotEmpty()) {
                 categories.add(HomePageList("📺 ${category.name}", series, isHorizontalImages = false))
             }
         }
         
-        println("✅ [StreamFlix] Total de categorias na home: ${categories.size}")
         return newHomePageResponse(categories, hasNext = false)
     }
 
     private suspend fun getMovieCategories(): List<Category> {
-    println("🌐 [StreamFlix] Buscando categorias de filmes...")
-    return withContext(Dispatchers.IO) {
-        try {
-            val response = app.get("$mainUrl/api_proxy.php?action=get_vod_categories")
-            val jsonArray = JSONArray(response.body.string())
-            
-            val allMovies = getAllMovies()
-            val countMap = mutableMapOf<String, Int>()
-            
-            // Conta filmes por categoria
-            for (i in 0 until allMovies.length()) {
-                val movie = allMovies.getJSONObject(i)
-                val categories = getCategoryIds(movie)
-                for (catId in categories) {
-                    countMap[catId] = countMap.getOrDefault(catId, 0) + 1
+        return withContext(Dispatchers.IO) {
+            try {
+                val response = app.get("$mainUrl/api_proxy.php?action=get_vod_categories")
+                val jsonArray = JSONArray(response.body.string())
+                val allMovies = getAllMovies()
+                val countMap = mutableMapOf<String, Int>()
+                
+                for (i in 0 until allMovies.length()) {
+                    val movie = allMovies.getJSONObject(i)
+                    val categories = getCategoryIds(movie)
+                    for (catId in categories) {
+                        countMap[catId] = countMap.getOrDefault(catId, 0) + 1
+                    }
                 }
-            }
-            
-            val categories = mutableListOf<Category>()
-            for (i in 0 until jsonArray.length()) {
-                val obj = jsonArray.getJSONObject(i)
-                val id = obj.getString("category_id")
-                var name = obj.getString("category_name")
                 
-                // Limpa o nome (remove símbolos e normaliza)
-                name = cleanCategoryName(name)
-                
-                val count = countMap.getOrDefault(id, 0)
-                
-                if (count >= 25) {
-                    categories.add(Category(id, name, count))
+                val categories = mutableListOf<Category>()
+                for (i in 0 until jsonArray.length()) {
+                    val obj = jsonArray.getJSONObject(i)
+                    val id = obj.getString("category_id")
+                    val name = cleanCategoryName(obj.getString("category_name"))
+                    val count = countMap.getOrDefault(id, 0)
+                    
+                    if (count >= 25) {
+                        categories.add(Category(id, name, count))
+                    }
                 }
+                
+                return@withContext categories
+                    .groupBy { it.name.lowercase() }
+                    .map { it.value.first() }
+                    .sortedByDescending { it.count }
+                    .shuffled()
+                    .take(4)
+            } catch (e: Exception) {
+                emptyList()
             }
-            
-            // Remove duplicatas pelo nome (case insensitive)
-            val uniqueCategories = categories
-                .groupBy { it.name.lowercase() }
-                .map { it.value.first() }
-                .sortedByDescending { it.count }
-            
-            // Embaralha e pega 4 aleatórias
-            val shuffled = uniqueCategories.shuffled()
-            val selected = shuffled.take(4)
-            
-            println("✅ [StreamFlix] Categorias de filmes válidas (únicas): ${uniqueCategories.size}, selecionadas: ${selected.size}")
-            selected
-        } catch (e: Exception) {
-            println("❌ [StreamFlix] Erro ao buscar categorias de filmes: ${e.message}")
-            emptyList()
         }
     }
-}
 
-private suspend fun getSeriesCategories(): List<Category> {
-    println("🌐 [StreamFlix] Buscando categorias de séries...")
-    return withContext(Dispatchers.IO) {
-        try {
-            val response = app.get("$mainUrl/api_proxy.php?action=get_series_categories")
-            val jsonArray = JSONArray(response.body.string())
-            
-            val allSeries = getAllSeries()
-            val countMap = mutableMapOf<String, Int>()
-            
-            // Conta séries por categoria
-            for (i in 0 until allSeries.length()) {
-                val series = allSeries.getJSONObject(i)
-                val categories = getCategoryIds(series)
-                for (catId in categories) {
-                    countMap[catId] = countMap.getOrDefault(catId, 0) + 1
+    private suspend fun getSeriesCategories(): List<Category> {
+        return withContext(Dispatchers.IO) {
+            try {
+                val response = app.get("$mainUrl/api_proxy.php?action=get_series_categories")
+                val jsonArray = JSONArray(response.body.string())
+                val allSeries = getAllSeries()
+                val countMap = mutableMapOf<String, Int>()
+                
+                for (i in 0 until allSeries.length()) {
+                    val series = allSeries.getJSONObject(i)
+                    val categories = getCategoryIds(series)
+                    for (catId in categories) {
+                        countMap[catId] = countMap.getOrDefault(catId, 0) + 1
+                    }
                 }
-            }
-            
-            val categories = mutableListOf<Category>()
-            for (i in 0 until jsonArray.length()) {
-                val obj = jsonArray.getJSONObject(i)
-                val id = obj.getString("category_id")
-                var name = obj.getString("category_name")
                 
-                // Limpa o nome (remove símbolos e normaliza)
-                name = cleanCategoryName(name)
-                
-                val count = countMap.getOrDefault(id, 0)
-                
-                if (count >= 25) {
-                    categories.add(Category(id, name, count))
+                val categories = mutableListOf<Category>()
+                for (i in 0 until jsonArray.length()) {
+                    val obj = jsonArray.getJSONObject(i)
+                    val id = obj.getString("category_id")
+                    val name = cleanCategoryName(obj.getString("category_name"))
+                    val count = countMap.getOrDefault(id, 0)
+                    
+                    if (count >= 25) {
+                        categories.add(Category(id, name, count))
+                    }
                 }
+                
+                return@withContext categories
+                    .groupBy { it.name.lowercase() }
+                    .map { it.value.first() }
+                    .sortedByDescending { it.count }
+                    .shuffled()
+                    .take(4)
+            } catch (e: Exception) {
+                emptyList()
             }
-            
-            // Remove duplicatas pelo nome (case insensitive)
-            val uniqueCategories = categories
-                .groupBy { it.name.lowercase() }
-                .map { it.value.first() }
-                .sortedByDescending { it.count }
-            
-            // Embaralha e pega 4 aleatórias
-            val shuffled = uniqueCategories.shuffled()
-            val selected = shuffled.take(4)
-            
-            println("✅ [StreamFlix] Categorias de séries válidas (únicas): ${uniqueCategories.size}, selecionadas: ${selected.size}")
-            selected
-        } catch (e: Exception) {
-            println("❌ [StreamFlix] Erro ao buscar categorias de séries: ${e.message}")
-            emptyList()
         }
     }
-}
 
-private fun cleanCategoryName(name: String): String {
-    var cleaned = name
-    
-    // Remove Unicode escapes manualmente
-    val unicodePattern = Regex("\\\\u([0-9a-fA-F]{4})")
-    cleaned = unicodePattern.replace(cleaned) { matchResult ->
-        val code = matchResult.groupValues[1].toInt(16)
-        code.toChar().toString()
+    private fun cleanCategoryName(name: String): String {
+        var cleaned = name
+        
+        val unicodePattern = Regex("\\\\u([0-9a-fA-F]{4})")
+        cleaned = unicodePattern.replace(cleaned) { matchResult ->
+            val code = matchResult.groupValues[1].toInt(16)
+            code.toChar().toString()
+        }
+        
+        cleaned = cleaned.replace(Regex("[☑✅⚡✏️🔞🎬📺🇰🇷🇯🇵⭐]"), "")
+        cleaned = cleaned.replace(Regex("[\\[\\]()]"), "")
+        cleaned = cleaned.trim()
+        cleaned = cleaned.replace(Regex("\\s+"), " ")
+        
+        cleaned = cleaned.split(" ").joinToString(" ") { word ->
+            if (word.isNotEmpty()) word.replaceFirstChar { it.uppercase() } else word
+        }
+        
+        return cleaned
     }
-    
-    // Remove símbolos comuns (check, bullet, etc.)
-    cleaned = cleaned.replace(Regex("[☑✅⚡✏️🔞🎬📺🇰🇷🇯🇵⭐]"), "")
-    cleaned = cleaned.replace(Regex("[\\[\\]()]"), "")
-    cleaned = cleaned.trim()
-    
-    // Normaliza espaços
-    cleaned = cleaned.replace(Regex("\\s+"), " ")
-    
-    // Capitaliza primeira letra de cada palavra
-    cleaned = cleaned.split(" ").joinToString(" ") { word ->
-        if (word.isNotEmpty()) word.replaceFirstChar { it.uppercase() } else word
-    }
-    
-    return cleaned
-}
-    
+
     private suspend fun getMoviesByCategory(categoryId: String, page: Int): List<SearchResponse> {
         val allMovies = getAllMovies()
         
@@ -232,7 +188,7 @@ private fun cleanCategoryName(name: String): String {
             
             if (isAdultContent(rawName)) continue
             
-            val (cleanName, dubStatus, qualityTag) = processTitle(rawName, categoryId == "245")
+            val (cleanName, dubStatus, qualityTag) = processTitle(rawName, false)
             val finalName = cleanTitle(cleanName)
             
             val id = movie.getInt("stream_id")
@@ -357,33 +313,21 @@ private fun cleanCategoryName(name: String): String {
     }
 
     private suspend fun getAllMovies(): JSONArray {
-        if (cachedMovies != null) {
-            println("💾 [StreamFlix] Usando cache de filmes: ${cachedMovies?.length()} filmes")
-            return cachedMovies!!
-        }
-        
-        println("🌐 [StreamFlix] Baixando lista de filmes...")
+        if (cachedMovies != null) return cachedMovies!!
         return withContext(Dispatchers.IO) {
             val response = app.get("$mainUrl/api_proxy.php?action=get_vod_streams")
             val json = JSONArray(response.body.string())
             cachedMovies = json
-            println("✅ [StreamFlix] Baixados ${json.length()} filmes")
             json
         }
     }
 
     private suspend fun getAllSeries(): JSONArray {
-        if (cachedSeries != null) {
-            println("💾 [StreamFlix] Usando cache de séries: ${cachedSeries?.length()} séries")
-            return cachedSeries!!
-        }
-        
-        println("🌐 [StreamFlix] Baixando lista de séries...")
+        if (cachedSeries != null) return cachedSeries!!
         return withContext(Dispatchers.IO) {
             val response = app.get("$mainUrl/api_proxy.php?action=get_series")
             val json = JSONArray(response.body.string())
             cachedSeries = json
-            println("✅ [StreamFlix] Baixadas ${json.length()} séries")
             json
         }
     }
@@ -535,7 +479,6 @@ private fun cleanCategoryName(name: String): String {
                     }
                 }
             } catch (e: Exception) {
-                println("❌ [StreamFlix] Erro ao carregar filme $id: ${e.message}")
                 null
             }
         }
@@ -639,7 +582,6 @@ private fun cleanCategoryName(name: String): String {
                     }
                 }
             } catch (e: Exception) {
-                println("❌ [StreamFlix] Erro ao carregar série $id: ${e.message}")
                 null
             }
         }
@@ -749,7 +691,6 @@ private fun cleanCategoryName(name: String): String {
             val seasonKeys = episodesJson.keys()
             while (seasonKeys.hasNext()) {
                 val seasonNum = seasonKeys.next().toIntOrNull() ?: continue
-                
                 val seasonArray = episodesJson.getJSONArray(seasonNum.toString())
                 
                 for (i in 0 until seasonArray.length()) {
@@ -849,7 +790,6 @@ private fun cleanCategoryName(name: String): String {
         return fixed
     }
 
-    // Data classes
     private data class TMDBMovieInfo(
         val title: String?,
         val year: Int?,
