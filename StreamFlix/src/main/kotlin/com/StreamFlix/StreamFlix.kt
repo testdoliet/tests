@@ -39,40 +39,52 @@ class StreamFlix : MainAPI() {
     private val TMDB_API_KEY = BuildConfig.TMDB_API_KEY
     private val TMDB_ACCESS_TOKEN = BuildConfig.TMDB_ACCESS_TOKEN
 
-    // Categorias que serão carregadas dinamicamente
     private data class Category(val id: String, val name: String, val count: Int = 0)
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
+        println("📱 [StreamFlix] getMainPage chamado - página: $page")
+        
         val categories = mutableListOf<HomePageList>()
         
         // Carrega categorias de filmes
         val movieCategories = getMovieCategories()
+        println("🎬 [StreamFlix] Categorias de filmes encontradas: ${movieCategories.size}")
         for (category in movieCategories.take(4)) {
+            println("  -> Carregando filmes da categoria: ${category.name} (${category.id}) com ${category.count} itens")
             val movies = getMoviesByCategory(category.id, 0)
+            println("  -> Filmes carregados: ${movies.size}")
             if (movies.isNotEmpty()) {
-                categories.add(HomePageList("🎬 ${category.name}", movies, isHorizontalImages = true))
+                categories.add(HomePageList("🎬 ${category.name}", movies, isHorizontalImages = false))
             }
         }
         
         // Carrega categorias de séries
         val seriesCategories = getSeriesCategories()
+        println("📺 [StreamFlix] Categorias de séries encontradas: ${seriesCategories.size}")
         for (category in seriesCategories.take(4)) {
+            println("  -> Carregando séries da categoria: ${category.name} (${category.id}) com ${category.count} itens")
             val series = getSeriesByCategory(category.id, 0)
+            println("  -> Séries carregadas: ${series.size}")
             if (series.isNotEmpty()) {
-                categories.add(HomePageList("📺 ${category.name}", series, isHorizontalImages = true))
+                categories.add(HomePageList("📺 ${category.name}", series, isHorizontalImages = false))
             }
         }
         
+        println("✅ [StreamFlix] Total de categorias na home: ${categories.size}")
         return newHomePageResponse(categories, hasNext = false)
     }
 
     private suspend fun getMovieCategories(): List<Category> {
+        println("🌐 [StreamFlix] Buscando categorias de filmes...")
         return withContext(Dispatchers.IO) {
             try {
                 val response = app.get("$mainUrl/api_proxy.php?action=get_vod_categories")
                 val jsonArray = JSONArray(response.body.string())
+                println("📊 [StreamFlix] Resposta de categorias: ${jsonArray.length()} categorias")
                 
                 val allMovies = getAllMovies()
+                println("📊 [StreamFlix] Total de filmes para contar: ${allMovies.length()}")
+                
                 val countMap = mutableMapOf<String, Int>()
                 
                 // Conta filmes por categoria
@@ -84,43 +96,46 @@ class StreamFlix : MainAPI() {
                     }
                 }
                 
+                println("📊 [StreamFlix] Mapa de contagem tem ${countMap.size} categorias")
+                
                 val categories = mutableListOf<Category>()
                 for (i in 0 until jsonArray.length()) {
                     val obj = jsonArray.getJSONObject(i)
                     val id = obj.getString("category_id")
                     var name = obj.getString("category_name")
                     
-                    // Limpa o nome (remove Unicode e emojis)
                     name = cleanCategoryName(name)
-                    
                     val count = countMap.getOrDefault(id, 0)
+                    
+                    println("  Categoria: $name (ID: $id) - $count filmes")
+                    
                     if (count >= 25) {
                         categories.add(Category(id, name, count))
                     }
                 }
                 
-                categories.sortedByDescending { it.count }
+                val sorted = categories.sortedByDescending { it.count }
+                println("✅ [StreamFlix] Categorias de filmes válidas (≥25): ${sorted.size}")
+                sorted
             } catch (e: Exception) {
-                // Fallback: categorias padrão
-                listOf(
-                    Category("243", "LANÇAMENTOS"),
-                    Category("218", "AÇÃO"),
-                    Category("217", "COMÉDIA"),
-                    Category("253", "DRAMA"),
-                    Category("255", "TERROR"),
-                    Category("245", "4K")
-                )
+                println("❌ [StreamFlix] Erro ao buscar categorias de filmes: ${e.message}")
+                e.printStackTrace()
+                emptyList()
             }
         }
     }
 
     private suspend fun getSeriesCategories(): List<Category> {
+        println("🌐 [StreamFlix] Buscando categorias de séries...")
         return withContext(Dispatchers.IO) {
             try {
                 val response = app.get("$mainUrl/api_proxy.php?action=get_series_categories")
                 val jsonArray = JSONArray(response.body.string())
+                println("📊 [StreamFlix] Resposta de categorias de séries: ${jsonArray.length()} categorias")
                 
                 val allSeries = getAllSeries()
+                println("📊 [StreamFlix] Total de séries para contar: ${allSeries.length()}")
+                
                 val countMap = mutableMapOf<String, Int>()
                 
                 // Conta séries por categoria
@@ -132,32 +147,31 @@ class StreamFlix : MainAPI() {
                     }
                 }
                 
+                println("📊 [StreamFlix] Mapa de contagem de séries tem ${countMap.size} categorias")
+                
                 val categories = mutableListOf<Category>()
                 for (i in 0 until jsonArray.length()) {
                     val obj = jsonArray.getJSONObject(i)
                     val id = obj.getString("category_id")
                     var name = obj.getString("category_name")
                     
-                    // Limpa o nome
                     name = cleanCategoryName(name)
-                    
                     val count = countMap.getOrDefault(id, 0)
+                    
+                    println("  Categoria: $name (ID: $id) - $count séries")
+                    
                     if (count >= 25) {
                         categories.add(Category(id, name, count))
                     }
                 }
                 
-                categories.sortedByDescending { it.count }
+                val sorted = categories.sortedByDescending { it.count }
+                println("✅ [StreamFlix] Categorias de séries válidas (≥25): ${sorted.size}")
+                sorted
             } catch (e: Exception) {
-                // Fallback: categorias padrão
-                listOf(
-                    Category("209", "NETFLIX"),
-                    Category("208", "MAX"),
-                    Category("195", "AMAZON PRIME"),
-                    Category("202", "DISNEY+"),
-                    Category("204", "DORAMAS"),
-                    Category("199", "ANIMES")
-                )
+                println("❌ [StreamFlix] Erro ao buscar categorias de séries: ${e.message}")
+                e.printStackTrace()
+                emptyList()
             }
         }
     }
@@ -321,23 +335,33 @@ class StreamFlix : MainAPI() {
     }
 
     private suspend fun getAllMovies(): JSONArray {
-        if (cachedMovies != null) return cachedMovies!!
+        if (cachedMovies != null) {
+            println("💾 [StreamFlix] Usando cache de filmes: ${cachedMovies?.length()} filmes")
+            return cachedMovies!!
+        }
         
+        println("🌐 [StreamFlix] Baixando lista de filmes...")
         return withContext(Dispatchers.IO) {
             val response = app.get("$mainUrl/api_proxy.php?action=get_vod_streams")
             val json = JSONArray(response.body.string())
             cachedMovies = json
+            println("✅ [StreamFlix] Baixados ${json.length()} filmes")
             json
         }
     }
 
     private suspend fun getAllSeries(): JSONArray {
-        if (cachedSeries != null) return cachedSeries!!
+        if (cachedSeries != null) {
+            println("💾 [StreamFlix] Usando cache de séries: ${cachedSeries?.length()} séries")
+            return cachedSeries!!
+        }
         
+        println("🌐 [StreamFlix] Baixando lista de séries...")
         return withContext(Dispatchers.IO) {
             val response = app.get("$mainUrl/api_proxy.php?action=get_series")
             val json = JSONArray(response.body.string())
             cachedSeries = json
+            println("✅ [StreamFlix] Baixadas ${json.length()} séries")
             json
         }
     }
@@ -489,6 +513,7 @@ class StreamFlix : MainAPI() {
                     }
                 }
             } catch (e: Exception) {
+                println("❌ [StreamFlix] Erro ao carregar filme $id: ${e.message}")
                 null
             }
         }
@@ -592,6 +617,7 @@ class StreamFlix : MainAPI() {
                     }
                 }
             } catch (e: Exception) {
+                println("❌ [StreamFlix] Erro ao carregar série $id: ${e.message}")
                 null
             }
         }
