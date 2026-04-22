@@ -67,7 +67,7 @@ cloudstream {
     status = 1
     tvTypes = listOf("Movies", "Series")
     iconUrl = "https://openclipart.org/image/2400px/svg_to_png/193323/-S.png"
-    isCrossPlatform = false
+    isCrossPlatform = true
     requiresResources = true
 }
 
