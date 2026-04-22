@@ -380,10 +380,10 @@
     },
     {
         "iconUrl": "https://openclipart.org/image/2400px/svg_to_png/193323/-S.png",
-        "fileHash": "sha256-024907e5c0b1d5a6f9ad665825675e767e98a9b61e1aa7eec51006e4e95ef74c",
+        "fileHash": "sha256-5b043c250fdaea7780a0e2a5f07b8e436c846b8356c7216961188fcdf38453e8",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/lawlietbt/lietrepo",
-        "fileSize": 50262,
+        "fileSize": 51368,
         "status": 1,
         "language": "pt-br",
         "authors": [
