@@ -60,13 +60,14 @@ fun getLocalProperty(key: String): String? {
 }
 
 cloudstream {
-    version = 1
+    version = 3
     description = "StreamFlix - Filmes e Séries Online em Português | Lançamentos e Clássicos"
     language = "pt-br"
     authors = listOf("lawlietbr")
     status = 1
     tvTypes = listOf("Movies", "Series")
     iconUrl = "https://openclipart.org/image/2400px/svg_to_png/193323/-S.png"
+    isCrossPlatform = false
     requiresResources = true
 }
 
