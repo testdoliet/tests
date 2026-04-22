@@ -48,7 +48,7 @@ class StreamFlix : MainAPI() {
         for (category in movieCategories.take(4)) {
             val movies = getMoviesByCategory(category.id, 0)
             if (movies.isNotEmpty()) {
-                categories.add(HomePageList("🎬 ${category.name}", movies, isHorizontalImages = false))
+                categories.add(HomePageList("Filmes - ${category.name}", movies, isHorizontalImages = false))
             }
         }
         
@@ -56,7 +56,7 @@ class StreamFlix : MainAPI() {
         for (category in seriesCategories.take(4)) {
             val series = getSeriesByCategory(category.id, 0)
             if (series.isNotEmpty()) {
-                categories.add(HomePageList("📺 ${category.name}", series, isHorizontalImages = false))
+                categories.add(HomePageList("Séries - ${category.name}", series, isHorizontalImages = false))
             }
         }
         
@@ -766,7 +766,6 @@ class StreamFlix : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        println("🔗 [StreamFlix] Carregando links para: ${data.take(80)}...")
         
         var quality = 0
         var resolution = ""
@@ -806,7 +805,6 @@ class StreamFlix : MainAPI() {
                                     pixels >= 700000 -> 720
                                     else -> 480
                                 }
-                                println("✅ [StreamFlix] Qualidade detectada: ${quality}p (${resolution})")
                                 break
                             }
                         }
@@ -840,12 +838,9 @@ class StreamFlix : MainAPI() {
                     if (quality > 0) this.quality = quality
                 }
             )
-            println("✅ [StreamFlix] Stream adicionado: $sourceName")
             return true
             
         } catch (e: Exception) {
-            println("⚠️ [StreamFlix] Erro ao detectar qualidade: ${e.message}, adicionando sem qualidade")
-            
             callback(
                 newExtractorLink(
                     source = "$name - ?",
@@ -871,7 +866,6 @@ class StreamFlix : MainAPI() {
         return fixed
     }
 
-    // Data classes
     private data class TMDBMovieInfo(
         val title: String?,
         val year: Int?,
