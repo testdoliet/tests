@@ -33,52 +33,34 @@ class StreamFlix : MainAPI() {
 
     private var cachedMovies: JSONArray? = null
     private var cachedSeries: JSONArray? = null
+    private var dynamicMovieCategories: MutableMap<String, String> = mutableMapOf()
+    private var dynamicSeriesCategories: MutableMap<String, String> = mutableMapOf()
     private val PAGE_SIZE = 30
 
     private val tmdbImageUrl = "https://image.tmdb.org/t/p"
     private val TMDB_API_KEY = BuildConfig.TMDB_API_KEY
     private val TMDB_ACCESS_TOKEN = BuildConfig.TMDB_ACCESS_TOKEN
 
-    // Categorias estáticas (baseadas nas respostas da API)
-    private val MOVIE_CATEGORIES = mapOf(
-        "243" to "🎬 LANÇAMENTOS",
-        "218" to "🎬 AÇÃO",
-        "217" to "🎬 COMÉDIA",
-        "253" to "🎬 DRAMA",
-        "255" to "🎬 TERROR",
-        "245" to "🎬 4K"
-    )
-
-    private val SERIES_CATEGORIES = mapOf(
-        "209" to "📺 NETFLIX",
-        "208" to "📺 MAX",
-        "195" to "📺 AMAZON PRIME",
-        "202" to "📺 DISNEY+",
-        "204" to "🇰🇷 DORAMAS",
-        "199" to "🇯🇵 ANIMES"
-    )
-
-    override val mainPage = mainPageOf(
-        *MOVIE_CATEGORIES.map { (id, name) ->
-            id to name
-        }.toTypedArray(),
-        *SERIES_CATEGORIES.map { (id, name) ->
-            "series_$id" to name
-        }.toTypedArray()
-    )
+    // Inicializa com categorias vazias, serão preenchidas na primeira chamada
+    override val mainPage = mainPageOf()
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
+        // Atualiza categorias se estiver vazio
+        if (dynamicMovieCategories.isEmpty() && dynamicSeriesCategories.isEmpty()) {
+            loadDynamicCategories()
+        }
+        
         val categoryId = when {
-            MOVIE_CATEGORIES.values.contains(request.name) -> {
-                MOVIE_CATEGORIES.entries.find { it.value == request.name }?.key
+            dynamicMovieCategories.values.contains(request.name) -> {
+                dynamicMovieCategories.entries.find { it.value == request.name }?.key
             }
-            SERIES_CATEGORIES.values.contains(request.name) -> {
-                SERIES_CATEGORIES.entries.find { it.value == request.name }?.key
+            dynamicSeriesCategories.values.contains(request.name) -> {
+                dynamicSeriesCategories.entries.find { it.value == request.name }?.key
             }
             else -> null
         }
         
-        val isMovies = MOVIE_CATEGORIES.values.contains(request.name)
+        val isMovies = dynamicMovieCategories.values.contains(request.name)
         
         val items = if (isMovies && categoryId != null) {
             getMoviesByCategory(categoryId, page)
@@ -89,6 +71,190 @@ class StreamFlix : MainAPI() {
         }
         
         return newHomePageResponse(request.name, items, hasNext = items.size == PAGE_SIZE)
+    }
+
+    private suspend fun loadDynamicCategories() {
+        println("📊 [StreamFlix] Carregando categorias dinâmicas...")
+        
+        // Busca categorias de filmes
+        try {
+            val movieCatsResponse = app.get("$mainUrl/api_proxy.php?action=get_vod_categories")
+            val movieCatsArray = JSONArray(movieCatsResponse.body.string())
+            
+            val allMovies = getAllMovies()
+            val movieCountMap = mutableMapOf<String, Int>()
+            
+            // Conta filmes por categoria
+            for (i in 0 until allMovies.length()) {
+                val movie = allMovies.getJSONObject(i)
+                val categories = getCategoryIds(movie)
+                for (catId in categories) {
+                    movieCountMap[catId] = movieCountMap.getOrDefault(catId, 0) + 1
+                }
+            }
+            
+            // Filtra categorias com pelo menos 25 filmes e pega até 4
+            val validMovieCats = mutableListOf<Pair<String, String>>()
+            for (i in 0 until movieCatsArray.length()) {
+                val obj = movieCatsArray.getJSONObject(i)
+                val id = obj.getString("category_id")
+                var name = obj.getString("category_name")
+                
+                // Limpa o nome (remove Unicode e emojis)
+                name = name
+                    .replace("\\u[0-9a-fA-F]{4}".toRegex()) { 
+                        val code = it.value.substring(2).toInt(16)
+                        code.toChar().toString()
+                    }
+                    .replace(Regex("[⭐✅⚡✏️🔞🎬📺🇰🇷🇯🇵]"), "")
+                    .trim()
+                
+                val count = movieCountMap.getOrDefault(id, 0)
+                if (count >= 25) {
+                    validMovieCats.add(id to "🎬 $name")
+                }
+            }
+            
+            // Pega até 4 categorias de filmes
+            validMovieCats.take(4).forEach {
+                dynamicMovieCategories[it.first] = it.second
+                println("✅ [StreamFlix] Categoria filme: ${it.second} (${it.first})")
+            }
+            
+        } catch (e: Exception) {
+            println("❌ [StreamFlix] Erro ao carregar categorias de filmes: ${e.message}")
+            // Fallback: categorias padrão
+            dynamicMovieCategories["243"] = "🎬 LANÇAMENTOS"
+            dynamicMovieCategories["218"] = "🎬 AÇÃO"
+            dynamicMovieCategories["217"] = "🎬 COMÉDIA"
+            dynamicMovieCategories["253"] = "🎬 DRAMA"
+        }
+        
+        // Busca categorias de séries
+        try {
+            val seriesCatsResponse = app.get("$mainUrl/api_proxy.php?action=get_series_categories")
+            val seriesCatsArray = JSONArray(seriesCatsResponse.body.string())
+            
+            val allSeries = getAllSeries()
+            val seriesCountMap = mutableMapOf<String, Int>()
+            
+            // Conta séries por categoria
+            for (i in 0 until allSeries.length()) {
+                val series = allSeries.getJSONObject(i)
+                val categories = getCategoryIds(series)
+                for (catId in categories) {
+                    seriesCountMap[catId] = seriesCountMap.getOrDefault(catId, 0) + 1
+                }
+            }
+            
+            // Filtra categorias com pelo menos 25 séries e pega até 4
+            val validSeriesCats = mutableListOf<Pair<String, String>>()
+            for (i in 0 until seriesCatsArray.length()) {
+                val obj = seriesCatsArray.getJSONObject(i)
+                val id = obj.getString("category_id")
+                var name = obj.getString("category_name")
+                
+                // Limpa o nome (remove Unicode e emojis)
+                name = name
+                    .replace("\\u[0-9a-fA-F]{4}".toRegex()) { 
+                        val code = it.value.substring(2).toInt(16)
+                        code.toChar().toString()
+                    }
+                    .replace(Regex("[⭐✅⚡✏️🔞🎬📺🇰🇷🇯🇵]"), "")
+                    .trim()
+                
+                val count = seriesCountMap.getOrDefault(id, 0)
+                if (count >= 25) {
+                    validSeriesCats.add(id to "📺 $name")
+                }
+            }
+            
+            // Pega até 4 categorias de séries
+            validSeriesCats.take(4).forEach {
+                dynamicSeriesCategories[it.first] = it.second
+                println("✅ [StreamFlix] Categoria série: ${it.second} (${it.first})")
+            }
+            
+        } catch (e: Exception) {
+            println("❌ [StreamFlix] Erro ao carregar categorias de séries: ${e.message}")
+            // Fallback: categorias padrão
+            dynamicSeriesCategories["209"] = "📺 NETFLIX"
+            dynamicSeriesCategories["208"] = "📺 MAX"
+            dynamicSeriesCategories["195"] = "📺 AMAZON PRIME"
+            dynamicSeriesCategories["202"] = "📺 DISNEY+"
+        }
+        
+        // Atualiza o mainPage dinamicamente
+        val newMainPage = mutableListOf<Pair<String, String>>()
+        newMainPage.addAll(dynamicMovieCategories.map { it.key to it.value })
+        newMainPage.addAll(dynamicSeriesCategories.map { it.key to it.value })
+        
+        // Recria o mainPage
+        (this as MainAPI).mainPage = mainPageOf(*newMainPage.map { 
+            it.first to it.second 
+        }.toTypedArray())
+    }
+
+    override suspend fun search(query: String): List<SearchResponse> {
+        if (query.length < 2) return emptyList()
+        
+        // Atualiza categorias se estiver vazio
+        if (dynamicMovieCategories.isEmpty() && dynamicSeriesCategories.isEmpty()) {
+            loadDynamicCategories()
+        }
+        
+        val results = mutableListOf<SearchResponse>()
+        val queryLower = query.lowercase()
+        
+        val allMovies = getAllMovies()
+        for (i in 0 until allMovies.length()) {
+            val movie = allMovies.getJSONObject(i)
+            val rawName = movie.getString("name")
+            if (rawName.lowercase().contains(queryLower)) {
+                if (isAdultContent(rawName)) continue
+                
+                val (cleanName, dubStatus, qualityTag) = processTitle(rawName, false)
+                val finalName = cleanTitle(cleanName)
+                val id = movie.getInt("stream_id")
+                val poster = fixImageUrl(movie.optString("stream_icon"))
+                val ratingValue = movie.optDouble("rating_5based", 0.0).let { it.toFloat() * 2 }
+                
+                results.add(
+                    newAnimeSearchResponse(finalName, "movie?id=$id", TvType.Movie) {
+                        this.posterUrl = poster
+                        if (qualityTag != null) this.quality = qualityTag
+                        if (dubStatus != null) this.dubStatus = dubStatus
+                        this.score = Score.from10(ratingValue)
+                    }
+                )
+            }
+        }
+        
+        val allSeries = getAllSeries()
+        for (i in 0 until allSeries.length()) {
+            val series = allSeries.getJSONObject(i)
+            val rawName = series.getString("name")
+            if (rawName.lowercase().contains(queryLower)) {
+                if (isAdultContent(rawName)) continue
+                
+                val (cleanName, dubStatus, qualityTag) = processTitle(rawName, false)
+                val finalName = cleanTitle(cleanName)
+                val id = series.getInt("series_id")
+                val poster = fixImageUrl(series.optString("cover"))
+                val ratingValue = series.optDouble("rating_5based", 0.0).let { it.toFloat() * 2 }
+                
+                results.add(
+                    newAnimeSearchResponse(finalName, "series?id=$id", TvType.TvSeries) {
+                        this.posterUrl = poster
+                        if (qualityTag != null) this.quality = qualityTag
+                        if (dubStatus != null) this.dubStatus = dubStatus
+                        this.score = Score.from10(ratingValue)
+                    }
+                )
+            }
+        }
+        
+        return results
     }
 
     private suspend fun getMoviesByCategory(categoryId: String, page: Int): List<SearchResponse> {
@@ -259,63 +425,6 @@ class StreamFlix : MainAPI() {
             cachedSeries = json
             json
         }
-    }
-
-    override suspend fun search(query: String): List<SearchResponse> {
-        if (query.length < 2) return emptyList()
-        
-        val results = mutableListOf<SearchResponse>()
-        val queryLower = query.lowercase()
-        
-        val allMovies = getAllMovies()
-        for (i in 0 until allMovies.length()) {
-            val movie = allMovies.getJSONObject(i)
-            val rawName = movie.getString("name")
-            if (rawName.lowercase().contains(queryLower)) {
-                if (isAdultContent(rawName)) continue
-                
-                val (cleanName, dubStatus, qualityTag) = processTitle(rawName, false)
-                val finalName = cleanTitle(cleanName)
-                val id = movie.getInt("stream_id")
-                val poster = fixImageUrl(movie.optString("stream_icon"))
-                val ratingValue = movie.optDouble("rating_5based", 0.0).let { it.toFloat() * 2 }
-                
-                results.add(
-                    newAnimeSearchResponse(finalName, "movie?id=$id", TvType.Movie) {
-                        this.posterUrl = poster
-                        if (qualityTag != null) this.quality = qualityTag
-                        if (dubStatus != null) this.dubStatus = dubStatus
-                        this.score = Score.from10(ratingValue)
-                    }
-                )
-            }
-        }
-        
-        val allSeries = getAllSeries()
-        for (i in 0 until allSeries.length()) {
-            val series = allSeries.getJSONObject(i)
-            val rawName = series.getString("name")
-            if (rawName.lowercase().contains(queryLower)) {
-                if (isAdultContent(rawName)) continue
-                
-                val (cleanName, dubStatus, qualityTag) = processTitle(rawName, false)
-                val finalName = cleanTitle(cleanName)
-                val id = series.getInt("series_id")
-                val poster = fixImageUrl(series.optString("cover"))
-                val ratingValue = series.optDouble("rating_5based", 0.0).let { it.toFloat() * 2 }
-                
-                results.add(
-                    newAnimeSearchResponse(finalName, "series?id=$id", TvType.TvSeries) {
-                        this.posterUrl = poster
-                        if (qualityTag != null) this.quality = qualityTag
-                        if (dubStatus != null) this.dubStatus = dubStatus
-                        this.score = Score.from10(ratingValue)
-                    }
-                )
-            }
-        }
-        
-        return results
     }
 
     override suspend fun load(url: String): LoadResponse? {
