@@ -74,125 +74,139 @@ class StreamFlix : MainAPI() {
         return newHomePageResponse(categories, hasNext = false)
     }
 
-    private fun cleanCategoryName(name: String): String {
-        var cleaned = name
-        
-        // Remove Unicode escapes manualmente
-        val unicodePattern = Regex("\\\\u([0-9a-fA-F]{4})")
-        cleaned = unicodePattern.replace(cleaned) { matchResult ->
-            val code = matchResult.groupValues[1].toInt(16)
-            code.toChar().toString()
-        }
-        
-        // Remove emojis e caracteres especiais
-        cleaned = cleaned.replace(Regex("[⭐✅⚡✏️🔞🎬📺🇰🇷🇯🇵]"), "")
-        
-        return cleaned.trim()
-    }
-
     private suspend fun getMovieCategories(): List<Category> {
-        println("🌐 [StreamFlix] Buscando categorias de filmes...")
-        return withContext(Dispatchers.IO) {
-            try {
-                val response = app.get("$mainUrl/api_proxy.php?action=get_vod_categories")
-                val jsonArray = JSONArray(response.body.string())
-                println("📊 [StreamFlix] Resposta de categorias: ${jsonArray.length()} categorias")
-                
-                val allMovies = getAllMovies()
-                println("📊 [StreamFlix] Total de filmes para contar: ${allMovies.length()}")
-                
-                val countMap = mutableMapOf<String, Int>()
-                
-                // Conta filmes por categoria
-                for (i in 0 until allMovies.length()) {
-                    val movie = allMovies.getJSONObject(i)
-                    val categories = getCategoryIds(movie)
-                    for (catId in categories) {
-                        countMap[catId] = countMap.getOrDefault(catId, 0) + 1
-                    }
+    println("🌐 [StreamFlix] Buscando categorias de filmes...")
+    return withContext(Dispatchers.IO) {
+        try {
+            val response = app.get("$mainUrl/api_proxy.php?action=get_vod_categories")
+            val jsonArray = JSONArray(response.body.string())
+            
+            val allMovies = getAllMovies()
+            val countMap = mutableMapOf<String, Int>()
+            
+            // Conta filmes por categoria
+            for (i in 0 until allMovies.length()) {
+                val movie = allMovies.getJSONObject(i)
+                val categories = getCategoryIds(movie)
+                for (catId in categories) {
+                    countMap[catId] = countMap.getOrDefault(catId, 0) + 1
                 }
-                
-                println("📊 [StreamFlix] Mapa de contagem tem ${countMap.size} categorias")
-                
-                val categories = mutableListOf<Category>()
-                for (i in 0 until jsonArray.length()) {
-                    val obj = jsonArray.getJSONObject(i)
-                    val id = obj.getString("category_id")
-                    var name = obj.getString("category_name")
-                    
-                    name = cleanCategoryName(name)
-                    val count = countMap.getOrDefault(id, 0)
-                    
-                    println("  Categoria: $name (ID: $id) - $count filmes")
-                    
-                    if (count >= 25) {
-                        categories.add(Category(id, name, count))
-                    }
-                }
-                
-                val sorted = categories.sortedByDescending { it.count }
-                println("✅ [StreamFlix] Categorias de filmes válidas (≥25): ${sorted.size}")
-                sorted
-            } catch (e: Exception) {
-                println("❌ [StreamFlix] Erro ao buscar categorias de filmes: ${e.message}")
-                e.printStackTrace()
-                emptyList()
             }
+            
+            val categories = mutableListOf<Category>()
+            for (i in 0 until jsonArray.length()) {
+                val obj = jsonArray.getJSONObject(i)
+                val id = obj.getString("category_id")
+                var name = obj.getString("category_name")
+                
+                // Limpa o nome (remove símbolos e normaliza)
+                name = cleanCategoryName(name)
+                
+                val count = countMap.getOrDefault(id, 0)
+                
+                if (count >= 25) {
+                    categories.add(Category(id, name, count))
+                }
+            }
+            
+            // Remove duplicatas pelo nome (case insensitive)
+            val uniqueCategories = categories
+                .groupBy { it.name.lowercase() }
+                .map { it.value.first() }
+                .sortedByDescending { it.count }
+            
+            // Embaralha e pega 4 aleatórias
+            val shuffled = uniqueCategories.shuffled()
+            val selected = shuffled.take(4)
+            
+            println("✅ [StreamFlix] Categorias de filmes válidas (únicas): ${uniqueCategories.size}, selecionadas: ${selected.size}")
+            selected
+        } catch (e: Exception) {
+            println("❌ [StreamFlix] Erro ao buscar categorias de filmes: ${e.message}")
+            emptyList()
         }
     }
+}
 
-    private suspend fun getSeriesCategories(): List<Category> {
-        println("🌐 [StreamFlix] Buscando categorias de séries...")
-        return withContext(Dispatchers.IO) {
-            try {
-                val response = app.get("$mainUrl/api_proxy.php?action=get_series_categories")
-                val jsonArray = JSONArray(response.body.string())
-                println("📊 [StreamFlix] Resposta de categorias de séries: ${jsonArray.length()} categorias")
-                
-                val allSeries = getAllSeries()
-                println("📊 [StreamFlix] Total de séries para contar: ${allSeries.length()}")
-                
-                val countMap = mutableMapOf<String, Int>()
-                
-                // Conta séries por categoria
-                for (i in 0 until allSeries.length()) {
-                    val series = allSeries.getJSONObject(i)
-                    val categories = getCategoryIds(series)
-                    for (catId in categories) {
-                        countMap[catId] = countMap.getOrDefault(catId, 0) + 1
-                    }
+private suspend fun getSeriesCategories(): List<Category> {
+    println("🌐 [StreamFlix] Buscando categorias de séries...")
+    return withContext(Dispatchers.IO) {
+        try {
+            val response = app.get("$mainUrl/api_proxy.php?action=get_series_categories")
+            val jsonArray = JSONArray(response.body.string())
+            
+            val allSeries = getAllSeries()
+            val countMap = mutableMapOf<String, Int>()
+            
+            // Conta séries por categoria
+            for (i in 0 until allSeries.length()) {
+                val series = allSeries.getJSONObject(i)
+                val categories = getCategoryIds(series)
+                for (catId in categories) {
+                    countMap[catId] = countMap.getOrDefault(catId, 0) + 1
                 }
-                
-                println("📊 [StreamFlix] Mapa de contagem de séries tem ${countMap.size} categorias")
-                
-                val categories = mutableListOf<Category>()
-                for (i in 0 until jsonArray.length()) {
-                    val obj = jsonArray.getJSONObject(i)
-                    val id = obj.getString("category_id")
-                    var name = obj.getString("category_name")
-                    
-                    name = cleanCategoryName(name)
-                    val count = countMap.getOrDefault(id, 0)
-                    
-                    println("  Categoria: $name (ID: $id) - $count séries")
-                    
-                    if (count >= 25) {
-                        categories.add(Category(id, name, count))
-                    }
-                }
-                
-                val sorted = categories.sortedByDescending { it.count }
-                println("✅ [StreamFlix] Categorias de séries válidas (≥25): ${sorted.size}")
-                sorted
-            } catch (e: Exception) {
-                println("❌ [StreamFlix] Erro ao buscar categorias de séries: ${e.message}")
-                e.printStackTrace()
-                emptyList()
             }
+            
+            val categories = mutableListOf<Category>()
+            for (i in 0 until jsonArray.length()) {
+                val obj = jsonArray.getJSONObject(i)
+                val id = obj.getString("category_id")
+                var name = obj.getString("category_name")
+                
+                // Limpa o nome (remove símbolos e normaliza)
+                name = cleanCategoryName(name)
+                
+                val count = countMap.getOrDefault(id, 0)
+                
+                if (count >= 25) {
+                    categories.add(Category(id, name, count))
+                }
+            }
+            
+            // Remove duplicatas pelo nome (case insensitive)
+            val uniqueCategories = categories
+                .groupBy { it.name.lowercase() }
+                .map { it.value.first() }
+                .sortedByDescending { it.count }
+            
+            // Embaralha e pega 4 aleatórias
+            val shuffled = uniqueCategories.shuffled()
+            val selected = shuffled.take(4)
+            
+            println("✅ [StreamFlix] Categorias de séries válidas (únicas): ${uniqueCategories.size}, selecionadas: ${selected.size}")
+            selected
+        } catch (e: Exception) {
+            println("❌ [StreamFlix] Erro ao buscar categorias de séries: ${e.message}")
+            emptyList()
         }
     }
+}
 
-    // ... (resto do código igual, mantenha todas as outras funções)
+private fun cleanCategoryName(name: String): String {
+    var cleaned = name
+    
+    // Remove Unicode escapes manualmente
+    val unicodePattern = Regex("\\\\u([0-9a-fA-F]{4})")
+    cleaned = unicodePattern.replace(cleaned) { matchResult ->
+        val code = matchResult.groupValues[1].toInt(16)
+        code.toChar().toString()
+    }
+    
+    // Remove símbolos comuns (check, bullet, etc.)
+    cleaned = cleaned.replace(Regex("[☑✅⚡✏️🔞🎬📺🇰🇷🇯🇵⭐]"), "")
+    cleaned = cleaned.replace(Regex("[\\[\\]()]"), "")
+    cleaned = cleaned.trim()
+    
+    // Normaliza espaços
+    cleaned = cleaned.replace(Regex("\\s+"), " ")
+    
+    // Capitaliza primeira letra de cada palavra
+    cleaned = cleaned.split(" ").joinToString(" ") { word ->
+        if (word.isNotEmpty()) word.replaceFirstChar { it.uppercase() } else word
+    }
+    
+    return cleaned
+}
     
     private suspend fun getMoviesByCategory(categoryId: String, page: Int): List<SearchResponse> {
         val allMovies = getAllMovies()
