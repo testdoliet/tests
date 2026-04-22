@@ -74,6 +74,22 @@ class StreamFlix : MainAPI() {
         return newHomePageResponse(categories, hasNext = false)
     }
 
+    private fun cleanCategoryName(name: String): String {
+        var cleaned = name
+        
+        // Remove Unicode escapes manualmente
+        val unicodePattern = Regex("\\\\u([0-9a-fA-F]{4})")
+        cleaned = unicodePattern.replace(cleaned) { matchResult ->
+            val code = matchResult.groupValues[1].toInt(16)
+            code.toChar().toString()
+        }
+        
+        // Remove emojis e caracteres especiais
+        cleaned = cleaned.replace(Regex("[⭐✅⚡✏️🔞🎬📺🇰🇷🇯🇵]"), "")
+        
+        return cleaned.trim()
+    }
+
     private suspend fun getMovieCategories(): List<Category> {
         println("🌐 [StreamFlix] Buscando categorias de filmes...")
         return withContext(Dispatchers.IO) {
@@ -176,16 +192,8 @@ class StreamFlix : MainAPI() {
         }
     }
 
-    private fun cleanCategoryName(name: String): String {
-        return name
-            .replace("\\u[0-9a-fA-F]{4}".toRegex()) { 
-                val code = it.value.substring(2).toInt(16)
-                code.toChar().toString()
-            }
-            .replace(Regex("[⭐✅⚡✏️🔞🎬📺🇰🇷🇯🇵]"), "")
-            .trim()
-    }
-
+    // ... (resto do código igual, mantenha todas as outras funções)
+    
     private suspend fun getMoviesByCategory(categoryId: String, page: Int): List<SearchResponse> {
         val allMovies = getAllMovies()
         
