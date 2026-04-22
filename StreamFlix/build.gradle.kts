@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.library")
 }
@@ -13,12 +15,28 @@ android {
     defaultConfig {
         minSdk = 24
 
-        val tmdbApiKey = System.getenv("TMDB_API_KEY") ?: "dummy_api_key"
-        val tmdbAccessToken = System.getenv("TMDB_ACCESS_TOKEN") ?: "dummy_access_token"
-        
+        val tmdbApiKey = project.findProperty("TMDB_API_KEY") as? String
+            ?: System.getenv("TMDB_API_KEY")
+            ?: getLocalProperty("TMDB_API_KEY")
+            ?: "dummy_api_key"
+
+        val tmdbAccessToken = project.findProperty("TMDB_ACCESS_TOKEN") as? String
+            ?: System.getenv("TMDB_ACCESS_TOKEN")
+            ?: getLocalProperty("TMDB_ACCESS_TOKEN")
+            ?: "dummy_access_token"
+
         buildConfigField("String", "TMDB_API_KEY", "\"$tmdbApiKey\"")
         buildConfigField("String", "TMDB_ACCESS_TOKEN", "\"$tmdbAccessToken\"")
     }
+}
+
+fun getLocalProperty(key: String): String? {
+    val localProperties = Properties()
+    val localPropertiesFile = project.rootProject.file("local.properties")
+    return if (localPropertiesFile.exists()) {
+        localProperties.load(localPropertiesFile.inputStream())
+        localProperties.getProperty(key)
+    } else null
 }
 
 cloudstream {
@@ -34,7 +52,4 @@ cloudstream {
 dependencies {
     val cloudstream by configurations
     cloudstream("com.lagradost:cloudstream3:pre-release")
-
-    implementation("com.fasterxml.jackson.core:jackson-databind:2.15.2")
-    implementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.15.2")
 }
