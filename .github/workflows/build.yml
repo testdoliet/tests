@@ -1,4 +1,4 @@
-name: Build do L
+name: 🚀 Build do L
 
 on:
   push:
@@ -17,59 +17,99 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Set up JDK 17
+      - name: ☕ Set up JDK 17
         uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
           cache: 'gradle'
 
-      - name: Grant execute permission for gradlew
+      - name: 🔧 Grant execute permission for gradlew
         run: chmod +x gradlew
 
-      - name: Configurar BuildConfig com Secrets
+      - name: ⚙️ Configurar BuildConfig com Secrets
         run: |
+          echo "🏗️ Configurando variáveis de ambiente..."
+          
           if [[ -z "${{ secrets.TMDB_API_KEY }}" ]]; then
+            echo "⚠️ TMDB_API_KEY não encontrada, usando dummy"
             TMDB_API_KEY="dummy_api_key"
           else
+            echo "✅ TMDB_API_KEY configurada"
             TMDB_API_KEY="${{ secrets.TMDB_API_KEY }}"
           fi
           
           if [[ -z "${{ secrets.TMDB_ACCESS_TOKEN }}" ]]; then
+            echo "⚠️ TMDB_ACCESS_TOKEN não encontrado, usando dummy"
             TMDB_ACCESS_TOKEN="dummy_access_token"
           else
+            echo "✅ TMDB_ACCESS_TOKEN configurado"
             TMDB_ACCESS_TOKEN="${{ secrets.TMDB_ACCESS_TOKEN }}"
           fi
           
           echo "TMDB_API_KEY=$TMDB_API_KEY" > local.properties
           echo "TMDB_ACCESS_TOKEN=$TMDB_ACCESS_TOKEN" >> local.properties
+          echo "📝 Arquivo local.properties criado"
 
-      - name: Build with Gradle
+      - name: 🛠️ Build with Gradle
+        id: build
         run: |
+          echo "🔨 Iniciando build do projeto..."
           source local.properties
-          ./gradlew assemble --refresh-dependencies \
+          
+          if ./gradlew assemble --refresh-dependencies \
             -PTMDB_API_KEY="${TMDB_API_KEY:-dummy_api_key}" \
-            -PTMDB_ACCESS_TOKEN="${TMDB_ACCESS_TOKEN:-dummy_access_token}"
+            -PTMDB_ACCESS_TOKEN="${TMDB_ACCESS_TOKEN:-dummy_access_token}" 2>&1 | tee build.log; then
+            echo "✅ Build concluído com sucesso!"
+          else
+            echo "❌ Build falhou!"
+            echo ""
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "🚨 ERROS DETECTADOS:"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            grep -E "(error:|FAILED|Exception:|FAILURE:|> Compilation error|cannot find symbol)" build.log | head -20 || echo "Nenhum erro específico encontrado"
+            echo ""
+            echo "📋 Últimas 20 linhas do log:"
+            tail -20 build.log
+            exit 1
+          fi
 
-      - name: Generate plugins.json
+      - name: 📋 Generate plugins.json
+        id: generate
         run: |
+          echo "📝 Gerando arquivo plugins.json..."
           source local.properties
-          ./gradlew makePluginsJson -PoutputFile="build/plugins.json" \
+          
+          if ./gradlew makePluginsJson -PoutputFile="build/plugins.json" \
             -PTMDB_API_KEY="${TMDB_API_KEY:-dummy_api_key}" \
-            -PTMDB_ACCESS_TOKEN="${TMDB_ACCESS_TOKEN:-dummy_access_token}"
+            -PTMDB_ACCESS_TOKEN="${TMDB_ACCESS_TOKEN:-dummy_access_token}" 2>&1 | tee plugins.log; then
+            echo "✅ plugins.json gerado com sucesso!"
+          else
+            echo "❌ Falha ao gerar plugins.json!"
+            echo ""
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "🚨 ERROS NA GERAÇÃO:"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            grep -E "(error:|FAILED|Exception:|at |Caused by:)" plugins.log | head -15
+            exit 1
+          fi
 
-      - name: Mover e Corrigir URLs
+      - name: 📦 Mover e Corrigir URLs
         run: |
+          echo "📦 Organizando arquivos de build..."
+          
           REPO_BASE_URL="https://github.com/${{ github.repository }}/raw/refs/heads/main/builds"
           PLUGINS_LIST="[\"$REPO_BASE_URL/plugins.json\"]"
 
           mkdir -p builds
           mv build/plugins.json builds/plugins.json
+          echo "✅ plugins.json movido"
 
           REPO_BASE_URL_ESCAPED=$(echo $REPO_BASE_URL | sed 's/\//\\\//g')
 
           sed -i -E 's|"url": "[^"]*/([^/]+)\.cs3"|"url": "'"$REPO_BASE_URL_ESCAPED"'/\1.cs3"|g' builds/plugins.json
           sed -i -E 's|"jarUrl": "[^"]*/([^/]+)\.jar"|"jarUrl": "'"$REPO_BASE_URL_ESCAPED"'/\1.jar"|g' builds/plugins.json
+          echo "🔗 URLs corrigidas"
 
           echo "{
             \"name\": \"lietrepo\",
@@ -78,13 +118,40 @@ jobs:
             \"manifestVersion\": 1,
             \"pluginLists\": $PLUGINS_LIST
           }" > builds/repo.json
+          echo "✅ repo.json criado"
 
-          find . -type f -name "*.cs3" -exec cp {} builds/ \; || true
-          find . -type f -name "*.jar" -exec cp {} builds/ \; || true
+          find . -type f -name "*.cs3" -exec cp {} builds/ \; && echo "📦 Arquivos .cs3 copiados" || echo "⚠️ Nenhum .cs3 encontrado"
+          find . -type f -name "*.jar" -exec cp {} builds/ \; && echo "📦 Arquivos .jar copiados" || echo "⚠️ Nenhum .jar encontrado"
 
-      - name: Commit Providers to main branch
+      - name: 📊 Resumo dos arquivos gerados
+        run: |
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "📊 RESUMO DOS ARQUIVOS GERADOS"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+          echo "📁 Conteúdo da pasta builds/:"
+          ls -lah builds/
+          echo ""
+          echo "📄 Total de arquivos: $(find builds -type f | wc -l)"
+          echo "💾 Tamanho total: $(du -sh builds | cut -f1)"
+
+      - name: 💾 Commit Providers to main branch
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "Build: Atualização de plugins"
+          commit_message: "✨ Build: Atualização de plugins [skip ci]"
           branch: main
           file_pattern: builds/*
+
+      - name: ✅ Finalização
+        if: always()
+        run: |
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          if [ "${{ job.status }}" = "success" ]; then
+            echo "🎉 BUILD FINALIZADO COM SUCESSO! 🎉"
+          else
+            echo "⚠️ BUILD FINALIZADO COM ERROS ⚠️"
+            echo "🔍 Verifique os logs acima para mais detalhes"
+          fi
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
