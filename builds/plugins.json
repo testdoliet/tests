@@ -169,10 +169,10 @@
     },
     {
         "iconUrl": "https://embedtv.best/assets/icon.png",
-        "fileHash": "sha256-d8e587497510bd2d5d12e9dd1e53bd48e7a8de6b161f5ef93878ee67f0059e4e",
+        "fileHash": "sha256-1e3bb9c8751d59579b6f63c82f6148fe973a1043e5d19d122359a7535d49e8b1",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/lawlietbt/lietrepo",
-        "fileSize": 13884,
+        "fileSize": 15134,
         "status": 1,
         "language": "pt-br",
         "authors": [
@@ -317,10 +317,10 @@
     },
     {
         "iconUrl": "https://www.image2url.com/r2/default/images/1776018665375-eafe8c65-10f1-490c-9994-2f519402b6e3.png",
-        "fileHash": "sha256-0a0037f471f9f5a42f62bfa6242fff225492b557be89f1d3911c1a293172231a",
+        "fileHash": "sha256-0036fb60304f15a62842fbd171f2bfe58343f589d5c9e49c1808b27f64876545",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/lawlietbt/lietrepo",
-        "fileSize": 45599,
+        "fileSize": 47518,
         "status": 1,
         "language": "pt-br",
         "authors": [
