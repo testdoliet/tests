@@ -1,4 +1,4 @@
-name: Build do L
+name: 🚀 Build do L
 
 on:
   push:
@@ -13,78 +13,176 @@ jobs:
       contents: write
 
     steps:
-      - uses: actions/checkout@v4
+      - name: 📦 Checkout do código
+        uses: actions/checkout@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Set up JDK 17
+      - name: ☕ Setup JDK 17
         uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
           cache: 'gradle'
 
-      - name: Grant execute permission for gradlew
+      - name: 🔧 Configurar permissões do Gradle
         run: chmod +x gradlew
 
-      - name: Configurar BuildConfig com Secrets
+      - name: ⚙️ Configurar BuildConfig com Secrets
         run: |
+          echo "🏗️ Configurando variáveis de ambiente..."
+          
           if [[ -z "${{ secrets.TMDB_API_KEY }}" ]]; then
+            echo "⚠️ TMDB_API_KEY não encontrada, usando dummy"
             TMDB_API_KEY="dummy_api_key"
           else
+            echo "✅ TMDB_API_KEY configurada"
             TMDB_API_KEY="${{ secrets.TMDB_API_KEY }}"
           fi
           
           if [[ -z "${{ secrets.TMDB_ACCESS_TOKEN }}" ]]; then
+            echo "⚠️ TMDB_ACCESS_TOKEN não encontrado, usando dummy"
             TMDB_ACCESS_TOKEN="dummy_access_token"
           else
+            echo "✅ TMDB_ACCESS_TOKEN configurado"
             TMDB_ACCESS_TOKEN="${{ secrets.TMDB_ACCESS_TOKEN }}"
           fi
           
           echo "TMDB_API_KEY=$TMDB_API_KEY" > local.properties
           echo "TMDB_ACCESS_TOKEN=$TMDB_ACCESS_TOKEN" >> local.properties
+          echo "📝 Arquivo local.properties criado"
 
-      - name: Build with Gradle
+      - name: 🛠️ Build com Gradle
+        id: gradle_build
         run: |
+          echo "🔨 Iniciando build do projeto..."
+          
           source local.properties
-          ./gradlew assemble --refresh-dependencies \
+          
+          # Executa build e captura saída
+          if ./gradlew assemble --refresh-dependencies \
             -PTMDB_API_KEY="${TMDB_API_KEY:-dummy_api_key}" \
-            -PTMDB_ACCESS_TOKEN="${TMDB_ACCESS_TOKEN:-dummy_access_token}"
+            -PTMDB_ACCESS_TOKEN="${TMDB_ACCESS_TOKEN:-dummy_access_token}" 2>&1 | tee build.log; then
+            echo "✅ Build concluído com sucesso!"
+          else
+            echo "❌ Build falhou! Verificando logs..."
+            
+            # Extrai apenas os erros relevantes
+            echo ""
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "🚨 ERROS DETECTADOS:"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo ""
+            
+            # Mostra apenas erros de compilação
+            grep -E "(error:|FAILED|Exception:|FAILURE:|> Compilation error|cannot find symbol|unclosed character literal|';' expected|not a statement|illegal start of expression)" build.log | head -20 || echo "Nenhum erro de compilação encontrado no log padrão"
+            
+            # Mostra erros específicos do Gradle
+            echo ""
+            echo "📋 Últimas 20 linhas do log:"
+            tail -20 build.log
+            
+            exit 1
+          fi
 
-      - name: Generate plugins.json
+      - name: 📋 Gerar plugins.json
+        id: generate_plugins
         run: |
+          echo "📝 Gerando arquivo plugins.json..."
+          
           source local.properties
-          ./gradlew makePluginsJson -PoutputFile="build/plugins.json" \
+          
+          if ./gradlew makePluginsJson -PoutputFile="build/plugins.json" \
             -PTMDB_API_KEY="${TMDB_API_KEY:-dummy_api_key}" \
-            -PTMDB_ACCESS_TOKEN="${TMDB_ACCESS_TOKEN:-dummy_access_token}"
+            -PTMDB_ACCESS_TOKEN="${TMDB_ACCESS_TOKEN:-dummy_access_token}" 2>&1 | tee plugins.log; then
+            echo "✅ plugins.json gerado com sucesso!"
+          else
+            echo "❌ Falha ao gerar plugins.json!"
+            
+            echo ""
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "🚨 ERROS NA GERAÇÃO DO PLUGINS.JSON:"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo ""
+            
+            grep -E "(error:|FAILED|Exception:|at |Caused by:)" plugins.log | head -15
+            
+            exit 1
+          fi
 
-      - name: Mover e Corrigir URLs
+      - name: 📁 Mover e Corrigir URLs
         run: |
+          echo "📦 Organizando arquivos de build..."
+          
           REPO_BASE_URL="https://github.com/${{ github.repository }}/raw/refs/heads/main/builds"
           PLUGINS_LIST="[\"$REPO_BASE_URL/plugins.json\"]"
 
           mkdir -p builds
           mv build/plugins.json builds/plugins.json
+          echo "✅ plugins.json movido para builds/"
 
           REPO_BASE_URL_ESCAPED=$(echo $REPO_BASE_URL | sed 's/\//\\\//g')
 
+          # Corrige URLs no plugins.json
           sed -i -E 's|"url": "[^"]*/([^/]+)\.cs3"|"url": "'"$REPO_BASE_URL_ESCAPED"'/\1.cs3"|g' builds/plugins.json
           sed -i -E 's|"jarUrl": "[^"]*/([^/]+)\.jar"|"jarUrl": "'"$REPO_BASE_URL_ESCAPED"'/\1.jar"|g' builds/plugins.json
+          echo "🔗 URLs dos plugins corrigidas"
 
-          echo "{
-            \"name\": \"lietrepo\",
-            \"iconUrl\": \"https://github.com/lawlietbr.png\",
-            \"description\": \"Repositório Brasileiro para o Cloudstream\",
-            \"manifestVersion\": 1,
-            \"pluginLists\": $PLUGINS_LIST
-          }" > builds/repo.json
+          # Cria repo.json
+          cat > builds/repo.json << EOF
+{
+  "name": "lietrepo",
+  "iconUrl": "https://github.com/lawlietbr.png",
+  "description": "Repositório Brasileiro para o Cloudstream",
+  "manifestVersion": 1,
+  "pluginLists": $PLUGINS_LIST
+}
+EOF
+          echo "✅ repo.json criado"
 
-          find . -type f -name "*.cs3" -exec cp {} builds/ \; || true
-          find . -type f -name "*.jar" -exec cp {} builds/ \; || true
+          # Copia arquivos .cs3 e .jar
+          find . -type f -name "*.cs3" -exec cp {} builds/ \; && echo "📦 Arquivos .cs3 copiados" || echo "⚠️ Nenhum arquivo .cs3 encontrado"
+          find . -type f -name "*.jar" -exec cp {} builds/ \; && echo "📦 Arquivos .jar copiados" || echo "⚠️ Nenhum arquivo .jar encontrado"
 
-      - name: Commit Providers to main branch
+      - name: 📊 Exibir resumo dos arquivos gerados
+        run: |
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "📊 RESUMO DOS ARQUIVOS GERADOS"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+          
+          if [ -d "builds" ]; then
+            echo "📁 Conteúdo da pasta builds/:"
+            ls -lah builds/
+            echo ""
+            echo "📄 Arquivos Count: $(find builds -type f | wc -l) arquivos"
+            echo "💾 Tamanho total: $(du -sh builds | cut -f1)"
+          else
+            echo "❌ Pasta builds não encontrada!"
+            exit 1
+          fi
+
+      - name: 💾 Commit dos providers para a branch main
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "Build: Atualização de plugins"
+          commit_message: "✨ Build: Atualização de plugins [skip ci]"
           branch: main
           file_pattern: builds/*
+          commit_user_name: "GitHub Actions Bot"
+          commit_user_email: "actions@github.com"
+          commit_author: "GitHub Actions <actions@github.com>"
+
+      - name: ✅ Finalização
+        if: always()
+        run: |
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          if [ ${{ job.status }} == "success" ]; then
+            echo "🎉 BUILD FINALIZADO COM SUCESSO! 🎉"
+          else
+            echo "⚠️ BUILD FINALIZADO COM ERROS ⚠️"
+            echo ""
+            echo "🔍 Para mais detalhes, verifique os logs acima"
+          fi
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
