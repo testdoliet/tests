@@ -128,14 +128,18 @@ jobs:
           sed -i -E 's|"jarUrl": "[^"]*/([^/]+)\.jar"|"jarUrl": "'"$REPO_BASE_URL_ESCAPED"'/\1.jar"|g' builds/plugins.json
           echo "🔗 URLs dos plugins corrigidas"
 
-          # Cria repo.json sem problemas de sintaxe YAML
-          echo '{
+          # Cria repo.json
+          cat > builds/repo.json << 'EOF'
+{
   "name": "lietrepo",
   "iconUrl": "https://github.com/lawlietbr.png",
   "description": "Repositório Brasileiro para o Cloudstream",
   "manifestVersion": 1,
-  "pluginLists": '"$PLUGINS_LIST"'
-}' > builds/repo.json
+  "pluginLists": PLUGINS_LIST_PLACEHOLDER
+}
+EOF
+          # Substitui o placeholder
+          sed -i "s|PLUGINS_LIST_PLACEHOLDER|$PLUGINS_LIST|g" builds/repo.json
           echo "✅ repo.json criado"
 
           # Copia arquivos .cs3 e .jar
