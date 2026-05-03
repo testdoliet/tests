@@ -59,29 +59,21 @@ jobs:
           
           source local.properties
           
-          # Executa build e captura saída
           if ./gradlew assemble --refresh-dependencies \
             -PTMDB_API_KEY="${TMDB_API_KEY:-dummy_api_key}" \
             -PTMDB_ACCESS_TOKEN="${TMDB_ACCESS_TOKEN:-dummy_access_token}" 2>&1 | tee build.log; then
             echo "✅ Build concluído com sucesso!"
           else
             echo "❌ Build falhou! Verificando logs..."
-            
-            # Extrai apenas os erros relevantes
             echo ""
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
             echo "🚨 ERROS DETECTADOS:"
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
             echo ""
-            
-            # Mostra apenas erros de compilação
-            grep -E "(error:|FAILED|Exception:|FAILURE:|> Compilation error|cannot find symbol|unclosed character literal|';' expected|not a statement|illegal start of expression)" build.log | head -20 || echo "Nenhum erro de compilação encontrado no log padrão"
-            
-            # Mostra erros específicos do Gradle
+            grep -E "(error:|FAILED|Exception:|FAILURE:|> Compilation error|cannot find symbol)" build.log | head -20 || echo "Nenhum erro de compilação encontrado"
             echo ""
             echo "📋 Últimas 20 linhas do log:"
             tail -20 build.log
-            
             exit 1
           fi
 
@@ -98,15 +90,12 @@ jobs:
             echo "✅ plugins.json gerado com sucesso!"
           else
             echo "❌ Falha ao gerar plugins.json!"
-            
             echo ""
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
             echo "🚨 ERROS NA GERAÇÃO DO PLUGINS.JSON:"
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
             echo ""
-            
             grep -E "(error:|FAILED|Exception:|at |Caused by:)" plugins.log | head -15
-            
             exit 1
           fi
 
@@ -123,26 +112,19 @@ jobs:
 
           REPO_BASE_URL_ESCAPED=$(echo $REPO_BASE_URL | sed 's/\//\\\//g')
 
-          # Corrige URLs no plugins.json
           sed -i -E 's|"url": "[^"]*/([^/]+)\.cs3"|"url": "'"$REPO_BASE_URL_ESCAPED"'/\1.cs3"|g' builds/plugins.json
           sed -i -E 's|"jarUrl": "[^"]*/([^/]+)\.jar"|"jarUrl": "'"$REPO_BASE_URL_ESCAPED"'/\1.jar"|g' builds/plugins.json
           echo "🔗 URLs dos plugins corrigidas"
 
-          # Cria repo.json
-          cat > builds/repo.json << 'EOF'
-{
+          echo '{
   "name": "lietrepo",
   "iconUrl": "https://github.com/lawlietbr.png",
   "description": "Repositório Brasileiro para o Cloudstream",
   "manifestVersion": 1,
-  "pluginLists": PLUGINS_LIST_PLACEHOLDER
-}
-EOF
-          # Substitui o placeholder
-          sed -i "s|PLUGINS_LIST_PLACEHOLDER|$PLUGINS_LIST|g" builds/repo.json
+  "pluginLists": '"$PLUGINS_LIST"'
+}' > builds/repo.json
           echo "✅ repo.json criado"
 
-          # Copia arquivos .cs3 e .jar
           find . -type f -name "*.cs3" -exec cp {} builds/ \; && echo "📦 Arquivos .cs3 copiados" || echo "⚠️ Nenhum arquivo .cs3 encontrado"
           find . -type f -name "*.jar" -exec cp {} builds/ \; && echo "📦 Arquivos .jar copiados" || echo "⚠️ Nenhum arquivo .jar encontrado"
 
@@ -158,7 +140,7 @@ EOF
             echo "📁 Conteúdo da pasta builds/:"
             ls -lah builds/
             echo ""
-            echo "📄 Arquivos Count: $(find builds -type f | wc -l) arquivos"
+            echo "📄 Total de arquivos: $(find builds -type f | wc -l)"
             echo "💾 Tamanho total: $(du -sh builds | cut -f1)"
           else
             echo "❌ Pasta builds não encontrada!"
@@ -184,7 +166,5 @@ EOF
             echo "🎉 BUILD FINALIZADO COM SUCESSO! 🎉"
           else
             echo "⚠️ BUILD FINALIZADO COM ERROS ⚠️"
-            echo ""
-            echo "🔍 Para mais detalhes, verifique os logs acima"
           fi
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
